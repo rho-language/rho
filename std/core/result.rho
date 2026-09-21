@@ -1,0 +1,22 @@
+module std.core.result
+
+struct Result[T, E] {
+    is_ok: bool
+    ok: T
+    err: E
+}
+
+fn Ok[T, E](v: T) Result[T, E] {
+    return Result[T, E]{ true, v, default(E) }
+}
+
+fn Err[T, E](e: E) Result[T, E] {
+    return Result[T, E]{ false, default(T), e }
+}
+
+fn unwrap[T, E](r: Result[T, E]) T {
+    if !r.is_ok {
+        panic("unwrap Err")
+    }
+    return r.ok
+}

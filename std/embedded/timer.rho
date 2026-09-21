@@ -1,0 +1,12 @@
+module std.embedded.timer
+
+extern fn timer_hw_delay_ms(ms: u32) void
+extern fn timer_hw_delay_us(us: u32) void
+
+fn delay_ms(ms: u32) void {
+    timer_hw_delay_ms(ms)
+}
+
+fn delay_us(us: u32) void {
+    timer_hw_delay_us(us)
+}

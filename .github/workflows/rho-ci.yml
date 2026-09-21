@@ -1,0 +1,35 @@
+name: Rho CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: go.mod
+
+    - name: Run Go tests
+      run: go test ./...
+
+    - name: Build Go tools
+      run: go build ./...
+
+    - name: Configure CMake
+      run: cmake -S . -B build -DBUILD_TESTING=ON
+
+    - name: Build CMake target
+      run: cmake --build build --parallel
+
+    - name: Run CTest
+      run: ctest --test-dir build --output-on-failure

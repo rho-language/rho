@@ -1,0 +1,20 @@
+module std.collections.array
+
+import std.core.ptr
+import std.core.slice
+
+struct Array[T, N] {
+    data: Ptr[T]
+}
+
+fn get[T, N](a: Array[T, N], i: u32) T {
+    return a.data[i]
+}
+
+fn set[T, N](a: Array[T, N], i: u32, v: T) void {
+    a.data[i] = v
+}
+
+fn as_slice[T, N](a: Array[T, N]) Slice[T] {
+    return Slice[T]{ a.data, N }
+}

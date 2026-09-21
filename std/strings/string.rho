@@ -1,0 +1,111 @@
+module std.strings.string
+
+import std.core.slice
+import std.core.option
+
+type String = Slice[u8]
+
+fn len(s: String) u32 {
+    return s.len
+}
+
+fn eq(a: String, b: String) bool {
+    if a.len != b.len {
+        return false
+    }
+    let i: u32 = 0
+    while i < a.len {
+        if a.ptr[i] != b.ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn find(haystack: String, needle: String) Option[u32] {
+    if needle.len == 0 {
+        return Some[u32](0)
+    }
+
+    let i: u32 = 0
+    while i + needle.len <= haystack.len {
+        let j: u32 = 0
+        let ok: bool = true
+
+        while j < needle.len {
+            if haystack.ptr[i + j] != needle.ptr[j] {
+                ok = false
+                break
+            }
+            j = j + 1
+        }
+
+        if ok {
+            return Some[u32](i)
+        }
+
+        i = i + 1
+    }
+
+    return None[u32]()
+}
+
+fn starts_with(s: String, prefix: String) bool {
+    if prefix.len > s.len {
+        return false
+    }
+
+    let i: u32 = 0
+    while i < prefix.len {
+        if s.ptr[i] != prefix.ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+fn ends_with(s: String, suffix: String) bool {
+    if suffix.len > s.len {
+        return false
+    }
+
+    let offset: u32 = s.len - suffix.len
+    let i: u32 = 0
+
+    while i < suffix.len {
+        if s.ptr[offset + i] != suffix.ptr[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+fn split(s: String, sep: u8, out: Slice[String]) u32 {
+    let count: u32 = 0
+    let start: u32 = 0
+    let i: u32 = 0
+
+    while i < s.len {
+        if s.ptr[i] == sep {
+            if count < out.len {
+                out.ptr[count] = String{ s.ptr + start, i - start }
+            }
+            count = count + 1
+            start = i + 1
+        }
+        i = i + 1
+    }
+
+    // ultimul segment
+    if count < out.len {
+        out.ptr[count] = String{ s.ptr + start, s.len - start }
+    }
+    count = count + 1
+
+    return count
+}

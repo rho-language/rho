@@ -1,0 +1,51 @@
+module std.embedded.rs485
+
+import std.core.slice
+import std.core.ptr
+import std.embedded.uart
+import std.embedded.gpio
+
+struct RS485 {
+    de_pin: u32
+    re_pin: u32
+}
+
+fn init(de_pin: u32, re_pin: u32, baud: u32) RS485 {
+    // configure UART
+    uart.init(baud)
+
+    // configure DE/RE pins
+    gpio.init(de_pin, 1)   // 1 = output
+    gpio.init(re_pin, 1)
+
+    // default: RX mode
+    gpio.write(de_pin, false)
+    gpio.write(re_pin, false)
+
+    return RS485{ de_pin, re_pin }
+}
+
+fn set_direction(dev: RS485, tx: bool) void {
+    if tx {
+        // TX mode: DE=1, RE=1
+        gpio.write(dev.de_pin, true)
+        gpio.write(dev.re_pin, true)
+    } else {
+        // RX mode: DE=0, RE=0
+        gpio.write(dev.de_pin, false)
+        gpio.write(dev.re_pin, false)
+    }
+}
+
+fn write(dev: RS485, data: Slice[u8]) void {
+    set_direction(dev, true)
+    uart.write(data)
+    // small turnaround delay (hardware-specific)
+    // in Rho 0.1: user handles delay externally
+    set_direction(dev, false)
+}
+
+fn read(dev: RS485, out: Slice[u8]) u32 {
+    set_direction(dev, false)
+    return uart.read(out)
+}

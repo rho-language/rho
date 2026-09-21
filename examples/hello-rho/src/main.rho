@@ -1,0 +1,9 @@
+module hello
+
+include "greeting.rho"
+import messages
+
+fn main() void {
+    let name: string = yaml.load("config/app.yml");
+    print(prefix() + name);
+}

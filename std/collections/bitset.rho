@@ -1,0 +1,23 @@
+module std.collections.bitset
+
+struct BitSet[N] {
+    data: u64[N]   // N * 64 bits
+}
+
+fn set[N](b: BitSet[N], idx: u32) void {
+    let word: u32 = idx / 64
+    let bit: u32 = idx % 64
+    b.data[word] = b.data[word] | (1u64 << bit)
+}
+
+fn clear[N](b: BitSet[N], idx: u32) void {
+    let word: u32 = idx / 64
+    let bit: u32 = idx % 64
+    b.data[word] = b.data[word] & ~(1u64 << bit)
+}
+
+fn get[N](b: BitSet[N], idx: u32) bool {
+    let word: u32 = idx / 64
+    let bit: u32 = idx % 64
+    return (b.data[word] & (1u64 << bit)) != 0
+}

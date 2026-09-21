@@ -1,0 +1,35 @@
+module tests.collections_test
+
+import std.collections.array
+import std.collections.map
+import std.core.slice
+import std.core.option
+
+fn assert(cond: bool, msg: String) void {
+    if !cond {
+        panic(msg)
+    }
+}
+
+fn test_array() void {
+    let raw: u32[4]
+    let arr: Array[u32, 4] = Array[u32, 4]{ Ptr[u32](&raw[0]) }
+
+    set(arr, 0, 42)
+    assert(get(arr, 0) == 42, "Array get/set failed")
+}
+
+fn test_map() void {
+    let raw: Entry[u32, u32][8]
+    let m: Map[u32, u32, 8] = Map[u32, u32, 8]{ Ptr[Entry[u32, u32]](&raw[0]) }
+
+    insert(m, 10, 99)
+    let v: Option[u32] = get(m, 10)
+
+    assert(v.is_some(), "Map get failed")
+}
+
+fn main() void {
+    test_array()
+    test_map()
+}

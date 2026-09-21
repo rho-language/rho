@@ -1,0 +1,15 @@
+module std.embedded.spi
+
+import std.core.slice
+import std.core.ptr
+
+extern fn spi_hw_init() void
+extern fn spi_hw_transfer(tx: Ptr[u8], rx: Ptr[u8], len: u32) void
+
+fn init() void {
+    spi_hw_init()
+}
+
+fn transfer(tx: Slice[u8], rx: Slice[u8]) void {
+    spi_hw_transfer(tx.ptr, rx.ptr, tx.len)
+}

@@ -1,0 +1,13 @@
+module std.core.maybe_uninit
+
+struct MaybeUninit[T] {
+    storage: Ptr[T]
+}
+
+fn uninit[T]() MaybeUninit[T] {
+    return MaybeUninit[T]{ from_u64[T](0) }
+}
+
+fn assume_init[T](m: MaybeUninit[T]) T {
+    return *(m.storage.raw)
+}
