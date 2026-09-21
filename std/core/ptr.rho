@@ -1,0 +1,17 @@
+module std.core.ptr
+
+struct Ptr[T] {
+    raw: u64
+}
+
+fn from_u64[T](v: u64) Ptr[T] {
+    return Ptr[T]{ v }
+}
+
+fn to_u64[T](p: Ptr[T]) u64 {
+    return p.raw
+}
+
+fn index[T](p: Ptr[T], i: u32) T {
+    return *(p.raw + i * sizeof(T))
+}

@@ -1,0 +1,15 @@
+module std.os.sys
+
+extern fn c_syscall(num: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) u64
+
+fn exit(code: u32) void {
+    c_syscall(60, code, 0, 0, 0, 0, 0)
+}
+
+fn write(fd: u32, buf: Ptr[u8], len: u32) u32 {
+    return u32(c_syscall(1, fd, buf.raw, len, 0, 0, 0))
+}
+
+fn read(fd: u32, buf: Ptr[u8], len: u32) u32 {
+    return u32(c_syscall(0, fd, buf.raw, len, 0, 0, 0))
+}

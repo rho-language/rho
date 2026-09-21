@@ -1,0 +1,26 @@
+module std.strings.utf8
+
+import std.strings.string
+import std.core.option
+
+fn is_ascii(s: String) bool {
+    let i: u32 = 0
+    while i < s.len {
+        if s.ptr[i] > 0x7F {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn first_codepoint(s: String) Option[u32] {
+    if s.len == 0 {
+        return None[u32]()
+    }
+    // simplu: doar ASCII pentru Rho 0.1
+    if s.ptr[0] <= 0x7F {
+        return Some[u32](u32(s.ptr[0]))
+    }
+    return None[u32]()
+}

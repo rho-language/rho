@@ -1,0 +1,20 @@
+module std.embedded.uart
+
+import std.core.slice
+import std.core.ptr
+
+extern fn uart_hw_init(baud: u32) void
+extern fn uart_hw_write(ptr: Ptr[u8], len: u32) void
+extern fn uart_hw_read(ptr: Ptr[u8], len: u32) u32
+
+fn init(baud: u32) void {
+    uart_hw_init(baud)
+}
+
+fn write(s: Slice[u8]) void {
+    uart_hw_write(s.ptr, s.len)
+}
+
+fn read(out: Slice[u8]) u32 {
+    return uart_hw_read(out.ptr, out.len)
+}

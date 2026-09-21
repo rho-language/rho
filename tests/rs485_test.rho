@@ -1,0 +1,25 @@
+module tests.rs485_test
+
+import std.embedded.rs485
+import std.core.strings
+
+fn assert(cond: bool, msg: String) void {
+    if !cond {
+        panic(msg)
+    }
+}
+
+fn test_direction() void {
+    let dev: RS485 = RS485{ 1, 2 }
+
+    // TX mode
+    set_direction(dev, true)
+    // cannot read hardware → only check that code runs
+
+    // RX mode
+    set_direction(dev, false)
+}
+
+fn main() void {
+    test_direction()
+}

@@ -1,0 +1,26 @@
+module std.math.float
+
+extern fn c_sqrt(x: f64) f64
+extern fn c_pow(x: f64, y: f64) f64
+extern fn c_sin(x: f64) f64
+extern fn c_cos(x: f64) f64
+
+fn sqrt(x: f64) f64 {
+    return c_sqrt(x)
+}
+
+fn pow(x: f64, y: f64) f64 {
+    return c_pow(x, y)
+}
+
+fn sin(x: f64) f64 {
+    return c_sin(x)
+}
+
+fn cos(x: f64) f64 {
+    return c_cos(x)
+}
+
+fn lerp(a: f64, b: f64, t: f64) f64 {
+    return a + (b - a) * t
+}

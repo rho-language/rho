@@ -1,0 +1,21 @@
+module std.core.option
+
+struct Option[T] {
+    is_some: bool
+    value: T
+}
+
+fn Some[T](v: T) Option[T] {
+    return Option[T]{ true, v }
+}
+
+fn None[T]() Option[T] {
+    return Option[T]{ false, default(T) }
+}
+
+fn unwrap[T](o: Option[T]) T {
+    if !o.is_some {
+        panic("unwrap None")
+    }
+    return o.value
+}

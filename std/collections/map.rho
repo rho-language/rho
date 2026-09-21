@@ -1,0 +1,50 @@
+module std.collections.map
+
+import std.core.option
+
+struct Entry[K, V] {
+    used: bool
+    key: K
+    value: V
+}
+
+struct Map[K, V, N] {
+    entries: Ptr[Entry[K, V]]
+}
+
+fn hash_u32(x: u32) u32 {
+    return (x * 2654435761) // Knuth multiplicative hash
+}
+
+fn insert[K, V, N](m: Map[K, V, N], key: K, value: V) bool {
+    let h: u32 = hash_u32(u32(key)) % N
+    let i: u32 = 0
+
+    while i < N {
+        let idx: u32 = (h + i) % N
+        if !m.entries[idx].used {
+            m.entries[idx].used = true
+            m.entries[idx].key = key
+            m.entries[idx].value = value
+            return true
+        }
+        i = i + 1
+    }
+
+    return false
+}
+
+fn get[K, V, N](m: Map[K, V, N], key: K) Option[V] {
+    let h: u32 = hash_u32(u32(key)) % N
+    let i: u32 = 0
+
+    while i < N {
+        let idx: u32 = (h + i) % N
+        if m.entries[idx].used && m.entries[idx].key == key {
+            return Some[V](m.entries[idx].value)
+        }
+        i = i + 1
+    }
+
+    return None[V]()
+}

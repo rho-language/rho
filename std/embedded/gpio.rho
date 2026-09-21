@@ -1,0 +1,17 @@
+module std.embedded.gpio
+
+extern fn gpio_hw_init(pin: u32, mode: u32) void
+extern fn gpio_hw_write(pin: u32, value: u32) void
+extern fn gpio_hw_read(pin: u32) u32
+
+fn init(pin: u32, mode: u32) void {
+    gpio_hw_init(pin, mode)
+}
+
+fn write(pin: u32, value: bool) void {
+    gpio_hw_write(pin, if value { 1 } else { 0 })
+}
+
+fn read(pin: u32) bool {
+    return gpio_hw_read(pin) != 0
+}

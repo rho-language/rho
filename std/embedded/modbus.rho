@@ -1,0 +1,91 @@
+module std.embedded.modbus
+
+import std.core.slice
+import std.core.ptr
+import std.embedded.rs485
+
+struct Modbus {
+    bus: RS485
+    addr: u8
+}
+
+fn init(bus: RS485, addr: u8) Modbus {
+    return Modbus{ bus, addr }
+}
+
+fn crc16_modbus(data: Slice[u8]) u16 {
+    let crc: u16 = 0xFFFF
+
+    let i: u32 = 0
+    while i < data.len {
+        crc = crc ^ u16(data.ptr[i])
+
+        let j: u32 = 0
+        while j < 8 {
+            if (crc & 0x0001) != 0 {
+                crc = (crc >> 1) ^ 0xA001
+            } else {
+                crc = crc >> 1
+            }
+            j = j + 1
+        }
+
+        i = i + 1
+    }
+
+    return crc
+}
+
+fn read_holding(m: Modbus, start: u16, qty: u16, out: Slice<u16>) bool {
+    let buf_raw: u8[8]
+    let buf: Slice[u8] = Slice[u8]{ Ptr[u8](&buf_raw[0]), 8 }
+
+    buf.ptr[0] = m.addr
+    buf.ptr[1] = 0x03
+    buf.ptr[2] = u8(start >> 8)
+    buf.ptr[3] = u8(start & 0xFF)
+    buf.ptr[4] = u8(qty >> 8)
+    buf.ptr[5] = u8(qty & 0xFF)
+
+    let crc: u16 = crc16_modbus(Slice[u8]{ buf.ptr, 6 })
+    buf.ptr[6] = u8(crc & 0xFF)        // low byte first
+    buf.ptr[7] = u8(crc >> 8)
+
+    rs485.write(m.bus, buf)
+
+    // răspuns: addr, func, byte_count, data..., crc_lo, crc_hi
+    let rx_raw: u8[64]
+    let rx: Slice[u8] = Slice[u8]{ Ptr[u8](&rx_raw[0]), 64 }
+
+    let n: u32 = rs485.read(m.bus, rx)
+    if n < 5 {
+        return false
+    }
+
+    // verificăm CRC
+    let crc_calc: u16 = crc16_modbus(Slice[u8]{ rx.ptr, n - 2 })
+    let crc_lo: u8 = rx.ptr[n - 2]
+    let crc_hi: u8 = rx.ptr[n - 1]
+    let crc_recv: u16 = u16(crc_lo) | (u16(crc_hi) << 8)
+
+    if crc_calc != crc_recv {
+        return false
+    }
+
+    // extragem registrele
+    let byte_count: u8 = rx.ptr[2]
+    if u32(byte_count) != qty * 2 {
+        return false
+    }
+
+    let i: u32 = 0
+    while i < u32(qty) && i < out.len {
+        let base: u32 = 3 + i * 2
+        let hi: u8 = rx.ptr[base]
+        let lo: u8 = rx.ptr[base + 1]
+        out.ptr[i] = (u16(hi) << 8) | u16(lo)
+        i = i + 1
+    }
+
+    return true
+}

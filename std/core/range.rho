@@ -1,0 +1,17 @@
+module std.core.range
+
+struct Range {
+    start: u32
+    end: u32
+}
+
+fn range(start: u32, end: u32) Range {
+    return Range{ start, end }
+}
+
+fn next(r: Range, i: u32) Option<u32> {
+    if i < r.end {
+        return Some(i)
+    }
+    return None()
+}

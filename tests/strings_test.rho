@@ -1,0 +1,26 @@
+module tests.strings_test
+
+import std.core.strings
+
+fn assert(cond: bool, msg: String) void {
+    if !cond {
+        panic(msg)
+    }
+}
+
+fn test_len() void {
+    let s: String = "abc"
+    assert(s.len() == 3, "String len failed")
+}
+
+fn test_concat() void {
+    let a: String = "ro"
+    let b: String = "ho"
+    let c: String = a + b
+    assert(c == "roho", "String concat failed")
+}
+
+fn main() void {
+    test_len()
+    test_concat()
+}

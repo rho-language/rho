@@ -1,0 +1,22 @@
+module tests.math_test
+
+import std.math.basic
+
+fn assert(cond: bool, msg: String) void {
+    if !cond {
+        panic(msg)
+    }
+}
+
+fn test_add() void {
+    assert(add(2, 3) == 5, "add failed")
+}
+
+fn test_mul() void {
+    assert(mul(4, 5) == 20, "mul failed")
+}
+
+fn main() void {
+    test_add()
+    test_mul()
+}

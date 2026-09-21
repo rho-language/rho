@@ -1,0 +1,30 @@
+module tests.core_test
+
+import std.core.option
+import std.core.result
+import std.core.strings
+
+fn assert(cond: bool, msg: String) void {
+    if !cond {
+        panic(msg)
+    }
+}
+
+fn test_option() void {
+    let x: Option[u32] = Some[u32](10)
+    assert(x.is_some(), "Option Some failed")
+    assert(!None[u32]().is_some(), "Option None failed")
+}
+
+fn test_result() void {
+    let ok: Result[u32, u32] = Ok[u32, u32](5)
+    let err: Result[u32, u32] = Err[u32, u32](99)
+
+    assert(ok.is_ok(), "Result Ok failed")
+    assert(err.is_err(), "Result Err failed")
+}
+
+fn main() void {
+    test_option()
+    test_result()
+}

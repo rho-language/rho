@@ -1,0 +1,5 @@
+module greeting
+
+fn prefix() string {
+    return "Hello ";
+}

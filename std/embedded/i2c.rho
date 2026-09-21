@@ -1,0 +1,20 @@
+module std.embedded.i2c
+
+import std.core.slice
+import std.core.ptr
+
+extern fn i2c_hw_init(bus: u32) void
+extern fn i2c_hw_write(addr: u32, ptr: Ptr[u8], len: u32) u32
+extern fn i2c_hw_read(addr: u32, ptr: Ptr[u8], len: u32) u32
+
+fn init(bus: u32) void {
+    i2c_hw_init(bus)
+}
+
+fn write(addr: u32, data: Slice[u8]) u32 {
+    return i2c_hw_write(addr, data.ptr, data.len)
+}
+
+fn read(addr: u32, out: Slice[u8]) u32 {
+    return i2c_hw_read(addr, out.ptr, out.len)
+}
