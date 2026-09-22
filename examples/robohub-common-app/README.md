@@ -5,18 +5,28 @@ dependency. The dependency uses the absolute local path
 `/home/miraur/projects/robohub-common`, matching the version declared in its
 `module.yml` (`1.0.0`) and its exported include/source layout.
 
-From the Rho repository root:
+The `main = "src/main.rho"` entry in `rho.mod` selects the application entry
+point. From the Rho repository root, resolve and inspect the dependency:
 
 ```bash
-go run ./cmd/rho-deps sync
+(cd examples/robohub-common-app && go run ../../cmd/rho-deps sync)
+(cd examples/robohub-common-app && go run ../../cmd/rho-deps graph --json)
+(cd examples/robohub-common-app && go run ../../cmd/rho-deps verify)
 ```
 
-From this example directory, inspect the resolved dependency:
+Build the application project from the repository root:
 
 ```bash
-go run ../../cmd/rho-deps graph --json
-go run ../../cmd/rho-deps verify
+go build -o ./rho ./cmd/rho
+./rho build examples/robohub-common-app
+./rho run examples/robohub-common-app
 ```
+
+This generates `build/app.c`, `build/app.h`, `build/main.c`, and
+`build/CMakeLists.txt` (plus `build/config.h` when the project has a config
+directory). Because `robohub-common` contains platform hooks, its
+native executable also needs a board implementation; the generated CMake
+project is the integration point for that implementation.
 
 The example is intentionally focused on dependency resolution. The current
 `robohub-common` platform sources require a board implementation for native

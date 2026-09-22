@@ -10,6 +10,7 @@ func TestLoadManifest(t *testing.T) {
 	content := `
 module testmod
 version 1.0.0
+main = "src/main.rho"
 
 dep robohub-common {
     type = "c"
@@ -36,6 +37,9 @@ dep robohub-common {
 	}
 	if m.Version != "1.0.0" {
 		t.Fatalf("Version = %s", m.Version)
+	}
+	if m.Main != "src/main.rho" {
+		t.Fatalf("Main = %s", m.Main)
 	}
 	if len(m.Deps) != 1 {
 		t.Fatalf("Deps count = %d", len(m.Deps))

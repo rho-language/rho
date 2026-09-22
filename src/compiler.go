@@ -58,6 +58,79 @@ func CompileProjectTo(path, outPath string) error {
 	return CompileFileTo(path, outPath)
 }
 
+// GenerateProject emits a small native C project for a Rho application.
+// The generated directory contains app.c, app.h, main.c, and CMakeLists.txt.
+func GenerateProject(path, outputDir string, includePaths, sourceFiles []string) error {
+	mod, err := loadModuleGraph(path)
+	if err != nil {
+		return err
+	}
+	tc := types.New()
+	if err := tc.CheckModule(*mod); err != nil {
+		return fmt.Errorf("typechecking failed: %w", err)
+	}
+	irModule := tc.ToIR(*mod)
+	hasInit := false
+	for _, fn := range irModule.Funcs {
+		if fn.Name == "init" && !fn.Extern && len(fn.Params) == 0 {
+			hasInit = true
+			break
+		}
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("create generated project: %w", err)
+	}
+
+	appC := codegen.EmitC(irModule)
+	appC = strings.ReplaceAll(appC, "int main(", "int app_main(")
+	appC = "/*\n * @file app.c\n * @brief Generated Rho application implementation.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#include \"app.h\"\n\n" + appC
+	appC = "/*\n * @file app.c\n * @brief Generated Rho application implementation.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#define _POSIX_C_SOURCE 200809L\n#include \"app.h\"\n\n" + appC
+
+	configInclude := ""
+	projectRoot := ProjectRoot(path)
+	if info, statErr := os.Stat(filepath.Join(projectRoot, "config")); statErr == nil && info.IsDir() {
+		config := "/*\n * @file app_config.h\n * @brief Generated Rho application configuration.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#pragma once\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n#define RHO_APP_NAME \"" + mod.Name + "\"\n\n#ifdef __cplusplus\n}\n#endif\n"
+		config = strings.Replace(config, "app_config.h", "config.h", 1)
+		if err := os.WriteFile(filepath.Join(outputDir, "config.h"), []byte(config), 0644); err != nil {
+			return fmt.Errorf("write config.h: %w", err)
+		}
+		configInclude = "#include \"config.h\"\n"
+	}
+
+	initCall := ""
+	if hasInit {
+		initCall = "    init();\n"
+	}
+	appInit := "void app_init(void)\n{\n" + initCall + "}\n\n"
+	appC += "\n" + appInit
+	if err := os.WriteFile(filepath.Join(outputDir, "app.c"), []byte(appC), 0644); err != nil {
+		return fmt.Errorf("write app.c: %w", err)
+	}
+	header := "/*\n * @file app.h\n * @brief Generated Rho application interface.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#pragma once\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n#include <stdint.h>\n#include <stdbool.h>\n#include <stddef.h>\n" + configInclude + "\nint app_main(void);\nvoid app_init(void);\n\n#ifdef __cplusplus\n}\n#endif\n"
+	if err := os.WriteFile(filepath.Join(outputDir, "app.h"), []byte(header), 0644); err != nil {
+		return fmt.Errorf("write app.h: %w", err)
+	}
+
+	mainC := "/*\n * @file main.c\n * @brief Generated native system entry point for a Rho application.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#include \"app.h\"\n\nint main(void)\n{\n    app_init();\n    return app_main();\n}\n"
+	if err := os.WriteFile(filepath.Join(outputDir, "main.c"), []byte(mainC), 0644); err != nil {
+		return fmt.Errorf("write main.c: %w", err)
+	}
+
+	cmake := "cmake_minimum_required(VERSION 3.16)\nproject(" + mod.Name + " C)\n\nset(CMAKE_C_STANDARD 11)\nset(CMAKE_C_STANDARD_REQUIRED ON)\n\nadd_executable(" + mod.Name + " main.c app.c\n"
+	for _, source := range sourceFiles {
+		cmake += "    " + filepath.ToSlash(source) + "\n"
+	}
+	cmake += ")\n\ntarget_include_directories(" + mod.Name + " PRIVATE\n    ${CMAKE_CURRENT_SOURCE_DIR}\n"
+	for _, include := range includePaths {
+		cmake += "    " + filepath.ToSlash(include) + "\n"
+	}
+	cmake += ")\n"
+	if err := os.WriteFile(filepath.Join(outputDir, "CMakeLists.txt"), []byte(cmake), 0644); err != nil {
+		return fmt.Errorf("write CMakeLists.txt: %w", err)
+	}
+	return nil
+}
+
 // ProjectRoot returns the directory containing rho.mod, or the source file's
 // directory when the file is not part of a project.
 func ProjectRoot(path string) string {

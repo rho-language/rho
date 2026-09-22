@@ -1,5 +1,6 @@
 module robohub-common-app
 version 0.1.0
+main = "src/main.rho"
 
 dep robohub-common {
     type = "c"
