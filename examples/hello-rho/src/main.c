@@ -8,6 +8,9 @@
 #include <string.h>
 #include <stddef.h>
 
+#define RHO_FEATURE_MATH 1
+#define RHO_FEATURE_MATH 1
+
 static char* rho_concat(const char* a, const char* b);
 static char* rho_yaml_load(const char* path);
 

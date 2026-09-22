@@ -39,6 +39,7 @@ type Module struct {
 	Name     string
 	Imports  []Import
 	Includes []Include
+	Features []string
 	Decls    []Decl
 }
 

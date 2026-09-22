@@ -1,0 +1,11 @@
+module std.math.fast
+
+extern fn c_sin(x: f64) f64
+extern fn c_cos(x: f64) f64
+extern fn c_sqrt(x: f64) f64
+extern fn c_atan2(y: f64, x: f64) f64
+
+fn fast_sin(x: f64) f64 { return c_sin(x) }
+fn fast_cos(x: f64) f64 { return c_cos(x) }
+fn fast_sqrt(x: f64) f64 { return c_sqrt(x) }
+fn fast_atan2(y: f64, x: f64) f64 { return c_atan2(y, x) }

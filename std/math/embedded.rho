@@ -1,0 +1,8 @@
+module std.math.embedded
+
+fn map_range(x: f64, in_min: f64, in_max: f64, out_min: f64, out_max: f64) f64 { return out_min + (x-in_min)*(out_max-out_min)/(in_max-in_min) }
+fn saturate(x: f64, low: f64, high: f64) f64 { if x < low { return low } if x > high { return high } return x }
+fn deadband(x: f64, threshold: f64) f64 { if x < threshold && x > -threshold { return 0.0 } return x }
+fn smoothstep01(x: f64) f64 { let t: f64 = saturate(x, 0.0, 1.0); return t*t*(3.0-2.0*t) }
+fn deg_to_rad(degrees: f64) f64 { return degrees * 0.017453292519943295 }
+fn rad_to_deg(radians: f64) f64 { return radians * 57.29577951308232 }

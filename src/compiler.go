@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"rho/src/codegen"
+	"rho/src/deps"
 	"rho/src/frontend/ast"
 	"rho/src/frontend/lexer"
 	"rho/src/frontend/parser"
@@ -143,6 +144,9 @@ func ProjectRoot(path string) string {
 		abs = filepath.Dir(abs)
 	}
 	for current := abs; ; current = filepath.Dir(current) {
+		if _, err := os.Stat(filepath.Join(current, "module.yml")); err == nil {
+			return current
+		}
 		if _, err := os.Stat(filepath.Join(current, "rho.mod")); err == nil {
 			return current
 		}
@@ -157,8 +161,10 @@ func ProjectRoot(path string) string {
 // path for a standalone source file.
 func ProjectOutputPath(path string) string {
 	root := ProjectRoot(path)
-	if _, err := os.Stat(filepath.Join(root, "rho.mod")); err != nil {
-		return replaceExt(path, ".c")
+	if _, err := os.Stat(filepath.Join(root, "module.yml")); err != nil {
+		if _, legacyErr := os.Stat(filepath.Join(root, "rho.mod")); legacyErr != nil {
+			return replaceExt(path, ".c")
+		}
 	}
 	return filepath.Join(root, "build", filepath.Base(replaceExt(path, ".c")))
 }
@@ -183,7 +189,32 @@ func loadModuleGraph(entry string) (*ast.Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	if manifest, manifestErr := deps.LoadManifest(filepath.Join(ProjectRoot(entry), "rho.mod")); manifestErr == nil {
+		root.Features = append(root.Features, manifest.Features...)
+	}
+	if err := loadFeatureModules(root, entry, ProjectRoot(entry), visited); err != nil {
+		return nil, err
+	}
 	return root, nil
+}
+
+func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, visited map[string]bool) error {
+	for _, feature := range module.Features {
+		if !strings.HasPrefix(feature, "math.") {
+			continue
+		}
+		name := "std." + feature
+		featurePath, err := resolveImport(name, sourcePath, projectRoot)
+		if err != nil {
+			return fmt.Errorf("feature %q: %w", feature, err)
+		}
+		featureModule, err := loadModuleFile(featurePath, projectRoot, visited)
+		if err != nil {
+			return fmt.Errorf("load feature %q: %w", feature, err)
+		}
+		module.Decls = append(module.Decls, featureModule.Decls...)
+	}
+	return nil
 }
 
 func loadModuleFile(path, projectRoot string, visited map[string]bool) (*ast.Module, error) {
@@ -209,7 +240,7 @@ func loadModuleFile(path, projectRoot string, visited map[string]bool) (*ast.Mod
 		return nil, fmt.Errorf("parsing %q failed: %w", abs, err)
 	}
 
-	merged := &ast.Module{Name: mod.Name, Imports: nil, Includes: nil, Decls: append([]ast.Decl{}, mod.Decls...)}
+	merged := &ast.Module{Name: mod.Name, Imports: nil, Includes: nil, Features: append([]string{}, mod.Features...), Decls: append([]ast.Decl{}, mod.Decls...)}
 	for _, include := range mod.Includes {
 		includePath := include.Path
 		if !filepath.IsAbs(includePath) {
@@ -220,6 +251,7 @@ func loadModuleFile(path, projectRoot string, visited map[string]bool) (*ast.Mod
 			return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
 		}
 		merged.Decls = append(merged.Decls, included.Decls...)
+		merged.Features = append(merged.Features, included.Features...)
 	}
 	for _, imp := range mod.Imports {
 		importPath, err := resolveImport(imp.Name, abs, projectRoot)
@@ -231,12 +263,18 @@ func loadModuleFile(path, projectRoot string, visited map[string]bool) (*ast.Mod
 			return nil, err
 		}
 		merged.Decls = append(merged.Decls, imported.Decls...)
+		merged.Features = append(merged.Features, imported.Features...)
+	}
+	if err := loadFeatureModules(merged, abs, projectRoot, visited); err != nil {
+		return nil, err
 	}
 	return merged, nil
 }
 
 func resolveImport(name, sourcePath, projectRoot string) (string, error) {
-	relative := filepath.FromSlash(strings.ReplaceAll(name, ".", "/"))
+	stdImport := strings.HasPrefix(name, "std.")
+	moduleName := strings.TrimPrefix(name, "std.")
+	relative := filepath.FromSlash(strings.ReplaceAll(moduleName, ".", "/"))
 	candidates := []string{
 		filepath.Join(projectRoot, "src", relative+".rho"),
 		filepath.Join(projectRoot, relative+".rho"),
@@ -245,6 +283,18 @@ func resolveImport(name, sourcePath, projectRoot string) (string, error) {
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
+		}
+	}
+	if stdImport {
+		for current := projectRoot; ; current = filepath.Dir(current) {
+			candidate := filepath.Join(current, "std", relative+".rho")
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, nil
+			}
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
 		}
 	}
 	return "", fmt.Errorf("file not found for module %q", name)

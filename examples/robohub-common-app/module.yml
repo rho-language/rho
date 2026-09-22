@@ -1,0 +1,17 @@
+module:
+  name: robohub-common-app
+  type: rho
+  version: 0.1.0
+
+main: src/main.rho
+
+features:
+  - math.control
+
+depends:
+  - name: robohub-common
+    type: c
+    version: 1.0.0
+    path: /home/miraur/projects/robohub-common
+    include: include
+    src: src
