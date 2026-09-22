@@ -139,7 +139,11 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 			cg.b.WriteString(cTypeFor(returnType))
 		}
 		cg.b.WriteString(" ")
-		cg.b.WriteString(fn.Name)
+		name := fn.CName
+		if name == "" {
+			name = fn.Name
+		}
+		cg.b.WriteString(name)
 		cg.b.WriteString("(")
 
 		for i, p := range fn.Params {
@@ -208,13 +212,17 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 }
 
 func (cg *Codegen) emitFunctionSignature(fn ir.FuncIR) {
+	name := fn.CName
+	if name == "" {
+		name = fn.Name
+	}
 	if fn.Name == "main" && fn.ReturnType.Kind == ir.TypeVoid {
 		cg.b.WriteString("int")
 	} else {
 		cg.b.WriteString(cTypeFor(fn.ReturnType))
 	}
 	cg.b.WriteString(" ")
-	cg.b.WriteString(fn.Name)
+	cg.b.WriteString(name)
 	cg.b.WriteString("(")
 	for i, p := range fn.Params {
 		if i > 0 {
@@ -259,10 +267,53 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 		if len(instr.Args) == 1 {
 			cg.b.WriteString("    ")
 			cg.b.WriteString(instr.Dest)
-			cg.b.WriteString(" = ")
+			if strings.HasSuffix(instr.Dest, "=") {
+				cg.b.WriteString(" ")
+			} else {
+				cg.b.WriteString(" = ")
+			}
 			cg.b.WriteString(instr.Args[0])
 			cg.b.WriteString(";\n")
 		}
+	case ir.OpLet:
+		cg.b.WriteString("    ")
+		cg.b.WriteString(instr.Type)
+		cg.b.WriteString(" ")
+		cg.b.WriteString(instr.Dest)
+		if len(instr.Args) == 1 && instr.Args[0] != "" {
+			cg.b.WriteString(" = ")
+			cg.b.WriteString(instr.Args[0])
+		}
+		cg.b.WriteString(";\n")
+
+	case ir.OpExpr:
+		if len(instr.Args) == 1 {
+			cg.b.WriteString("    ")
+			cg.b.WriteString(instr.Args[0])
+			cg.b.WriteString(";\n")
+		}
+	case ir.OpIf:
+		cg.b.WriteString("    if (")
+		cg.b.WriteString(instr.Condition)
+		cg.b.WriteString(") {\n")
+		cg.emitNested(instr.Then)
+		cg.b.WriteString("    }")
+		if len(instr.Else) > 0 {
+			cg.b.WriteString(" else {\n")
+			cg.emitNested(instr.Else)
+			cg.b.WriteString("    }")
+		}
+		cg.b.WriteString("\n")
+
+	case ir.OpWhile:
+		cg.b.WriteString("    while (")
+		cg.b.WriteString(instr.Condition)
+		cg.b.WriteString(") {\n")
+		cg.emitNested(instr.Then)
+		cg.b.WriteString("    }\n")
+
+	case ir.OpBreak:
+		cg.b.WriteString("    break;\n")
 
 	case ir.OpCall:
 		cg.b.WriteString("    ")
@@ -290,6 +341,18 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 
 	default:
 		cg.b.WriteString("    /* unknown op */\n")
+	}
+}
+
+func (cg *Codegen) emitNested(instructions []ir.Instr) {
+	child := New()
+	for _, instruction := range instructions {
+		child.emitInstr(instruction)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(child.b.String(), "\n"), "\n") {
+		cg.b.WriteString("    ")
+		cg.b.WriteString(line)
+		cg.b.WriteString("\n")
 	}
 }
 

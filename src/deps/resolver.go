@@ -4,15 +4,13 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 func hashPath(path string) string {
-	data, err := os.ReadFile(filepath.Join(path, "rho.mod"))
-	if err == nil {
-		return fmt.Sprintf("sha256:%x", sha256.Sum256(data))
-	}
-	data, err = os.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err == nil {
 		return fmt.Sprintf("sha256:%x", sha256.Sum256(data))
 	}
@@ -188,10 +186,19 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 		Type:    dependencyType,
 		Version: version,
 		GitURL:  dep.GitURL,
-		Rev:     version,
 		Path:    path,
 		Hash:    hashPath(path),
+		Rev:     revision(path, version),
 	})
 
 	return nil
+}
+
+func revision(path, fallback string) string {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return fallback
+	}
+	return strings.TrimSpace(string(output))
 }

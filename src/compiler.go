@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"rho/src/codegen"
@@ -83,6 +84,9 @@ func GenerateProjectWithDependencies(path, outputDir string, includePaths, sourc
 		return fmt.Errorf("typechecking failed: %w", err)
 	}
 	irModule := tc.ToIR(*mod)
+	if err := codegen.ValidateModule(irModule); err != nil {
+		return fmt.Errorf("codegen validation failed: %w", err)
+	}
 	hasInit := false
 	for _, fn := range irModule.Funcs {
 		if fn.Name == "init" && !fn.Extern && len(fn.Params) == 0 {
@@ -116,6 +120,19 @@ func GenerateProjectWithDependencies(path, outputDir string, includePaths, sourc
 	}
 	appInit := "void app_init(void)\n{\n" + initCall + "}\n\n"
 	appC += "\n" + appInit
+	runtimeStart := strings.Index(appC, "static char* rho_concat(const char* a, const char* b) {")
+	initStart := strings.Index(appC, "\nvoid app_init(void)")
+	if runtimeStart < 0 || initStart < runtimeStart {
+		return fmt.Errorf("generated runtime section is missing")
+	}
+	runtimeBody := appC[runtimeStart:initStart]
+	appC = appC[:runtimeStart] + appC[initStart:]
+	appC = strings.ReplaceAll(appC, "static char* rho_", "char* rho_")
+	runtimeBody = strings.ReplaceAll(runtimeBody, "static char* rho_", "char* rho_")
+	runtimeC := "/*\n * @file runtime.c\n * @brief Generated Rho C runtime support.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#define _POSIX_C_SOURCE 200809L\n#include <stdint.h>\n#include <stdbool.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stddef.h>\n\n" + runtimeBody
+	if err := os.WriteFile(filepath.Join(outputDir, "runtime.c"), []byte(runtimeC), 0644); err != nil {
+		return fmt.Errorf("write runtime.c: %w", err)
+	}
 	if err := os.WriteFile(filepath.Join(outputDir, "app.c"), []byte(appC), 0644); err != nil {
 		return fmt.Errorf("write app.c: %w", err)
 	}
@@ -130,6 +147,7 @@ func GenerateProjectWithDependencies(path, outputDir string, includePaths, sourc
 	}
 
 	cmake := "cmake_minimum_required(VERSION 3.16)\nproject(" + mod.Name + " C)\n\nset(CMAKE_C_STANDARD 11)\nset(CMAKE_C_STANDARD_REQUIRED ON)\n\nadd_executable(" + mod.Name + " main.c app.c\n"
+	cmake += "    runtime.c\n"
 	for _, source := range sourceFiles {
 		cmake += "    " + filepath.ToSlash(source) + "\n"
 	}
@@ -249,11 +267,11 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited 
 	}
 	toks, err := lexer.Lex(string(source))
 	if err != nil {
-		return nil, fmt.Errorf("lexing %q failed: %w", abs, err)
+		return nil, sourceDiagnostic(abs, string(source), "lexing", err)
 	}
 	mod, err := parser.Parse(toks)
 	if err != nil {
-		return nil, fmt.Errorf("parsing %q failed: %w", abs, err)
+		return nil, sourceDiagnostic(abs, string(source), "parsing", err)
 	}
 
 	merged := &ast.Module{Name: mod.Name, Imports: nil, Includes: nil, Features: append([]string{}, mod.Features...), Decls: append([]ast.Decl{}, mod.Decls...)}
@@ -278,6 +296,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited 
 		if err != nil {
 			return nil, err
 		}
+		markModuleOwnership(imported, imported.Name)
 		merged.Decls = append(merged.Decls, imported.Decls...)
 		merged.Features = append(merged.Features, imported.Features...)
 	}
@@ -285,6 +304,54 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited 
 		return nil, err
 	}
 	return merged, nil
+}
+
+func sourceDiagnostic(path, source, phase string, err error) error {
+	message := err.Error()
+	byteOffset := -1
+	if marker := strings.Index(message, "byte "); marker >= 0 {
+		start := marker + len("byte ")
+		end := start
+		for end < len(message) && message[end] >= '0' && message[end] <= '9' {
+			end++
+		}
+		if end > start {
+			if parsed, parseErr := strconv.Atoi(message[start:end]); parseErr == nil {
+				byteOffset = parsed
+			}
+		}
+	}
+	line, column := 1, 1
+	if byteOffset >= 0 {
+		if byteOffset > len(source) {
+			byteOffset = len(source)
+		}
+		prefix := source[:byteOffset]
+		line = 1 + strings.Count(prefix, "\n")
+		if last := strings.LastIndex(prefix, "\n"); last >= 0 {
+			column = byteOffset - last
+		} else {
+			column = byteOffset + 1
+		}
+	}
+	return fmt.Errorf("%s %s:%d:%d: %w", phase, path, line, column, err)
+}
+
+func markModuleOwnership(module *ast.Module, owner string) {
+	for index, decl := range module.Decls {
+		switch declaration := decl.(type) {
+		case ast.FuncDecl:
+			if declaration.Owner == "" {
+				declaration.Owner = owner
+				module.Decls[index] = declaration
+			}
+		case ast.StructDecl:
+			if declaration.Owner == "" {
+				declaration.Owner = owner
+				module.Decls[index] = declaration
+			}
+		}
+	}
 }
 
 func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []string) (string, error) {
@@ -310,6 +377,18 @@ func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []strin
 			parent := filepath.Dir(current)
 			if parent == current {
 				break
+			}
+		}
+		if workingDirectory, err := os.Getwd(); err == nil {
+			for current := workingDirectory; ; current = filepath.Dir(current) {
+				candidate := filepath.Join(current, "std", relative+".rho")
+				if _, err := os.Stat(candidate); err == nil {
+					return candidate, nil
+				}
+				parent := filepath.Dir(current)
+				if parent == current {
+					break
+				}
 			}
 		}
 	}
