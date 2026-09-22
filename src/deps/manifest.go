@@ -33,6 +33,7 @@ type DepSpec struct {
 type Manifest struct {
 	ModuleName string
 	Version    string
+	Main       string
 	Deps       []DepSpec
 }
 
@@ -60,6 +61,13 @@ func LoadManifest(path string) (*Manifest, error) {
 
 		if currentDep == nil && strings.HasPrefix(ln, "version ") {
 			m.Version = parseValue(strings.TrimPrefix(ln, "version"))
+			continue
+		}
+
+		if currentDep == nil && (strings.HasPrefix(ln, "main ") || strings.HasPrefix(ln, "main:")) {
+			value := strings.TrimPrefix(ln, "main")
+			value = strings.TrimSpace(strings.TrimPrefix(value, ":"))
+			m.Main = unquote(strings.TrimPrefix(strings.TrimSpace(value), "="))
 			continue
 		}
 

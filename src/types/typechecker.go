@@ -288,6 +288,9 @@ func lowerExpr(expr ast.Expr) string {
 		if expr.Object.(ast.IdentifierExpr).Name == "yaml" && expr.Name == "load" {
 			return "rho_yaml_load"
 		}
+		if expr.Object.(ast.IdentifierExpr).Name == "string" && expr.Name == "from_i32" {
+			return "rho_string_from_i32"
+		}
 		return lowerExpr(expr.Object) + "." + expr.Name
 	case ast.IndexExpr:
 		return lowerExpr(expr.Object) + "[" + lowerExpr(expr.Index) + "]"

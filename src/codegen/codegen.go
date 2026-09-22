@@ -87,6 +87,7 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 	cg.b.WriteString("#include <stddef.h>\n\n")
 	cg.b.WriteString("static char* rho_concat(const char* a, const char* b);\n")
 	cg.b.WriteString("static char* rho_yaml_load(const char* path);\n\n")
+	cg.b.WriteString("static char* rho_string_from_i32(int32_t value);\n\n")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -189,6 +190,11 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 	cg.b.WriteString("    fclose(f);\n")
 	cg.b.WriteString("    if (result != NULL) return result;\n")
 	cg.b.WriteString("    return strdup(\"unknown\");\n")
+	cg.b.WriteString("}\n\n")
+	cg.b.WriteString("static char* rho_string_from_i32(int32_t value) {\n")
+	cg.b.WriteString("    char buffer[32];\n")
+	cg.b.WriteString("    snprintf(buffer, sizeof(buffer), \"%d\", value);\n")
+	cg.b.WriteString("    return strdup(buffer);\n")
 	cg.b.WriteString("}\n\n")
 }
 

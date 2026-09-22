@@ -62,11 +62,30 @@ func main() {
 
 func runCLI(args []string) {
 	if len(args) != 1 {
-		fmt.Println("Usage: rho run <file.rho>")
+		fmt.Println("Usage: rho run <file.rho|project-dir>")
 		os.Exit(2)
 	}
 
 	file := args[0]
+	if info, err := os.Stat(file); err == nil && info.IsDir() {
+		projectRoot, absErr := filepath.Abs(file)
+		if absErr != nil {
+			fmt.Fprintln(os.Stderr, "rho run:", absErr)
+			os.Exit(1)
+		}
+		manifest, manifestErr := deps.LoadManifest(filepath.Join(projectRoot, "rho.mod"))
+		if manifestErr != nil || manifest.Main == "" {
+			if manifestErr == nil {
+				manifestErr = fmt.Errorf("manifest does not declare main entry")
+			}
+			fmt.Fprintln(os.Stderr, "rho run:", manifestErr)
+			os.Exit(1)
+		}
+		file = manifest.Main
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(projectRoot, file)
+		}
+	}
 	abs, _ := filepath.Abs(file)
 
 	if err := RunFile(abs); err != nil {
@@ -84,19 +103,58 @@ func buildCLI(args []string) int {
 	out := fs.String("o", "", "output C file (optional)")
 	fs.Parse(args)
 
-	if fs.NArg() != 1 {
-		fmt.Println("Usage: rho build <file.rho> [-o out.c]")
+	if fs.NArg() > 1 {
+		fmt.Println("Usage: rho build [file.rho] [-o out.c]")
 		return 2
 	}
 
-	in := fs.Arg(0)
+	in := ""
+	projectArg := ""
+	if fs.NArg() == 1 {
+		candidate := fs.Arg(0)
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			projectArg, _ = filepath.Abs(candidate)
+			manifest, manifestErr := deps.LoadManifest(filepath.Join(projectArg, "rho.mod"))
+			if manifestErr != nil || manifest.Main == "" {
+				if manifestErr == nil {
+					manifestErr = fmt.Errorf("manifest does not declare main entry")
+				}
+				fmt.Fprintln(os.Stderr, "rho build:", manifestErr)
+				return 1
+			}
+			in = manifest.Main
+			if !filepath.IsAbs(in) {
+				in = filepath.Join(projectArg, in)
+			}
+		} else {
+			in = candidate
+		}
+	} else {
+		projectRoot, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "rho build:", err)
+			return 1
+		}
+		manifest, err := deps.LoadManifest(filepath.Join(projectRoot, "rho.mod"))
+		if err != nil || manifest.Main == "" {
+			if err == nil {
+				err = fmt.Errorf("manifest does not declare main entry")
+			}
+			fmt.Fprintln(os.Stderr, "rho build:", err)
+			return 1
+		}
+		in = filepath.Join(projectRoot, manifest.Main)
+	}
 	absIn, _ := filepath.Abs(in)
 
 	/* ---------------------------------------------------------------------- */
 	/*  1. Load manifest                                                      */
 	/* ---------------------------------------------------------------------- */
 
-	projectRoot := filepath.Dir(absIn)
+	projectRoot := src.ProjectRoot(absIn)
+	if projectArg != "" {
+		projectRoot = projectArg
+	}
 	manifestPath := filepath.Join(projectRoot, "rho.mod")
 
 	manifest, err := deps.LoadManifest(manifestPath)
@@ -172,6 +230,12 @@ func buildCLI(args []string) int {
 	}
 
 	if err := src.CompileFileTo(absIn, outC); err != nil {
+		fmt.Fprintln(os.Stderr, "rho build:", err)
+		return 1
+	}
+
+	generatedDir := filepath.Join(projectRoot, "build")
+	if err := src.GenerateProject(absIn, generatedDir, includePaths, sourceFiles); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
