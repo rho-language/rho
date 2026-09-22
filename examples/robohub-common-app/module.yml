@@ -10,8 +10,7 @@ features:
 
 depends:
   - name: robohub-common
-    type: c
     version: 1.0.0
     path: /home/miraur/projects/robohub-common
-    include: include
-    src: src
+    git: https://github.com/RoboHubPlatform/robohub-common
+    branch: main
