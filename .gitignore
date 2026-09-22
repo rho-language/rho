@@ -26,6 +26,8 @@ coverage/
 *.gcno
 *.gcov
 
+*.lock
+
 # Local IDE and OS files
 .vscode/
 .idea/
