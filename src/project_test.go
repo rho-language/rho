@@ -163,6 +163,49 @@ func TestStandardLibraryImportResolves(t *testing.T) {
 	}
 }
 
+func TestDependencyModuleImportResolves(t *testing.T) {
+	root := t.TempDir()
+	dependency := filepath.Join(root, "dependency")
+	if err := os.MkdirAll(filepath.Join(dependency, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dependency, "rho.mod"), []byte("module dependency\nversion 1.0.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dependency, "src", "message.rho"), []byte(`module message
+
+fn dependency_message() string {
+    return "from dependency"
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "rho.mod"), []byte("module app\nversion 1.0.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "main.rho")
+	if err := os.WriteFile(entry, []byte(`module app
+import message
+
+fn main() void {
+    print(dependency_message());
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(root, "build", "app.c")
+	if err := CompileFileToWithDependencies(entry, out, []string{dependency}); err != nil {
+		t.Fatalf("dependency import failed: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dependency_message") {
+		t.Fatal("generated C does not contain dependency module function")
+	}
+}
+
 func TestManifestFeatureLoadsStandardModule(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "app.c")
 	if err := CompileProjectTo("../examples/robohub-common-app/src/main.rho", out); err != nil {

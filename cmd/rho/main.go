@@ -67,6 +67,7 @@ func runCLI(args []string) {
 	}
 
 	file := args[0]
+	var dependencyRoots []string
 	if info, err := os.Stat(file); err == nil && info.IsDir() {
 		projectRoot, absErr := filepath.Abs(file)
 		if absErr != nil {
@@ -87,8 +88,26 @@ func runCLI(args []string) {
 		}
 	}
 	abs, _ := filepath.Abs(file)
+	projectRoot := src.ProjectRoot(abs)
+	if manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot)); err == nil {
+		locator := &deps.DefaultLocator{
+			ProjectRoot: projectRoot,
+			GlobalCache: filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod"),
+			LocalCache:  filepath.Join(projectRoot, ".rho-deps"),
+		}
+		graph, _, resolveErr := (&deps.Resolver{Locator: locator}).Resolve(manifest, projectRoot)
+		if resolveErr != nil {
+			fmt.Fprintln(os.Stderr, "rho run:", resolveErr)
+			os.Exit(1)
+		}
+		for _, node := range graph.Nodes {
+			if node.Type == deps.DepTypeRho {
+				dependencyRoots = append(dependencyRoots, node.Path)
+			}
+		}
+	}
 
-	if err := RunFile(abs); err != nil {
+	if err := RunFileWithDependencies(abs, dependencyRoots); err != nil {
 		fmt.Fprintln(os.Stderr, "rho run:", err)
 		os.Exit(1)
 	}
@@ -196,8 +215,12 @@ func buildCLI(args []string) int {
 
 	var includePaths []string
 	var sourceFiles []string
+	var rhoDependencyRoots []string
 
 	for _, node := range graph.Nodes {
+		if node.Type == deps.DepTypeRho {
+			rhoDependencyRoots = append(rhoDependencyRoots, node.Path)
+		}
 		// C deps only
 		if node.Type == deps.DepTypeC {
 			inc := filepath.Join(node.Path, "include")
@@ -229,13 +252,13 @@ func buildCLI(args []string) int {
 		outC = replaceExt(absIn, ".c")
 	}
 
-	if err := src.CompileFileTo(absIn, outC); err != nil {
+	if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
 
 	generatedDir := filepath.Join(projectRoot, "build")
-	if err := src.GenerateProject(absIn, generatedDir, includePaths, sourceFiles); err != nil {
+	if err := src.GenerateProjectWithDependencies(absIn, generatedDir, includePaths, sourceFiles, rhoDependencyRoots); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
