@@ -13,13 +13,17 @@ var commandRunner = exec.Command
 
 // RunFile compiles a Rho source file to C, builds a host executable, and runs it.
 func RunFile(path string) error {
+	return RunFileWithDependencies(path, nil)
+}
+
+func RunFileWithDependencies(path string, dependencyRoots []string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve source path: %w", err)
 	}
 
 	cOut := src.ProjectOutputPath(abs)
-	if err := src.CompileFileTo(abs, cOut); err != nil {
+	if err := src.CompileFileToWithDependencies(abs, cOut, dependencyRoots); err != nil {
 		return fmt.Errorf("rho compile failed: %w", err)
 	}
 

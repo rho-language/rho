@@ -47,7 +47,13 @@ func CompileFile(path string) error {
 
 // CompileFileTo compiles one Rho source file into the requested C output path.
 func CompileFileTo(path, outPath string) error {
-	mod, err := loadModuleGraph(path)
+	return CompileFileToWithDependencies(path, outPath, nil)
+}
+
+// CompileFileToWithDependencies compiles a source file with additional Rho
+// dependency roots available to import resolution.
+func CompileFileToWithDependencies(path, outPath string, dependencyRoots []string) error {
+	mod, err := loadModuleGraphWithDependencies(path, dependencyRoots)
 	if err != nil {
 		return err
 	}
@@ -62,7 +68,13 @@ func CompileProjectTo(path, outPath string) error {
 // GenerateProject emits a small native C project for a Rho application.
 // The generated directory contains app.c, app.h, main.c, and CMakeLists.txt.
 func GenerateProject(path, outputDir string, includePaths, sourceFiles []string) error {
-	mod, err := loadModuleGraph(path)
+	return GenerateProjectWithDependencies(path, outputDir, includePaths, sourceFiles, nil)
+}
+
+// GenerateProjectWithDependencies emits a native project with dependency
+// roots available while loading imported Rho modules.
+func GenerateProjectWithDependencies(path, outputDir string, includePaths, sourceFiles, dependencyRoots []string) error {
+	mod, err := loadModuleGraphWithDependencies(path, dependencyRoots)
 	if err != nil {
 		return err
 	}
@@ -184,31 +196,35 @@ func compileModule(mod ast.Module, outPath string) error {
 }
 
 func loadModuleGraph(entry string) (*ast.Module, error) {
+	return loadModuleGraphWithDependencies(entry, nil)
+}
+
+func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*ast.Module, error) {
 	visited := map[string]bool{}
-	root, err := loadModuleFile(entry, ProjectRoot(entry), visited)
+	root, err := loadModuleFile(entry, ProjectRoot(entry), dependencyRoots, visited)
 	if err != nil {
 		return nil, err
 	}
 	if manifest, manifestErr := deps.LoadManifest(filepath.Join(ProjectRoot(entry), "rho.mod")); manifestErr == nil {
 		root.Features = append(root.Features, manifest.Features...)
 	}
-	if err := loadFeatureModules(root, entry, ProjectRoot(entry), visited); err != nil {
+	if err := loadFeatureModules(root, entry, ProjectRoot(entry), dependencyRoots, visited); err != nil {
 		return nil, err
 	}
 	return root, nil
 }
 
-func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, visited map[string]bool) error {
+func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, dependencyRoots []string, visited map[string]bool) error {
 	for _, feature := range module.Features {
 		if !strings.HasPrefix(feature, "math.") {
 			continue
 		}
 		name := "std." + feature
-		featurePath, err := resolveImport(name, sourcePath, projectRoot)
+		featurePath, err := resolveImport(name, sourcePath, projectRoot, dependencyRoots)
 		if err != nil {
 			return fmt.Errorf("feature %q: %w", feature, err)
 		}
-		featureModule, err := loadModuleFile(featurePath, projectRoot, visited)
+		featureModule, err := loadModuleFile(featurePath, projectRoot, dependencyRoots, visited)
 		if err != nil {
 			return fmt.Errorf("load feature %q: %w", feature, err)
 		}
@@ -217,7 +233,7 @@ func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, visi
 	return nil
 }
 
-func loadModuleFile(path, projectRoot string, visited map[string]bool) (*ast.Module, error) {
+func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited map[string]bool) (*ast.Module, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source path: %w", err)
@@ -246,7 +262,7 @@ func loadModuleFile(path, projectRoot string, visited map[string]bool) (*ast.Mod
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(filepath.Dir(abs), includePath)
 		}
-		included, err := loadModuleFile(includePath, projectRoot, visited)
+		included, err := loadModuleFile(includePath, projectRoot, dependencyRoots, visited)
 		if err != nil {
 			return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
 		}
@@ -254,24 +270,24 @@ func loadModuleFile(path, projectRoot string, visited map[string]bool) (*ast.Mod
 		merged.Features = append(merged.Features, included.Features...)
 	}
 	for _, imp := range mod.Imports {
-		importPath, err := resolveImport(imp.Name, abs, projectRoot)
+		importPath, err := resolveImport(imp.Name, abs, projectRoot, dependencyRoots)
 		if err != nil {
 			return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
 		}
-		imported, err := loadModuleFile(importPath, projectRoot, visited)
+		imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, visited)
 		if err != nil {
 			return nil, err
 		}
 		merged.Decls = append(merged.Decls, imported.Decls...)
 		merged.Features = append(merged.Features, imported.Features...)
 	}
-	if err := loadFeatureModules(merged, abs, projectRoot, visited); err != nil {
+	if err := loadFeatureModules(merged, abs, projectRoot, dependencyRoots, visited); err != nil {
 		return nil, err
 	}
 	return merged, nil
 }
 
-func resolveImport(name, sourcePath, projectRoot string) (string, error) {
+func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []string) (string, error) {
 	stdImport := strings.HasPrefix(name, "std.")
 	moduleName := strings.TrimPrefix(name, "std.")
 	relative := filepath.FromSlash(strings.ReplaceAll(moduleName, ".", "/"))
@@ -294,6 +310,17 @@ func resolveImport(name, sourcePath, projectRoot string) (string, error) {
 			parent := filepath.Dir(current)
 			if parent == current {
 				break
+			}
+		}
+	}
+	for _, dependencyRoot := range dependencyRoots {
+		candidates := []string{
+			filepath.Join(dependencyRoot, "src", relative+".rho"),
+			filepath.Join(dependencyRoot, relative+".rho"),
+		}
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, nil
 			}
 		}
 	}
