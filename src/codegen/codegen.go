@@ -85,6 +85,15 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 	cg.b.WriteString("#include <stdlib.h>\n")
 	cg.b.WriteString("#include <string.h>\n")
 	cg.b.WriteString("#include <stddef.h>\n\n")
+	for _, feature := range m.Features {
+		name := strings.ToUpper(strings.NewReplacer(".", "_", "-", "_", "/", "_").Replace(feature))
+		cg.b.WriteString("#define RHO_FEATURE_")
+		cg.b.WriteString(name)
+		cg.b.WriteString(" 1\n")
+	}
+	if len(m.Features) > 0 {
+		cg.b.WriteString("\n")
+	}
 	cg.b.WriteString("static char* rho_concat(const char* a, const char* b);\n")
 	cg.b.WriteString("static char* rho_yaml_load(const char* path);\n\n")
 	cg.b.WriteString("static char* rho_string_from_i32(int32_t value);\n\n")

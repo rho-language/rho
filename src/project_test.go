@@ -42,7 +42,6 @@ fn main() void {
 `), 0644); err != nil {
 		t.Fatal(err)
 	}
-
 	out := filepath.Join(root, "build", "main.c")
 	if err := CompileProjectTo(entry, out); err != nil {
 		t.Fatalf("CompileProjectTo failed: %v", err)
@@ -78,7 +77,6 @@ fn main() void {
 `), 0644); err != nil {
 		t.Fatal(err)
 	}
-
 	outDir := filepath.Join(root, "build")
 	if err := GenerateProject(entry, outDir, []string{"/opt/include"}, []string{"/opt/src/support.c"}); err != nil {
 		t.Fatalf("GenerateProject failed: %v", err)
@@ -101,5 +99,80 @@ fn main() void {
 	}
 	if !strings.Contains(string(cmake), "/opt/src/support.c") || !strings.Contains(string(cmake), "/opt/include") {
 		t.Fatal("generated CMakeLists.txt is missing dependency paths")
+	}
+}
+
+func TestStandardMathModulesParse(t *testing.T) {
+	modules := []string{
+		"../std/math/basic.rho",
+		"../std/math/float.rho",
+		"../std/math/control.rho",
+		"../std/math/linear.rho",
+		"../std/math/fixed.rho",
+		"../std/math/fast.rho",
+		"../std/math/embedded.rho",
+	}
+	for _, modulePath := range modules {
+		source, err := os.ReadFile(modulePath)
+		if err != nil {
+			t.Fatalf("read %s: %v", modulePath, err)
+		}
+		if err := CompileSource(string(source), filepath.Join(t.TempDir(), "module.c")); err != nil {
+			t.Fatalf("compile %s: %v", modulePath, err)
+		}
+	}
+}
+
+func TestFeatureDeclarationsReachGeneratedC(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "rho.mod"), []byte("module feature-app\nversion 0.1.0\nfeature = \"module.manifest\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "main.rho")
+	if err := os.WriteFile(entry, []byte("module feature\nfeature \"module.local\"\n\nfn main() void {\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(root, "build", "app.c")
+	if err := GenerateProject(entry, filepath.Dir(out), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, define := range []string{"RHO_FEATURE_MATH 1", "RHO_FEATURE_MODULE_MANIFEST 1", "RHO_FEATURE_MODULE_LOCAL 1"} {
+		if !strings.Contains(text, define) {
+			t.Fatalf("missing feature define %q", define)
+		}
+	}
+}
+
+func TestStandardLibraryImportResolves(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "app.c")
+	entry := "../examples/robohub-common-app/src/main.rho"
+	if err := CompileProjectTo(entry, out); err != nil {
+		t.Fatalf("compile standard-library import: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "typedef struct") || !strings.Contains(string(data), "PID") {
+		t.Fatal("standard control module was not included in generated C")
+	}
+}
+
+func TestManifestFeatureLoadsStandardModule(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "app.c")
+	if err := CompileProjectTo("../examples/robohub-common-app/src/main.rho", out); err != nil {
+		t.Fatalf("compile feature-enabled project: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "PID") || !strings.Contains(string(data), "RHO_FEATURE_MATH_CONTROL 1") {
+		t.Fatal("manifest feature did not load math.control")
 	}
 }

@@ -9,7 +9,7 @@ Rho compiler and native x86 runner.
 - `src/greeting.rho` - included Rho source
 - `src/messages.rho` - imported Rho module
 - `config/app.yml` - YAML configuration read by the program
-- `rho.mod` - project manifest
+- `module.yml` - project manifest
 - `build/` - generated C application project
 
 ## Build and run on x86

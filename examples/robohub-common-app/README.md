@@ -5,8 +5,12 @@ dependency. The dependency uses the absolute local path
 `/home/miraur/projects/robohub-common`, matching the version declared in its
 `module.yml` (`1.0.0`) and its exported include/source layout.
 
-The `main = "src/main.rho"` entry in `rho.mod` selects the application entry
-point. From the Rho repository root, resolve and inspect the dependency:
+The `main: src/main.rho` entry in `module.yml` selects the application entry
+point. The manifest enables `math.control`, while the application uses the
+control module. Base `math` support is enabled automatically; specialized
+standard modules are imported only when used.
+
+From the Rho repository root, resolve and inspect the dependency:
 
 ```bash
 (cd examples/robohub-common-app && go run ../../cmd/rho-deps sync)
