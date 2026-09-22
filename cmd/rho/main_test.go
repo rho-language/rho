@@ -6,6 +6,7 @@
 // - rho build <file>
 // - rho build -o <out.c>
 // - rho run <file>
+// - dependency integration (no deps present)
 // - error handling
 //
 // @project Rho Programming Language
@@ -19,57 +20,256 @@ package main
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
-/*  Test: rho build                                                           */
+/*  Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+func writeMinimalModule(t *testing.T, name string) {
+    src := `
+module ` + name + `
+
+fn main() void {
+}
+`
+    if err := os.WriteFile(name+".rho", []byte(src), 0644); err != nil {
+        t.Fatalf("write failed: %v", err)
+    }
+}
+
+func writeMinimalManifest(t *testing.T) {
+    mod := `
+module testmod
+version 0.1.0
+`
+    if err := os.WriteFile("rho.mod", []byte(mod), 0644); err != nil {
+        t.Fatalf("write manifest failed: %v", err)
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: rho build (default output)                                          */
 /* -------------------------------------------------------------------------- */
 
 func TestCLIBuildDefault(t *testing.T) {
-	src := `
-module cli_test
+    writeMinimalModule(t, "cli_build_default")
+    writeMinimalManifest(t)
 
-fn main() void {
+    in := "cli_build_default.rho"
+    outC := "cli_build_default.c"
+    outBin := outC + "_bin"
+
+    defer os.Remove(in)
+    defer os.Remove(outC)
+    defer os.Remove(outBin)
+    defer os.Remove("rho.mod")
+    defer os.Remove("rho.lock")
+    defer os.RemoveAll(".rho-deps")
+
+    buildCLI([]string{in})
+
+    if _, err := os.Stat(outC); err != nil {
+        t.Fatalf("expected %s to exist", outC)
+    }
+
+    if _, err := os.Stat(outBin); err != nil {
+        t.Fatalf("expected binary %s to exist", outBin)
+    }
 }
-`
-	in := "cli_build_default.rho"
-	out := "cli_build_default.c"
 
-	defer os.Remove(in)
-	defer os.Remove(out)
-
-	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
-	buildCLI([]string{in})
-
-	if _, err := os.Stat(out); err != nil {
-		t.Fatalf("expected %s to exist", out)
-	}
-}
+/* -------------------------------------------------------------------------- */
+/*  Test: rho build (custom output)                                           */
+/* -------------------------------------------------------------------------- */
 
 func TestCLIBuildCustomOut(t *testing.T) {
-	src := `
-module cli_custom
+    writeMinimalModule(t, "cli_custom")
+    writeMinimalManifest(t)
 
-fn main() void {
+    in := "cli_custom.rho"
+    outC := "cli_custom_out.c"
+    outBin := outC + "_bin"
+
+    defer os.Remove(in)
+    defer os.Remove(outC)
+    defer os.Remove(outBin)
+    defer os.Remove("rho.mod")
+    defer os.Remove("rho.lock")
+    defer os.RemoveAll(".rho-deps")
+
+    buildCLI([]string{"-o", outC, in})
+
+    if _, err := os.Stat(outC); err != nil {
+        t.Fatalf("expected custom output %s to exist", outC)
+    }
+
+    if _, err := os.Stat(outBin); err != nil {
+        t.Fatalf("expected binary %s to exist", outBin)
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: rho run                                                             */
+/* -------------------------------------------------------------------------- */
+
+func TestCLIRun(t *testing.T) {
+    writeMinimalModule(t, "cli_run")
+    writeMinimalManifest(t)
+
+    in := "cli_run.rho"
+
+    defer os.Remove(in)
+    defer os.Remove("rho.mod")
+
+    // runCLI should not error
+    runCLI([]string{in})
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: rho build error (missing file)                                      */
+/* -------------------------------------------------------------------------- */
+
+func TestCLIBuildMissingFile(t *testing.T) {
+    writeMinimalManifest(t)
+
+    defer os.Remove("rho.mod")
+
+    err := func() (e error) {
+        defer func() {
+            if r := recover(); r != nil {
+                e = nil // buildCLI exits via os.Exit, so panic is expected
+            }
+        }()
+        buildCLI([]string{"does_not_exist.rho"})
+        return nil
+    }()
+
+    if err != nil {
+        t.Fatalf("expected buildCLI to exit, got error: %v", err)
+    }
+}
+
+func TestCLIBuildWithCDependency(t *testing.T) {
+    tmp := t.TempDir()
+    oldWd, _ := os.Getwd()
+    defer os.Chdir(oldWd)
+    os.Chdir(tmp)
+
+    /* ---------------------------------------------------------------------- */
+    /* 1. Create fake C dependency                                            */
+    /* ---------------------------------------------------------------------- */
+
+    dep := filepath.Join(tmp, ".rho-deps", "depA")
+    os.MkdirAll(filepath.Join(dep, "include"), 0755)
+    os.MkdirAll(filepath.Join(dep, "src"), 0755)
+
+    // depA.h
+    hdr := `
+#ifndef DEPA_H
+#define DEPA_H
+
+int depA_add(int a, int b);
+
+#endif
+`
+    os.WriteFile(filepath.Join(dep, "include", "depA.h"), []byte(hdr), 0644)
+
+    // depA.c
+    csrc := `
+#include "depA.h"
+
+int depA_add(int a, int b) {
+    return a + b;
 }
 `
-	in := "cli_custom.rho"
-	out := "cli_custom_out.c"
+    os.WriteFile(filepath.Join(dep, "src", "depA.c"), []byte(csrc), 0644)
 
-	defer os.Remove(in)
-	defer os.Remove(out)
+    // depA rho.mod
+    depMod := `
+module depA
+version 1.0.0
+`
+    os.WriteFile(filepath.Join(dep, "rho.mod"), []byte(depMod), 0644)
 
-	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
+    /* ---------------------------------------------------------------------- */
+    /* 2. Create project manifest                                             */
+    /* ---------------------------------------------------------------------- */
 
-	buildCLI([]string{"-o", out, in})
+    rootMod := `
+module root
+version 0.1.0
 
-	if _, err := os.Stat(out); err != nil {
-		t.Fatalf("expected custom output %s to exist", out)
-	}
+dep depA {
+    type = "c"
+    version = ">=1.0.0 <2.0.0"
+    path = ".rho-deps/depA"
+}
+`
+    os.WriteFile("rho.mod", []byte(rootMod), 0644)
+
+    /* ---------------------------------------------------------------------- */
+    /* 3. Create Rho program that calls C function                            */
+    /* ---------------------------------------------------------------------- */
+
+    rhoSrc := `
+module test
+
+extern fn depA_add(a: i32, b: i32) i32;
+
+fn main() void {
+    let x: i32 = depA_add(2, 3);
+    print("Result: " + string.from_i32(x));
+}
+`
+    os.WriteFile("test.rho", []byte(rhoSrc), 0644)
+
+    /* ---------------------------------------------------------------------- */
+    /* 4. Build                                                                */
+    /* ---------------------------------------------------------------------- */
+
+    buildCLI([]string{"test.rho"})
+
+    outC := "test.c"
+    outBin := "test.c_bin"
+
+    defer os.Remove(outC)
+    defer os.Remove(outBin)
+    defer os.Remove("rho.mod")
+    defer os.Remove("rho.lock")
+    defer os.RemoveAll(".rho-deps")
+
+    /* ---------------------------------------------------------------------- */
+    /* 5. Verify C file exists                                                 */
+    /* ---------------------------------------------------------------------- */
+
+    if _, err := os.Stat(outC); err != nil {
+        t.Fatalf("expected %s to exist", outC)
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* 6. Verify binary exists                                                 */
+    /* ---------------------------------------------------------------------- */
+
+    if _, err := os.Stat(outBin); err != nil {
+        t.Fatalf("expected %s to exist", outBin)
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* 7. Run binary and check output                                          */
+    /* ---------------------------------------------------------------------- */
+
+    cmd := exec.Command("./" + outBin)
+    outBytes, err := cmd.CombinedOutput()
+    if err != nil {
+        t.Fatalf("binary failed: %v", err)
+    }
+
+    out := string(outBytes)
+    if !strings.Contains(out, "Result: 5") {
+        t.Fatalf("unexpected output: %s", out)
+    }
 }

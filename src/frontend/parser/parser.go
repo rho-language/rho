@@ -256,6 +256,8 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 	body := []ast.Stmt{}
 	if !extern {
 		body = p.parseBlock()
+	} else if p.current.Kind == lexer.TokenSemicolon {
+		p.readToken()
 	}
 	return ast.FuncDecl{Name: name, Params: params, ReturnType: returnType.String(), TypeParams: typeParams, Extern: extern, Body: body}
 }
