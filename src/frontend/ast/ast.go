@@ -115,6 +115,7 @@ func (TypeDecl) declNode() {}
 type StructDecl struct {
 	Node
 	Name       string
+	Owner      string
 	Fields     []Field
 	TypeParams []string
 }
@@ -145,6 +146,7 @@ type Field struct {
 type FuncDecl struct {
 	Node
 	Name       string
+	Owner      string
 	Params     []Param
 	ReturnType string
 	Body       []Stmt // Rho 0.1: empty, parser skips body

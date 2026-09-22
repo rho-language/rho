@@ -40,8 +40,10 @@ const (
 
 // Type represents a concrete type in the IR.
 type Type struct {
-	Kind TypeKind
-	Name string // for structs or user-defined types
+	Kind     TypeKind
+	Name     string // for structs or user-defined types
+	Args     []Type
+	ArrayLen int
 }
 
 /* -------------------------------------------------------------------------- */
@@ -63,6 +65,7 @@ type ModuleIR struct {
 // StructIR represents a struct in IR.
 type StructIR struct {
 	Name   string
+	CName  string
 	Fields []FieldIR
 }
 
@@ -79,6 +82,7 @@ type FieldIR struct {
 // FuncIR represents a function in IR.
 type FuncIR struct {
 	Name       string
+	CName      string
 	Params     []ParamIR
 	ReturnType Type
 	Body       []Instr // Rho 0.1: may be empty
@@ -106,13 +110,22 @@ const (
 	OpLoad
 	OpStore
 	OpRaw
+	OpLet
+	OpExpr
+	OpIf
+	OpWhile
+	OpBreak
 )
 
 // Instr represents a single IR instruction.
 type Instr struct {
-	Op   OpCode
-	Dest string   // destination symbol
-	Args []string // argument symbols
+	Op        OpCode
+	Dest      string   // destination symbol
+	Type      string   // declared type for OpLet
+	Args      []string // argument symbols
+	Condition string
+	Then      []Instr
+	Else      []Instr
 }
 
 /* -------------------------------------------------------------------------- */

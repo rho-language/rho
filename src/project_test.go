@@ -81,7 +81,7 @@ fn main() void {
 	if err := GenerateProject(entry, outDir, []string{"/opt/include"}, []string{"/opt/src/support.c"}); err != nil {
 		t.Fatalf("GenerateProject failed: %v", err)
 	}
-	for _, name := range []string{"app.c", "app.h", "main.c", "CMakeLists.txt", "config.h"} {
+	for _, name := range []string{"app.c", "app.h", "main.c", "runtime.c", "CMakeLists.txt", "config.h"} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("missing generated file %s: %v", name, err)
 		}
@@ -217,5 +217,44 @@ func TestManifestFeatureLoadsStandardModule(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "PID") || !strings.Contains(string(data), "RHO_FEATURE_MATH_CONTROL 1") {
 		t.Fatal("manifest feature did not load math.control")
+	}
+}
+
+func TestStandardLibraryImportGraphsCompile(t *testing.T) {
+	err := filepath.Walk("../std", func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() || filepath.Ext(path) != ".rho" {
+			return nil
+		}
+		if compileErr := CompileProjectTo(path, filepath.Join(t.TempDir(), "module.c")); compileErr != nil {
+			t.Errorf("%s: %v", path, compileErr)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplicationCanImportEmbeddedModuleGraph(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "rho.mod"), []byte("module app\nversion 1.0.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "main.rho")
+	if err := os.WriteFile(entry, []byte("module app\nimport std.embedded.modbus\n\nfn main() void {\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileProjectTo(entry, filepath.Join(root, "build", "app.c")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompilerDiagnosticIncludesSourceLocation(t *testing.T) {
+	err := CompileSource("module broken\n\nfn main() void {\n  let value: bool = 1\n}\n", filepath.Join(t.TempDir(), "broken.c"))
+	if err == nil || !strings.Contains(err.Error(), "typechecking failed: function main") {
+		t.Fatalf("expected source-aware compiler error, got %v", err)
 	}
 }

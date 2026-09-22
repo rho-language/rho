@@ -421,6 +421,20 @@ func (p *Parser) parsePrefix() ast.Expr {
 		expression = p.parseExpr(0)
 		p.expect(lexer.TokenRParen)
 		p.readToken()
+	case lexer.TokenLBracket:
+		p.readToken()
+		values := []ast.Expr{}
+		for p.current.Kind != lexer.TokenRBracket {
+			if p.current.Kind == lexer.TokenEOF {
+				panic("unterminated array literal")
+			}
+			values = append(values, p.parseExpr(0))
+			if p.current.Kind == lexer.TokenComma {
+				p.readToken()
+			}
+		}
+		p.readToken()
+		expression = ast.ArrayLiteralExpr{Values: values}
 	case lexer.TokenIdent:
 		expression = ast.IdentifierExpr{Name: p.current.Lex}
 		p.readToken()

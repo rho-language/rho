@@ -21,10 +21,10 @@ package codegen
 /* -------------------------------------------------------------------------- */
 
 import (
-    "strings"
-    "testing"
+	"strings"
+	"testing"
 
-    "rho/src/ir"
+	"rho/src/ir"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -32,20 +32,20 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestEmitModuleHeader(t *testing.T) {
-    cg := New()
-    m := ir.NewModuleIR("lighting")
+	cg := New()
+	m := ir.NewModuleIR("lighting")
 
-    out := cg.EmitModule(m)
+	out := cg.EmitModule(m)
 
-    if !strings.Contains(out, "module lighting") {
-        t.Fatalf("expected module name in header")
-    }
-    if !strings.Contains(out, "#include <stdint.h>") {
-        t.Fatalf("expected stdint include")
-    }
-    if !strings.Contains(out, "#include <stdbool.h>") {
-        t.Fatalf("expected stdbool include")
-    }
+	if !strings.Contains(out, "module lighting") {
+		t.Fatalf("expected module name in header")
+	}
+	if !strings.Contains(out, "#include <stdint.h>") {
+		t.Fatalf("expected stdint include")
+	}
+	if !strings.Contains(out, "#include <stdbool.h>") {
+		t.Fatalf("expected stdbool include")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -53,31 +53,31 @@ func TestEmitModuleHeader(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestEmitStruct(t *testing.T) {
-    cg := New()
+	cg := New()
 
-    m := ir.NewModuleIR("lighting")
-    m.Structs = append(m.Structs, ir.StructIR{
-        Name: "Light",
-        Fields: []ir.FieldIR{
-            {Name: "pin", Type: ir.Type{Kind: ir.TypeU8, Name: "u8"}},
-            {Name: "enabled", Type: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
-        },
-    })
+	m := ir.NewModuleIR("lighting")
+	m.Structs = append(m.Structs, ir.StructIR{
+		Name: "Light",
+		Fields: []ir.FieldIR{
+			{Name: "pin", Type: ir.Type{Kind: ir.TypeU8, Name: "u8"}},
+			{Name: "enabled", Type: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+		},
+	})
 
-    out := cg.EmitModule(m)
+	out := cg.EmitModule(m)
 
-    if !strings.Contains(out, "typedef struct") {
-        t.Fatalf("expected struct typedef")
-    }
-    if !strings.Contains(out, "uint8_t pin;") {
-        t.Fatalf("expected uint8_t pin field")
-    }
-    if !strings.Contains(out, "bool enabled;") {
-        t.Fatalf("expected bool enabled field")
-    }
-    if !strings.Contains(out, "} Light;") {
-        t.Fatalf("expected struct name Light")
-    }
+	if !strings.Contains(out, "typedef struct") {
+		t.Fatalf("expected struct typedef")
+	}
+	if !strings.Contains(out, "uint8_t pin;") {
+		t.Fatalf("expected uint8_t pin field")
+	}
+	if !strings.Contains(out, "bool enabled;") {
+		t.Fatalf("expected bool enabled field")
+	}
+	if !strings.Contains(out, "} Light;") {
+		t.Fatalf("expected struct name Light")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -85,30 +85,30 @@ func TestEmitStruct(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestEmitFunctionSignature(t *testing.T) {
-    cg := New()
+	cg := New()
 
-    m := ir.NewModuleIR("lighting")
-    m.Funcs = append(m.Funcs, ir.FuncIR{
-        Name: "set",
-        Params: []ir.ParamIR{
-            {Name: "pin", Type: ir.Type{Kind: ir.TypeU8}},
-            {Name: "value", Type: ir.Type{Kind: ir.TypeBool}},
-        },
-        ReturnType: ir.Type{Kind: ir.TypeBool},
-        Body:       []ir.Instr{},
-    })
+	m := ir.NewModuleIR("lighting")
+	m.Funcs = append(m.Funcs, ir.FuncIR{
+		Name: "set",
+		Params: []ir.ParamIR{
+			{Name: "pin", Type: ir.Type{Kind: ir.TypeU8}},
+			{Name: "value", Type: ir.Type{Kind: ir.TypeBool}},
+		},
+		ReturnType: ir.Type{Kind: ir.TypeBool},
+		Body:       []ir.Instr{},
+	})
 
-    out := cg.EmitModule(m)
+	out := cg.EmitModule(m)
 
-    if !strings.Contains(out, "bool set(") {
-        t.Fatalf("expected function return type bool")
-    }
-    if !strings.Contains(out, "uint8_t pin") {
-        t.Fatalf("expected uint8_t pin parameter")
-    }
-    if !strings.Contains(out, "bool value") {
-        t.Fatalf("expected bool value parameter")
-    }
+	if !strings.Contains(out, "bool set(") {
+		t.Fatalf("expected function return type bool")
+	}
+	if !strings.Contains(out, "uint8_t pin") {
+		t.Fatalf("expected uint8_t pin parameter")
+	}
+	if !strings.Contains(out, "bool value") {
+		t.Fatalf("expected bool value parameter")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -116,27 +116,27 @@ func TestEmitFunctionSignature(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestEmitInstructions(t *testing.T) {
-    cg := New()
+	cg := New()
 
-    m := ir.NewModuleIR("lighting")
-    m.Funcs = append(m.Funcs, ir.FuncIR{
-        Name:       "test",
-        Params:     []ir.ParamIR{},
-        ReturnType: ir.Type{Kind: ir.TypeVoid},
-        Body: []ir.Instr{
-            {Op: ir.OpAssign, Dest: "x", Args: []string{"y"}},
-            {Op: ir.OpReturn, Args: []string{}},
-        },
-    })
+	m := ir.NewModuleIR("lighting")
+	m.Funcs = append(m.Funcs, ir.FuncIR{
+		Name:       "test",
+		Params:     []ir.ParamIR{},
+		ReturnType: ir.Type{Kind: ir.TypeVoid},
+		Body: []ir.Instr{
+			{Op: ir.OpAssign, Dest: "x", Args: []string{"y"}},
+			{Op: ir.OpReturn, Args: []string{}},
+		},
+	})
 
-    out := cg.EmitModule(m)
+	out := cg.EmitModule(m)
 
-    if !strings.Contains(out, "x = y;") {
-        t.Fatalf("expected assignment instruction")
-    }
-    if !strings.Contains(out, "return;") {
-        t.Fatalf("expected return instruction")
-    }
+	if !strings.Contains(out, "x = y;") {
+		t.Fatalf("expected assignment instruction")
+	}
+	if !strings.Contains(out, "return;") {
+		t.Fatalf("expected return instruction")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -144,33 +144,53 @@ func TestEmitInstructions(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestEmitFullModule(t *testing.T) {
-    cg := New()
+	cg := New()
 
-    m := ir.NewModuleIR("lighting")
-    m.Structs = append(m.Structs, ir.StructIR{
-        Name: "Light",
-        Fields: []ir.FieldIR{
-            {Name: "pin", Type: ir.Type{Kind: ir.TypeU8}},
-        },
-    })
-    m.Funcs = append(m.Funcs, ir.FuncIR{
-        Name:       "init",
-        Params:     []ir.ParamIR{},
-        ReturnType: ir.Type{Kind: ir.TypeVoid},
-        Body: []ir.Instr{
-            {Op: ir.OpNop},
-        },
-    })
+	m := ir.NewModuleIR("lighting")
+	m.Structs = append(m.Structs, ir.StructIR{
+		Name: "Light",
+		Fields: []ir.FieldIR{
+			{Name: "pin", Type: ir.Type{Kind: ir.TypeU8}},
+		},
+	})
+	m.Funcs = append(m.Funcs, ir.FuncIR{
+		Name:       "init",
+		Params:     []ir.ParamIR{},
+		ReturnType: ir.Type{Kind: ir.TypeVoid},
+		Body: []ir.Instr{
+			{Op: ir.OpNop},
+		},
+	})
 
-    out := cg.EmitModule(m)
+	out := cg.EmitModule(m)
 
-    if !strings.Contains(out, "typedef struct") {
-        t.Fatalf("expected struct typedef")
-    }
-    if !strings.Contains(out, "void init(") {
-        t.Fatalf("expected void init() function")
-    }
-    if !strings.Contains(out, "/* nop */") {
-        t.Fatalf("expected nop instruction")
-    }
+	if !strings.Contains(out, "typedef struct") {
+		t.Fatalf("expected struct typedef")
+	}
+	if !strings.Contains(out, "void init(") {
+		t.Fatalf("expected void init() function")
+	}
+	if !strings.Contains(out, "/* nop */") {
+		t.Fatalf("expected nop instruction")
+	}
+}
+
+func TestValidateModuleRejectsInvalidIdentifier(t *testing.T) {
+	err := ValidateModule(ir.ModuleIR{Funcs: []ir.FuncIR{{Name: "bad-name"}}})
+	if err == nil {
+		t.Fatal("expected invalid C identifier error")
+	}
+}
+
+func TestEmitStructuredControlFlow(t *testing.T) {
+	m := ir.NewModuleIR("control")
+	m.Funcs = append(m.Funcs, ir.FuncIR{
+		Name:       "main",
+		ReturnType: ir.Type{Kind: ir.TypeVoid},
+		Body:       []ir.Instr{{Op: ir.OpWhile, Condition: "ready", Then: []ir.Instr{{Op: ir.OpIf, Condition: "done", Then: []ir.Instr{{Op: ir.OpBreak}}}}}},
+	})
+	out := New().EmitModule(m)
+	if !strings.Contains(out, "while (ready)") || !strings.Contains(out, "if (done)") || !strings.Contains(out, "break;") {
+		t.Fatalf("structured control flow was not emitted: %s", out)
+	}
 }
