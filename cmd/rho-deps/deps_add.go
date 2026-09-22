@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"rho/src/deps"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -75,7 +77,7 @@ func runDepsAdd(args []string) {
 		os.Exit(1)
 	}
 
-	manifestPath := filepath.Join(projectRoot, "rho.mod")
+	manifestPath := deps.ManifestPath(projectRoot)
 	contentBytes, err := os.ReadFile(manifestPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho deps add:", err)
@@ -83,6 +85,26 @@ func runDepsAdd(args []string) {
 	}
 
 	content := string(contentBytes)
+	if filepath.Base(manifestPath) == "module.yml" {
+		quotedName := strconv.Quote(name)
+		if strings.Contains(content, "\ndepends:") || strings.HasPrefix(content, "depends:") {
+			content += fmt.Sprintf("\n  - name: %s\n    type: %s\n    git: %s\n    version: %s\n", quotedName, strconv.Quote(*typ), strconv.Quote(*git), strconv.Quote(*ver))
+		} else {
+			content += fmt.Sprintf("\ndepends:\n  - name: %s\n    type: %s\n    git: %s\n    version: %s\n", quotedName, strconv.Quote(*typ), strconv.Quote(*git), strconv.Quote(*ver))
+		}
+		if *path != "" {
+			content += fmt.Sprintf("    path: %s\n", strconv.Quote(*path))
+		}
+		if *env != "" {
+			content += fmt.Sprintf("    env: %s\n", strconv.Quote(*env))
+		}
+		if err := os.WriteFile(manifestPath, []byte(content), 0644); err != nil {
+			fmt.Fprintln(os.Stderr, "rho deps add:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Added dependency:\n  - %s (%s)\n", name, *ver)
+		return
+	}
 
 	// Check if dependency already exists
 	if strings.Contains(content, "dep "+name+" {") || strings.Contains(content, "dep "+name+"\n") {

@@ -44,8 +44,23 @@ func (p *Parser) Parse() (mod *ast.Module, err error) {
 	mod = p.parseModuleDecl()
 	mod.Includes = p.parseIncludes()
 	mod.Imports = p.parseImports()
+	mod.Features = p.parseFeatures()
 	mod.Decls = p.parseTopLevelDecls()
 	return mod, nil
+}
+
+func (p *Parser) parseFeatures() []string {
+	features := []string{}
+	for p.current.Kind == lexer.TokenIdent && p.current.Lex == "feature" {
+		p.readToken()
+		p.expect(lexer.TokenString)
+		features = append(features, p.current.Lex)
+		p.readToken()
+		if p.current.Kind == lexer.TokenSemicolon {
+			p.readToken()
+		}
+	}
+	return features
 }
 
 func (p *Parser) parseIncludes() []ast.Include {

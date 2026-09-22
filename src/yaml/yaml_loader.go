@@ -69,7 +69,7 @@ func Load(src string) (Value, error) {
 
 			if val == "" {
 				child := &Value{Kind: KindMap, Map: map[string]Value{}}
-				if key == "list" {
+				if key == "list" || key == "features" || key == "depends" {
 					child.Kind = KindList
 					child.Map = nil
 					child.List = []Value{}
@@ -99,6 +99,21 @@ func Load(src string) (Value, error) {
 				return Value{}, fmt.Errorf("list item without a list: %q", line)
 			}
 			item := strings.TrimSpace(line[1:])
+			if strings.Contains(item, ":") {
+				parts := strings.SplitN(item, ":", 2)
+				key := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				if key == "" || value == "" {
+					return Value{}, fmt.Errorf("invalid YAML list map item: %q", line)
+				}
+				entry := Value{Kind: KindMap, Map: map[string]Value{key: {Kind: KindString, Str: value}}}
+				current.List = append(current.List, entry)
+				stack = append(stack, frame{indent: indent, node: &current.List[len(current.List)-1]})
+				if frame := stack[len(stack)-2]; frame.parent != nil {
+					frame.parent.Map[frame.key] = *current
+				}
+				continue
+			}
 			current.List = append(current.List, Value{Kind: KindString, Str: item})
 			if frame := stack[len(stack)-1]; frame.parent != nil {
 				frame.parent.Map[frame.key] = *current

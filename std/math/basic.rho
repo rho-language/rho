@@ -20,3 +20,34 @@ fn clamp_u32(x: u32, lo: u32, hi: u32) u32 {
     if x > hi { return hi }
     return x
 }
+
+fn min_f64(a: f64, b: f64) f64 {
+    if a < b { return a }
+    return b
+}
+
+fn max_f64(a: f64, b: f64) f64 {
+    if a > b { return a }
+    return b
+}
+
+fn clamp_f64(x: f64, lo: f64, hi: f64) f64 {
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+
+fn map_f64(x: f64, in_min: f64, in_max: f64, out_min: f64, out_max: f64) f64 {
+    return out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min)
+}
+
+fn deadband_f64(x: f64, threshold: f64) f64 {
+    if x <= threshold && x >= -threshold { return 0.0 }
+    if x > 0.0 { return x - threshold }
+    return x + threshold
+}
+
+fn smoothstep(edge0: f64, edge1: f64, x: f64) f64 {
+    let t: f64 = clamp_f64((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+}

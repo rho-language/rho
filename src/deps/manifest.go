@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"rho/src/yaml"
 )
 
 type DepType string
@@ -34,14 +36,34 @@ type Manifest struct {
 	ModuleName string
 	Version    string
 	Main       string
+	Features   []string
 	Deps       []DepSpec
+}
+
+func ManifestPath(projectRoot string) string {
+	path := filepath.Join(projectRoot, "module.yml")
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	return filepath.Join(projectRoot, "rho.mod")
 }
 
 // LoadManifest loads a rho.mod manifest file.
 func LoadManifest(path string) (*Manifest, error) {
+	if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+		path = filepath.Join(path, "module.yml")
+	} else if filepath.Base(path) == "rho.mod" {
+		candidate := filepath.Join(filepath.Dir(path), "module.yml")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			path = candidate
+		}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+	if filepath.Ext(path) == ".yml" || filepath.Ext(path) == ".yaml" {
+		return loadYAMLManifest(data)
 	}
 
 	m := &Manifest{}
@@ -68,6 +90,14 @@ func LoadManifest(path string) (*Manifest, error) {
 			value := strings.TrimPrefix(ln, "main")
 			value = strings.TrimSpace(strings.TrimPrefix(value, ":"))
 			m.Main = unquote(strings.TrimPrefix(strings.TrimSpace(value), "="))
+			continue
+		}
+
+		if currentDep == nil && strings.HasPrefix(ln, "feature ") {
+			feature := parseValue(strings.TrimPrefix(ln, "feature"))
+			if feature != "" {
+				m.Features = append(m.Features, feature)
+			}
 			continue
 		}
 
@@ -110,9 +140,62 @@ func LoadDepManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("stat dependency: %w", err)
 	}
 	if info.IsDir() {
-		path = filepath.Join(path, "rho.mod")
+		path = filepath.Join(path, "module.yml")
+		if _, statErr := os.Stat(path); statErr != nil {
+			path = filepath.Join(filepath.Dir(path), "rho.mod")
+		}
 	}
 	return LoadManifest(path)
+}
+
+func loadYAMLManifest(data []byte) (*Manifest, error) {
+	doc, err := yaml.Load(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("parse module.yml: %w", err)
+	}
+	m := &Manifest{}
+	module := doc.Map["module"]
+	if module.Kind == yaml.KindMap {
+		m.ModuleName = yamlString(module, "name")
+		m.Version = yamlString(module, "version")
+	}
+	m.Main = yamlString(doc, "main")
+	m.Features = yamlStrings(doc.Map["features"])
+	for _, item := range doc.Map["depends"].List {
+		if item.Kind != yaml.KindMap {
+			return nil, fmt.Errorf("depends entries must be maps")
+		}
+		dep := DepSpec{
+			Name: yamlString(item, "name"), Type: DepType(yamlString(item, "type")),
+			GitURL: yamlString(item, "git"), EnvVar: yamlString(item, "env"),
+			Path: yamlString(item, "path"), Include: yamlString(item, "include"), Src: yamlString(item, "src"),
+		}
+		dep.Version.Raw = yamlString(item, "version")
+		cs, parseErr := ParseVersionRange(dep.Version.Raw)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse version range for %s: %w", dep.Name, parseErr)
+		}
+		dep.Version.Constraints = cs
+		m.Deps = append(m.Deps, dep)
+	}
+	return m, nil
+}
+
+func yamlString(value yaml.Value, key string) string {
+	if item, ok := value.Map[key]; ok {
+		return strings.Trim(item.Str, "\"")
+	}
+	return ""
+}
+
+func yamlStrings(value yaml.Value) []string {
+	values := []string{}
+	for _, item := range value.List {
+		if item.Kind == yaml.KindString {
+			values = append(values, strings.Trim(item.Str, "\""))
+		}
+	}
+	return values
 }
 
 func parseValue(s string) string {

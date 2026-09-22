@@ -50,9 +50,10 @@ type Type struct {
 
 // ModuleIR is the IR representation of a Rho module.
 type ModuleIR struct {
-	Name    string
-	Funcs   []FuncIR
-	Structs []StructIR
+	Name     string
+	Features []string
+	Funcs    []FuncIR
+	Structs  []StructIR
 }
 
 /* -------------------------------------------------------------------------- */

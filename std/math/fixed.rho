@@ -1,0 +1,16 @@
+module std.math.fixed
+
+struct Q16_16 { raw: i32 }
+
+fn q16_from_i32(value: i32) Q16_16 { return Q16_16{ value * 65536 } }
+fn q16_to_f64(value: Q16_16) f64 { return value.raw / 65536.0 }
+fn q16_add(a: Q16_16, b: Q16_16) Q16_16 { return Q16_16{ a.raw + b.raw } }
+fn q16_sub(a: Q16_16, b: Q16_16) Q16_16 { return Q16_16{ a.raw - b.raw } }
+fn q16_mul(a: Q16_16, b: Q16_16) Q16_16 { return Q16_16{ (a.raw * b.raw) / 65536 } }
+fn q16_clamp(value: Q16_16, low: Q16_16, high: Q16_16) Q16_16 { if value.raw < low.raw { return low } if value.raw > high.raw { return high } return value }
+
+struct Q8_8 { raw: i32 }
+fn q8_from_i32(value: i32) Q8_8 { return Q8_8{ value * 256 } }
+fn q8_add(a: Q8_8, b: Q8_8) Q8_8 { return Q8_8{ a.raw + b.raw } }
+fn q8_sub(a: Q8_8, b: Q8_8) Q8_8 { return Q8_8{ a.raw - b.raw } }
+fn q8_mul(a: Q8_8, b: Q8_8) Q8_8 { return Q8_8{ (a.raw * b.raw) / 256 } }

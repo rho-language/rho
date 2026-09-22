@@ -1,0 +1,118 @@
+module std.math.control
+
+import std.math.basic
+
+struct PID {
+    kp: f64
+    ki: f64
+    kd: f64
+    integral: f64
+    previous_error: f64
+    derivative: f64
+    derivative_alpha: f64
+    output_min: f64
+    output_max: f64
+    integral_min: f64
+    integral_max: f64
+}
+
+fn pid_init(kp: f64, ki: f64, kd: f64, output_min: f64, output_max: f64) PID {
+    return PID{ kp, ki, kd, 0.0, 0.0, 0.0, 0.2, output_min, output_max, output_min, output_max }
+}
+
+fn pid_set_derivative_filter(pid: PID, alpha: f64) PID {
+    return PID{ pid.kp, pid.ki, pid.kd, pid.integral, pid.previous_error, pid.derivative, alpha, pid.output_min, pid.output_max, pid.integral_min, pid.integral_max }
+}
+
+fn pid_update(pid: PID, setpoint: f64, measurement: f64, dt: f64) PID {
+    let error: f64 = setpoint - measurement
+    let derivative_raw: f64 = (error - pid.previous_error) / dt
+    let derivative_filtered: f64 = pid.derivative + pid.derivative_alpha * (derivative_raw - pid.derivative)
+    let integral_next: f64 = pid.integral + error * dt
+    let integral_limited: f64 = clamp_f64(integral_next, pid.integral_min, pid.integral_max)
+    return PID{ pid.kp, pid.ki, pid.kd, integral_limited, error, derivative_filtered, pid.derivative_alpha, pid.output_min, pid.output_max, pid.integral_min, pid.integral_max }
+}
+
+fn pid_output(pid: PID, setpoint: f64, measurement: f64) f64 {
+    let error: f64 = setpoint - measurement
+    return clamp_f64(pid.kp * error + pid.ki * pid.integral + pid.kd * pid.derivative, pid.output_min, pid.output_max)
+}
+
+struct LowPass {
+    alpha: f64
+    value: f64
+    initialized: bool
+}
+
+fn low_pass_init(alpha: f64, initial: f64) LowPass {
+    return LowPass{ clamp_f64(alpha, 0.0, 1.0), initial, false }
+}
+
+fn low_pass_update(filter: LowPass, sample: f64) LowPass {
+    if !filter.initialized {
+        return LowPass{ filter.alpha, sample, true }
+    }
+    return LowPass{ filter.alpha, filter.value + filter.alpha * (sample - filter.value), true }
+}
+
+struct MovingAverage4 {
+    a: f64
+    b: f64
+    c: f64
+    d: f64
+    count: u32
+    index: u32
+}
+
+fn moving_average4_init() MovingAverage4 {
+    return MovingAverage4{ 0.0, 0.0, 0.0, 0.0, 0, 0 }
+}
+
+fn moving_average4_update(filter: MovingAverage4, sample: f64) MovingAverage4 {
+    if filter.index == 0 {
+        return MovingAverage4{ sample, filter.b, filter.c, filter.d, min_u32(filter.count + 1, 4), 1 }
+    }
+    if filter.index == 1 {
+        return MovingAverage4{ filter.a, sample, filter.c, filter.d, min_u32(filter.count + 1, 4), 2 }
+    }
+    if filter.index == 2 {
+        return MovingAverage4{ filter.a, filter.b, sample, filter.d, min_u32(filter.count + 1, 4), 3 }
+    }
+    return MovingAverage4{ filter.a, filter.b, filter.c, sample, min_u32(filter.count + 1, 4), 0 }
+}
+
+fn moving_average4_value(filter: MovingAverage4) f64 {
+    if filter.count == 0 { return 0.0 }
+    return (filter.a + filter.b + filter.c + filter.d) / filter.count
+}
+
+struct Complementary {
+    alpha: f64
+    angle: f64
+}
+
+fn complementary_init(alpha: f64) Complementary {
+    return Complementary{ clamp_f64(alpha, 0.0, 1.0), 0.0 }
+}
+
+fn complementary_update(filter: Complementary, accelerometer_angle: f64, gyro_rate: f64, dt: f64) Complementary {
+    let gyro_angle: f64 = filter.angle + gyro_rate * dt
+    return Complementary{ filter.alpha, filter.alpha * gyro_angle + (1.0 - filter.alpha) * accelerometer_angle }
+}
+
+struct Kalman1D {
+    estimate: f64
+    covariance: f64
+    process_noise: f64
+    measurement_noise: f64
+}
+
+fn kalman1d_init(initial: f64, process_noise: f64, measurement_noise: f64) Kalman1D {
+    return Kalman1D{ initial, 1.0, process_noise, measurement_noise }
+}
+
+fn kalman1d_update(filter: Kalman1D, measurement: f64) Kalman1D {
+    let predicted_covariance: f64 = filter.covariance + filter.process_noise
+    let gain: f64 = predicted_covariance / (predicted_covariance + filter.measurement_noise)
+    return Kalman1D{ filter.estimate + gain * (measurement - filter.estimate), (1.0 - gain) * predicted_covariance, filter.process_noise, filter.measurement_noise }
+}

@@ -4,6 +4,9 @@ extern fn c_sqrt(x: f64) f64
 extern fn c_pow(x: f64, y: f64) f64
 extern fn c_sin(x: f64) f64
 extern fn c_cos(x: f64) f64
+extern fn c_atan2(y: f64, x: f64) f64
+extern fn c_fabs(x: f64) f64
+extern fn c_floor(x: f64) f64
 
 fn sqrt(x: f64) f64 {
     return c_sqrt(x)
@@ -19,6 +22,28 @@ fn sin(x: f64) f64 {
 
 fn cos(x: f64) f64 {
     return c_cos(x)
+}
+
+fn atan2(y: f64, x: f64) f64 {
+    return c_atan2(y, x)
+}
+
+fn abs_f64(x: f64) f64 {
+    return c_fabs(x)
+}
+
+fn deg_to_rad(degrees: f64) f64 {
+    return degrees * 0.017453292519943295
+}
+
+fn rad_to_deg(radians: f64) f64 {
+    return radians * 57.29577951308232
+}
+
+fn wrap_pi(angle: f64) f64 {
+    let two_pi: f64 = 6.283185307179586
+    let result: f64 = angle - two_pi * c_floor(angle / two_pi + 0.5)
+    return result
 }
 
 fn lerp(a: f64, b: f64, t: f64) f64 {

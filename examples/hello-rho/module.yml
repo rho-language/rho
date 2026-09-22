@@ -1,0 +1,9 @@
+module:
+  name: hello-rho
+  type: rho
+  version: 0.1.0
+
+main: src/main.rho
+
+features:
+  - math

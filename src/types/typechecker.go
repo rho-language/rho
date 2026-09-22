@@ -137,6 +137,8 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 // ToIR converts a validated AST module into IR.
 func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 	out := ir.NewModuleIR(m.Name)
+	out.Features = append(out.Features, "math")
+	out.Features = append(out.Features, m.Features...)
 
 	// Structs
 	for _, decl := range m.Decls {
