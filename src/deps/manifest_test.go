@@ -16,6 +16,7 @@ feature = "math.control"
 dep robohub-common {
     type = "c"
     git = "https://github.com/aurel/robohub-common.git"
+	tag = "v1.0.0"
     version = ">=1.0.0 <2.0.0"
     env = "ROBOHUB_COMMON_PATH"
     path = "../external/robohub-common"
@@ -37,7 +38,7 @@ dep robohub-common {
 		t.Fatalf("unexpected manifest contents: %+v", m)
 	}
 	d := m.Deps[0]
-	if d.Name != "robohub-common" || d.Type != DepTypeC || d.GitURL == "" || d.Version.Raw != ">=1.0.0 <2.0.0" || d.EnvVar != "ROBOHUB_COMMON_PATH" || d.Path != "../external/robohub-common" || d.Include != "include" || d.Src != "src" {
+	if d.Name != "robohub-common" || d.Type != DepTypeC || d.GitURL == "" || d.GitTag != "v1.0.0" || d.GitBranch != "" || d.Version.Raw != ">=1.0.0 <2.0.0" || d.EnvVar != "ROBOHUB_COMMON_PATH" || d.Path != "../external/robohub-common" || d.Include != "include" || d.Src != "src" {
 		t.Fatalf("unexpected dependency: %+v", d)
 	}
 }
@@ -70,4 +71,11 @@ depends:
 	if len(m.Features) != 1 || len(m.Deps) != 1 || m.Deps[0].Path != "/opt/robohub-common" {
 		t.Fatalf("unexpected YAML manifest contents: %+v", m)
 	}
+}
+
+func TestLoadYAMLManifestRejectsTagAndBranch(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "module.yml")
+	content := "module:\n  name: app\n  version: 1.0.0\ndepends:\n  - name: dep\n    git: https://example.com/dep.git\n    tag: v1.0.0\n    branch: main\n"
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil { t.Fatal(err) }
+	if _, err := LoadManifest(tmp); err == nil { t.Fatal("expected tag/branch conflict") }
 }

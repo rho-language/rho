@@ -12,6 +12,8 @@ type LockedPackage struct {
 	Type    DepType
 	Version string
 	GitURL  string
+	GitTag  string
+	GitBranch string
 	Rev     string
 	Path    string
 	Hash    string

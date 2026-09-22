@@ -223,21 +223,8 @@ func buildCLI(args []string) int {
 		}
 		// C deps only
 		if node.Type == deps.DepTypeC {
-			inc := filepath.Join(node.Path, "include")
-			srcDir := filepath.Join(node.Path, "src")
-
-			if _, err := os.Stat(inc); err == nil {
-				includePaths = append(includePaths, inc)
-			}
-
-			if _, err := os.Stat(srcDir); err == nil {
-				entries, _ := os.ReadDir(srcDir)
-				for _, e := range entries {
-					if !e.IsDir() && filepath.Ext(e.Name()) == ".c" {
-						sourceFiles = append(sourceFiles, filepath.Join(srcDir, e.Name()))
-					}
-				}
-			}
+			includePaths = append(includePaths, node.IncludeDirs...)
+			sourceFiles = append(sourceFiles, node.SourceFiles...)
 		}
 	}
 

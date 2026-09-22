@@ -57,6 +57,8 @@ type PackageNode struct {
 	Type         DepType
 	Deps         []DepSpec
 	ResolvedDeps []*PackageNode
+	IncludeDirs  []string
+	SourceFiles  []string
 }
 
 type DependencyGraph struct {
@@ -119,6 +121,14 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 		if dmanifest.ModuleName != "" && dmanifest.ModuleName != dep.Name {
 			return fmt.Errorf("dependency %s declares module %s", dep.Name, dmanifest.ModuleName)
 		}
+		if dep.Type == "" {
+			if dmanifest.BuildLanguage == "c" || dmanifest.ModuleType == "interfaces" {
+				dependencyType = DepTypeC
+			}
+			if dmanifest.ModuleType == "rho" {
+				dependencyType = DepTypeRho
+			}
+		}
 		version = dmanifest.Version
 		v, err = ParseSemver(version)
 		if err != nil {
@@ -134,6 +144,14 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 			// C repositories may include a rho.mod for version metadata or
 			// transitive Rho dependencies, but it is not required.
 			dmanifest = candidate
+			if dependencyType == "" || dependencyType == DepTypeRho {
+				if candidate.BuildLanguage == "c" || candidate.ModuleType == "interfaces" {
+					dependencyType = DepTypeC
+				}
+				if candidate.ModuleType == "rho" {
+					dependencyType = DepTypeRho
+				}
+			}
 			if candidate.Version != "" {
 				version = candidate.Version
 				v, err = ParseSemver(version)
@@ -171,6 +189,38 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 			return dmanifest.Deps
 		}(),
 	}
+	if dmanifest != nil {
+		for _, dir := range dmanifest.BuildIncludeDirs {
+			node.IncludeDirs = append(node.IncludeDirs, filepath.Join(path, dir))
+		}
+		for _, file := range dmanifest.BuildSources {
+			node.SourceFiles = append(node.SourceFiles, filepath.Join(path, file))
+		}
+		for _, dir := range dmanifest.BuildSourceDirs {
+			entries, readErr := os.ReadDir(filepath.Join(path, dir))
+			if readErr != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if !entry.IsDir() && filepath.Ext(entry.Name()) == ".c" {
+					node.SourceFiles = append(node.SourceFiles, filepath.Join(path, dir, entry.Name()))
+				}
+			}
+		}
+	}
+	if dependencyType == DepTypeC && len(node.IncludeDirs) == 0 && len(node.SourceFiles) == 0 {
+		if _, statErr := os.Stat(filepath.Join(path, "include")); statErr == nil {
+			node.IncludeDirs = append(node.IncludeDirs, filepath.Join(path, "include"))
+		}
+		srcDir := filepath.Join(path, "src")
+		if entries, readErr := os.ReadDir(srcDir); readErr == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() && filepath.Ext(entry.Name()) == ".c" {
+					node.SourceFiles = append(node.SourceFiles, filepath.Join(srcDir, entry.Name()))
+				}
+			}
+		}
+	}
 	graph.Nodes[dep.Name] = node
 
 	// 7. Resolve transitive dependencies
@@ -186,6 +236,8 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 		Type:    dependencyType,
 		Version: version,
 		GitURL:  dep.GitURL,
+		GitTag:  dep.GitTag,
+		GitBranch: dep.GitBranch,
 		Path:    path,
 		Hash:    hashPath(path),
 		Rev:     revision(path, version),

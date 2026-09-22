@@ -3,6 +3,7 @@ package deps
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -121,5 +122,13 @@ func TestLocatorMissingSource(t *testing.T) {
 	_, err := loc.Locate(dep)
 	if err == nil {
 		t.Fatalf("expected error for missing git source")
+	}
+}
+
+func TestGitCloneArgsPreferTag(t *testing.T) {
+	args := gitCloneArgs("https://example.com/repo.git", "/tmp/repo", "v1.0.0", "main")
+	got := strings.Join(args, " ")
+	if got != "clone --branch v1.0.0 --single-branch https://example.com/repo.git /tmp/repo" {
+		t.Fatalf("unexpected git args: %s", got)
 	}
 }

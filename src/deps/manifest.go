@@ -22,22 +22,29 @@ type VersionRange struct {
 }
 
 type DepSpec struct {
-	Name    string
-	Type    DepType
-	GitURL  string
-	Version VersionRange
-	EnvVar  string
-	Path    string
-	Include string
-	Src     string
+	Name      string
+	Type      DepType
+	GitURL    string
+	GitTag    string
+	GitBranch string
+	Version   VersionRange
+	EnvVar    string
+	Path      string
+	Include   string
+	Src       string
 }
 
 type Manifest struct {
-	ModuleName string
-	Version    string
-	Main       string
-	Features   []string
-	Deps       []DepSpec
+	ModuleName       string
+	ModuleType       string
+	Version          string
+	Main             string
+	Features         []string
+	Deps             []DepSpec
+	BuildLanguage    string
+	BuildIncludeDirs []string
+	BuildSourceDirs  []string
+	BuildSources     []string
 }
 
 func ManifestPath(projectRoot string) string {
@@ -123,6 +130,9 @@ func LoadManifest(path string) (*Manifest, error) {
 
 	// Parse version ranges now so Constraints are populated.
 	for i := range m.Deps {
+		if m.Deps[i].GitTag != "" && m.Deps[i].GitBranch != "" {
+			return nil, fmt.Errorf("dependency %s cannot specify both tag and branch", m.Deps[i].Name)
+		}
 		cs, err := ParseVersionRange(m.Deps[i].Version.Raw)
 		if err != nil {
 			return nil, fmt.Errorf("parse version range for %s: %w", m.Deps[i].Name, err)
@@ -157,7 +167,15 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	module := doc.Map["module"]
 	if module.Kind == yaml.KindMap {
 		m.ModuleName = yamlString(module, "name")
+		m.ModuleType = yamlString(module, "type")
 		m.Version = yamlString(module, "version")
+	}
+	build := doc.Map["build"]
+	if build.Kind == yaml.KindMap {
+		m.BuildLanguage = yamlString(build, "language")
+		m.BuildIncludeDirs = yamlStrings(build.Map["include_dirs"])
+		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
+		m.BuildSources = yamlStrings(build.Map["sources"])
 	}
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
@@ -168,9 +186,13 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		dep := DepSpec{
 			Name: yamlString(item, "name"), Type: DepType(yamlString(item, "type")),
 			GitURL: yamlString(item, "git"), EnvVar: yamlString(item, "env"),
+			GitTag: yamlString(item, "tag"), GitBranch: yamlString(item, "branch"),
 			Path: yamlString(item, "path"), Include: yamlString(item, "include"), Src: yamlString(item, "src"),
 		}
 		dep.Version.Raw = yamlString(item, "version")
+		if dep.GitTag != "" && dep.GitBranch != "" {
+			return nil, fmt.Errorf("dependency %s cannot specify both tag and branch", dep.Name)
+		}
 		cs, parseErr := ParseVersionRange(dep.Version.Raw)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse version range for %s: %w", dep.Name, parseErr)
@@ -209,6 +231,10 @@ func parseDepField(dep *DepSpec, ln string) {
 		dep.Type = DepType(unquote(strings.TrimPrefix(ln, "type =")))
 	case strings.HasPrefix(ln, "git "):
 		dep.GitURL = unquote(strings.TrimPrefix(ln, "git ="))
+	case strings.HasPrefix(ln, "tag "):
+		dep.GitTag = unquote(strings.TrimPrefix(ln, "tag ="))
+	case strings.HasPrefix(ln, "branch "):
+		dep.GitBranch = unquote(strings.TrimPrefix(ln, "branch ="))
 	case strings.HasPrefix(ln, "version "):
 		dep.Version.Raw = unquote(strings.TrimPrefix(ln, "version ="))
 	case strings.HasPrefix(ln, "env "):

@@ -22,7 +22,7 @@ func exists(path string) bool {
 	return err == nil
 }
 
-func gitClone(url, dest string) error {
+func gitClone(url, dest, tag, branch string) error {
 	if info, err := os.Stat(dest); err == nil {
 		if info.IsDir() {
 			return nil
@@ -33,10 +33,24 @@ func gitClone(url, dest string) error {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	cmd := exec.Command("git", "clone", url, dest)
+	args := gitCloneArgs(url, dest, tag, branch)
+	cmd := exec.Command("git", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func gitCloneArgs(url, dest, tag, branch string) []string {
+	args := []string{"clone"}
+	ref := tag
+	if ref == "" {
+		ref = branch
+	}
+	if ref != "" {
+		args = append(args, "--branch", ref, "--single-branch")
+	}
+	args = append(args, url, dest)
+	return args
 }
 
 func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
@@ -51,6 +65,7 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 	}
 
 	// 2. Path override
+	cloneDest := filepath.Join(l.LocalCache, dep.Name)
 	if dep.Path != "" {
 		p := dep.Path
 		if !filepath.IsAbs(p) {
@@ -59,6 +74,7 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 		if exists(p) {
 			return p, nil
 		}
+		cloneDest = p
 	}
 
 	// Dependencies declared by a local dependency are resolved relative to
@@ -87,9 +103,9 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 		return "", fmt.Errorf("dependency %s has no source", dep.Name)
 	}
 
-	if err := gitClone(dep.GitURL, loc); err != nil {
+	if err := gitClone(dep.GitURL, cloneDest, dep.GitTag, dep.GitBranch); err != nil {
 		return "", fmt.Errorf("git clone %s: %w", dep.Name, err)
 	}
 
-	return loc, nil
+	return cloneDest, nil
 }
