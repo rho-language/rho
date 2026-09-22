@@ -1,0 +1,10 @@
+module std.core.slice
+
+struct Slice[T] {
+    ptr: Ptr[T]
+    len: u32
+}
+
+fn slice_empty[T]() Slice[T] {
+    return Slice[T]{ Ptr[T](0), 0 }
+}

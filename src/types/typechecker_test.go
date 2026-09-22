@@ -155,6 +155,39 @@ func TestFuncValidationUnknownReturnType(t *testing.T) {
 	}
 }
 
+func TestFuncBodyRejectsUndefinedName(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{ast.FuncDecl{
+		Name: "main", ReturnType: "void",
+		Body: []ast.Stmt{ast.ExprStmt{Expr: ast.IdentifierExpr{Name: "missing"}}},
+	}}}
+	if err := tc.CheckModule(m); err == nil {
+		t.Fatal("expected undefined name error")
+	}
+}
+
+func TestFuncBodyRejectsTypeMismatch(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{ast.FuncDecl{
+		Name: "main", ReturnType: "void",
+		Body: []ast.Stmt{ast.LetStmt{Name: "value", Type: ast.TypeExpr{Name: "bool"}, Value: ast.NumberExpr{Value: "1"}}},
+	}}}
+	if err := tc.CheckModule(m); err == nil {
+		t.Fatal("expected type mismatch error")
+	}
+}
+
+func TestFuncBodyRejectsMissingReturn(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{ast.FuncDecl{
+		Name: "value", ReturnType: "i32",
+		Body: []ast.Stmt{ast.ExprStmt{Expr: ast.NumberExpr{Value: "1"}}},
+	}}}
+	if err := tc.CheckModule(m); err == nil {
+		t.Fatal("expected missing return error")
+	}
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Tests: AST → IR Conversion                                                 */
 /* -------------------------------------------------------------------------- */
@@ -189,5 +222,31 @@ func TestToIRConversion(t *testing.T) {
 	}
 	if irMod.Structs[0].Name != "Light" || irMod.Funcs[0].Name != "init" {
 		t.Fatalf("unexpected IR declarations: %+v", irMod)
+	}
+}
+
+func TestToIRPreservesCompositeTypeShape(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.StructDecl{Name: "Box", TypeParams: []string{"T"}, Fields: []ast.Field{{Name: "value", Type: "T", TypeExpr: ast.TypeExpr{Name: "T"}}}},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatal(err)
+	}
+	irModule := tc.ToIR(m)
+	fieldType := irModule.Structs[0].Fields[0].Type
+	if fieldType.Name != "T" {
+		t.Fatalf("expected generic field type T, got %#v", fieldType)
+	}
+}
+
+func TestGenericFieldSubstitution(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.StructDecl{Name: "Box", TypeParams: []string{"T"}, Fields: []ast.Field{{Name: "value", Type: "T", TypeExpr: ast.TypeExpr{Name: "T"}}}},
+		ast.FuncDecl{Name: "read", Params: []ast.Param{{Name: "box", Type: "Box[u32]", TypeExpr: ast.TypeExpr{Name: "Box", Args: []ast.TypeExpr{{Name: "u32"}}}}}, ReturnType: "u32", Body: []ast.Stmt{ast.ReturnStmt{Value: ast.MemberExpr{Object: ast.IdentifierExpr{Name: "box"}, Name: "value"}}}},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatal(err)
 	}
 }
