@@ -55,12 +55,51 @@ contains the directive. Generated C output is written to `build/`.
 
 ## CLI Tools
 
-The main `rho` command currently provides `build`, `run`, and `help`:
+The main `rho` command provides `build`, `run`, `lsp`, and `help`:
 
 ```sh
 ./rho build <file.rho>
 ./rho run <file.rho>
+./rho lsp
 ./rho help
+```
+
+The language server can also be built as a standalone executable:
+
+```sh
+mkdir -p bin
+go build -o ./bin/rho-lsp ./cmd/rho-lsp
+./bin/rho-lsp
+```
+
+For VS Code, configure the LSP client to launch either `./rho lsp` or the
+standalone `./bin/rho-lsp`. Both communicate over JSON-RPC on stdin/stdout.
+
+This repository includes `.vscode/settings.json` for the installed Generic
+LSP Client extension. Run the VS Code task `Build Rho LSP` once, then open or
+edit any `.rho` file; the extension launches `bin/rho lsp` automatically.
+
+Install the local Rho language registration extension once so `Rho` appears in
+the language selector:
+
+```sh
+cd editors/rho-language
+./package.sh
+code --install-extension rho-language-0.1.0.vsix
+```
+
+The server intentionally prints no startup banner. It waits for the client's
+LSP `initialize` request. To smoke-test the integrated command manually:
+
+If Generic LSP Client reports `activation (enabled: false)`, set the open
+file's language mode to `Rho` in the bottom-right status bar, run
+`Developer: Reload Window`, then run `Generic LSP Client: Restart server`.
+Use `View: Toggle Output` and select `Generic LSP Client`; a successful launch
+logs `Started language server`.
+
+```sh
+go build -o ./rho ./cmd/rho
+python3 -c 'import json,subprocess; p=json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///"}}).encode(); print(subprocess.run(["./rho","lsp"], input=(f"Content-Length: {len(p)}\\r\\n\\r\\n".encode()+p), stdout=subprocess.PIPE, check=True).stdout.decode())'
 ```
 
 The repository also contains standalone tools. Build each tool from the

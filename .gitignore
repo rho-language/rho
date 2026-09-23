@@ -30,5 +30,8 @@ coverage/
 
 # Local IDE and OS files
 .vscode/
+!.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
 .idea/
 .DS_Store

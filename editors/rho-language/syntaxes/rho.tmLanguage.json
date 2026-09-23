@@ -1,0 +1,44 @@
+{
+  "name": "Rho",
+  "scopeName": "source.rho",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.rho", "match": "//.*$" },
+        { "name": "comment.block.rho", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.rho",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.rho", "match": "\\\\." }]
+    },
+    "keywords": {
+      "patterns": [{
+        "name": "keyword.control.rho",
+        "match": "\\b(module|import|include|feature|fn|extern|struct|type|let|return|if|else|while|break|match|for)\\b"
+      }]
+    },
+    "types": {
+      "patterns": [{
+        "name": "storage.type.rho",
+        "match": "\\b(bool|void|string|u8|u16|u32|u64|i32|f64|true|false)\\b"
+      }]
+    },
+    "numbers": {
+      "patterns": [{ "name": "constant.numeric.rho", "match": "\\b(?:0x[0-9A-Fa-f]+|[0-9]+(?:\\.[0-9]+)?)\\b" }]
+    },
+    "operators": {
+      "patterns": [{ "name": "keyword.operator.rho", "match": "==|!=|<=|>=|&&|\\|\\||[+*/%<>=!&|^-]" }]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Rho LSP",
+      "type": "shell",
+      "command": "/bin/mkdir -p bin && /usr/bin/go build -o bin/rho ./cmd/rho",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": "$go"
+    }
+  ]
+}
