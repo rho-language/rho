@@ -76,6 +76,22 @@ func TestLexerKeywords(t *testing.T) {
 	}
 }
 
+func TestLexerBlockComments(t *testing.T) {
+	l := New("module demo /* section\n details */ fn main")
+	if token := l.Next(); token.Kind != TokenModule {
+		t.Fatalf("expected module, got %v", token)
+	}
+	if token := l.Next(); token.Kind != TokenIdent || token.Lex != "demo" {
+		t.Fatalf("expected demo, got %v", token)
+	}
+	if token := l.Next(); token.Kind != TokenFn {
+		t.Fatalf("expected fn after block comment, got %v", token)
+	}
+	if token := l.Next(); token.Kind != TokenIdent || token.Lex != "main" {
+		t.Fatalf("expected main, got %v", token)
+	}
+}
+
 func TestLexerNumbers(t *testing.T) {
 	src := "0 42 9999"
 	l := New(src)

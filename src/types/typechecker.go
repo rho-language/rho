@@ -414,9 +414,15 @@ func (tc *TypeChecker) exprType(expr ast.Expr, scope map[string]ir.Type) (ir.Typ
 				}
 				return ir.Type{Kind: ir.TypeVoid, Name: "void"}, nil
 			}
+			if identifier.Name == "str_eq" {
+				signature = functionType{params: []ir.Type{{Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeString, Name: "string"}}, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}}
+			}
 			if !exists {
 				if identifier.Name == "clamp_f64" || identifier.Name == "lerp" || identifier.Name == "sqrt" || identifier.Name == "sin" || identifier.Name == "cos" || identifier.Name == "atan2" || identifier.Name == "floor" {
 					return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
+				}
+				if identifier.Name == "str_eq" {
+					return ir.Type{Kind: ir.TypeBool, Name: "bool"}, nil
 				}
 				if strings.HasPrefix(identifier.Name, "c_") || identifier.Name == "sizeof" {
 					return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
@@ -586,7 +592,7 @@ func isExternalBuiltin(name string) bool {
 	if strings.HasPrefix(name, "c_") {
 		return true
 	}
-	for _, builtin := range []string{"sqrt", "sin", "cos", "atan2", "floor", "clamp_f64", "lerp", "panic", "sizeof", "robohub_platform_init", "robohub_board_register"} {
+	for _, builtin := range []string{"sqrt", "sin", "cos", "atan2", "floor", "clamp_f64", "lerp", "str_eq", "panic", "sizeof", "robohub_platform_init", "robohub_board_register"} {
 		if name == builtin {
 			return true
 		}
@@ -813,6 +819,9 @@ func lowerExpr(expr ast.Expr) string {
 			return "printf(\"%s\\n\", \"\")"
 		}
 		callee := lowerExpr(expr.Callee)
+		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok && identifier.Name == "str_eq" {
+			callee = "rho_str_eq"
+		}
 		args := []string{}
 		for _, arg := range expr.Args {
 			args = append(args, lowerExpr(arg))

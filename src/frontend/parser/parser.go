@@ -157,6 +157,12 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 func (p *Parser) parseTypeDecl() ast.Decl {
 	p.readToken()
 	name := p.name()
+	if p.current.Kind != lexer.TokenAssign {
+		if p.current.Kind == lexer.TokenLBracket {
+			_ = p.parseTypeParams()
+		}
+		return ast.TypeDecl{Name: name, Type: ast.TypeExpr{Name: name}}
+	}
 	p.expect(lexer.TokenAssign)
 	p.readToken()
 	return ast.TypeDecl{Name: name, Type: p.parseType()}
@@ -447,6 +453,13 @@ func (p *Parser) parsePrefix() ast.Expr {
 func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 	for {
 		switch p.current.Kind {
+		case lexer.TokenIdent:
+			if p.current.Lex != "as" {
+				return expression
+			}
+			p.readToken()
+			target := p.parseType()
+			expression = ast.CastExpr{Type: target, Value: expression}
 		case lexer.TokenDot:
 			p.readToken()
 			expression = ast.MemberExpr{Object: expression, Name: p.name()}

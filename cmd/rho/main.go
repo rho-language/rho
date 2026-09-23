@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	lspserver "rho/cmd/rho-lsp/server"
@@ -34,7 +35,7 @@ import (
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: rho <command> [args]")
-		os.Exit(1)
+		return
 	}
 
 	cmd := os.Args[1]
@@ -53,11 +54,40 @@ func main() {
 	case "lsp":
 		os.Exit(lspCLI(os.Args[2:]))
 
+	case "test":
+		os.Exit(testCLI(os.Args[2:]))
+
 	default:
 		fmt.Println("Unknown command:", cmd)
 		fmt.Println("Use: rho help")
 		os.Exit(1)
 	}
+}
+
+func testCLI(args []string) int {
+	if len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "Usage: rho test [path]")
+		return 2
+	}
+	path := "."
+	if len(args) == 1 {
+		path = args[0]
+	}
+	command := exec.Command("go", append([]string{"run", "./cmd/rho-test", path}, args[1:]...)...)
+	command.Stdout, command.Stderr = os.Stdout, os.Stderr
+	command.Dir, _ = os.Getwd()
+	if rho, err := filepath.Abs(filepath.Join(command.Dir, "rho")); err == nil {
+		if _, statErr := os.Stat(rho); statErr == nil {
+			command.Env = append(os.Environ(), "RHO_BIN="+rho)
+		}
+	}
+	if err := command.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode()
+		}
+		return 1
+	}
+	return 0
 }
 
 func lspCLI(args []string) int {
@@ -251,6 +281,8 @@ func buildCLI(args []string) int {
 	var outC string
 	if *out != "" {
 		outC, _ = filepath.Abs(*out)
+	} else if projectArg != "" {
+		outC = filepath.Join(projectRoot, "build", "main.c")
 	} else {
 		outC = replaceExt(absIn, ".c")
 	}
@@ -260,7 +292,7 @@ func buildCLI(args []string) int {
 		return 1
 	}
 
-	generatedDir := filepath.Join(projectRoot, "build")
+	generatedDir := filepath.Join(projectRoot, "build", "generated")
 	if err := src.GenerateProjectWithDependencies(absIn, generatedDir, includePaths, sourceFiles, rhoDependencyRoots); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
@@ -306,5 +338,6 @@ func printHelp() {
 	fmt.Println("  rho run <file.rho>          Run a Rho program")
 	fmt.Println("  rho build <file.rho> [-o]   Compile Rho → C (+ deps)")
 	fmt.Println("  rho lsp                     Start the Rho language server")
+	fmt.Println("  rho test [path]             Run Rho tests")
 	fmt.Println("  rho help                    Show this help")
 }

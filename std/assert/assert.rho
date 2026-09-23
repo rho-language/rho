@@ -1,0 +1,62 @@
+// @file assert.rho
+// @brief Minimal assert library for Rho tests - Enterprise v1.
+//
+// Provides:
+//   - assert(cond)
+//   - assert_eq(a, b)
+//   - assert_ne(a, b)
+//   - assert_true(x)
+//   - assert_false(x)
+//   - fail(msg)
+//
+// Behavior:
+//   - On failure, prints a message and aborts execution.
+//   - Exact mechanism (panic/abort) depends on runtime.
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: MIT
+//
+
+module std.assert.assert
+
+extern fn print(msg: string)
+extern fn abort()
+
+fn fail(msg: string) {
+    print("ASSERTION FAILED: " + msg)
+    abort()
+}
+
+fn assert(cond: bool) {
+    if !cond {
+        fail("assert(cond) failed")
+    }
+}
+
+fn assert_true(x: bool) {
+    if !x {
+        fail("expected true, got false")
+    }
+}
+
+fn assert_false(x: bool) {
+    if x {
+        fail("expected false, got true")
+    }
+}
+
+fn assert_eq[T](a: T, b: T) {
+    if a != b {
+        // TODO: pretty-print T when you have reflection/formatting
+        fail("assert_eq failed")
+    }
+}
+
+fn assert_ne[T](a: T, b: T) {
+    if a == b {
+        fail("assert_ne failed")
+    }
+}

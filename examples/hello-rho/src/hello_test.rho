@@ -1,0 +1,15 @@
+module hello_test
+
+include "greeting.rho"
+
+extern fn abort()
+
+test fn greeting_prefix() void {
+    if !str_eq(prefix(), "Hello ") {
+        abort()
+    }
+}
+
+fn main() void {
+    greeting_prefix()
+}

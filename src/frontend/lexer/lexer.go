@@ -380,6 +380,18 @@ func (l *Lexer) skipWhitespace() {
 			}
 			continue
 		}
+		if l.ch == '/' && l.peekChar() == '*' {
+			l.readChar()
+			l.readChar()
+			for l.ch != 0 && !(l.ch == '*' && l.peekChar() == '/') {
+				l.readChar()
+			}
+			if l.ch != 0 {
+				l.readChar()
+				l.readChar()
+			}
+			continue
+		}
 		break
 	}
 }
