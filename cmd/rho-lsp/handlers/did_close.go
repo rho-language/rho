@@ -10,6 +10,9 @@ func HandleDidClose(req protocol.Request, ws *state.Workspace) *protocol.Respons
 	var params protocol.DidCloseTextDocumentParams
 	raw, _ := json.Marshal(req.Params)
 	_ = json.Unmarshal(raw, &params)
-	ws.CloseDocument(params.TextDocument.URI)
+
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
+	ws.CloseDocument(normalizedPath)
+
 	return nil
 }

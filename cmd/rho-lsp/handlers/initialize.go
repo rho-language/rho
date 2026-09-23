@@ -21,7 +21,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleInitialize                                                           */
+/*  HandleInitialize                                                          */
 /* -------------------------------------------------------------------------- */
 
 func HandleInitialize(req protocol.Request, workspaces ...*state.Workspace) *protocol.Response {
@@ -31,10 +31,12 @@ func HandleInitialize(req protocol.Request, workspaces ...*state.Workspace) *pro
 	if len(workspaces) > 0 {
 		roots := []string{}
 		if params.RootURI != "" {
-			roots = append(roots, params.RootURI)
+			roots = append(roots, state.NormalizeURI(params.RootURI))
 		}
 		for _, folder := range params.WorkspaceFolders {
-			roots = append(roots, folder.URI)
+			if folder.URI != "" {
+				roots = append(roots, state.NormalizeURI(folder.URI))
+			}
 		}
 		workspaces[0].SetRoots(roots)
 	}

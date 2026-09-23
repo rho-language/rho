@@ -22,7 +22,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleCompletion                                                           */
+/*  HandleCompletion                                                          */
 /* -------------------------------------------------------------------------- */
 
 func HandleCompletion(req protocol.Request, ws *state.Workspace) *protocol.Response {
@@ -31,9 +31,9 @@ func HandleCompletion(req protocol.Request, ws *state.Workspace) *protocol.Respo
 	var params protocol.CompletionParams
 	_ = json.Unmarshal(raw, &params)
 
-	uri := params.TextDocument.URI
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
 
-	doc := ws.GetDocument(uri)
+	doc := ws.GetDocument(normalizedPath)
 	if doc == nil {
 		return &protocol.Response{
 			JsonRPC: "2.0",
@@ -107,6 +107,7 @@ func completionPrefix(line string) string {
 	}
 	return line[index+1:]
 }
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
