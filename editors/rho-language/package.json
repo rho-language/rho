@@ -1,0 +1,28 @@
+{
+  "name": "rho-language",
+  "displayName": "Rho Language Support",
+  "description": "Language registration and syntax highlighting for Rho.",
+  "version": "0.1.0",
+  "publisher": "robohubplatform",
+  "engines": {
+    "vscode": ">=1.80.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "rho",
+        "aliases": ["Rho", "rho"],
+        "extensions": [".rho"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "rho",
+        "scopeName": "source.rho",
+        "path": "./syntaxes/rho.tmLanguage.json"
+      }
+    ]
+  }
+}

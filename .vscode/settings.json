@@ -1,0 +1,12 @@
+{
+  "files.associations": {
+    "*.rho": "rho"
+  },
+  "glspc.serverCommand": "/home/miraur/projects/rho/bin/rho",
+  "glspc.serverCommandArguments": ["lsp"],
+  "glspc.languageId": "rho",
+  "glspc.trace.server": "verbose",
+  "glspc.initializationOptions": {
+    "rootUri": "${workspaceFolder}"
+  }
+}
