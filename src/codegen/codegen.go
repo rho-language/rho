@@ -97,6 +97,7 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 	cg.b.WriteString("static char* rho_concat(const char* a, const char* b);\n")
 	cg.b.WriteString("static char* rho_yaml_load(const char* path);\n\n")
 	cg.b.WriteString("static char* rho_string_from_i32(int32_t value);\n\n")
+	cg.b.WriteString("static bool rho_str_eq(const char* a, const char* b);\n\n")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -179,6 +180,9 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 	cg.b.WriteString("    memcpy(out, a, len_a);\n")
 	cg.b.WriteString("    memcpy(out + len_a, b, len_b + 1);\n")
 	cg.b.WriteString("    return out;\n")
+	cg.b.WriteString("}\n\n")
+	cg.b.WriteString("static bool rho_str_eq(const char* a, const char* b) {\n")
+	cg.b.WriteString("    return a != NULL && b != NULL && strcmp(a, b) == 0;\n")
 	cg.b.WriteString("}\n\n")
 	cg.b.WriteString("static char* rho_yaml_load(const char* path) {\n")
 	cg.b.WriteString("    FILE* f = fopen(path, \"r\");\n")

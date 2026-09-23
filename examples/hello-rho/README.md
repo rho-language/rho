@@ -10,7 +10,7 @@ Rho compiler and native x86 runner.
 - `src/messages.rho` - imported Rho module
 - `config/app.yml` - YAML configuration read by the program
 - `module.yml` - project manifest
-- `build/` - generated C application project
+- `build/generated/` - generated C application project
 
 ## Build and run on x86
 
@@ -24,10 +24,16 @@ go build -o ./rho ./cmd/rho
 
 The `main = "src/main.rho"` entry in `rho.mod` selects the application entry
 point. Rho follows its imports and includes, then generates `app.c`, `app.h`,
-`main.c`, `CMakeLists.txt`, and `config.h` under `build/`.
+`main.c`, `CMakeLists.txt`, and `config.h` under `build/generated/`.
 
 Expected output:
 
 ```text
 Hello Alice
+```
+
+Run the example tests:
+
+```bash
+./rho test examples/hello-rho
 ```

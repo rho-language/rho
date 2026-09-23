@@ -48,6 +48,12 @@ func TestLSPCLIRejectsArguments(t *testing.T) {
 	}
 }
 
+func TestTestCLIRejectsTooManyArguments(t *testing.T) {
+	if code := testCLI([]string{"one", "two"}); code != 2 {
+		t.Fatalf("testCLI returned %d, want 2", code)
+	}
+}
+
 func writeMinimalManifest(t *testing.T) {
 	mod := `
 module testmod

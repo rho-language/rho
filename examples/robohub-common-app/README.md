@@ -31,11 +31,22 @@ go build -o ./rho ./cmd/rho
 ./rho run examples/robohub-common-app
 ```
 
-This generates `build/app.c`, `build/app.h`, `build/main.c`, and
-`build/CMakeLists.txt` (plus `build/config.h` when the project has a config
+This generates `build/generated/app.c`, `build/generated/app.h`,
+`build/generated/main.c`, and `build/generated/CMakeLists.txt` (plus
+`build/generated/config.h` when the project has a config
 directory). Because `robohub-common` contains platform hooks, its
 native executable also needs a board implementation; the generated CMake
 project is the integration point for that implementation.
+
+The test command is also available:
+
+```bash
+./rho test examples/robohub-common-app
+```
+
+At present this project exercises dependency resolution, but enabling
+`math.control` also exposes an existing numeric-expression codegen issue in
+the compiler before the test executable can be linked.
 
 The example is intentionally focused on dependency resolution. The current
 `robohub-common` platform sources require a board implementation for native

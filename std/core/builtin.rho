@@ -1,0 +1,124 @@
+//
+// @file builtin.rho
+// @brief Core builtin definitions for Rho - Enterprise v1.
+//
+// Provides:
+//   - Primitive types
+//   - Basic operators
+//   - Builtin functions (print, abort)
+//   - Memory primitives (ptr, load, store)
+//   - Intrinsics required by codegen C
+//
+// Notes:
+//   - No heap allocation
+//   - No GC
+//   - No hidden runtime
+//   - Everything is explicit and deterministic
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: MIT
+//
+
+module std.core.builtin
+
+/* -------------------------------------------------------------------------- */
+/*  Primitive Types                                                            */
+/* -------------------------------------------------------------------------- */
+
+type bool
+type u8
+type u16
+type u32
+type u64
+
+type i8
+type i16
+type i32
+type i64
+
+type f32
+type f64
+
+type string
+type ptr[T]
+
+/* -------------------------------------------------------------------------- */
+/*  Builtin Constants                                                          */
+/* -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------- */
+/*  Builtin Functions                                                          */
+/* -------------------------------------------------------------------------- */
+
+extern fn print(msg: string)
+extern fn abort()
+extern fn assert(condition: bool)
+
+/* -------------------------------------------------------------------------- */
+/*  Pointer Operations                                                         */
+/* -------------------------------------------------------------------------- */
+
+fn ptr_null[T]() ptr[T] {
+    return 0 as ptr[T]
+}
+
+fn ptr_add[T](p: ptr[T], offset: u64) ptr[T] {
+    return (p as u64 + offset * sizeof(T)) as ptr[T]
+}
+
+fn ptr_eq[T](a: ptr[T], b: ptr[T]) bool {
+    return (a as u64) == (b as u64)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Memory Access                                                              */
+/* -------------------------------------------------------------------------- */
+
+extern fn load_u8(p: ptr[u8]) u8
+extern fn store_u8(p: ptr[u8], v: u8)
+
+extern fn load_u32(p: ptr[u32]) u32
+extern fn store_u32(p: ptr[u32], v: u32)
+
+/* -------------------------------------------------------------------------- */
+/*  Arithmetic Intrinsics                                                      */
+/* -------------------------------------------------------------------------- */
+
+extern fn add_i32(a: i32, b: i32) i32
+extern fn sub_i32(a: i32, b: i32) i32
+extern fn mul_i32(a: i32, b: i32) i32
+extern fn div_i32(a: i32, b: i32) i32
+
+extern fn add_f64(a: f64, b: f64) f64
+extern fn sub_f64(a: f64, b: f64) f64
+extern fn mul_f64(a: f64, b: f64) f64
+extern fn div_f64(a: f64, b: f64) f64
+
+/* -------------------------------------------------------------------------- */
+/*  Comparison Intrinsics                                                      */
+/* -------------------------------------------------------------------------- */
+
+extern fn eq_i32(a: i32, b: i32) bool
+extern fn lt_i32(a: i32, b: i32) bool
+extern fn gt_i32(a: i32, b: i32) bool
+
+extern fn eq_f64(a: f64, b: f64) bool
+extern fn lt_f64(a: f64, b: f64) bool
+extern fn gt_f64(a: f64, b: f64) bool
+
+/* -------------------------------------------------------------------------- */
+/*  String Builtins                                                            */
+/* -------------------------------------------------------------------------- */
+
+extern fn strlen(s: string) u64
+extern fn str_eq(a: string, b: string) bool
+extern fn str_concat(a: string, b: string) string
+
+/* -------------------------------------------------------------------------- */
+/*  Control Flow Builtins                                                      */
+/* -------------------------------------------------------------------------- */
+
+extern fn panic(msg: string)

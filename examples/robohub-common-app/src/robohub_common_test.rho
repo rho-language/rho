@@ -1,0 +1,9 @@
+module robohub_common_test
+
+test fn dependency_example_runs() void {
+    print("robohub-common test executed")
+}
+
+fn main() void {
+    dependency_example_runs()
+}
