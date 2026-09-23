@@ -70,7 +70,7 @@ func emptyDefinition(req protocol.Request) *protocol.Response {
 	return &protocol.Response{
 		JsonRPC: "2.0",
 		ID:      req.ID,
-		Result:  nil,
+		Result:  json.RawMessage("null"),
 	}
 }
 

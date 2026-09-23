@@ -20,12 +20,33 @@ func Lex(source string) []Token {
 			index++
 			continue
 		}
-		if character == '/' && index+1 < len(source) && source[index+1] == '/' {
-			for index < len(source) && source[index] != '\n' {
-				index++
-				column++
+		if character == '/' && index+1 < len(source) {
+			if source[index+1] == '/' {
+				for index < len(source) && source[index] != '\n' {
+					index++
+					column++
+				}
+				continue
 			}
-			continue
+			if source[index+1] == '*' {
+				index += 2
+				column += 2
+				for index+1 < len(source) {
+					if source[index] == '*' && source[index+1] == '/' {
+						index += 2
+						column += 2
+						break
+					}
+					if source[index] == '\n' {
+						line++
+						column = 0
+					} else {
+						column++
+					}
+					index++
+				}
+				continue
+			}
 		}
 		startLine, startColumn := line, column
 		if unicode.IsLetter(character) || character == '_' {

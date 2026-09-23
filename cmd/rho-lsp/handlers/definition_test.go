@@ -122,7 +122,8 @@ func TestDefinitionEmpty(t *testing.T) {
 	}
 
 	resp := HandleDefinition(req, ws)
-	if resp.Result != nil {
-		t.Fatalf("expected nil definition, got: %+v", resp.Result)
+	data, _ := json.Marshal(resp.Result)
+	if string(data) != "null" {
+		t.Fatalf("expected null definition, got: %s", string(data))
 	}
 }

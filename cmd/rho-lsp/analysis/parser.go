@@ -101,7 +101,7 @@ type Module struct {
 
 func (m *Module) NodeAt(line, col int) Node {
 	for _, n := range m.Nodes {
-		if n.Line() == line && col >= n.Column() && col <= n.Column()+len(n.Name()) {
+		if n.Line() == line && col >= n.Column() && col < n.Column()+len(n.Name()) {
 			return n
 		}
 	}
