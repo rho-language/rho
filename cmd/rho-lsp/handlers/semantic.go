@@ -21,7 +21,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  Token Types (LSP Standard)                                                 */
+/*  Token Types (LSP Standard)                                                */
 /* -------------------------------------------------------------------------- */
 
 const (
@@ -35,7 +35,7 @@ const (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleSemanticTokens                                                       */
+/*  HandleSemanticTokens                                                      */
 /* -------------------------------------------------------------------------- */
 
 func HandleSemanticTokens(req protocol.Request, ws *state.Workspace) *protocol.Response {
@@ -44,9 +44,9 @@ func HandleSemanticTokens(req protocol.Request, ws *state.Workspace) *protocol.R
 	var params protocol.SemanticTokensParams
 	_ = json.Unmarshal(raw, &params)
 
-	uri := params.TextDocument.URI
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
 
-	doc := ws.GetDocument(uri)
+	doc := ws.GetDocument(normalizedPath)
 	if doc == nil {
 		return emptySemantic(req)
 	}
@@ -74,7 +74,7 @@ func HandleSemanticTokens(req protocol.Request, ws *state.Workspace) *protocol.R
 		)
 		previousLine, previousColumn = tok.Line, tok.Column
 	}
-	ws.SemanticTokens[uri] = append([]uint32{}, tokens...)
+	ws.SemanticTokens[normalizedPath] = append([]uint32{}, tokens...)
 
 	return &protocol.Response{
 		JsonRPC: "2.0",
@@ -87,7 +87,7 @@ func HandleSemanticTokens(req protocol.Request, ws *state.Workspace) *protocol.R
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Helpers                                                                    */
+/*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
 func emptySemantic(req protocol.Request) *protocol.Response {
@@ -104,12 +104,23 @@ func HandleSemanticTokensDelta(req protocol.Request, ws *state.Workspace) *proto
 	var params protocol.SemanticTokensDeltaParams
 	raw, _ := json.Marshal(req.Params)
 	_ = json.Unmarshal(raw, &params)
-	current := ws.SemanticTokens[params.TextDocument.URI]
+
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
+	current := ws.SemanticTokens[normalizedPath]
 	if current == nil {
 		full := HandleSemanticTokens(req, ws)
 		return full
 	}
-	return &protocol.Response{JsonRPC: "2.0", ID: req.ID, Result: protocol.SemanticTokensDelta{ResultID: "1", Edits: []protocol.SemanticTokensEdit{{Start: 0, DeleteCount: len(current), Data: current}}}}
+	return &protocol.Response{
+		JsonRPC: "2.0",
+		ID:      req.ID,
+		Result: protocol.SemanticTokensDelta{
+			ResultID: "1",
+			Edits: []protocol.SemanticTokensEdit{
+				{Start: 0, DeleteCount: len(current), Data: current},
+			},
+		},
+	}
 }
 
 func classifyToken(doc *state.Document, index int) (int, int) {

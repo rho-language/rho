@@ -21,7 +21,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleDidOpen                                                              */
+/*  HandleDidOpen                                                             */
 /* -------------------------------------------------------------------------- */
 
 func HandleDidOpen(req protocol.Request, ws *state.Workspace) *protocol.Response {
@@ -31,12 +31,13 @@ func HandleDidOpen(req protocol.Request, ws *state.Workspace) *protocol.Response
 	_ = json.Unmarshal(raw, &params)
 
 	doc := params.TextDocument
+	normalizedPath := state.NormalizeURI(doc.URI)
 
-	// Add document to workspace
-	ws.OpenDocument(doc.URI, doc.Text)
+	// Add document to workspace using normalized path key
+	ws.OpenDocument(normalizedPath, doc.Text)
 
-	// Parse + analyze
-	diags := ws.Recompute(doc.URI)
+	// Parse + analyze using normalized path key
+	diags := ws.Recompute(normalizedPath)
 
 	// LSP diagnostics response
 	result := map[string]any{

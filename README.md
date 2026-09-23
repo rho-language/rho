@@ -73,21 +73,23 @@ go build -o ./bin/rho-lsp ./cmd/rho-lsp
 ./bin/rho-lsp
 ```
 
-For VS Code, configure the LSP client to launch either `./bin/rho lsp` or the
-standalone `./bin/rho-lsp`. Both communicate over JSON-RPC on stdin/stdout.
-
-This repository includes `.vscode/settings.json` for the installed Generic
-LSP Client extension. Run the VS Code task `Build Rho LSP` once, then open or
-edit any `.rho` file; the extension launches `bin/rho lsp` automatically.
-
-Install the local Rho language registration extension once so `Rho` appears in
-the language selector:
+For VS Code, install the `Rho` extension (includes built-in LSP client):
 
 ```sh
 cd editors/rho-language
 ./package.sh
-code --install-extension rho-language-0.1.0.vsix
+code --install-extension rho-0.2.0.vsix
 ```
+
+The extension automatically launches `bin/rho lsp` from your workspace root. Configure the server path in VS Code settings if needed:
+
+```json
+{
+  "rho.lsp.serverPath": "bin/rho"
+}
+```
+
+No separate Generic LSP Client extension is required.
 
 The server intentionally prints no startup banner. It waits for the client's
 LSP `initialize` request. To smoke-test the integrated command manually:

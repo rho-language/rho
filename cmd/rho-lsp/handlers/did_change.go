@@ -21,7 +21,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleDidChange                                                            */
+/*  HandleDidChange                                                           */
 /* -------------------------------------------------------------------------- */
 
 func HandleDidChange(req protocol.Request, ws *state.Workspace) *protocol.Response {
@@ -30,7 +30,7 @@ func HandleDidChange(req protocol.Request, ws *state.Workspace) *protocol.Respon
 	var params protocol.DidChangeTextDocumentParams
 	_ = json.Unmarshal(raw, &params)
 
-	uri := params.TextDocument.URI
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
 
 	if len(params.ContentChanges) == 0 {
 		return &protocol.Response{
@@ -40,11 +40,11 @@ func HandleDidChange(req protocol.Request, ws *state.Workspace) *protocol.Respon
 		}
 	}
 
-	// Full text replacement (LSP v1)
-	ws.ApplyChanges(uri, params.TextDocument.Version, params.ContentChanges)
+	// Full text replacement (LSP v1) using normalized path key
+	ws.ApplyChanges(normalizedPath, params.TextDocument.Version, params.ContentChanges)
 
-	// Recompute AST + diagnostics
-	diags := ws.Recompute(uri)
+	// Recompute AST + diagnostics using normalized path key
+	diags := ws.Recompute(normalizedPath)
 
 	result := map[string]any{
 		"diagnostics": diags,

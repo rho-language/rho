@@ -1,13 +1,17 @@
 {
-  "name": "rho-language",
-  "displayName": "Rho Language Support",
-  "description": "Language registration and syntax highlighting for Rho.",
-  "version": "0.1.0",
+  "name": "rho",
+  "displayName": "Rho",
+  "description": "Language support for Rho (syntax highlighting, LSP client).",
+  "version": "0.2.0",
   "publisher": "robohubplatform",
   "engines": {
-    "vscode": ">=1.80.0"
+    "vscode": "^1.80.0"
   },
   "categories": ["Programming Languages"],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:rho"
+  ],
   "contributes": {
     "languages": [
       {
@@ -23,6 +27,33 @@
         "scopeName": "source.rho",
         "path": "./syntaxes/rho.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Rho",
+      "properties": {
+        "rho.lsp.serverPath": {
+          "type": "string",
+          "default": "bin/rho",
+          "description": "Path to the rho binary (relative to workspace root). The LSP server is started with 'rho lsp'."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0",
+    "vsce": "^2.15.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0",
+    "vscode-languageserver-protocol": "^3.17.0"
   }
 }

@@ -21,7 +21,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleDefinition                                                           */
+/*  HandleDefinition                                                          */
 /* -------------------------------------------------------------------------- */
 
 func HandleDefinition(req protocol.Request, ws *state.Workspace) *protocol.Response {
@@ -30,10 +30,10 @@ func HandleDefinition(req protocol.Request, ws *state.Workspace) *protocol.Respo
 	var params protocol.DefinitionParams
 	_ = json.Unmarshal(raw, &params)
 
-	uri := params.TextDocument.URI
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
 	pos := params.Position
 
-	doc := ws.GetDocument(uri)
+	doc := ws.GetDocument(normalizedPath)
 	if doc == nil {
 		return emptyDefinition(req)
 	}
@@ -63,7 +63,7 @@ func HandleDefinition(req protocol.Request, ws *state.Workspace) *protocol.Respo
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Helpers                                                                    */
+/*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
 func emptyDefinition(req protocol.Request) *protocol.Response {

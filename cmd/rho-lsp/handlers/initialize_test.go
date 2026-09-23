@@ -65,7 +65,7 @@ func TestHandleInitialize(t *testing.T) {
 func TestHandleInitializeStoresWorkspaceRoots(t *testing.T) {
 	ws := state.NewWorkspace()
 	resp := HandleInitialize(protocol.Request{JsonRPC: "2.0", ID: 2, Method: "initialize", Params: map[string]any{"rootUri": "file:///rho"}}, ws)
-	if resp == nil || len(ws.Roots) != 1 || ws.Roots[0] != "file:///rho" {
+	if resp == nil || len(ws.Roots) != 1 || ws.Roots[0] != "/rho" {
 		t.Fatalf("roots were not stored: %#v", ws.Roots)
 	}
 }

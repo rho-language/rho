@@ -21,7 +21,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleReferences                                                           */
+/*  HandleReferences                                                          */
 /* -------------------------------------------------------------------------- */
 
 func HandleReferences(req protocol.Request, ws *state.Workspace) *protocol.Response {
@@ -30,10 +30,10 @@ func HandleReferences(req protocol.Request, ws *state.Workspace) *protocol.Respo
 	var params protocol.ReferenceParams
 	_ = json.Unmarshal(raw, &params)
 
-	uri := params.TextDocument.URI
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
 	pos := params.Position
 
-	doc := ws.GetDocument(uri)
+	doc := ws.GetDocument(normalizedPath)
 	if doc == nil {
 		return emptyReferences(req)
 	}
@@ -81,7 +81,7 @@ func HandleReferences(req protocol.Request, ws *state.Workspace) *protocol.Respo
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Helpers                                                                    */
+/*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
 func emptyReferences(req protocol.Request) *protocol.Response {

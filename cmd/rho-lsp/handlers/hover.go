@@ -22,7 +22,7 @@ import (
 )
 
 /* -------------------------------------------------------------------------- */
-/*  HandleHover                                                                */
+/*  HandleHover                                                               */
 /* -------------------------------------------------------------------------- */
 
 func HandleHover(req protocol.Request, ws *state.Workspace) *protocol.Response {
@@ -31,10 +31,10 @@ func HandleHover(req protocol.Request, ws *state.Workspace) *protocol.Response {
 	var params protocol.HoverParams
 	_ = json.Unmarshal(raw, &params)
 
-	uri := params.TextDocument.URI
+	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
 	pos := params.Position
 
-	doc := ws.GetDocument(uri)
+	doc := ws.GetDocument(normalizedPath)
 	if doc == nil {
 		return emptyHover(req)
 	}
@@ -66,7 +66,7 @@ func HandleHover(req protocol.Request, ws *state.Workspace) *protocol.Response {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Helpers                                                                    */
+/*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
 func emptyHover(req protocol.Request) *protocol.Response {

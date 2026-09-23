@@ -91,10 +91,18 @@ func testCLI(args []string) int {
 }
 
 func lspCLI(args []string) int {
-	if len(args) != 0 {
-		fmt.Fprintln(os.Stderr, "Usage: rho lsp")
+	// Allow --stdio, -stdio, or empty args (ignore unexpected flags gracefully)
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: rho lsp [--stdio]")
+			return 0
+		}
+		// Reject unexpected arguments
+		fmt.Fprintln(os.Stderr, "Usage: rho lsp [--stdio]")
 		return 2
 	}
+
+	// Start the LSP server
 	if err := lspserver.New().Start(os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "rho lsp:", err)
 		return 1
