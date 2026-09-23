@@ -3,15 +3,6 @@
 // @brief Rho LSP Server - Enterprise v1.
 //
 // Implements the core JSON-RPC loop for the Rho Language Server.
-// Responsible for:
-//   - reading LSP messages
-//   - decoding JSON-RPC
-//   - dispatching to handlers
-//   - writing responses
-//
-// @project Rho Programming Language
-// @version 0.1
-// @date 2026
 //
 // SPDX-License-Identifier: MIT
 //
@@ -23,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,8 +37,31 @@ func New() *Server {
 	}
 }
 
+// DocumentURItoPath converts VS Code document URIs (including vscode-remote://) to standard local paths.
+func DocumentURItoPath(uri string) string {
+	decoded, err := url.PathUnescape(uri)
+	if err != nil {
+		decoded = uri
+	}
+
+	// Handle vscode-remote:// URIs (e.g. vscode-remote://wsl+ubuntu/home/...)
+	if strings.HasPrefix(decoded, "vscode-remote://") {
+		parts := strings.SplitN(decoded, "/", 4)
+		if len(parts) == 4 {
+			return filepath.Clean("/" + parts[3])
+		}
+	}
+
+	// Handle standard file:// URIs
+	if strings.HasPrefix(decoded, "file://") {
+		return filepath.Clean(strings.TrimPrefix(decoded, "file://"))
+	}
+
+	return filepath.Clean(decoded)
+}
+
 /* -------------------------------------------------------------------------- */
-/*  Start                                                                      */
+/*  Start                                                                     */
 /* -------------------------------------------------------------------------- */
 
 func (s *Server) Start(in io.Reader, out io.Writer) error {
@@ -98,6 +114,7 @@ func (s *Server) Start(in io.Reader, out io.Writer) error {
 			data, _ := json.Marshal(resp)
 			fmt.Fprintf(out, "Content-Length: %d\r\n\r\n%s", len(data), data)
 		}
+
 		if req.Method == "textDocument/didOpen" || req.Method == "textDocument/didChange" {
 			var params struct {
 				TextDocument struct {
@@ -106,8 +123,22 @@ func (s *Server) Start(in io.Reader, out io.Writer) error {
 			}
 			raw, _ := json.Marshal(req.Params)
 			_ = json.Unmarshal(raw, &params)
-			if doc := s.workspace.GetDocument(params.TextDocument.URI); doc != nil {
-				notification := protocol.Notification{JsonRPC: "2.0", Method: "textDocument/publishDiagnostics", Params: map[string]any{"uri": doc.URI, "version": doc.Version, "diagnostics": doc.Diags}}
+
+			// Normalize the URI before querying s.workspace
+			normalizedPath := state.NormalizeURI(params.TextDocument.URI)
+
+			if doc := s.workspace.GetDocument(normalizedPath); doc != nil {
+				// Keep original params.TextDocument.URI in the published notification
+				// so VS Code UI matches the diagnostic target
+				notification := protocol.Notification{
+					JsonRPC: "2.0",
+					Method:  "textDocument/publishDiagnostics",
+					Params: map[string]any{
+						"uri":         params.TextDocument.URI,
+						"version":     doc.Version,
+						"diagnostics": doc.Diags,
+					},
+				}
 				data, _ := json.Marshal(notification)
 				fmt.Fprintf(out, "Content-Length: %d\r\n\r\n%s", len(data), data)
 			}
@@ -116,7 +147,7 @@ func (s *Server) Start(in io.Reader, out io.Writer) error {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Dispatch                                                                   */
+/*  Dispatch                                                                  */
 /* -------------------------------------------------------------------------- */
 
 func (s *Server) dispatch(req protocol.Request) *protocol.Response {

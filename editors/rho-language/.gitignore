@@ -1,0 +1,32 @@
+# Node dependencies
+node_modules/
+
+# TypeScript / Build outputs
+out/
+dist/
+*.tsbuildinfo
+
+# VS Code Extension packages (VSIX)
+*.vsix
+
+# VS Code workspace files
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.code-workspace
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+*-lock.json
+
+# Optional: Local binary test builds (if you keep local binaries in your repo for testing)
+bin/
