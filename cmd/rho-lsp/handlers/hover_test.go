@@ -117,7 +117,8 @@ func TestHoverEmpty(t *testing.T) {
 	}
 
 	resp := HandleHover(req, ws)
-	if resp.Result != nil {
-		t.Fatalf("expected empty hover, got: %+v", resp.Result)
+	data, _ := json.Marshal(resp.Result)
+	if string(data) != "null" {
+		t.Fatalf("expected null hover, got: %s", string(data))
 	}
 }
