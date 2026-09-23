@@ -77,7 +77,7 @@ fn main() void {
 `), 0644); err != nil {
 		t.Fatal(err)
 	}
-	outDir := filepath.Join(root, "build")
+	outDir := filepath.Join(root, "build", "generated")
 	if err := GenerateProject(entry, outDir, []string{"/opt/include"}, []string{"/opt/src/support.c"}); err != nil {
 		t.Fatalf("GenerateProject failed: %v", err)
 	}
@@ -99,6 +99,20 @@ fn main() void {
 	}
 	if !strings.Contains(string(cmake), "/opt/src/support.c") || !strings.Contains(string(cmake), "/opt/include") {
 		t.Fatal("generated CMakeLists.txt is missing dependency paths")
+	}
+}
+
+func TestProjectBuildOutputPath(t *testing.T) {
+	root := t.TempDir()
+	entry := filepath.Join(root, "src", "main.rho")
+	if err := os.MkdirAll(filepath.Dir(entry), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "rho.mod"), []byte("module app\nversion 1.0.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ProjectOutputPath(entry); got != filepath.Join(root, "build", "main.c") {
+		t.Fatalf("unexpected project output: %s", got)
 	}
 }
 
