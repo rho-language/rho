@@ -90,6 +90,7 @@ func (d *Document) Recompute() {
 	// Parse
 	var parseDiags []analysis.Diagnostic
 	d.AST, parseDiags = analysis.Parse(d.Tokens)
+	d.AST.URI = d.URI
 	d.Diags = make([]protocol.Diagnostic, 0, len(parseDiags))
 	d.Diags = append(d.Diags, analysisDiagnostics(parseDiags)...)
 	// analysis.Analyze is scope-unaware (no params/let/imports/fields), so it

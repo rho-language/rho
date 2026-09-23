@@ -44,9 +44,10 @@ The CLI can compile the example project to `build/main.c` and run it natively
 on x86:
 
 ```sh
-go build -o ./rho ./cmd/rho
-./rho build examples/hello-rho/src/main.rho
-./rho run examples/hello-rho/src/main.rho
+go build -o ./bin/rho ./cmd/rho
+./bin/rho build examples/hello-rho
+./bin/rho run examples/hello-rho
+./bin/rho test examples/hello-rho
 ```
 
 For a project, `rho.mod` marks the project root. Imports resolve from
@@ -55,24 +56,24 @@ contains the directive. Generated C output is written to `build/`.
 
 ## CLI Tools
 
-The main `rho` command provides `build`, `run`, `lsp`, and `help`:
+The main `rho` command provides `build`, `run`, `test`, `lsp`, and `help`:
 
 ```sh
-./rho build <file.rho>
-./rho run <file.rho>
-./rho lsp
-./rho help
+./bin/rho build <project-dir>
+./bin/rho run <project-dir>
+./bin/rho test <project-dir>
+./bin/rho lsp
+./bin/rho help
 ```
 
 The language server can also be built as a standalone executable:
 
 ```sh
-mkdir -p bin
 go build -o ./bin/rho-lsp ./cmd/rho-lsp
 ./bin/rho-lsp
 ```
 
-For VS Code, configure the LSP client to launch either `./rho lsp` or the
+For VS Code, configure the LSP client to launch either `./bin/rho lsp` or the
 standalone `./bin/rho-lsp`. Both communicate over JSON-RPC on stdin/stdout.
 
 This repository includes `.vscode/settings.json` for the installed Generic
@@ -98,8 +99,8 @@ Use `View: Toggle Output` and select `Generic LSP Client`; a successful launch
 logs `Started language server`.
 
 ```sh
-go build -o ./rho ./cmd/rho
-python3 -c 'import json,subprocess; p=json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///"}}).encode(); print(subprocess.run(["./rho","lsp"], input=(f"Content-Length: {len(p)}\\r\\n\\r\\n".encode()+p), stdout=subprocess.PIPE, check=True).stdout.decode())'
+go build -o ./bin/rho ./cmd/rho
+python3 -c 'import json,subprocess; p=json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///"}}).encode(); print(subprocess.run(["./bin/rho","lsp"], input=(f"Content-Length: {len(p)}\\r\\n\\r\\n".encode()+p), stdout=subprocess.PIPE, check=True).stdout.decode())'
 ```
 
 The repository also contains standalone tools. Build each tool from the
@@ -156,7 +157,13 @@ go build -o ./rho-flash ./cmd/rho-flash
 ## Examples
 
 The repository includes a minimal project in `examples/hello-rho` that loads a
-name from `config/app.yml` and prints a greeting on the command line.
+name from `config/app.yml` and prints a greeting on the command line. Build and
+run it with:
+
+```sh
+./bin/rho build examples/hello-rho
+./bin/rho run examples/hello-rho
+```
 
 ## License
 

@@ -22,8 +22,8 @@ func BuildIntervalIndex(nodes []Node) *IntervalIndex {
 
 func (index *IntervalIndex) NodeAt(line, column int) Node {
 	entries := index.byLine[line]
-	position := sort.Search(len(entries), func(i int) bool { return entries[i].end >= column })
-	if position < len(entries) && column >= entries[position].start && column <= entries[position].end {
+	position := sort.Search(len(entries), func(i int) bool { return entries[i].end > column })
+	if position < len(entries) && column >= entries[position].start && column < entries[position].end {
 		return entries[position].node
 	}
 	return nil
