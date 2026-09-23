@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
+	lspserver "rho/cmd/rho-lsp/server"
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
 )
@@ -49,11 +50,26 @@ func main() {
 	case "help":
 		printHelp()
 
+	case "lsp":
+		os.Exit(lspCLI(os.Args[2:]))
+
 	default:
 		fmt.Println("Unknown command:", cmd)
 		fmt.Println("Use: rho help")
 		os.Exit(1)
 	}
+}
+
+func lspCLI(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "Usage: rho lsp")
+		return 2
+	}
+	if err := lspserver.New().Start(os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "rho lsp:", err)
+		return 1
+	}
+	return 0
 }
 
 /* -------------------------------------------------------------------------- */
@@ -289,5 +305,6 @@ func printHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  rho run <file.rho>          Run a Rho program")
 	fmt.Println("  rho build <file.rho> [-o]   Compile Rho → C (+ deps)")
+	fmt.Println("  rho lsp                     Start the Rho language server")
 	fmt.Println("  rho help                    Show this help")
 }
