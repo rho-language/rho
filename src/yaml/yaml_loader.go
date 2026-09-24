@@ -73,7 +73,7 @@ func Load(src string) (Value, error) {
 			}
 			if val == "" {
 				child := &Value{Kind: KindMap, Map: map[string]Value{}}
-				if key == "list" || key == "features" || key == "depends" || key == "include_dirs" || key == "source_dirs" || key == "sources" || key == "headers" || key == "required" || key == "optional" || key == "tags" || key == "test_dirs" || key == "test_files" || key == "kconfig_fragments" {
+				if key == "list" || key == "features" || key == "depends" || key == "include_dirs" || key == "source_dirs" || key == "sources" || key == "headers" || key == "required" || key == "optional" || key == "tags" || key == "test_dirs" || key == "test_files" || key == "kconfig_fragments" || key == "hooks" {
 					child.Kind = KindList
 					child.Map = nil
 					child.List = []Value{}
@@ -91,6 +91,10 @@ func Load(src string) (Value, error) {
 			} else {
 				if _, exists := current.Map[key]; exists {
 					return Value{}, fmt.Errorf("duplicate YAML key: %q", key)
+				}
+				// Strip surrounding quotes if present
+				if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+					val = val[1 : len(val)-1]
 				}
 				current.Map[key] = Value{Kind: KindString, Str: val}
 			}
@@ -110,6 +114,10 @@ func Load(src string) (Value, error) {
 				if key == "" || value == "" {
 					return Value{}, fmt.Errorf("invalid YAML list map item: %q", line)
 				}
+				// Strip surrounding quotes if present
+				if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
+					value = value[1 : len(value)-1]
+				}
 				entry := Value{Kind: KindMap, Map: map[string]Value{key: {Kind: KindString, Str: value}}}
 				current.List = append(current.List, entry)
 				stack = append(stack, frame{indent: indent, node: &current.List[len(current.List)-1]})
@@ -117,6 +125,10 @@ func Load(src string) (Value, error) {
 					frame.parent.Map[frame.key] = *current
 				}
 				continue
+			}
+			// Strip surrounding quotes if present
+			if len(item) >= 2 && ((item[0] == '"' && item[len(item)-1] == '"') || (item[0] == '\'' && item[len(item)-1] == '\'')) {
+				item = item[1 : len(item)-1]
 			}
 			current.List = append(current.List, Value{Kind: KindString, Str: item})
 			if frame := stack[len(stack)-1]; frame.parent != nil {
