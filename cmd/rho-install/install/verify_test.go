@@ -38,8 +38,7 @@ func TestIsInstalled(t *testing.T) {
 	// Fake binaries
 	binPath, _ := GetBinPath()
 	names := []string{
-		"rho", "rho-pkg", "rho-module", "rho-build",
-		"rho-run", "rho-fmt", "rho-test", "rho-deps", "rho-doc",
+		"rho", "rho-fmt", "rho-test", "rho-deps", "rho-doc",
 	}
 
 	for _, n := range names {
