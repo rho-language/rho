@@ -102,10 +102,6 @@ func binariesExist() bool {
 
     binaries := []string{
         "rho",
-        "rho-pkg",
-        "rho-module",
-        "rho-build",
-        "rho-run",
         "rho-fmt",
         "rho-test",
         "rho-deps",

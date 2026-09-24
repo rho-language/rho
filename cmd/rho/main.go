@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	util "rho/cmd/rho-install/util"
 	install "rho/cmd/rho-install/install"
+	pkgcli "rho/cmd/rho-pkg/cli"
 	lspserver "rho/cmd/rho-lsp/server"
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
@@ -77,6 +78,9 @@ func main() {
 	case "test":
 		os.Exit(testCLI(os.Args[2:]))
 
+	case "pkg":
+		os.Exit(pkgcli.Main(os.Args[2:]))
+
 	case "install":
 	    os.Exit(installCLI(os.Args[2:]))
 
@@ -93,7 +97,6 @@ func buildRhoExecutables() error {
         path string
     }{
         {"rho", "./cmd/rho"},
-        {"rho-pkg", "./cmd/rho-pkg"},
         {"rho-fmt", "./cmd/rho-fmt"},
         {"rho-test", "./cmd/rho-test"},
         {"rho-deps", "./cmd/rho-deps"},
@@ -459,6 +462,8 @@ func printHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  rho run <file.rho>          Run a Rho program")
 	fmt.Println("  rho build <file.rho> [-o]   Compile Rho → C (+ deps)")
+	fmt.Println("  rho install           	   Install Rho programming language")
+	fmt.Println("  rho pkg <command>           Package management (init, pack, unpack, inspect)")
 	fmt.Println("  rho lsp                     Start the Rho language server")
 	fmt.Println("  rho test [path]             Run Rho tests")
 	fmt.Println("  rho help                    Show this help")
