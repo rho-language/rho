@@ -22,7 +22,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
+	util "rho/cmd/rho-install/util"
+	install "rho/cmd/rho-install/install"
 	lspserver "rho/cmd/rho-lsp/server"
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
@@ -38,7 +39,26 @@ func main() {
 		return
 	}
 
+	// --------------------------------------------------------------------------
+	// Verify Rho installation
+	// --------------------------------------------------------------------------
+
 	cmd := os.Args[1]
+
+	// Commands that DO NOT require installation
+	if cmd == "help" || cmd == "--help" || cmd == "-h" || cmd == "install" {
+    	// skip installation check
+		if cmd == "--help" || cmd == "-h" {
+			cmd = "help"
+		}
+	} else {
+    	// All other commands require Rho to be installed
+    	if !install.IsInstalled() {
+        	fmt.Println("Rho is not installed.")
+        	fmt.Println("Run: rho install")
+        	os.Exit(1)
+    	}
+	}
 
 	switch cmd {
 
@@ -57,12 +77,106 @@ func main() {
 	case "test":
 		os.Exit(testCLI(os.Args[2:]))
 
+	case "install":
+	    os.Exit(installCLI(os.Args[2:]))
+
 	default:
 		fmt.Println("Unknown command:", cmd)
 		fmt.Println("Use: rho help")
 		os.Exit(1)
 	}
 }
+
+func buildRhoExecutables() error {
+    binaries := []struct {
+        name string
+        path string
+    }{
+        {"rho", "./cmd/rho"},
+        {"rho-pkg", "./cmd/rho-pkg"},
+        {"rho-fmt", "./cmd/rho-fmt"},
+        {"rho-test", "./cmd/rho-test"},
+        {"rho-deps", "./cmd/rho-deps"},
+        {"rho-doc", "./cmd/rho-doc"},
+    }
+
+    if err := os.MkdirAll("./bin", 0o755); err != nil {
+        return fmt.Errorf("cannot create ./bin: %w", err)
+    }
+
+    for _, b := range binaries {
+        cmd := exec.Command("go", "build", "-o", filepath.Join("bin", b.name), b.path)
+        cmd.Stdout = os.Stdout
+        cmd.Stderr = os.Stderr
+
+        if err := cmd.Run(); err != nil {
+            return fmt.Errorf("failed to build %s: %w", b.name, err)
+        }
+    }
+
+    return nil
+}
+
+
+func installCLI(args []string) int {
+    fmt.Println("Installing Rho ecosystem...")
+
+	force := false
+    if len(args) == 1 && args[0] == "--force" {
+        force = true
+    }
+
+	if force {
+	    home, err := install.GetRhoHome()
+   	 if err != nil {
+    	    fmt.Println("rho install:", err)
+       	 return 1
+   	 }
+   	 os.RemoveAll(home)
+	}
+
+    steps := []struct {
+        name string
+        fn   func() error
+    }{
+        {"Creating directory structure", install.EnsurePaths},
+		{"Building Rho executables", buildRhoExecutables},
+        {"Installing binaries", func() error {
+            // Binaries are expected to be in ./bin relative to rho
+            return install.InstallAllBinaries("./bin")
+        }},
+        {"Initializing registry", install.InitLocalRegistry},
+        {"Initializing cache", install.InitCache},
+        {"Initializing config", install.InitConfig},
+        {"Adding Rho to PATH", install.AddRhoToPath},
+    }
+
+    for _, step := range steps {
+        fmt.Printf(" - %s...\n", step.name)
+        if err := step.fn(); err != nil {
+            fmt.Printf("   ERROR: %v\n", err)
+            return 1
+        }
+    }
+
+    fmt.Println("Rho installation complete.")
+	fmt.Println()
+	fmt.Println("To activate Rho in your current shell, run:")
+	switch util.DetectShell() {
+		case "bash":
+    		fmt.Println("  source ~/.bashrc")
+		case "zsh":
+    		fmt.Println("  source ~/.zshrc")
+		case "fish":
+    		fmt.Println("  source ~/.config/fish/config.fish")
+		default:
+    		fmt.Println("  source ~/.profile")
+	}
+	fmt.Println()
+
+    return 0
+}
+
 
 func testCLI(args []string) int {
 	if len(args) > 1 {
