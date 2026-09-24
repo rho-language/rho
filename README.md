@@ -54,15 +54,41 @@ For a project, `rho.mod` marks the project root. Imports resolve from
 `src/`, while `include "file.rho"` resolves relative to the source file that
 contains the directive. Generated C output is written to `build/`.
 
+## Installation
+
+Install Rho to `~/.rho` (or `$RHO_HOME` if set) with all tools, registry, cache,
+and PATH integration:
+
+```sh
+./bin/rho install            # interactive install
+./bin/rho install --force    # reinstall (removes existing ~/.rho)
+```
+
+The install command:
+- Creates `~/.rho/{bin,modules,registry,cache,config}` directories
+- Builds and installs `rho`, `rho-fmt`, `rho-test`, `rho-deps`, `rho-doc`
+- Initializes local registry and package cache
+- Adds `~/.rho/bin` to your shell PATH (bash, zsh, fish, or generic)
+
+After install, restart your shell or run the suggested `source` command, then
+`rho` is available globally:
+
+```sh
+rho help
+rho pkg init my-project
+```
+
 ## CLI Tools
 
-The main `rho` command provides `build`, `run`, `test`, `lsp`, and `help`:
+The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`, and `help`:
 
 ```sh
 ./bin/rho build <project-dir>
 ./bin/rho run <project-dir>
 ./bin/rho test <project-dir>
 ./bin/rho lsp
+./bin/rho install [--force]
+./bin/rho pkg <command> [args]
 ./bin/rho help
 ```
 
@@ -133,17 +159,26 @@ go build -o ./rho-fmt ./cmd/rho-fmt
 The formatter currently covers the syntax represented by the parser AST. Full
 statement and expression formatting will expand as the language does.
 
-### Packages
+### Package Management
 
-`rho-pkg` manages the minimal `rho.yaml` project manifest. It does not yet
-download, resolve, or install dependencies:
+`rho pkg` manages Rho project scaffolding and `.rho-pkg` archives:
 
 ```sh
-go build -o ./rho-pkg ./cmd/rho-pkg
-./rho-pkg init
-./rho-pkg add common ../robohub-common
-./rho-pkg list
+# Create a new project with module.yml, src/main.rho, README.md
+rho pkg init [directory]
+
+# Create a .rho-pkg archive from a project directory
+rho pkg pack [directory]
+
+# Inspect a .rho-pkg archive (shows name, type, version, main, features)
+rho pkg inspect <file.rho-pkg>
+
+# Unpack a .rho-pkg archive
+rho pkg unpack <file.rho-pkg> [destination]
 ```
+
+The `rho pkg` commands are built into the main `rho` binary - no separate
+build step required.
 
 ### Device Flashing
 
