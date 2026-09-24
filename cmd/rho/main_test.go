@@ -56,12 +56,6 @@ version 0.1.0
 /*  Tests for CLI subcommands (internal functions)                             */
 /* -------------------------------------------------------------------------- */
 
-func TestLSPCLIRejectsArguments(t *testing.T) {
-    if code := lspCLI([]string{"unexpected"}); code != 2 {
-        t.Fatalf("lspCLI returned %d, want 2", code)
-    }
-}
-
 func TestTestCLIRejectsTooManyArguments(t *testing.T) {
     if code := testCLI([]string{"one", "two"}); code != 2 {
         t.Fatalf("testCLI returned %d, want 2", code)

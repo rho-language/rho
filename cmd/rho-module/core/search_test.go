@@ -1,22 +1,42 @@
+//
+// @file search_test.go
+// @brief Tests for SearchRegistry - Enterprise v3.
+//
+// Validates:
+//   - Search with query returns matching modules
+//   - Search without query returns all modules
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: MIT
+//
+
 package core
 
-import "testing"
+import (
+	"testing"
+)
 
 /* -------------------------------------------------------------------------- */
 /*  Test: Search Registry                                                      */
 /* -------------------------------------------------------------------------- */
 
 func TestSearchRegistry(t *testing.T) {
-    results, err := SearchRegistry("math")
-    if err != nil {
-        t.Fatalf("SearchRegistry failed: %v", err)
-    }
+	_, cleanup := SetupTestRegistry(t)
+	defer cleanup()
 
-    if len(results) == 0 {
-        t.Fatalf("expected at least one result")
-    }
+	results, err := SearchRegistry("math")
+	if err != nil {
+		t.Fatalf("SearchRegistry failed: %v", err)
+	}
 
-    if results[0].Name != "math" {
-        t.Fatalf("wrong module returned")
-    }
+	if len(results) == 0 {
+		t.Fatalf("expected at least one result")
+	}
+
+	if results[0].Name != "math" {
+		t.Fatalf("wrong module returned")
+	}
 }

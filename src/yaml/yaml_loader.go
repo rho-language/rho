@@ -73,7 +73,7 @@ func Load(src string) (Value, error) {
 			}
 			if val == "" {
 				child := &Value{Kind: KindMap, Map: map[string]Value{}}
-				if key == "list" || key == "features" || key == "depends" || key == "include_dirs" || key == "source_dirs" || key == "sources" || key == "headers" || key == "required" || key == "optional" || key == "tags" || key == "test_dirs" || key == "test_files" || key == "kconfig_fragments" || key == "hooks" {
+				if key == "list" || key == "features" || key == "depends" || key == "include_dirs" || key == "source_dirs" || key == "sources" || key == "headers" || key == "required" || key == "optional" || key == "tags" || key == "test_dirs" || key == "test_files" || key == "kconfig_fragments" || key == "hooks" || key == "components" || key == "plugins" {
 					child.Kind = KindList
 					child.Map = nil
 					child.List = []Value{}

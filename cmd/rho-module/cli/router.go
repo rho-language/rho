@@ -26,7 +26,7 @@ import (
 func Main(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: rho module <command> [args]")
-		fmt.Fprintln(os.Stderr, "Commands: init, validate, info, publish, download, install, remove, update, search")
+		fmt.Fprintln(os.Stderr, "Commands: init, validate, info, publish, unpublish, activate, download, install, remove, update, search, build")
 		return 2
 	}
 
@@ -42,10 +42,16 @@ func Main(args []string) int {
 		err = Info(args[1:])
 	case "publish":
 		err = Publish(args[1:])
+	case "unpublish":
+		err = Unpublish(args[1:])
+	case "activate":
+		err = Activate(args[1:])
 	case "download":
 		err = Download(args[1:])
 	case "install":
 		err = Install(args[1:])
+	case "build":
+		err = Build(args[1:])
 	case "remove":
 		err = Remove(args[1:])
 	case "update":
@@ -54,7 +60,7 @@ func Main(args []string) int {
 		err = Search(args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, "unknown module command:", cmd)
-		fmt.Fprintln(os.Stderr, "Commands: init, validate, info, publish, download, install, remove, update, search")
+		fmt.Fprintln(os.Stderr, "Commands: init, validate, info, publish, unpublish, activate, download, install, remove, update, search, build")
 		return 2
 	}
 

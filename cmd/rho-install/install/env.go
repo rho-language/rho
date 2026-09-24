@@ -51,6 +51,11 @@ func AddRhoToPath() error {
 		return err
 	}
 
+	// Only add to PATH if bin directory exists
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		return fmt.Errorf("bin directory does not exist: %s", binPath)
+	}
+
 	shell := DetectShell()
 	rhoHome, err := GetRhoHome()
 	if err != nil {

@@ -11,7 +11,7 @@
 //   - fetch metadata
 //   - integrate with resolver + search
 //
-// For now, uses simulated registry entries.
+// For now, uses local registry entries.
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -35,17 +35,23 @@ type RemoteEntry = core.RegistryEntry
 /* -------------------------------------------------------------------------- */
 
 func ListRemoteModules() []RemoteEntry {
-    return core.SimulatedRegistry()
+	entries, err := core.ListInstalledModules()
+	if err != nil {
+		return []RemoteEntry{}
+	}
+	return entries
 }
 
 func RemoteVersions(name string) []string {
-    out := []string{}
-
-    for _, e := range core.SimulatedRegistry() {
-        if e.Name == name {
-            out = append(out, e.Version)
-        }
-    }
-
-    return out
+	entries, err := core.ListInstalledModules()
+	if err != nil {
+		return []string{}
+	}
+	out := []string{}
+	for _, e := range entries {
+		if e.Name == name {
+			out = append(out, e.Version)
+		}
+	}
+	return out
 }

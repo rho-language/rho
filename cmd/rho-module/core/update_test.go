@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rho/internal/paths"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -12,6 +14,9 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestUpdateDependencies(t *testing.T) {
+	_, cleanup := SetupTestRegistry(t)
+	defer cleanup()
+
 	tmp := t.TempDir()
 
 	// module.yml - use range constraint to allow upgrade
@@ -38,7 +43,8 @@ lock:
 `), 0644)
 
 	// Fake global cache module (new version) - the simulated registry has 1.2.0
-	global := filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod", "math@1.2.0")
+	cachePath, _ := paths.GetCachePath()
+	global := filepath.Join(cachePath, "math@1.2.0")
 	os.MkdirAll(global, 0755)
 	os.WriteFile(filepath.Join(global, "module.yml"), []byte("module: math"), 0644)
 

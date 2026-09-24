@@ -43,6 +43,8 @@ func UnpackArchive(src, dest string) error {
 
     tr := tar.NewReader(gz)
 
+    var binaryName string
+
     for {
         hdr, err := tr.Next()
         if err == io.EOF {
@@ -78,6 +80,27 @@ func UnpackArchive(src, dest string) error {
         }
 
         outFile.Close()
+
+        // Track binary name from module.yml
+        if hdr.Name == "module.yml" {
+            // We'll read it after extraction to find the binary name
+        }
+    }
+
+    // Read module.yml to find binary name and make it executable
+    modPath := filepath.Join(dest, "module.yml")
+    if _, err := os.Stat(modPath); err == nil {
+        manifest, err := LoadModuleYAML(modPath)
+        if err == nil && manifest.Main != "" {
+            binaryName = filepath.Base(manifest.Main)
+            binaryPath := filepath.Join(dest, binaryName)
+            if _, err := os.Stat(binaryPath); err == nil {
+                // Make binary executable
+                if err := os.Chmod(binaryPath, 0755); err != nil {
+                    return fmt.Errorf("chmod binary: %w", err)
+                }
+            }
+        }
     }
 
     return nil

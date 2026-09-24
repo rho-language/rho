@@ -26,7 +26,8 @@ import (
 	install "rho/cmd/rho-install/install"
 	pkgcli "rho/cmd/rho-pkg/cli"
 	modcli "rho/cmd/rho-module/cli"
-	lspserver "rho/cmd/rho-lsp/server"
+	modcore "rho/cmd/rho-module/core"
+
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
 )
@@ -73,9 +74,6 @@ func main() {
 	case "help":
 		printHelp()
 
-	case "lsp":
-		os.Exit(lspCLI(os.Args[2:]))
-
 	case "test":
 		os.Exit(testCLI(os.Args[2:]))
 
@@ -89,10 +87,89 @@ func main() {
 	    os.Exit(installCLI(os.Args[2:]))
 
 	default:
-		fmt.Println("Unknown command:", cmd)
-		fmt.Println("Use: rho help")
-		os.Exit(1)
+	    if !runDynamicModule(cmd, os.Args[2:]) {
+    	    fmt.Println("Unknown command:", cmd)
+       		fmt.Println("Use: rho help")
+        	os.Exit(1)
+    	}
 	}
+}
+
+func runDynamicModule(cmd string, args []string) bool {
+    // First, try to find a module with matching command
+    registryPath := filepath.Join(os.Getenv("HOME"), ".rho", "registry", "local", "registry.yaml")
+    
+    // Read registry to find modules with this command
+    if _, err := os.Stat(registryPath); err == nil {
+        // Parse registry to find module with matching command
+        // We need to check each installed module's manifest for the command field
+        modulesDir := filepath.Join(os.Getenv("HOME"), ".rho", "modules", "installed")
+        
+        for _, moduleType := range []string{"component", "plugin"} {
+            typeDir := filepath.Join(modulesDir, moduleType)
+            if _, err := os.Stat(typeDir); err != nil {
+                continue
+            }
+            
+            entries, err := os.ReadDir(typeDir)
+            if err != nil {
+                continue
+            }
+            
+            for _, e := range entries {
+                if !e.IsDir() {
+                    continue
+                }
+                
+                modPath := filepath.Join(typeDir, e.Name(), "module.yml")
+                manifest, err := modcore.LoadModuleYAML(modPath)
+                if err != nil {
+                    continue
+                }
+                
+                // Check if this module's command matches
+                if manifest.Module.Command == cmd {
+                    // Found it! Load and run
+                    mod, err := modcore.LoadInstalledModule(manifest.Module.Name)
+                    if err != nil {
+                        return false
+                    }
+                    
+                    entry := mod.Entry()
+                    if entry == nil {
+                        fmt.Fprintln(os.Stderr, "rho:", "module has no entrypoint:", manifest.Module.Name)
+                        os.Exit(1)
+                    }
+                    
+                    if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
+                        fmt.Fprintln(os.Stderr, "rho:", err)
+                        os.Exit(1)
+                    }
+                    
+                    return true
+                }
+            }
+        }
+    }
+    
+    // Fallback: try to load by module name (for backwards compatibility)
+    mod, err := modcore.LoadInstalledModule(cmd)
+    if err != nil {
+        return false
+    }
+    
+    entry := mod.Entry()
+    if entry == nil {
+        fmt.Fprintln(os.Stderr, "rho:", "module has no entrypoint:", cmd)
+        os.Exit(1)
+    }
+    
+    if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
+        fmt.Fprintln(os.Stderr, "rho:", err)
+        os.Exit(1)
+    }
+    
+    return true
 }
 
 func buildRhoExecutables() error {
@@ -206,26 +283,6 @@ func testCLI(args []string) int {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode()
 		}
-		return 1
-	}
-	return 0
-}
-
-func lspCLI(args []string) int {
-	// Allow --stdio, -stdio, or empty args (ignore unexpected flags gracefully)
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" {
-			fmt.Fprintln(os.Stderr, "Usage: rho lsp [--stdio]")
-			return 0
-		}
-		// Reject unexpected arguments
-		fmt.Fprintln(os.Stderr, "Usage: rho lsp [--stdio]")
-		return 2
-	}
-
-	// Start the LSP server
-	if err := lspserver.New().Start(os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "rho lsp:", err)
 		return 1
 	}
 	return 0
