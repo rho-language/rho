@@ -80,7 +80,7 @@ rho pkg init my-project
 
 ## CLI Tools
 
-The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`, and `help`:
+The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`, `module`, and `help`:
 
 ```sh
 ./bin/rho build <project-dir>
@@ -89,6 +89,7 @@ The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`,
 ./bin/rho lsp
 ./bin/rho install [--force]
 ./bin/rho pkg <command> [args]
+./bin/rho module <command> [args]
 ./bin/rho help
 ```
 
@@ -178,6 +179,42 @@ rho pkg unpack <file.rho-pkg> [destination]
 ```
 
 The `rho pkg` commands are built into the main `rho` binary - no separate
+build step required.
+
+### Module Management
+
+`rho module` manages Rho module dependencies and publishing:
+
+```sh
+# Create a new module (library) or plugin
+rho module init <name> <type>     # type: rho, module, or plugin
+
+# Validate a module structure
+rho module validate [directory]
+
+# Show module metadata
+rho module info [directory]
+
+# Publish a module to registry
+rho module publish [directory]
+
+# Download a module from registry
+rho module download <name>[@version]
+
+# Install all dependencies from module.yml
+rho module install [directory]
+
+# Remove a dependency
+rho module remove <name>[@version]
+
+# Update dependencies to latest compatible versions
+rho module update [directory]
+
+# Search registry for modules
+rho module search <query>
+```
+
+The `rho module` commands are built into the main `rho` binary - no separate
 build step required.
 
 ### Device Flashing

@@ -25,6 +25,7 @@ import (
 	util "rho/cmd/rho-install/util"
 	install "rho/cmd/rho-install/install"
 	pkgcli "rho/cmd/rho-pkg/cli"
+	modcli "rho/cmd/rho-module/cli"
 	lspserver "rho/cmd/rho-lsp/server"
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
@@ -80,6 +81,9 @@ func main() {
 
 	case "pkg":
 		os.Exit(pkgcli.Main(os.Args[2:]))
+
+	case "module":
+		os.Exit(modcli.Main(os.Args[2:]))
 
 	case "install":
 	    os.Exit(installCLI(os.Args[2:]))
@@ -464,6 +468,7 @@ func printHelp() {
 	fmt.Println("  rho build <file.rho> [-o]   Compile Rho → C (+ deps)")
 	fmt.Println("  rho install           	   Install Rho programming language")
 	fmt.Println("  rho pkg <command>           Package management (init, pack, unpack, inspect)")
+	fmt.Println("  rho module <command>        Module management (init, validate, info, publish, download, install, remove, update, search)")
 	fmt.Println("  rho lsp                     Start the Rho language server")
 	fmt.Println("  rho test [path]             Run Rho tests")
 	fmt.Println("  rho help                    Show this help")
