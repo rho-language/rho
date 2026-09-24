@@ -26,9 +26,11 @@
 package registry
 
 import (
-    "os"
-    "path/filepath"
-    "strings"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"rho/internal/paths"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -36,9 +38,9 @@ import (
 /* -------------------------------------------------------------------------- */
 
 type LocalEntry struct {
-    Name    string
-    Version string
-    Path    string
+	Name    string
+	Version string
+	Path    string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -46,34 +48,37 @@ type LocalEntry struct {
 /* -------------------------------------------------------------------------- */
 
 func ListLocalModules() ([]LocalEntry, error) {
-    base := filepath.Join(os.Getenv("HOME"), ".rho", "registry", "local")
+	base, err := paths.GetRegistryPath()
+	if err != nil {
+		return nil, err
+	}
 
-    entries, err := os.ReadDir(base)
-    if err != nil {
-        return nil, err
-    }
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil, err
+	}
 
-    out := []LocalEntry{}
+	out := []LocalEntry{}
 
-    for _, e := range entries {
-        if !e.IsDir() {
-            continue
-        }
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
 
-        // Format: name@version
-        parts := strings.Split(e.Name(), "@")
-        if len(parts) != 2 {
-            continue
-        }
+		// Format: name@version
+		parts := strings.Split(e.Name(), "@")
+		if len(parts) != 2 {
+			continue
+		}
 
-        out = append(out, LocalEntry{
-            Name:    parts[0],
-            Version: parts[1],
-            Path:    filepath.Join(base, e.Name()),
-        })
-    }
+		out = append(out, LocalEntry{
+			Name:    parts[0],
+			Version: parts[1],
+			Path:    filepath.Join(base, e.Name()),
+		})
+	}
 
-    return out, nil
+	return out, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -81,17 +86,17 @@ func ListLocalModules() ([]LocalEntry, error) {
 /* -------------------------------------------------------------------------- */
 
 func LocalVersions(name string) ([]string, error) {
-    modules, err := ListLocalModules()
-    if err != nil {
-        return nil, err
-    }
+	modules, err := ListLocalModules()
+	if err != nil {
+		return nil, err
+	}
 
-    out := []string{}
-    for _, m := range modules {
-        if m.Name == name {
-            out = append(out, m.Version)
-        }
-    }
+	out := []string{}
+	for _, m := range modules {
+		if m.Name == name {
+			out = append(out, m.Version)
+		}
+	}
 
-    return out, nil
+	return out, nil
 }

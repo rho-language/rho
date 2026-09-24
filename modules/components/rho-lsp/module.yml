@@ -1,0 +1,12 @@
+module:
+  name: rho-lsp
+  type: component
+  version: 0.1.0
+  command: lsp
+
+main: rho-lsp
+
+features:
+  - lsp
+  - semantic
+  - workspace

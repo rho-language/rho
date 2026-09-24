@@ -30,11 +30,13 @@
 package core
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
-    "sort"
-    "strings"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"rho/internal/paths"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -112,36 +114,55 @@ func getAvailableVersions(name string) ([]string, error) {
 /* -------------------------------------------------------------------------- */
 
 func getLocalVersions(name string) []string {
-    base := filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod")
-    entries, _ := os.ReadDir(base)
+	cachePath, err := paths.GetCachePath()
+	if err != nil {
+		return []string{}
+	}
+	base := cachePath
+	entries, _ := os.ReadDir(base)
 
-    out := []string{}
-    prefix := name + "@"
+	out := []string{}
+	prefix := name + "@"
 
-    for _, e := range entries {
-        if strings.HasPrefix(e.Name(), prefix) {
-            parts := strings.Split(e.Name(), "@")
-            if len(parts) == 2 {
-                out = append(out, parts[1])
-            }
-        }
-    }
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) {
+			parts := strings.Split(e.Name(), "@")
+			if len(parts) == 2 {
+				out = append(out, parts[1])
+			}
+		}
+	}
 
-    return out
+	return out
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Remote Versions (Simulated)                                                */
+/*  Remote Versions (Local Registry)                                           */
 /* -------------------------------------------------------------------------- */
 
 func getRemoteVersions(name string) []string {
-    out := []string{}
+	registryPath, err := paths.GetRegistryPath()
+	if err != nil {
+		return []string{}
+	}
+	registryFile := filepath.Join(registryPath, "registry.yaml")
 
-    for _, entry := range simulatedRegistry {
-        if entry.Name == name {
-            out = append(out, entry.Version)
-        }
-    }
+	registry, err := readRegistry(registryFile)
+	if err != nil {
+		return []string{}
+	}
 
-    return out
+	out := []string{}
+	for _, c := range registry.Components {
+		if c.Name == name {
+			out = append(out, c.Version)
+		}
+	}
+	for _, p := range registry.Plugins {
+		if p.Name == name {
+			out = append(out, p.Version)
+		}
+	}
+
+	return out
 }

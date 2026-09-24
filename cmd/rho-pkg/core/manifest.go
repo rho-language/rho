@@ -43,11 +43,13 @@ type ModuleSection struct {
     Name    string
     Type    string
     Version string
+    Command string
 }
 
 type ModuleYAML struct {
     Module   ModuleSection
     Main     string
+    Deps     map[string]string
     Features []string
 }
 
@@ -73,6 +75,7 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
             Name:    modMap["name"].Str,
             Type:    modMap["type"].Str,
             Version: modMap["version"].Str,
+            Command: modMap["command"].Str,
         },
         Main:     root.Map["main"].Str,
         Features: []string{},
@@ -101,7 +104,11 @@ func SaveModuleYAML(path string, m ModuleYAML) error {
     out := "module:\n"
     out += "  name: " + m.Module.Name + "\n"
     out += "  type: " + m.Module.Type + "\n"
-    out += "  version: " + m.Module.Version + "\n\n"
+    out += "  version: " + m.Module.Version + "\n"
+    if m.Module.Command != "" {
+        out += "  command: " + m.Module.Command + "\n"
+    }
+    out += "\n"
 
     out += "main: " + m.Main + "\n\n"
 

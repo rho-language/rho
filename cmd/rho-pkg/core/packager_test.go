@@ -32,26 +32,38 @@ import (
 func TestPackProject(t *testing.T) {
     tmp := t.TempDir()
 
+    // go.mod
+    os.WriteFile(filepath.Join(tmp, "go.mod"), []byte(`
+module github.com/test/hello-rho
+
+go 1.18
+`), 0644)
+
     // module.yml
     os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(`
 module:
   name: hello-rho
-  type: rho
+  type: component
   version: 0.1.0
+  command: hello-rho
 
-main: src/main.rho
+main: hello-rho
 `), 0644)
 
     // README.md
     os.WriteFile(filepath.Join(tmp, "README.md"), []byte("Hello"), 0644)
 
-    // src/main.rho
+    // src/main.go
     os.Mkdir(filepath.Join(tmp, "src"), 0755)
-    os.WriteFile(filepath.Join(tmp, "src", "main.rho"), []byte("module main"), 0644)
+    os.WriteFile(filepath.Join(tmp, "src", "main.go"), []byte(`
+package main
 
-    // config/app.yml
-    os.Mkdir(filepath.Join(tmp, "config"), 0755)
-    os.WriteFile(filepath.Join(tmp, "config", "app.yml"), []byte("app: test"), 0644)
+import "fmt"
+
+func main() {
+    fmt.Println("Hello from hello-rho")
+}
+`), 0644)
 
     pkgPath, err := PackProject(tmp)
     if err != nil {
@@ -87,14 +99,9 @@ main: src/main.rho
     if !found["module.yml"] {
         t.Fatalf("module.yml missing from archive")
     }
-    if !found["README.md"] {
-        t.Fatalf("README.md missing from archive")
-    }
-    if !found["src/main.rho"] {
-        t.Fatalf("src/main.rho missing from archive")
-    }
-    if !found["config/app.yml"] {
-        t.Fatalf("config/app.yml missing from archive")
+    // Check binary exists (name based on module name)
+    if !found["hello-rho"] {
+        t.Fatalf("hello-rho binary missing from archive")
     }
 }
 
@@ -105,10 +112,17 @@ main: src/main.rho
 func TestPackMissingManifest(t *testing.T) {
     tmp := t.TempDir()
 
+    // go.mod
+    os.WriteFile(filepath.Join(tmp, "go.mod"), []byte(`
+module github.com/test/hello-rho
+
+go 1.18
+`), 0644)
+
     // Missing module.yml
     os.WriteFile(filepath.Join(tmp, "README.md"), []byte("Hello"), 0644)
     os.Mkdir(filepath.Join(tmp, "src"), 0755)
-    os.WriteFile(filepath.Join(tmp, "src", "main.rho"), []byte("module main"), 0644)
+    os.WriteFile(filepath.Join(tmp, "src", "main.go"), []byte("package main"), 0644)
 
     if _, err := PackProject(tmp); err == nil {
         t.Fatalf("expected error for missing module.yml")

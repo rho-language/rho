@@ -18,9 +18,13 @@
 package core
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"rho/internal/paths"
+
+	pkgcore "rho/cmd/rho-pkg/core"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -68,6 +72,65 @@ func InstallDependencies(dir string) error {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Build Module (binary only)                                                 */
+/* -------------------------------------------------------------------------- */
+
+// BuildModule builds the module binary to the specified output directory.
+// If outputDir is empty, builds to the current directory.
+func BuildModule(dir, outputDir string) (string, error) {
+    // Step 1: Load manifest
+    modPath := filepath.Join(dir, "module.yml")
+    manifest, err := pkgcore.LoadModuleYAML(modPath)
+    if err != nil {
+        return "", fmt.Errorf("cannot load module.yml: %w", err)
+    }
+
+    // Only component/plugin types are Go projects with binaries
+    if manifest.Module.Type != "component" && manifest.Module.Type != "plugin" {
+        return "", fmt.Errorf("module type %s does not produce a binary", manifest.Module.Type)
+    }
+
+    // Step 2: Build binary using rho-pkg's build logic
+    binaryPath, err := pkgcore.BuildBinary(dir, manifest)
+    if err != nil {
+        return "", fmt.Errorf("failed to build binary: %w", err)
+    }
+
+    // Step 3: Copy to output directory if specified
+    if outputDir != "" {
+        if err := os.MkdirAll(outputDir, 0755); err != nil {
+            return "", fmt.Errorf("cannot create output dir: %w", err)
+        }
+        destPath := filepath.Join(outputDir, filepath.Base(binaryPath))
+        if err := copyFile(binaryPath, destPath); err != nil {
+            return "", fmt.Errorf("failed to copy binary: %w", err)
+        }
+        // Clean up original
+        os.Remove(binaryPath)
+        return destPath, nil
+    }
+
+    return binaryPath, nil
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Copy File                                                                  */
+/* -------------------------------------------------------------------------- */
+
+func copyFile(src, dst string) error {
+    data, err := os.ReadFile(src)
+    if err != nil {
+        return err
+    }
+    return os.WriteFile(dst, data, 0755)
+}
+
+type InstallRegistryEntry struct {
+	Name    string
+	Version string
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Dependency Resolver                                                        */
 /* -------------------------------------------------------------------------- */
 
@@ -97,7 +160,11 @@ func installLocalCache(dir string, deps map[string]string) error {
     }
 
     for name, version := range deps {
-        global := filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod", fmt.Sprintf("%s@%s", name, version))
+        cachePath, err := paths.GetCachePath()
+        if err != nil {
+            return err
+        }
+        global := filepath.Join(cachePath, fmt.Sprintf("%s@%s", name, version))
         local := filepath.Join(cacheDir, fmt.Sprintf("%s@%s", name, version))
 
         if err := copyDir(global, local); err != nil {
