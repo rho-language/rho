@@ -1,0 +1,3 @@
+module github.com/rho/rho-lsp
+
+go 1.18

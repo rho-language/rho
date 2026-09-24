@@ -26,9 +26,11 @@
 package cache
 
 import (
-    "os"
-    "path/filepath"
-    "strings"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"rho/internal/paths"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -36,9 +38,9 @@ import (
 /* -------------------------------------------------------------------------- */
 
 type GlobalEntry struct {
-    Name    string
-    Version string
-    Path    string
+	Name    string
+	Version string
+	Path    string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -46,46 +48,47 @@ type GlobalEntry struct {
 /* -------------------------------------------------------------------------- */
 
 func GlobalCacheDir() string {
-    return filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod")
+	path, _ := paths.GetCachePath()
+	return path
 }
 
 func ListGlobalModules() ([]GlobalEntry, error) {
-    base := GlobalCacheDir()
+	base := GlobalCacheDir()
 
-    entries, err := os.ReadDir(base)
-    if err != nil {
-        return nil, err
-    }
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil, err
+	}
 
-    out := []GlobalEntry{}
+	out := []GlobalEntry{}
 
-    for _, e := range entries {
-        if !e.IsDir() {
-            continue
-        }
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
 
-        // Format: name@version
-        parts := strings.Split(e.Name(), "@")
-        if len(parts) != 2 {
-            continue
-        }
+		// Format: name@version
+		parts := strings.Split(e.Name(), "@")
+		if len(parts) != 2 {
+			continue
+		}
 
-        out = append(out, GlobalEntry{
-            Name:    parts[0],
-            Version: parts[1],
-            Path:    filepath.Join(base, e.Name()),
-        })
-    }
+		out = append(out, GlobalEntry{
+			Name:    parts[0],
+			Version: parts[1],
+			Path:    filepath.Join(base, e.Name()),
+		})
+	}
 
-    return out, nil
+	return out, nil
 }
 
 func GlobalModuleExists(name, version string) bool {
-    path := filepath.Join(GlobalCacheDir(), name+"@"+version)
-    _, err := os.Stat(path)
-    return err == nil
+	path := filepath.Join(GlobalCacheDir(), name+"@"+version)
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func GlobalModulePath(name, version string) string {
-    return filepath.Join(GlobalCacheDir(), name+"@"+version)
+	return filepath.Join(GlobalCacheDir(), name+"@"+version)
 }

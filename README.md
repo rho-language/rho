@@ -198,6 +198,12 @@ rho module info [directory]
 # Publish a module to registry
 rho module publish [directory]
 
+# Unpublish a module version from registry
+rho module unpublish <name@version>
+
+# Activate a specific version (only one active at a time per module)
+rho module activate <name@version>
+
 # Download a module from registry
 rho module download <name>[@version]
 
@@ -210,9 +216,17 @@ rho module remove <name>[@version]
 # Update dependencies to latest compatible versions
 rho module update [directory]
 
-# Search registry for modules
-rho module search <query>
+# Search registry for modules (shows active status)
+rho module search [query]
 ```
+
+**Module Versioning & Active Versions:**
+- Multiple versions of the same module can be installed simultaneously
+- Only one version per module is active at a time
+- Publishing the first version of a module auto-activates it
+- `rho module search` shows `[ACTIVE]` marker for active versions
+- `rho module unpublish` fails if trying to unpublish an active version that has other versions available (must switch active version first)
+- If unpublishing the only version (even if active), it succeeds and clears from active list
 
 The `rho module` commands are built into the main `rho` binary - no separate
 build step required.

@@ -1,9 +1,7 @@
 package core
 
 import (
-    "os"
-    "path/filepath"
-    "testing"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -11,13 +9,8 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestResolveVersion(t *testing.T) {
-	_ = t.TempDir()
-
-	// Fake local cache
-	local := filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod", "math@1.0.0")
-	os.MkdirAll(local, 0755)
-
-	// Simulated registry has math@1.2.0
+	_, cleanup := SetupTestRegistry(t)
+	defer cleanup()
 
 	v, err := ResolveVersion("math", ">=1.0.0 <2.0.0")
 	if err != nil {
@@ -34,6 +27,9 @@ func TestResolveVersion(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestResolveVersionNoCompatible(t *testing.T) {
+	_, cleanup := SetupTestRegistry(t)
+	defer cleanup()
+
 	_, err := ResolveVersion("math", "<1.0.0")
 	if err == nil {
 		t.Fatalf("expected error for no compatible version")
@@ -45,11 +41,8 @@ func TestResolveVersionNoCompatible(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestGetLocalVersions(t *testing.T) {
-	_ = t.TempDir()
-	base := filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod")
-
-	os.MkdirAll(filepath.Join(base, "io@1.0.0"), 0755)
-	os.MkdirAll(filepath.Join(base, "io@1.1.0"), 0755)
+	_, cleanup := SetupTestRegistry(t)
+	defer cleanup()
 
 	versions := getLocalVersions("io")
 	if len(versions) != 2 {

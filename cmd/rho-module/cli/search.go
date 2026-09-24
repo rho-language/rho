@@ -2,19 +2,20 @@
 // @file search.go
 // @brief `rho module search` - Enterprise v3.
 //
-// Searches for modules in the remote registry by keyword.
+// Searches for modules in the local registry by keyword.
 // Displays:
 //   - module name
-//   - latest version
-//   - type (rho/module/plugin)
-//   - description
+//   - version
+//   - type (component/plugin)
+//   - active status
 //
 // Usage:
 //   rho module search <query>
+//   rho module search            (lists all)
 //
 // Examples:
 //   rho module search math
-//   rho module search io
+//   rho module search
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -36,11 +37,14 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func Search(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: rho module search <query>")
+	if len(args) > 1 {
+		return fmt.Errorf("usage: rho module search [query]")
 	}
 
-	query := args[0]
+	query := ""
+	if len(args) == 1 {
+		query = args[0]
+	}
 
 	results, err := core.SearchRegistry(query)
 	if err != nil {
@@ -52,12 +56,17 @@ func Search(args []string) error {
 		return nil
 	}
 
-	fmt.Println("Results for:", query)
+	if query == "" {
+		fmt.Println("Installed modules:")
+	} else {
+		fmt.Println("Results for:", query)
+	}
 	for _, r := range results {
-		fmt.Printf("- %s (%s) %s\n", r.Name, r.Version, r.Type)
-		if r.Description != "" {
-			fmt.Println("    ", r.Description)
+		activeMark := ""
+		if r.Active {
+			activeMark = " [ACTIVE]"
 		}
+		fmt.Printf("- %s@%s (%s)%s\n", r.Name, r.Version, r.Type, activeMark)
 	}
 
 	return nil

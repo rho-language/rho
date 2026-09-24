@@ -21,12 +21,17 @@
 package core
 
 import (
-    "archive/tar"
-    "compress/gzip"
-    "fmt"
-    "io"
-    "os"
-    "path/filepath"
+	"archive/tar"
+	"compress/gzip"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"rho/internal/paths"
+
+	pkgcore "rho/cmd/rho-pkg/core"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -45,25 +50,79 @@ func PublishModule(dir string) error {
         return fmt.Errorf("cannot read module info: %w", err)
     }
 
-    // Step 3: Pack module
-    archive, err := packModule(dir, meta)
+    // Convert to pkg ModuleYAML
+    pkgManifest := pkgcore.ModuleYAML{
+        Module: pkgcore.ModuleSection{
+            Name:    meta.Module.Name,
+            Type:    meta.Module.Type,
+            Version: meta.Module.Version,
+            Command: meta.Module.Command,
+        },
+        Main:     meta.Main,
+        Deps:     meta.Deps,
+        Features: meta.Features,
+    }
+
+    var binaryPath string
+    var pkgPath string
+    var sourceArchive string
+
+    // Cleanup function
+    cleanup := func() {
+        if binaryPath != "" {
+            os.Remove(binaryPath)
+        }
+        if pkgPath != "" {
+            os.Remove(pkgPath)
+        }
+        if sourceArchive != "" {
+            os.Remove(sourceArchive)
+        }
+    }
+    defer cleanup()
+
+    // Step 3: Build binary (for component/plugin)
+    if pkgManifest.Module.Type == "component" || pkgManifest.Module.Type == "plugin" {
+        binaryPath, err = pkgcore.BuildBinary(dir, pkgManifest)
+        if err != nil {
+            return fmt.Errorf("build binary: %w", err)
+        }
+    }
+
+    // Step 4: Pack module with pre-built binary
+    pkgPath, err = pkgcore.PackProjectWithBinary(dir, binaryPath)
     if err != nil {
         return fmt.Errorf("cannot pack module: %w", err)
     }
+    // Don't cleanup binary yet - it's in the package
 
-    // Step 4: Upload to registry
-    if err := uploadModule(meta, archive); err != nil {
+    // Step 5: Create .rho-module source archive for remote registry
+    sourceArchive, err = packModuleSources(dir, meta)
+    if err != nil {
+        return fmt.Errorf("cannot pack sources: %w", err)
+    }
+
+    // Step 6: Upload to remote registry (both binary pkg and source archive)
+    if err := uploadModule(meta, pkgPath, sourceArchive); err != nil {
         return fmt.Errorf("upload failed: %w", err)
     }
+
+    // Step 7: Install locally
+    if err := installLocally(pkgManifest, pkgPath); err != nil {
+        return fmt.Errorf("local install failed: %w", err)
+    }
+
+    // Step 8: Clean up generated files (pkg, binary, source archive)
+    cleanup()
 
     return nil
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Pack Module                                                                */
+/*  Pack Module Sources (for remote registry)                                  */
 /* -------------------------------------------------------------------------- */
 
-func packModule(dir string, meta ModuleInfo) (string, error) {
+func packModuleSources(dir string, meta ModuleInfo) (string, error) {
     archiveName := fmt.Sprintf("%s-%s.rho-module",
         meta.Module.Name,
         meta.Module.Version,
@@ -82,7 +141,7 @@ func packModule(dir string, meta ModuleInfo) (string, error) {
     tw := tar.NewWriter(gz)
     defer tw.Close()
 
-    // Collect files
+    // Collect source files (module.yml, src/, plugin/, README.md, config/)
     files, err := collectModuleFiles(dir)
     if err != nil {
         return "", err
@@ -141,6 +200,17 @@ func collectModuleFiles(dir string) ([]string, error) {
         return nil
     })
 
+    // config/ (optional)
+    configDir := filepath.Join(dir, "config")
+    if _, err := os.Stat(configDir); err == nil {
+        filepath.Walk(configDir, func(path string, info os.FileInfo, err error) error {
+            if err == nil && !info.IsDir() {
+                out = append(out, path)
+            }
+            return nil
+        })
+    }
+
     // plugin/ (optional)
     pluginDir := filepath.Join(dir, "plugin")
     if _, err := os.Stat(pluginDir); err == nil {
@@ -159,7 +229,7 @@ func collectModuleFiles(dir string) ([]string, error) {
 /*  Upload Module                                                              */
 /* -------------------------------------------------------------------------- */
 
-func uploadModule(meta ModuleInfo, archive string) error {
+func uploadModule(meta ModuleInfo, pkgPath, sourceArchive string) error {
     // Placeholder for remote registry upload
     // In Enterprise v3, this will be implemented via:
     //   - HTTP POST
@@ -168,6 +238,229 @@ func uploadModule(meta ModuleInfo, archive string) error {
     //
     // For now, simulate success.
 
-    fmt.Println("Uploading", archive, "to registry...")
+    fmt.Println("Uploading", pkgPath, "and", sourceArchive, "to registry...")
     return nil
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Local Install (same as build)                                              */
+/* -------------------------------------------------------------------------- */
+
+func installLocally(meta pkgcore.ModuleYAML, pkgPath string) error {
+	// Install to ~/.rho/modules/installed/<type>/
+	modulesDir, err := paths.GetModulesInstalledPath()
+	if err != nil {
+		return err
+	}
+	moduleDir := filepath.Join(modulesDir, meta.Module.Type, fmt.Sprintf("%s@%s", meta.Module.Name, meta.Module.Version))
+
+	if err := pkgcore.UnpackArchive(pkgPath, moduleDir); err != nil {
+		return fmt.Errorf("failed to install module: %w", err)
+	}
+
+	// Update registry.yaml
+	if err := updateRegistryForPublish(meta); err != nil {
+		return fmt.Errorf("failed to update registry: %w", err)
+	}
+
+	fmt.Printf("Published and installed %s@%s to %s\n", meta.Module.Name, meta.Module.Version, moduleDir)
+	return nil
+}
+
+func updateRegistryForPublish(manifest pkgcore.ModuleYAML) error {
+	registryPath, err := paths.GetRegistryPath()
+	if err != nil {
+		return err
+	}
+	registryFile := filepath.Join(registryPath, "registry.yaml")
+
+	// Read existing registry
+	registry, err := readRegistry(registryFile)
+	if err != nil {
+		return err
+	}
+
+	entry := struct {
+		Name    string `yaml:"name"`
+		Version string `yaml:"version"`
+	}{
+		Name:    manifest.Module.Name,
+		Version: manifest.Module.Version,
+	}
+
+	// Add to version list (avoid duplicates)
+	addVersionEntry(registry, manifest.Module.Type, entry)
+
+	// If no active version for this module, make this one active
+	if !hasActiveVersion(registry, manifest.Module.Type, manifest.Module.Name) {
+		setActiveVersion(registry, manifest.Module.Type, manifest.Module.Name, manifest.Module.Version)
+	}
+
+	// Write registry
+	return writeRegistry(registryFile, registry)
+}
+
+func readRegistry(registryPath string) (*Registry, error) {
+    registry := &Registry{
+        Components:  []VersionEntry{},
+        Plugins:     []VersionEntry{},
+        ActiveComponents:  []ActiveEntry{},
+        ActivePlugins:     []ActiveEntry{},
+    }
+
+    if _, err := os.Stat(registryPath); err == nil {
+        data, err := os.ReadFile(registryPath)
+        if err == nil {
+            // Simple YAML parsing for our structure
+            parseRegistryYAML(string(data), registry)
+        }
+    }
+
+    return registry, nil
+}
+
+func writeRegistry(registryPath string, registry *Registry) error {
+    var out string
+    out += "components:\n"
+    for _, c := range registry.Components {
+        out += fmt.Sprintf("  - name: %s\n    version: %s\n", c.Name, c.Version)
+    }
+    out += "plugins:\n"
+    for _, p := range registry.Plugins {
+        out += fmt.Sprintf("  - name: %s\n    version: %s\n", p.Name, p.Version)
+    }
+    out += "active_components:\n"
+    for _, c := range registry.ActiveComponents {
+        out += fmt.Sprintf("  - name: %s\n    version: %s\n", c.Name, c.Version)
+    }
+    out += "active_plugins:\n"
+    for _, p := range registry.ActivePlugins {
+        out += fmt.Sprintf("  - name: %s\n    version: %s\n", p.Name, p.Version)
+    }
+
+    registryDir := filepath.Dir(registryPath)
+    if err := os.MkdirAll(registryDir, 0755); err != nil {
+        return err
+    }
+
+    return os.WriteFile(registryPath, []byte(out), 0644)
+}
+
+func parseRegistryYAML(data string, registry *Registry) {
+    lines := strings.Split(data, "\n")
+    var currentSection string
+    var currentName string
+
+    for _, line := range lines {
+        trimmed := strings.TrimSpace(line)
+        if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+            continue
+        }
+
+        if strings.HasPrefix(trimmed, "components:") {
+            currentSection = "components"
+            continue
+        }
+        if strings.HasPrefix(trimmed, "plugins:") {
+            currentSection = "plugins"
+            continue
+        }
+        if strings.HasPrefix(trimmed, "active_components:") {
+            currentSection = "active_components"
+            continue
+        }
+        if strings.HasPrefix(trimmed, "active_plugins:") {
+            currentSection = "active_plugins"
+            continue
+        }
+
+        if strings.HasPrefix(trimmed, "- name:") {
+            currentName = strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:"))
+            continue
+        }
+        if strings.HasPrefix(trimmed, "version:") {
+            version := strings.TrimSpace(strings.TrimPrefix(trimmed, "version:"))
+            entry := VersionEntry{Name: currentName, Version: version}
+            switch currentSection {
+            case "components":
+                registry.Components = append(registry.Components, entry)
+            case "plugins":
+                registry.Plugins = append(registry.Plugins, entry)
+            case "active_components":
+                registry.ActiveComponents = append(registry.ActiveComponents, ActiveEntry{Name: currentName, Version: version})
+            case "active_plugins":
+                registry.ActivePlugins = append(registry.ActivePlugins, ActiveEntry{Name: currentName, Version: version})
+            }
+            currentName = ""
+        }
+    }
+}
+
+func addVersionEntry(registry *Registry, moduleType string, entry VersionEntry) {
+    var versions *[]VersionEntry
+    if moduleType == "component" {
+        versions = &registry.Components
+    } else if moduleType == "plugin" {
+        versions = &registry.Plugins
+    }
+
+    // Check for duplicate
+    for _, v := range *versions {
+        if v.Name == entry.Name && v.Version == entry.Version {
+            return
+        }
+    }
+    *versions = append(*versions, entry)
+}
+
+func hasActiveVersion(registry *Registry, moduleType, name string) bool {
+    var active *[]ActiveEntry
+    if moduleType == "component" {
+        active = &registry.ActiveComponents
+    } else if moduleType == "plugin" {
+        active = &registry.ActivePlugins
+    }
+    for _, a := range *active {
+        if a.Name == name {
+            return true
+        }
+    }
+    return false
+}
+
+func setActiveVersion(registry *Registry, moduleType, name, version string) {
+	var active *[]ActiveEntry
+	if moduleType == "component" {
+		active = &registry.ActiveComponents
+	} else if moduleType == "plugin" {
+		active = &registry.ActivePlugins
+	}
+
+	// Remove existing active version for this module
+	newActive := []ActiveEntry{}
+	for _, a := range *active {
+		if a.Name != name {
+			newActive = append(newActive, a)
+		}
+	}
+	// Add new active version
+	newActive = append(newActive, ActiveEntry{Name: name, Version: version})
+	*active = newActive
+}
+
+type Registry struct {
+    Components        []VersionEntry
+    Plugins           []VersionEntry
+    ActiveComponents  []ActiveEntry
+    ActivePlugins     []ActiveEntry
+}
+
+type VersionEntry struct {
+    Name    string `yaml:"name"`
+    Version string `yaml:"version"`
+}
+
+type ActiveEntry struct {
+    Name    string `yaml:"name"`
+    Version string `yaml:"version"`
 }

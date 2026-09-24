@@ -24,15 +24,17 @@
 package core
 
 import (
-    "archive/tar"
-    "compress/gzip"
-    "errors"
-    "fmt"
-    "io"
-    "net/http"
-    "os"
-    "path/filepath"
-    "strings"
+	"archive/tar"
+	"compress/gzip"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"rho/internal/paths"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -49,7 +51,11 @@ func DownloadModule(spec string) error {
 	}
 
 	// Check if already in global cache
-	cacheDir := filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod", fmt.Sprintf("%s@%s", name, resolved))
+	cachePath, err := paths.GetCachePath()
+	if err != nil {
+		return err
+	}
+	cacheDir := filepath.Join(cachePath, fmt.Sprintf("%s@%s", name, resolved))
 	if _, err := os.Stat(cacheDir); err == nil {
 		// Already cached, skip download
 		return nil
@@ -132,14 +138,18 @@ func downloadArchive(name, version string) (string, error) {
 /* -------------------------------------------------------------------------- */
 
 func storeInCache(name, version, archive string) error {
-    cacheDir := filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod", fmt.Sprintf("%s@%s", name, version))
+	cachePath, err := paths.GetCachePath()
+	if err != nil {
+		return err
+	}
+	cacheDir := filepath.Join(cachePath, fmt.Sprintf("%s@%s", name, version))
 
-    if err := os.MkdirAll(cacheDir, 0755); err != nil {
-        return err
-    }
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return err
+	}
 
-    dst := filepath.Join(cacheDir, filepath.Base(archive))
-    return os.Rename(archive, dst)
+	dst := filepath.Join(cacheDir, filepath.Base(archive))
+	return os.Rename(archive, dst)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -162,7 +172,7 @@ func validateArchive(path string) error {
     tr := tar.NewReader(gz)
 
     foundModule := false
-    foundSrc := false
+    foundBinary := false
 
     for {
         hdr, err := tr.Next()
@@ -176,16 +186,17 @@ func validateArchive(path string) error {
         if hdr.Name == "module.yml" {
             foundModule = true
         }
-        if strings.HasPrefix(hdr.Name, "src/") {
-            foundSrc = true
+        // Check for binary file (executable)
+        if !strings.HasPrefix(hdr.Name, "src/") && !hdr.FileInfo().IsDir() {
+            foundBinary = true
         }
     }
 
     if !foundModule {
         return errors.New("module.yml missing")
     }
-    if !foundSrc {
-        return errors.New("src/ missing")
+    if !foundBinary {
+        return errors.New("binary missing")
     }
 
     return nil

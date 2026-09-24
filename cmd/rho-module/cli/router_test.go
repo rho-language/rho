@@ -50,7 +50,8 @@ func TestRouterInvalidSubcommand(t *testing.T) {
 		"install",   // needs module.yml in current dir
 		"remove",    // needs 1 arg
 		"update",    // needs module.yml in current dir
-		"search",    // needs 1 arg
+		"activate",  // needs 1 arg
+		"unpublish", // needs 1 arg
 	}
 
 	for _, cmd := range commands {
@@ -105,9 +106,10 @@ func TestRouterDownload(t *testing.T) {
 }
 
 func TestRouterSearch(t *testing.T) {
+	// search with no args now lists all modules (exit code 0)
 	code := Main([]string{"search"})
-	if code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 for list all, got %d", code)
 	}
 
 	code = Main([]string{"search", "query"})

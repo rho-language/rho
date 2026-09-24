@@ -44,10 +44,12 @@ func ValidateModule(dir string) error {
         return fmt.Errorf("invalid semantic version: %s", manifest.Module.Version)
     }
 
-    // Validate main file
-    mainPath := filepath.Join(dir, manifest.Main)
-    if _, err := os.Stat(mainPath); err != nil {
-        return fmt.Errorf("main file not found: %s", manifest.Main)
+    // Validate main file (skip for component/plugin - binary is built during pack)
+    if manifest.Module.Type != "component" && manifest.Module.Type != "plugin" {
+        mainPath := filepath.Join(dir, manifest.Main)
+        if _, err := os.Stat(mainPath); err != nil {
+            return fmt.Errorf("main file not found: %s", manifest.Main)
+        }
     }
 
     // Validate plugin structure

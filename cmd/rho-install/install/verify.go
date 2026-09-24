@@ -49,22 +49,22 @@ func IsInstalled() bool {
 
 // VerifyInstallation returns an error if installation is incomplete.
 func VerifyInstallation() error {
-    if !pathsExist() {
-        return fmt.Errorf("Rho is not installed: missing ~/.rho structure")
-    }
-    if !binariesExist() {
-        return fmt.Errorf("Rho is not installed: missing binaries in ~/.rho/bin")
-    }
-    if !RegistryExists() {
-        return fmt.Errorf("Rho is not installed: missing registry.yaml")
-    }
-    if !CacheExists() {
-        return fmt.Errorf("Rho is not installed: missing cache files")
-    }
-    if !ConfigExists() {
-        return fmt.Errorf("Rho is not installed: missing config files")
-    }
-    return nil
+	if !pathsExist() {
+		return fmt.Errorf("Rho is not installed: missing ~/.rho structure")
+	}
+	if !binariesExist() {
+		return fmt.Errorf("Rho is not installed: missing binaries in ~/.rho/bin")
+	}
+	if !RegistryExists() {
+		return fmt.Errorf("Rho is not installed: missing registry.yaml")
+	}
+	if !CacheExists() {
+		return fmt.Errorf("Rho is not installed: missing cache files")
+	}
+	if !ConfigExists() {
+		return fmt.Errorf("Rho is not installed: missing config files")
+	}
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */
