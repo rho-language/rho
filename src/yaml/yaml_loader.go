@@ -7,6 +7,7 @@
 //   - key: value
 //   - nested maps
 //   - lists using "- item"
+//   - block scalars using ">" and "|"
 //
 // No anchors, no tags, no advanced YAML features.
 //
@@ -20,7 +21,6 @@
 package yaml
 
 import (
-	"bufio"
 	"fmt"
 	"strings"
 )
@@ -32,7 +32,7 @@ import (
 // Load parses a minimal YAML document into a Value (KindMap).
 func Load(src string) (Value, error) {
 	root := Value{Kind: KindMap, Map: map[string]Value{}}
-	scanner := bufio.NewScanner(strings.NewReader(src))
+	lines := strings.Split(src, "\n")
 
 	type frame struct {
 		indent int
@@ -46,8 +46,8 @@ func Load(src string) (Value, error) {
 	}
 	stack := []frame{{indent: -1, node: &root}}
 
-	for scanner.Scan() {
-		raw := strings.TrimRight(scanner.Text(), " \t")
+	for i := 0; i < len(lines); i++ {
+		raw := strings.TrimRight(lines[i], " \t")
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -89,17 +89,27 @@ func Load(src string) (Value, error) {
 			if key == "" {
 				return Value{}, fmt.Errorf("invalid YAML key in line: %q", line)
 			}
+			if _, exists := current.Map[key]; exists {
+				return Value{}, fmt.Errorf("duplicate YAML key: %q", key)
+			}
 
-			if val == ">" || val == "|" {
-				current.Map[key] = Value{Kind: KindString, Str: ""}
+			if style, ok := blockScalarStyle(val); ok {
+				// A block scalar owns every following line indented deeper
+				// than its key, so multi-line descriptions survive parsing.
+				content, next := readBlockScalar(lines, i, indent)
+				current.Map[key] = Value{Kind: KindString, Str: joinBlockScalar(content, style)}
+				i = next - 1
 				continue
 			}
+
+			if items, ok := inlineSequence(val); ok {
+				current.Map[key] = items
+				continue
+			}
+
 			if val == "" {
 				// Defer the map-vs-list decision to the content below.
 				child := &Value{Kind: KindNull}
-				if _, exists := current.Map[key]; exists {
-					return Value{}, fmt.Errorf("duplicate YAML key: %q", key)
-				}
 				current.Map[key] = *child
 				stack = append(stack, frame{
 					indent: indent,
@@ -108,14 +118,7 @@ func Load(src string) (Value, error) {
 					key:    key,
 				})
 			} else {
-				if _, exists := current.Map[key]; exists {
-					return Value{}, fmt.Errorf("duplicate YAML key: %q", key)
-				}
-				// Strip surrounding quotes if present
-				if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
-					val = val[1 : len(val)-1]
-				}
-				current.Map[key] = Value{Kind: KindString, Str: val}
+				current.Map[key] = Value{Kind: KindString, Str: unquote(val)}
 			}
 			continue
 		}
@@ -139,11 +142,7 @@ func Load(src string) (Value, error) {
 				if key == "" || value == "" {
 					return Value{}, fmt.Errorf("invalid YAML list map item: %q", line)
 				}
-				// Strip surrounding quotes if present
-				if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
-					value = value[1 : len(value)-1]
-				}
-				entry := Value{Kind: KindMap, Map: map[string]Value{key: {Kind: KindString, Str: value}}}
+				entry := Value{Kind: KindMap, Map: map[string]Value{key: {Kind: KindString, Str: unquote(value)}}}
 				current.List = append(current.List, entry)
 				stack = append(stack, frame{indent: indent, node: &current.List[len(current.List)-1], isItem: true})
 				if frame := stack[len(stack)-2]; frame.parent != nil {
@@ -151,11 +150,7 @@ func Load(src string) (Value, error) {
 				}
 				continue
 			}
-			// Strip surrounding quotes if present
-			if len(item) >= 2 && ((item[0] == '"' && item[len(item)-1] == '"') || (item[0] == '\'' && item[len(item)-1] == '\'')) {
-				item = item[1 : len(item)-1]
-			}
-			current.List = append(current.List, Value{Kind: KindString, Str: item})
+			current.List = append(current.List, Value{Kind: KindString, Str: unquote(item)})
 			if frame := stack[len(stack)-1]; frame.parent != nil {
 				frame.parent.Map[frame.key] = *current
 			}
@@ -168,5 +163,119 @@ func Load(src string) (Value, error) {
 		return Value{}, fmt.Errorf("invalid YAML line: %q", line)
 	}
 
-	return root, scanner.Err()
+	return root, nil
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Block Scalars                                                             */
+/* -------------------------------------------------------------------------- */
+
+// blockScalarStyle reports whether a value opens a block scalar and returns
+// the folding style. ">" folds lines with spaces, "|" keeps line breaks.
+func blockScalarStyle(val string) (string, bool) {
+	switch strings.TrimSpace(val) {
+	case ">", ">-", ">+":
+		return ">", true
+	case "|", "|-", "|+":
+		return "|", true
+	default:
+		return "", false
+	}
+}
+
+// readBlockScalar collects the lines indented deeper than the owning key.
+// It returns the content and the index of the first line after the block.
+func readBlockScalar(lines []string, keyIndex, keyIndent int) ([]string, int) {
+	content := []string{}
+	i := keyIndex + 1
+	for ; i < len(lines); i++ {
+		raw := strings.TrimRight(lines[i], " \t")
+		if strings.TrimSpace(raw) == "" {
+			content = append(content, "")
+			continue
+		}
+		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		if indent <= keyIndent {
+			break
+		}
+		content = append(content, strings.TrimSpace(raw))
+	}
+	// Trailing blank lines belong to the separator, not the content.
+	for len(content) > 0 && content[len(content)-1] == "" {
+		content = content[:len(content)-1]
+	}
+	return content, i
+}
+
+// joinBlockScalar renders collected block lines using the given style.
+func joinBlockScalar(content []string, style string) string {
+	if style == "|" {
+		return strings.Join(content, "\n")
+	}
+	// Folded style: blank lines become newlines, everything else joins with
+	// a single space, which is how a multi-line description reads.
+	var b strings.Builder
+	for i, line := range content {
+		if i > 0 {
+			if line == "" || content[i-1] == "" {
+				b.WriteString("\n")
+			} else {
+				b.WriteString(" ")
+			}
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Inline Sequences                                                          */
+/* -------------------------------------------------------------------------- */
+
+// inlineSequence parses a flow-style list such as `[]` or `[a, b]` into a
+// list value. Manifests use it for short lists, most often empty ones.
+func inlineSequence(val string) (Value, bool) {
+	if len(val) < 2 || val[0] != '[' || val[len(val)-1] != ']' {
+		return Value{}, false
+	}
+	inner := strings.TrimSpace(val[1 : len(val)-1])
+	list := Value{Kind: KindList, List: []Value{}}
+	if inner == "" {
+		return list, true
+	}
+	for _, item := range strings.Split(inner, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if strings.Contains(item, ":") {
+			// A flow entry written as `key: value` becomes a single-entry map
+			// so the shape matches the block form.
+			parts := strings.SplitN(item, ":", 2)
+			key := strings.TrimSpace(parts[0])
+			value := unquote(strings.TrimSpace(parts[1]))
+			if key == "" {
+				return Value{}, false
+			}
+			list.List = append(list.List, Value{Kind: KindMap, Map: map[string]Value{key: {Kind: KindString, Str: value}}})
+			continue
+		}
+		list.List = append(list.List, Value{Kind: KindString, Str: unquote(item)})
+	}
+	return list, true
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Helpers                                                                   */
+/* -------------------------------------------------------------------------- */
+
+// unquote strips one layer of matching surrounding quotes.
+func unquote(val string) string {
+	if len(val) >= 2 {
+		first, last := val[0], val[len(val)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			return val[1 : len(val)-1]
+		}
+	}
+	return val
 }

@@ -8,6 +8,14 @@ main: src/main.rho
 features:
   - math.control
 
+# This example integrates a Rho application with a native C library, so it
+# generates the C target only. See examples/hello-rho for a project that
+# generates both C and Go.
+build:
+  language: c
+  targets:
+    - c
+
 depends:
   - name: robohub-common
     version: 1.0.0

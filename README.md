@@ -100,6 +100,72 @@ go build -o ./bin/rho-lsp ./cmd/rho-lsp
 ./bin/rho-lsp
 ```
 
+### Multi-Target Generation
+
+A Rho application can be generated as C, as a Go command, or as a Go web
+service. Declare the backends in `module.yml`:
+
+```yaml
+build:
+  language: c
+  targets:
+    - c
+    - go
+    - go-server
+```
+
+`rho build` then writes one project per target:
+
+```
+build/generated/c/          app.c app.h main.c runtime.c CMakeLists.txt
+build/generated/go/         app.go main.go runtime.go go.mod
+build/generated/go-server/  app.go server.go main.go runtime.go go.mod static/
+```
+
+Each generated directory is a self-contained project:
+
+```sh
+cd build/generated/go && go run .
+cd build/generated/c   && cmake -B out && cmake --build out
+```
+
+`build.targets` defaults to `c` when omitted.
+
+**Target kinds.** `go` is a command line program (`func main` calls the Rho
+entry point). `go-server` starts an `net/http` service with a `/healthz`
+route, a `static/` asset folder, request logging and graceful shutdown, for web
+APIs and REST backends. Add project routes in `registerRoutes` in the generated
+`server.go`.
+
+**Project descriptors.** The file layout of every target is data, not code,
+held in `src/projectgen/descriptor.default.yml`. A project overrides it by
+adding its own `project.yml` at the root:
+
+```yaml
+version: 1
+output_dir: build/generated   # where generated projects go
+build_dir: build              # where compiled artefacts go
+
+targets:
+  - id: api
+    emitter: go
+    kind: server               # cli or server
+    module_path: example.com/org/api
+    requires:
+      - github.com/go-chi/chi/v5
+    output_dir: dist/api       # overrides the descriptor default
+    files:
+      - path: app.go
+        role: implementation
+      - path: server.go
+        role: server
+      - path: static
+        kind: dir              # creates a folder
+```
+
+Roles are `implementation`, `interface`, `runtime`, `entrypoint`, `server` and
+`build`. A new backend needs a descriptor entry and an emitter registered with
+`projectgen.RegisterBackend`; the generator itself is unchanged.
 For VS Code, install the `Rho` extension (includes built-in LSP client):
 
 ```sh

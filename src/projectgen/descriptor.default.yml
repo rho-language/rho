@@ -1,0 +1,80 @@
+# Built-in project descriptor for Rho generated projects.
+#
+# Declares the file layout of each generated target. `rho build` reads the
+# build.targets list from module.yml and generates one project per target id,
+# into build/generated/<target>/.
+#
+# Roles:
+#   implementation - module structs and functions
+#   interface      - public interface declarations
+#   runtime        - generated language runtime support
+#   entrypoint     - host language entry point
+#   server         - HTTP server wiring for web targets
+#   build          - build system definition
+#
+# Target settings:
+#   kind         - entry point shape: cli (default) or server
+#   module_path  - overrides the derived Go module path
+#   output_dir   - overrides output_dir for this target
+#   requires     - extra Go module requirements
+#   build_flags  - extra flags recorded for the build role
+#
+# A project can override this by placing its own project.yml at the root.
+
+version: 1
+
+# Generated projects go under <output_dir>/<target id>/.
+output_dir: build/generated
+
+# Compiled artefacts (the generated C translation unit and the native binary)
+# go under <build_dir>/.
+build_dir: build
+
+targets:
+  - id: c
+    emitter: c
+    kind: cli
+    description: Native C project built with CMake
+    files:
+      - path: app.c
+        role: implementation
+      - path: app.h
+        role: interface
+      - path: runtime.c
+        role: runtime
+      - path: main.c
+        role: entrypoint
+      - path: CMakeLists.txt
+        role: build
+
+  - id: go
+    emitter: go
+    kind: cli
+    description: Go command line project built with the go toolchain
+    files:
+      - path: app.go
+        role: implementation
+      - path: runtime.go
+        role: runtime
+      - path: main.go
+        role: entrypoint
+      - path: go.mod
+        role: build
+
+  - id: go-server
+    emitter: go
+    kind: server
+    description: Go HTTP server project for web APIs and REST services
+    files:
+      - path: app.go
+        role: implementation
+      - path: runtime.go
+        role: runtime
+      - path: server.go
+        role: server
+      - path: main.go
+        role: entrypoint
+      - path: go.mod
+        role: build
+      - path: static
+        kind: dir

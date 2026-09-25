@@ -190,11 +190,31 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 		}(),
 	}
 	if dmanifest != nil {
+		// A manifest may list the same file through both build.sources and a
+		// build.source_dirs scan, so collection is deduplicated. Without this
+		// the link step sees every translation unit twice.
+		seenSource := map[string]bool{}
+		seenInclude := map[string]bool{}
+		addSource := func(path string) {
+			if seenSource[path] {
+				return
+			}
+			seenSource[path] = true
+			node.SourceFiles = append(node.SourceFiles, path)
+		}
+		addInclude := func(path string) {
+			if seenInclude[path] {
+				return
+			}
+			seenInclude[path] = true
+			node.IncludeDirs = append(node.IncludeDirs, path)
+		}
+
 		for _, dir := range dmanifest.BuildIncludeDirs {
-			node.IncludeDirs = append(node.IncludeDirs, filepath.Join(path, dir))
+			addInclude(filepath.Join(path, dir))
 		}
 		for _, file := range dmanifest.BuildSources {
-			node.SourceFiles = append(node.SourceFiles, filepath.Join(path, file))
+			addSource(filepath.Join(path, file))
 		}
 		for _, dir := range dmanifest.BuildSourceDirs {
 			entries, readErr := os.ReadDir(filepath.Join(path, dir))
@@ -203,7 +223,7 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 			}
 			for _, entry := range entries {
 				if !entry.IsDir() && filepath.Ext(entry.Name()) == ".c" {
-					node.SourceFiles = append(node.SourceFiles, filepath.Join(path, dir, entry.Name()))
+					addSource(filepath.Join(path, dir, entry.Name()))
 				}
 			}
 		}
@@ -232,15 +252,15 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 
 	// 8. Add to lockfile
 	lock.Packages = append(lock.Packages, LockedPackage{
-		Name:    dep.Name,
-		Type:    dependencyType,
-		Version: version,
-		GitURL:  dep.GitURL,
-		GitTag:  dep.GitTag,
+		Name:      dep.Name,
+		Type:      dependencyType,
+		Version:   version,
+		GitURL:    dep.GitURL,
+		GitTag:    dep.GitTag,
 		GitBranch: dep.GitBranch,
-		Path:    path,
-		Hash:    hashPath(path),
-		Rev:     revision(path, version),
+		Path:      path,
+		Hash:      hashPath(path),
+		Rev:       revision(path, version),
 	})
 
 	return nil

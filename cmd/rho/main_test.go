@@ -71,7 +71,9 @@ func TestCLIBuildDefault(t *testing.T) {
     writeMinimalManifest(t)
 
     in := "cli_build_default.rho"
-    outC := "cli_build_default.c"
+    // Compiled artefacts belong under the descriptor's build_dir, never next
+    // to the source file.
+    outC := filepath.Join("build", "cli_build_default.c")
     outBin := outC + "_bin"
 
     defer os.Remove(in)
@@ -89,6 +91,10 @@ func TestCLIBuildDefault(t *testing.T) {
 
     if _, err := os.Stat(outBin); err != nil {
         t.Fatalf("expected binary %s to exist", outBin)
+    }
+
+    if _, err := os.Stat("cli_build_default.c"); err == nil {
+        t.Fatalf("build output must not be written next to the source file")
     }
 }
 
@@ -247,11 +253,12 @@ fn main() void {
 
     buildCLI([]string{"test.rho"})
 
-    outC := "test.c"
-    outBin := "test.c_bin"
+    outC := filepath.Join("build", "test.c")
+    outBin := outC + "_bin"
 
     defer os.Remove(outC)
     defer os.Remove(outBin)
+    defer os.Remove("test.rho")
     defer os.Remove("rho.mod")
     defer os.Remove("rho.lock")
     defer os.RemoveAll(".rho-deps")
