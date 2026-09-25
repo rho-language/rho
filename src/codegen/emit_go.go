@@ -113,9 +113,15 @@ func EmitGo(m ir.ModuleIR) string {
 }
 
 func emitGoStruct(b *strings.Builder, structure ir.StructIR) {
-	name := sanitizeGoTypeName(structure.CName)
+	// Name is the spelling type references use; CName carries the owner
+	// prefix, which is only for cross-module C linkage. Matching Name keeps
+	// definitions and references on the same identifier.
+	name := goTypeName(structure.Name)
 	if name == "" {
-		name = sanitizeGoTypeName(structure.Name)
+		name = goTypeName(structure.CName)
+	}
+	if name == "" {
+		name = "anon"
 	}
 	fmt.Fprintf(b, "// %s mirrors the Rho struct of the same name.\ntype %s struct {\n", name, name)
 	for _, field := range structure.Fields {
@@ -365,7 +371,7 @@ func goZeroValue(t ir.Type) string {
 	case ir.TypeString:
 		return "\"\""
 	case ir.TypeStruct:
-		name := sanitizeGoTypeName(t.Name)
+		name := goTypeName(t.Name)
 		if name == "" {
 			return "nil"
 		}

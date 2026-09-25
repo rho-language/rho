@@ -1,20 +1,41 @@
 module std.core.result
 
-struct Result[T, E] {
+// Result carries either a success value or an error. The error type defaults
+// to Unit, so a call that cannot deduce it does not have to be annotated:
+//
+//	let r: Result[u32, u32] = Ok(7)   // both types stated
+//	print(r)                          // E falls back to Unit
+struct Result[T, E = Unit] {
     is_ok: bool
     ok: T
     err: E
 }
 
-fn Ok[T, E](v: T) Result[T, E] {
+fn Ok[T, E = Unit](v: T) Result[T, E] {
     return Result[T, E]{ true, v, default(E) }
 }
 
-fn Err[T, E](e: E) Result[T, E] {
+fn Err[T = Unit, E = Unit](e: E) Result[T, E] {
     return Result[T, E]{ false, default(T), e }
 }
 
-fn unwrap[T, E](r: Result[T, E]) T {
+fn is_ok[T, E = Unit](r: Result[T, E]) bool {
+    return r.is_ok
+}
+
+fn is_err[T, E = Unit](r: Result[T, E]) bool {
+    return !r.is_ok
+}
+
+fn value[T, E = Unit](r: Result[T, E]) T {
+    return r.ok
+}
+
+fn error[T, E = Unit](r: Result[T, E]) E {
+    return r.err
+}
+
+fn unwrap[T, E = Unit](r: Result[T, E]) T {
     if !r.is_ok {
         panic("unwrap Err")
     }
