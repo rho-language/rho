@@ -22,11 +22,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	util "rho/cmd/rho-install/util"
 	install "rho/cmd/rho-install/install"
-	pkgcli "rho/cmd/rho-pkg/cli"
+	util "rho/cmd/rho-install/util"
 	modcli "rho/cmd/rho-module/cli"
 	modcore "rho/cmd/rho-module/core"
+	pkgcli "rho/cmd/rho-pkg/cli"
 
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
@@ -50,17 +50,17 @@ func main() {
 
 	// Commands that DO NOT require installation
 	if cmd == "help" || cmd == "--help" || cmd == "-h" || cmd == "install" {
-    	// skip installation check
+		// skip installation check
 		if cmd == "--help" || cmd == "-h" {
 			cmd = "help"
 		}
 	} else {
-    	// All other commands require Rho to be installed
-    	if !install.IsInstalled() {
-        	fmt.Println("Rho is not installed.")
-        	fmt.Println("Run: rho install")
-        	os.Exit(1)
-    	}
+		// All other commands require Rho to be installed
+		if !install.IsInstalled() {
+			fmt.Println("Rho is not installed.")
+			fmt.Println("Run: rho install")
+			os.Exit(1)
+		}
 	}
 
 	switch cmd {
@@ -84,183 +84,181 @@ func main() {
 		os.Exit(modcli.Main(os.Args[2:]))
 
 	case "install":
-	    os.Exit(installCLI(os.Args[2:]))
+		os.Exit(installCLI(os.Args[2:]))
 
 	default:
-	    if !runDynamicModule(cmd, os.Args[2:]) {
-    	    fmt.Println("Unknown command:", cmd)
-       		fmt.Println("Use: rho help")
-        	os.Exit(1)
-    	}
+		if !runDynamicModule(cmd, os.Args[2:]) {
+			fmt.Println("Unknown command:", cmd)
+			fmt.Println("Use: rho help")
+			os.Exit(1)
+		}
 	}
 }
 
 func runDynamicModule(cmd string, args []string) bool {
-    // First, try to find a module with matching command
-    registryPath := filepath.Join(os.Getenv("HOME"), ".rho", "registry", "local", "registry.yaml")
-    
-    // Read registry to find modules with this command
-    if _, err := os.Stat(registryPath); err == nil {
-        // Parse registry to find module with matching command
-        // We need to check each installed module's manifest for the command field
-        modulesDir := filepath.Join(os.Getenv("HOME"), ".rho", "modules", "installed")
-        
-        for _, moduleType := range []string{"component", "plugin"} {
-            typeDir := filepath.Join(modulesDir, moduleType)
-            if _, err := os.Stat(typeDir); err != nil {
-                continue
-            }
-            
-            entries, err := os.ReadDir(typeDir)
-            if err != nil {
-                continue
-            }
-            
-            for _, e := range entries {
-                if !e.IsDir() {
-                    continue
-                }
-                
-                modPath := filepath.Join(typeDir, e.Name(), "module.yml")
-                manifest, err := modcore.LoadModuleYAML(modPath)
-                if err != nil {
-                    continue
-                }
-                
-                // Check if this module's command matches
-                if manifest.Module.Command == cmd {
-                    // Found it! Load and run
-                    mod, err := modcore.LoadInstalledModule(manifest.Module.Name)
-                    if err != nil {
-                        return false
-                    }
-                    
-                    entry := mod.Entry()
-                    if entry == nil {
-                        fmt.Fprintln(os.Stderr, "rho:", "module has no entrypoint:", manifest.Module.Name)
-                        os.Exit(1)
-                    }
-                    
-                    if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
-                        fmt.Fprintln(os.Stderr, "rho:", err)
-                        os.Exit(1)
-                    }
-                    
-                    return true
-                }
-            }
-        }
-    }
-    
-    // Fallback: try to load by module name (for backwards compatibility)
-    mod, err := modcore.LoadInstalledModule(cmd)
-    if err != nil {
-        return false
-    }
-    
-    entry := mod.Entry()
-    if entry == nil {
-        fmt.Fprintln(os.Stderr, "rho:", "module has no entrypoint:", cmd)
-        os.Exit(1)
-    }
-    
-    if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
-        fmt.Fprintln(os.Stderr, "rho:", err)
-        os.Exit(1)
-    }
-    
-    return true
+	// First, try to find a module with matching command
+	registryPath := filepath.Join(os.Getenv("HOME"), ".rho", "registry", "local", "registry.yaml")
+
+	// Read registry to find modules with this command
+	if _, err := os.Stat(registryPath); err == nil {
+		// Parse registry to find module with matching command
+		// We need to check each installed module's manifest for the command field
+		modulesDir := filepath.Join(os.Getenv("HOME"), ".rho", "modules", "installed")
+
+		for _, moduleType := range []string{"component", "plugin"} {
+			typeDir := filepath.Join(modulesDir, moduleType)
+			if _, err := os.Stat(typeDir); err != nil {
+				continue
+			}
+
+			entries, err := os.ReadDir(typeDir)
+			if err != nil {
+				continue
+			}
+
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+
+				modPath := filepath.Join(typeDir, e.Name(), "module.yml")
+				manifest, err := modcore.LoadModuleYAML(modPath)
+				if err != nil {
+					continue
+				}
+
+				// Check if this module's command matches
+				if manifest.Module.Command == cmd {
+					// Found it! Load and run
+					mod, err := modcore.LoadInstalledModule(manifest.Module.Name)
+					if err != nil {
+						return false
+					}
+
+					entry := mod.Entry()
+					if entry == nil {
+						fmt.Fprintln(os.Stderr, "rho:", "module has no entrypoint:", manifest.Module.Name)
+						os.Exit(1)
+					}
+
+					if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
+						fmt.Fprintln(os.Stderr, "rho:", err)
+						os.Exit(1)
+					}
+
+					return true
+				}
+			}
+		}
+	}
+
+	// Fallback: try to load by module name (for backwards compatibility)
+	mod, err := modcore.LoadInstalledModule(cmd)
+	if err != nil {
+		return false
+	}
+
+	entry := mod.Entry()
+	if entry == nil {
+		fmt.Fprintln(os.Stderr, "rho:", "module has no entrypoint:", cmd)
+		os.Exit(1)
+	}
+
+	if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "rho:", err)
+		os.Exit(1)
+	}
+
+	return true
 }
 
 func buildRhoExecutables() error {
-    binaries := []struct {
-        name string
-        path string
-    }{
-        {"rho", "./cmd/rho"},
-        {"rho-fmt", "./cmd/rho-fmt"},
-        {"rho-test", "./cmd/rho-test"},
-        {"rho-deps", "./cmd/rho-deps"},
-        {"rho-doc", "./cmd/rho-doc"},
-    }
-
-    if err := os.MkdirAll("./bin", 0o755); err != nil {
-        return fmt.Errorf("cannot create ./bin: %w", err)
-    }
-
-    for _, b := range binaries {
-        cmd := exec.Command("go", "build", "-o", filepath.Join("bin", b.name), b.path)
-        cmd.Stdout = os.Stdout
-        cmd.Stderr = os.Stderr
-
-        if err := cmd.Run(); err != nil {
-            return fmt.Errorf("failed to build %s: %w", b.name, err)
-        }
-    }
-
-    return nil
-}
-
-
-func installCLI(args []string) int {
-    fmt.Println("Installing Rho ecosystem...")
-
-	force := false
-    if len(args) == 1 && args[0] == "--force" {
-        force = true
-    }
-
-	if force {
-	    home, err := install.GetRhoHome()
-   	 if err != nil {
-    	    fmt.Println("rho install:", err)
-       	 return 1
-   	 }
-   	 os.RemoveAll(home)
+	binaries := []struct {
+		name string
+		path string
+	}{
+		{"rho", "./cmd/rho"},
+		{"rho-fmt", "./cmd/rho-fmt"},
+		{"rho-test", "./cmd/rho-test"},
+		{"rho-deps", "./cmd/rho-deps"},
+		{"rho-doc", "./cmd/rho-doc"},
 	}
 
-    steps := []struct {
-        name string
-        fn   func() error
-    }{
-        {"Creating directory structure", install.EnsurePaths},
+	if err := os.MkdirAll("./bin", 0o755); err != nil {
+		return fmt.Errorf("cannot create ./bin: %w", err)
+	}
+
+	for _, b := range binaries {
+		cmd := exec.Command("go", "build", "-o", filepath.Join("bin", b.name), b.path)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to build %s: %w", b.name, err)
+		}
+	}
+
+	return nil
+}
+
+func installCLI(args []string) int {
+	fmt.Println("Installing Rho ecosystem...")
+
+	force := false
+	if len(args) == 1 && args[0] == "--force" {
+		force = true
+	}
+
+	if force {
+		home, err := install.GetRhoHome()
+		if err != nil {
+			fmt.Println("rho install:", err)
+			return 1
+		}
+		os.RemoveAll(home)
+	}
+
+	steps := []struct {
+		name string
+		fn   func() error
+	}{
+		{"Creating directory structure", install.EnsurePaths},
 		{"Building Rho executables", buildRhoExecutables},
-        {"Installing binaries", func() error {
-            // Binaries are expected to be in ./bin relative to rho
-            return install.InstallAllBinaries("./bin")
-        }},
-        {"Initializing registry", install.InitLocalRegistry},
-        {"Initializing cache", install.InitCache},
-        {"Initializing config", install.InitConfig},
-        {"Adding Rho to PATH", install.AddRhoToPath},
-    }
+		{"Installing binaries", func() error {
+			// Binaries are expected to be in ./bin relative to rho
+			return install.InstallAllBinaries("./bin")
+		}},
+		{"Initializing registry", install.InitLocalRegistry},
+		{"Initializing cache", install.InitCache},
+		{"Initializing config", install.InitConfig},
+		{"Adding Rho to PATH", install.AddRhoToPath},
+	}
 
-    for _, step := range steps {
-        fmt.Printf(" - %s...\n", step.name)
-        if err := step.fn(); err != nil {
-            fmt.Printf("   ERROR: %v\n", err)
-            return 1
-        }
-    }
+	for _, step := range steps {
+		fmt.Printf(" - %s...\n", step.name)
+		if err := step.fn(); err != nil {
+			fmt.Printf("   ERROR: %v\n", err)
+			return 1
+		}
+	}
 
-    fmt.Println("Rho installation complete.")
+	fmt.Println("Rho installation complete.")
 	fmt.Println()
 	fmt.Println("To activate Rho in your current shell, run:")
 	switch util.DetectShell() {
-		case "bash":
-    		fmt.Println("  source ~/.bashrc")
-		case "zsh":
-    		fmt.Println("  source ~/.zshrc")
-		case "fish":
-    		fmt.Println("  source ~/.config/fish/config.fish")
-		default:
-    		fmt.Println("  source ~/.profile")
+	case "bash":
+		fmt.Println("  source ~/.bashrc")
+	case "zsh":
+		fmt.Println("  source ~/.zshrc")
+	case "fish":
+		fmt.Println("  source ~/.config/fish/config.fish")
+	default:
+		fmt.Println("  source ~/.profile")
 	}
 	fmt.Println()
 
-    return 0
+	return 0
 }
-
 
 func testCLI(args []string) int {
 	if len(args) > 1 {
@@ -467,10 +465,10 @@ func buildCLI(args []string) int {
 	var outC string
 	if *out != "" {
 		outC, _ = filepath.Abs(*out)
-	} else if projectArg != "" {
-		outC = filepath.Join(projectRoot, "build", "main.c")
 	} else {
-		outC = replaceExt(absIn, ".c")
+		// A project keeps every generated artefact under build/; only a
+		// standalone source file is compiled next to itself.
+		outC = src.ProjectOutputPath(absIn)
 	}
 
 	if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
@@ -478,10 +476,18 @@ func buildCLI(args []string) int {
 		return 1
 	}
 
-	generatedDir := filepath.Join(projectRoot, "build", "generated")
-	if err := src.GenerateProjectWithDependencies(absIn, generatedDir, includePaths, sourceFiles, rhoDependencyRoots); err != nil {
+	// The descriptor decides where generated projects live.
+	generatedDirs, err := src.GenerateAllTargets(absIn, "", includePaths, sourceFiles, rhoDependencyRoots)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
+	}
+	for _, dir := range generatedDirs {
+		rel, relErr := filepath.Rel(projectRoot, dir)
+		if relErr != nil {
+			rel = dir
+		}
+		fmt.Println("Generated project:", filepath.ToSlash(rel))
 	}
 
 	/* ---------------------------------------------------------------------- */

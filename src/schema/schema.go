@@ -33,7 +33,7 @@ import (
 type Severity int
 
 const (
-	SeverityError   Severity = iota
+	SeverityError Severity = iota
 	SeverityWarning
 )
 
@@ -50,9 +50,9 @@ func (s Severity) String() string {
 
 // ValidationError represents a single schema violation.
 type ValidationError struct {
-	Path      string
-	Message   string
-	Severity  Severity
+	Path     string
+	Message  string
+	Severity Severity
 }
 
 func (e ValidationError) Error() string {

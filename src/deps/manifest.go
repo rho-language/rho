@@ -43,6 +43,7 @@ type Manifest struct {
 	Features         []string
 	Deps             []DepSpec
 	BuildLanguage    string
+	BuildTargets     []string
 	BuildIncludeDirs []string
 	BuildSourceDirs  []string
 	BuildSources     []string
@@ -182,6 +183,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	build := doc.Map["build"]
 	if build.Kind == yaml.KindMap {
 		m.BuildLanguage = yamlString(build, "language")
+		m.BuildTargets = yamlStrings(build.Map["targets"])
 		m.BuildIncludeDirs = yamlStrings(build.Map["include_dirs"])
 		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
 		m.BuildSources = yamlStrings(build.Map["sources"])

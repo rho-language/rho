@@ -33,6 +33,8 @@ import (
 	"rho/src/frontend/ast"
 	"rho/src/frontend/lexer"
 	"rho/src/frontend/parser"
+	"rho/src/ir"
+	"rho/src/projectgen"
 	types "rho/src/types"
 )
 
@@ -66,8 +68,8 @@ func CompileProjectTo(path, outPath string) error {
 	return CompileFileTo(path, outPath)
 }
 
-// GenerateProject emits a small native C project for a Rho application.
-// The generated directory contains app.c, app.h, main.c, and CMakeLists.txt.
+// GenerateProject emits a native C project for a Rho application using the
+// default descriptor.
 func GenerateProject(path, outputDir string, includePaths, sourceFiles []string) error {
 	return GenerateProjectWithDependencies(path, outputDir, includePaths, sourceFiles, nil)
 }
@@ -79,87 +81,147 @@ func GenerateProjectWithDependencies(path, outputDir string, includePaths, sourc
 	if err != nil {
 		return err
 	}
-	tc := types.New()
-	if err := tc.CheckModule(*mod); err != nil {
-		return fmt.Errorf("typechecking failed: %w", err)
+	return GenerateTarget(path, outputDir, "c", includePaths, sourceFiles, dependencyRoots, mod)
+}
+
+// GenerateTarget emits one generated project for a descriptor target id.
+// The compiled module may be supplied to avoid re-running the front end.
+func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles, dependencyRoots []string, compiled *ast.Module) error {
+	irModule, err := compileToIR(compiled, path, dependencyRoots)
+	if err != nil {
+		return err
 	}
-	irModule := tc.ToIR(*mod)
-	if err := codegen.ValidateModule(irModule); err != nil {
-		return fmt.Errorf("codegen validation failed: %w", err)
+	descriptor, err := ResolveDescriptor(ProjectRoot(path))
+	if err != nil {
+		return err
 	}
-	hasInit := false
-	for _, fn := range irModule.Funcs {
-		if fn.Name == "init" && !fn.Extern && len(fn.Params) == 0 {
-			hasInit = true
-			break
+	targets, err := descriptor.ResolveTargets([]string{targetID})
+	if err != nil {
+		return err
+	}
+	ctx := projectgen.Context{
+		ModuleName:   irModule.Name,
+		ProjectRoot:  ProjectRoot(path),
+		OutputDir:    outputDir,
+		IR:           irModule,
+		IncludePaths: includePaths,
+		SourceFiles:  sourceFiles,
+	}
+	for _, target := range targets {
+		if _, err := projectgen.Generate(ctx, target); err != nil {
+			return err
 		}
-	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("create generated project: %w", err)
-	}
-
-	appC := codegen.EmitC(irModule)
-	appC = strings.ReplaceAll(appC, "int main(", "int app_main(")
-	appC = "/*\n * @file app.c\n * @brief Generated Rho application implementation.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#include \"app.h\"\n\n" + appC
-	appC = "/*\n * @file app.c\n * @brief Generated Rho application implementation.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#define _POSIX_C_SOURCE 200809L\n#include \"app.h\"\n\n" + appC
-
-	configInclude := ""
-	projectRoot := ProjectRoot(path)
-	if info, statErr := os.Stat(filepath.Join(projectRoot, "config")); statErr == nil && info.IsDir() {
-		config := "/*\n * @file app_config.h\n * @brief Generated Rho application configuration.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#pragma once\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n#define RHO_APP_NAME \"" + mod.Name + "\"\n\n#ifdef __cplusplus\n}\n#endif\n"
-		config = strings.Replace(config, "app_config.h", "config.h", 1)
-		if err := os.WriteFile(filepath.Join(outputDir, "config.h"), []byte(config), 0644); err != nil {
-			return fmt.Errorf("write config.h: %w", err)
-		}
-		configInclude = "#include \"config.h\"\n"
-	}
-
-	initCall := ""
-	if hasInit {
-		initCall = "    init();\n"
-	}
-	appInit := "void app_init(void)\n{\n" + initCall + "}\n\n"
-	appC += "\n" + appInit
-	runtimeStart := strings.Index(appC, "static char* rho_concat(const char* a, const char* b) {")
-	initStart := strings.Index(appC, "\nvoid app_init(void)")
-	if runtimeStart < 0 || initStart < runtimeStart {
-		return fmt.Errorf("generated runtime section is missing")
-	}
-	runtimeBody := appC[runtimeStart:initStart]
-	appC = appC[:runtimeStart] + appC[initStart:]
-	appC = strings.ReplaceAll(appC, "static char* rho_", "char* rho_")
-	runtimeBody = strings.ReplaceAll(runtimeBody, "static char* rho_", "char* rho_")
-	runtimeC := "/*\n * @file runtime.c\n * @brief Generated Rho C runtime support.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#define _POSIX_C_SOURCE 200809L\n#include <stdint.h>\n#include <stdbool.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stddef.h>\n\n" + runtimeBody
-	if err := os.WriteFile(filepath.Join(outputDir, "runtime.c"), []byte(runtimeC), 0644); err != nil {
-		return fmt.Errorf("write runtime.c: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(outputDir, "app.c"), []byte(appC), 0644); err != nil {
-		return fmt.Errorf("write app.c: %w", err)
-	}
-	header := "/*\n * @file app.h\n * @brief Generated Rho application interface.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#pragma once\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n#include <stdint.h>\n#include <stdbool.h>\n#include <stddef.h>\n" + configInclude + "\nint app_main(void);\nvoid app_init(void);\n\n#ifdef __cplusplus\n}\n#endif\n"
-	if err := os.WriteFile(filepath.Join(outputDir, "app.h"), []byte(header), 0644); err != nil {
-		return fmt.Errorf("write app.h: %w", err)
-	}
-
-	mainC := "/*\n * @file main.c\n * @brief Generated native system entry point for a Rho application.\n *\n * @project " + mod.Name + "\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n#include \"app.h\"\n\nint main(void)\n{\n    app_init();\n    return app_main();\n}\n"
-	if err := os.WriteFile(filepath.Join(outputDir, "main.c"), []byte(mainC), 0644); err != nil {
-		return fmt.Errorf("write main.c: %w", err)
-	}
-
-	cmake := "cmake_minimum_required(VERSION 3.16)\nproject(" + mod.Name + " C)\n\nset(CMAKE_C_STANDARD 11)\nset(CMAKE_C_STANDARD_REQUIRED ON)\n\nadd_executable(" + mod.Name + " main.c app.c\n"
-	cmake += "    runtime.c\n"
-	for _, source := range sourceFiles {
-		cmake += "    " + filepath.ToSlash(source) + "\n"
-	}
-	cmake += ")\n\ntarget_include_directories(" + mod.Name + " PRIVATE\n    ${CMAKE_CURRENT_SOURCE_DIR}\n"
-	for _, include := range includePaths {
-		cmake += "    " + filepath.ToSlash(include) + "\n"
-	}
-	cmake += ")\n"
-	if err := os.WriteFile(filepath.Join(outputDir, "CMakeLists.txt"), []byte(cmake), 0644); err != nil {
-		return fmt.Errorf("write CMakeLists.txt: %w", err)
 	}
 	return nil
+}
+
+// GenerateAllTargets generates one project per target the manifest requests,
+// each under the descriptor's output root followed by the target id. It
+// returns the directories written.
+//
+// When module.yml declares no build.targets the C target is generated, which
+// preserves the behaviour of builds that predate multi-target support.
+func GenerateAllTargets(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string) ([]string, error) {
+	compiled, err := loadModuleGraphWithDependencies(path, dependencyRoots)
+	if err != nil {
+		return nil, err
+	}
+	irModule, err := compileToIR(compiled, path, dependencyRoots)
+	if err != nil {
+		return nil, err
+	}
+
+	projectRoot := ProjectRoot(path)
+	descriptor, err := ResolveDescriptor(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	requested, err := BuildTargetIDs(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	if len(requested) == 0 {
+		requested = []string{DefaultBuildTarget}
+	}
+	targets, err := descriptor.ResolveTargets(requested)
+	if err != nil {
+		return nil, err
+	}
+
+	// An explicit outputRoot argument wins over the descriptor.
+	root := outputRoot
+	if root == "" {
+		root = filepath.Join(projectRoot, descriptor.OutputRoot(targets[0]))
+	}
+
+	written := make([]string, 0, len(targets))
+	for _, target := range targets {
+		dir := filepath.Join(root, target.ID)
+		ctx := projectgen.Context{
+			ModuleName:   irModule.Name,
+			ProjectRoot:  projectRoot,
+			OutputDir:    dir,
+			IR:           irModule,
+			IncludePaths: includePaths,
+			SourceFiles:  sourceFiles,
+		}
+		if _, err := projectgen.Generate(ctx, target); err != nil {
+			return written, err
+		}
+		written = append(written, dir)
+	}
+	return written, nil
+}
+
+// DefaultBuildTarget is generated when a manifest names no targets.
+const DefaultBuildTarget = "c"
+
+// compileToIR runs typechecking and codegen validation, reusing a preloaded
+// module when one is supplied.
+func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (ir.ModuleIR, error) {
+	if compiled == nil {
+		loaded, err := loadModuleGraphWithDependencies(path, dependencyRoots)
+		if err != nil {
+			return ir.ModuleIR{}, err
+		}
+		compiled = loaded
+	}
+	tc := types.New()
+	if err := tc.CheckModule(*compiled); err != nil {
+		return ir.ModuleIR{}, fmt.Errorf("typechecking failed: %w", err)
+	}
+	irModule := tc.ToIR(*compiled)
+	if err := codegen.ValidateModule(irModule); err != nil {
+		return ir.ModuleIR{}, fmt.Errorf("codegen validation failed: %w", err)
+	}
+	return irModule, nil
+}
+
+// ResolveDescriptor returns the project's own project.yml when present, and
+// the built-in descriptor otherwise.
+func ResolveDescriptor(projectRoot string) (*projectgen.Descriptor, error) {
+	candidate := filepath.Join(projectRoot, projectgen.DescriptorFileName)
+	if _, err := os.Stat(candidate); err == nil {
+		return projectgen.ParseDescriptorFile(candidate)
+	}
+	return projectgen.DefaultDescriptor()
+}
+
+// BuildTargetIDs returns the target ids a project requests through
+// build.targets in its manifest. A project with no manifest, or with no
+// targets declared, returns an empty list so the caller can fall back to the
+// default. A manifest that exists but is malformed is reported.
+func BuildTargetIDs(projectRoot string) ([]string, error) {
+	manifestPath := deps.ManifestPath(projectRoot)
+	if _, err := os.Stat(manifestPath); err != nil {
+		return nil, nil
+	}
+	manifest, err := deps.LoadManifest(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read project manifest: %w", err)
+	}
+	return manifest.BuildTargets, nil
 }
 
 // ProjectRoot returns the directory containing rho.mod, or the source file's
@@ -187,8 +249,8 @@ func ProjectRoot(path string) string {
 	}
 }
 
-// ProjectOutputPath returns build/<entry>.c for a project and a sibling .c
-// path for a standalone source file.
+// ProjectOutputPath returns <build_dir>/<entry>.c for a project and a sibling
+// .c path for a standalone source file. The descriptor may relocate build_dir.
 func ProjectOutputPath(path string) string {
 	root := ProjectRoot(path)
 	if _, err := os.Stat(filepath.Join(root, "module.yml")); err != nil {
@@ -196,7 +258,15 @@ func ProjectOutputPath(path string) string {
 			return replaceExt(path, ".c")
 		}
 	}
-	return filepath.Join(root, "build", filepath.Base(replaceExt(path, ".c")))
+
+	buildDir := projectgen.DefaultBuildDir
+	// A project that overrides the build location in its descriptor is
+	// honoured; a descriptor that fails to parse falls back to the default so
+	// the path helper never becomes the source of a build error.
+	if descriptor, err := ResolveDescriptor(root); err == nil {
+		buildDir = descriptor.BuildRoot()
+	}
+	return filepath.Join(root, buildDir, filepath.Base(replaceExt(path, ".c")))
 }
 
 func compileModule(mod ast.Module, outPath string) error {

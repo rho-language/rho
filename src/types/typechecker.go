@@ -684,12 +684,19 @@ func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
 		}
 	}
 
+	// Lowering needs the local scope so operator lowering can pick the right
+	// form for the operand types. Locals are added as the body is lowered.
+	scope := make(map[string]ir.Type, len(params))
+	for _, param := range params {
+		scope[param.Name] = param.Type
+	}
+
 	return ir.FuncIR{
 		Name:       fn.Name,
 		CName:      qualifiedCName(fn.Owner, fn.Name),
 		Params:     params,
 		ReturnType: tc.typeFor(fn.ReturnType),
-		Body:       lowerStatements(fn.Body),
+		Body:       tc.lowerStatements(fn.Body, scope),
 		Extern:     fn.Extern,
 	}
 }
@@ -743,36 +750,39 @@ func unicodeUpper(ch byte) bool { return ch >= 'A' && ch <= 'Z' }
 
 func (tc *TypeChecker) typeFor(name string) ir.Type { typ, _ := tc.resolveType(name); return typ }
 
-func lowerStatements(statements []ast.Stmt) []ir.Instr {
+func (tc *TypeChecker) lowerStatements(statements []ast.Stmt, scope map[string]ir.Type) []ir.Instr {
 	out := []ir.Instr{}
 	for _, stmt := range statements {
-		out = append(out, lowerStatement(stmt)...)
+		out = append(out, tc.lowerStatement(stmt, scope)...)
 	}
 	return out
 }
 
-func lowerStatement(statement ast.Stmt) []ir.Instr {
+func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Type) []ir.Instr {
 	switch stmt := statement.(type) {
 	case ast.LetStmt:
 		value := ""
 		if stmt.Value != nil {
-			value = lowerExpr(stmt.Value)
+			value = tc.lowerExpr(stmt.Value, scope)
 		}
+		// Record the binding so later expressions in the same body can see
+		// its type when deciding how to lower operators.
+		scope[stmt.Name] = tc.typeFor(stmt.Type.String())
 		return []ir.Instr{{Op: ir.OpLet, Dest: stmt.Name, Type: cTypeForName(stmt.Type.String()), Args: []string{value}}}
 	case ast.AssignStmt:
-		return []ir.Instr{{Op: ir.OpAssign, Dest: lowerExpr(stmt.Target) + " " + stmt.Op, Args: []string{lowerExpr(stmt.Value)}}}
+		return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{tc.lowerExpr(stmt.Value, scope)}}}
 	case ast.ExprStmt:
-		return []ir.Instr{{Op: ir.OpExpr, Args: []string{lowerExpr(stmt.Expr)}}}
+		return []ir.Instr{{Op: ir.OpExpr, Args: []string{tc.lowerExpr(stmt.Expr, scope)}}}
 	case ast.ReturnStmt:
 		value := ""
 		if stmt.Value != nil {
-			value = lowerExpr(stmt.Value)
+			value = tc.lowerExpr(stmt.Value, scope)
 		}
 		return []ir.Instr{{Op: ir.OpReturn, Args: []string{value}}}
 	case ast.IfStmt:
-		return []ir.Instr{{Op: ir.OpIf, Condition: lowerExpr(stmt.Condition), Then: lowerStatements(stmt.Then), Else: lowerStatements(stmt.Else)}}
+		return []ir.Instr{{Op: ir.OpIf, Condition: tc.lowerExpr(stmt.Condition, scope), Then: tc.lowerStatements(stmt.Then, scope), Else: tc.lowerStatements(stmt.Else, scope)}}
 	case ast.WhileStmt:
-		return []ir.Instr{{Op: ir.OpWhile, Condition: lowerExpr(stmt.Condition), Then: lowerStatements(stmt.Body)}}
+		return []ir.Instr{{Op: ir.OpWhile, Condition: tc.lowerExpr(stmt.Condition, scope), Then: tc.lowerStatements(stmt.Body, scope)}}
 	case ast.BreakStmt:
 		return []ir.Instr{{Op: ir.OpBreak}}
 	default:
@@ -780,7 +790,7 @@ func lowerStatement(statement ast.Stmt) []ir.Instr {
 	}
 }
 
-func lowerExpr(expr ast.Expr) string {
+func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string {
 	switch expr := expr.(type) {
 	case ast.IdentifierExpr:
 		return expr.Name
@@ -794,12 +804,36 @@ func lowerExpr(expr ast.Expr) string {
 		}
 		return "false"
 	case ast.UnaryExpr:
-		return expr.Op + lowerExpr(expr.Value)
+		return expr.Op + tc.lowerExpr(expr.Value, scope)
 	case ast.BinaryExpr:
-		if expr.Op == "+" {
-			return "rho_concat(" + lowerExpr(expr.Left) + ", " + lowerExpr(expr.Right) + ")"
+		// `+` means different things per operand type. Strings need the
+		// runtime helper because C has no string concatenation operator, while
+		// numbers use the host operator directly.
+		if expr.Op == "+" && tc.isStringExpr(expr, scope) {
+			return "rho_concat(" + tc.lowerExpr(expr.Left, scope) + ", " + tc.lowerExpr(expr.Right, scope) + ")"
 		}
-		return "(" + lowerExpr(expr.Left) + " " + expr.Op + " " + lowerExpr(expr.Right) + ")"
+
+		left, right := tc.lowerExpr(expr.Left, scope), tc.lowerExpr(expr.Right, scope)
+
+		// C promotes mismatched numeric operands implicitly; Go does not. An
+		// explicit cast is valid in both, so both operands are widened here
+		// and the backends emit the same semantics.
+		//
+		// A numeric literal needs no handling: it is an untyped constant that
+		// adapts to the other operand in C and in Go alike.
+		leftType, leftErr := tc.exprType(expr.Left, scope)
+		rightType, rightErr := tc.exprType(expr.Right, scope)
+		promote := leftErr == nil && rightErr == nil &&
+			numeric(leftType) && numeric(rightType) &&
+			leftType.Kind != rightType.Kind &&
+			!isNumericLiteral(expr.Left) && !isNumericLiteral(expr.Right)
+		if promote {
+			target := promotedKind(leftType.Kind, rightType.Kind)
+			left = "(" + cTypeForKind(target) + ")" + left
+			right = "(" + cTypeForKind(target) + ")" + right
+		}
+
+		return "(" + left + " " + expr.Op + " " + right + ")"
 	case ast.MemberExpr:
 		object, isIdentifier := expr.Object.(ast.IdentifierExpr)
 		if isIdentifier && object.Name == "yaml" && expr.Name == "load" {
@@ -808,41 +842,102 @@ func lowerExpr(expr ast.Expr) string {
 		if isIdentifier && object.Name == "string" && expr.Name == "from_i32" {
 			return "rho_string_from_i32"
 		}
-		return lowerExpr(expr.Object) + "." + expr.Name
+		return tc.lowerExpr(expr.Object, scope) + "." + expr.Name
 	case ast.IndexExpr:
-		return lowerExpr(expr.Object) + "[" + lowerExpr(expr.Index) + "]"
+		return tc.lowerExpr(expr.Object, scope) + "[" + tc.lowerExpr(expr.Index, scope) + "]"
 	case ast.CallExpr:
 		if callee, ok := expr.Callee.(ast.IdentifierExpr); ok && callee.Name == "print" {
 			if len(expr.Args) == 1 {
-				return "printf(\"%s\\n\", " + lowerExpr(expr.Args[0]) + ")"
+				return "printf(\"%s\\n\", " + tc.lowerExpr(expr.Args[0], scope) + ")"
 			}
 			return "printf(\"%s\\n\", \"\")"
 		}
-		callee := lowerExpr(expr.Callee)
-		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok && identifier.Name == "str_eq" {
-			callee = "rho_str_eq"
+		callee := tc.lowerExpr(expr.Callee, scope)
+		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok {
+			if identifier.Name == "str_eq" {
+				callee = "rho_str_eq"
+			} else if signature, found := tc.funcs[identifier.Name]; found && signature.cName != "" {
+				// A function belonging to an imported module is emitted under
+				// its qualified name, so the call site must use the same name
+				// or the generated code will not link.
+				callee = signature.cName
+			}
 		}
 		args := []string{}
 		for _, arg := range expr.Args {
-			args = append(args, lowerExpr(arg))
+			args = append(args, tc.lowerExpr(arg, scope))
 		}
 		return callee + "(" + strings.Join(args, ", ") + ")"
 	case ast.StructLiteralExpr:
 		values := []string{}
 		for _, value := range expr.Values {
-			values = append(values, lowerExpr(value))
+			values = append(values, tc.lowerExpr(value, scope))
 		}
 		return "(" + cTypeForName(expr.Type.String()) + "){ " + strings.Join(values, ", ") + " }"
 	case ast.ArrayLiteralExpr:
 		values := make([]string, len(expr.Values))
 		for index, value := range expr.Values {
-			values[index] = lowerExpr(value)
+			values[index] = tc.lowerExpr(value, scope)
 		}
 		return "{ " + strings.Join(values, ", ") + " }"
 	case ast.IfExpr:
-		return "(" + lowerExpr(expr.Condition) + " ? " + lowerExpr(expr.Then) + " : " + lowerExpr(expr.Else) + ")"
+		return "(" + tc.lowerExpr(expr.Condition, scope) + " ? " + tc.lowerExpr(expr.Then, scope) + " : " + tc.lowerExpr(expr.Else, scope) + ")"
 	default:
 		return "0"
+	}
+}
+
+// isStringExpr reports whether an expression has string type. It is used to
+// decide whether `+` needs the runtime concatenation helper.
+//
+// The module has already been type checked by this point, so a failure here
+// means the type is not statically known. That case is treated as numeric so
+// the generated host code stays valid; the checker has already rejected
+// genuinely ill-typed expressions.
+func (tc *TypeChecker) isStringExpr(expr ast.Expr, scope map[string]ir.Type) bool {
+	typ, err := tc.exprType(expr, scope)
+	if err != nil {
+		return false
+	}
+	return typ.Kind == ir.TypeString
+}
+
+// isNumericLiteral reports whether an expression is a bare numeric literal,
+// which is an untyped constant for promotion purposes.
+func isNumericLiteral(expr ast.Expr) bool {
+	_, ok := expr.(ast.NumberExpr)
+	return ok
+}
+
+// promotedKind returns the numeric type both operands are promoted to,
+// following the usual widening order.
+func promotedKind(a, b ir.TypeKind) ir.TypeKind {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// cTypeForKind returns the C spelling of an IR numeric kind, used to emit
+// explicit widening casts.
+func cTypeForKind(kind ir.TypeKind) string {
+	switch kind {
+	case ir.TypeBool:
+		return "bool"
+	case ir.TypeU8:
+		return "uint8_t"
+	case ir.TypeU16:
+		return "uint16_t"
+	case ir.TypeU32:
+		return "uint32_t"
+	case ir.TypeU64:
+		return "uint64_t"
+	case ir.TypeI32:
+		return "int32_t"
+	case ir.TypeF64:
+		return "double"
+	default:
+		return "double"
 	}
 }
 

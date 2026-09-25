@@ -28,7 +28,30 @@ import (
 )
 
 // ValidModuleTypes lists all allowed module.type values.
-var ValidModuleTypes = []string{"rho", "module", "component", "plugin"}
+var ValidModuleTypes = []string{"rho", "module", "component", "plugin", "interfaces"}
+
+// RhoSourceModuleTypes are the module types written in Rho. They declare a
+// main entry point, unlike `interfaces` modules which are native libraries
+// consumed through the build section.
+var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
+
+// IsRhoSourceType reports whether a module type is written in Rho.
+func IsRhoSourceType(moduleType string) bool {
+	for _, candidate := range RhoSourceModuleTypes {
+		if candidate == moduleType {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidBuildLanguages lists the source languages a build section may declare.
+var ValidBuildLanguages = []string{"c", "go", "cgo"}
+
+// ValidBuildTargets lists the generated-project backends an application may
+// request. The set is intentionally open-ended: a descriptor may define new
+// targets, and validation of unknown ids happens against that descriptor.
+var ValidBuildTargets = []string{"c", "go"}
 
 // ModuleSchema returns a schema for validating module.yml content.
 // It returns a base schema that requires module.name, module.type,
@@ -46,13 +69,17 @@ func ModuleSchema() Schema {
 					{Name: "type", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidModuleTypes},
 					{Name: "version", Required: true, RejectNull: true, Kind: KindString},
 					{Name: "command", Required: false, Kind: KindString},
+					// Descriptive metadata carried by published modules.
+					{Name: "description", Required: false, Kind: KindString},
+					{Name: "maintainer", Required: false, Kind: KindString},
+					{Name: "license", Required: false, Kind: KindString},
+					{Name: "created", Required: false, Kind: KindString},
 				},
 			},
 			{
-				Name:      "main",
-				Required:  true,
-				RejectNull: true,
-				Kind:      KindString,
+				Name:     "main",
+				Required: false,
+				Kind:     KindString,
 			},
 			{
 				Name:     "deps",
@@ -94,11 +121,60 @@ func ModuleSchema() Schema {
 				Required: false,
 				Kind:     KindMap,
 				Fields: []FieldSchema{
-					{Name: "language", Required: true, RejectNull: true, Kind: KindString, AllowedValues: []string{"c", "go", "cgo"}},
+					{Name: "language", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidBuildLanguages},
+					// targets lists the generated-project backends to emit for
+					// this application (for example c and go).
+					{Name: "targets", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "include_dirs", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "source_dirs", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "sources", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "headers", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
+				Name:     "exports",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "headers", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					{Name: "sources", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
+				Name:     "dependencies",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "required", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					{Name: "optional", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
+				Name:     "config",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "kconfig_fragments", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
+				Name:     "tests",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "enabled", Required: false, Kind: KindString},
+					{Name: "test_dirs", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					{Name: "test_files", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
+				Name:     "metadata",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "tags", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					{Name: "stability", Required: false, Kind: KindString},
+					{Name: "visibility", Required: false, Kind: KindString},
 				},
 			},
 		},
@@ -122,9 +198,9 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 		if ok && modMap.Kind == yaml.KindMap {
 			if _, hasCmd := modMap.Map["command"]; !hasCmd {
 				errs = append(errs, ValidationError{
-					Path:      "module.command",
-					Message:   "component modules should specify a 'command' for dynamic dispatch",
-					Severity:  SeverityWarning,
+					Path:     "module.command",
+					Message:  "component modules should specify a 'command' for dynamic dispatch",
+					Severity: SeverityWarning,
 				})
 			}
 		}
@@ -134,9 +210,9 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 		if ok && modMap.Kind == yaml.KindMap {
 			if cmd, exists := modMap.Map["command"]; exists && cmd.Str != "" {
 				errs = append(errs, ValidationError{
-					Path:      "module.command",
-					Message:   "plugin modules should not specify 'command' (use hooks.yml instead)",
-					Severity:  SeverityError,
+					Path:     "module.command",
+					Message:  "plugin modules should not specify 'command' (use hooks.yml instead)",
+					Severity: SeverityError,
 				})
 			}
 		}
@@ -154,6 +230,25 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 		}
 	}
 
+	// A Rho-source module must declare an entry point. Native library
+	// modules (for example type `interfaces`) legitimately have none.
+	if IsRhoSourceType(moduleType) {
+		mainVal, hasMain := data.Map["main"]
+		if !hasMain {
+			errs = append(errs, ValidationError{
+				Path:     "main",
+				Message:  fmt.Sprintf("module type '%s' must declare a main entry point", moduleType),
+				Severity: SeverityError,
+			})
+		} else if mainVal.Kind == yaml.KindNull || mainVal.Str == "" {
+			errs = append(errs, ValidationError{
+				Path:     "main",
+				Message:  "main is declared but has no value",
+				Severity: SeverityError,
+			})
+		}
+	}
+
 	// Validate depends entries: each must have at least 'git' or 'path'
 	if dependsNode, ok := data.Map["depends"]; ok && dependsNode.Kind == yaml.KindList {
 		for i, item := range dependsNode.List {
@@ -164,17 +259,17 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 			hasPath, _ := item.Map["path"]
 			if hasGit.Str == "" && hasPath.Str == "" {
 				errs = append(errs, ValidationError{
-					Path:      fmt.Sprintf("depends[%d]", i),
-					Message:   "dependency must specify either 'git' or 'path'",
-					Severity:  SeverityError,
+					Path:     fmt.Sprintf("depends[%d]", i),
+					Message:  "dependency must specify either 'git' or 'path'",
+					Severity: SeverityError,
 				})
 			}
 			// tag and branch are mutually exclusive
 			if item.Map["tag"].Str != "" && item.Map["branch"].Str != "" {
 				errs = append(errs, ValidationError{
-					Path:      fmt.Sprintf("depends[%d]", i),
-					Message:   "dependency cannot specify both 'tag' and 'branch'",
-					Severity:  SeverityError,
+					Path:     fmt.Sprintf("depends[%d]", i),
+					Message:  "dependency cannot specify both 'tag' and 'branch'",
+					Severity: SeverityError,
 				})
 			}
 		}
