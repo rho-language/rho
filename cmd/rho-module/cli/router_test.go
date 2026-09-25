@@ -52,6 +52,7 @@ func TestRouterInvalidSubcommand(t *testing.T) {
 		"update",    // needs module.yml in current dir
 		"activate",  // needs 1 arg
 		"unpublish", // needs 1 arg
+		"uninstall", // needs 1 arg (alias for unpublish)
 	}
 
 	for _, cmd := range commands {

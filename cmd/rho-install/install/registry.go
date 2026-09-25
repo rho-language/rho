@@ -26,8 +26,10 @@ import (
 /*  Registry Template                                                          */
 /* -------------------------------------------------------------------------- */
 
-const registryTemplate = `modules: []
-active_plugins: {}
+const registryTemplate = `components:
+plugins:
+active_components:
+active_plugins:
 settings: {}
 `
 
