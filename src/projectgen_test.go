@@ -441,3 +441,447 @@ func TestGeneratedGoProjectMatchesC(t *testing.T) {
 		t.Fatalf("expected the program to print a greeting, got %q", wantOut)
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Test: String Escapes Survive Both Backends                                 */
+/* -------------------------------------------------------------------------- */
+
+// The lexer decodes escapes and lowering re-encodes them, so the C and Go
+// backends must emit the same bytes. A JSON payload is the motivating case:
+// before escape support, a quoted field could not be written in Rho at all.
+func TestStringEscapesMatchAcrossBackends(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("no C compiler available")
+	}
+
+	_, entry := writeEscapedProject(t)
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("GenerateAllTargets failed: %v", err)
+	}
+
+	// C target.
+	cDir := dirs[0]
+	cOut := filepath.Join(cDir, "app.c")
+	if err := CompileProjectTo(entry, cOut); err != nil {
+		t.Fatalf("CompileProjectTo failed: %v", err)
+	}
+	cBinary := filepath.Join(t.TempDir(), "appc")
+	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	if out, err := gcc.CombinedOutput(); err != nil {
+		t.Fatalf("C target did not build: %v\n%s", err, out)
+	}
+	cStdout, err := exec.Command(cBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("C binary failed: %v\n%s", err, cStdout)
+	}
+
+	// Go target.
+	goDir := dirs[1]
+	goBinary := filepath.Join(t.TempDir(), "appgo")
+	build := exec.Command("go", "build", "-o", goBinary, ".")
+	build.Dir = goDir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("Go target did not build: %v\n%s", err, out)
+	}
+	goStdout, err := exec.Command(goBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Go binary failed: %v\n%s", err, goStdout)
+	}
+
+	if string(cStdout) != string(goStdout) {
+		t.Fatalf("backends disagree:\nC  = %q\nGo = %q", cStdout, goStdout)
+	}
+	// The payload must actually contain a JSON object with a quoted field,
+	// proving the escape survived rather than being dropped.
+	if !strings.Contains(string(cStdout), `{"name":"rho-lsp"}`) {
+		t.Fatalf("expected a JSON payload with an escaped quote, got %q", cStdout)
+	}
+}
+
+// writeEscapedProject builds a project whose source needs escape sequences.
+func writeEscapedProject(t *testing.T) (root string, entry string) {
+	t.Helper()
+	root = t.TempDir()
+	entry = filepath.Join(root, "src", "main.rho")
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n  name: escaped\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n\nbuild:\n  language: c\n  targets:\n    - c\n    - go\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := "module app\n\n" +
+		"fn payload() string {\n" +
+		"    return \"{\\\"name\\\":\\\"rho-lsp\\\"}\";\n" +
+		"}\n\n" +
+		"fn main() void {\n" +
+		"    print(payload());\n" +
+		"}\n"
+	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root, entry
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Generics End to End                                                  */
+/* -------------------------------------------------------------------------- */
+
+// Generic declarations are monomorphised, so a program using Result and Option
+// must build and behave identically for the C and Go backends.
+func TestGenericProgramMatchesAcrossBackends(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("no C compiler available")
+	}
+
+	_, entry := writeGenericProject(t)
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("GenerateAllTargets failed: %v", err)
+	}
+
+	cDir := dirs[0]
+	cOut := filepath.Join(cDir, "app.c")
+	if err := CompileProjectTo(entry, cOut); err != nil {
+		t.Fatalf("CompileProjectTo failed: %v", err)
+	}
+	cBinary := filepath.Join(t.TempDir(), "appc")
+	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	if out, err := gcc.CombinedOutput(); err != nil {
+		t.Fatalf("C target did not build: %v\n%s", err, out)
+	}
+	cStdout, err := exec.Command(cBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("C binary failed: %v\n%s", err, cStdout)
+	}
+
+	goDir := dirs[1]
+	// go vet catches unresolved generic names the compiler would accept.
+	vet := exec.Command("go", "vet", "./...")
+	vet.Dir = goDir
+	if out, err := vet.CombinedOutput(); err != nil {
+		t.Fatalf("go vet rejected the generated project: %v\n%s", err, out)
+	}
+	goBinary := filepath.Join(t.TempDir(), "appgo")
+	build := exec.Command("go", "build", "-o", goBinary, ".")
+	build.Dir = goDir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("Go target did not build: %v\n%s", err, out)
+	}
+	goStdout, err := exec.Command(goBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Go binary failed: %v\n%s", err, goStdout)
+	}
+
+	if string(cStdout) != string(goStdout) {
+		t.Fatalf("backends disagree:\nC  = %q\nGo = %q", cStdout, goStdout)
+	}
+	for _, want := range []string{"ok path", "err path", "some path", "none path"} {
+		if !strings.Contains(string(cStdout), want) {
+			t.Fatalf("expected %q in output, got %q", want, cStdout)
+		}
+	}
+}
+
+// writeGenericProject builds a project that instantiates Result and Option,
+// which are monomorphised generic structs.
+func writeGenericProject(t *testing.T) (root string, entry string) {
+	t.Helper()
+	root = t.TempDir()
+	entry = filepath.Join(root, "src", "main.rho")
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n  name: generics\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n\nbuild:\n  language: c\n  targets:\n    - c\n    - go\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := `module app
+
+import std.core.result
+import std.core.option
+
+fn parse(ok: bool) Result[u32, u32] {
+    if ok {
+        return Ok[u32, u32](7)
+    }
+    return Err[u32, u32](1)
+}
+
+fn main() void {
+    let good: Result[u32, u32] = parse(true)
+    if good.is_ok {
+        print("ok path");
+    }
+    let bad: Result[u32, u32] = parse(false)
+    if !bad.is_ok {
+        print("err path");
+    }
+    let some: Option[u32] = Some[u32](5)
+    if some.is_some {
+        print("some path");
+    }
+    let none: Option[u32] = None[u32]()
+    if !none.is_some {
+        print("none path");
+    }
+}
+`
+	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root, entry
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Type Inference End to End                                            */
+/* -------------------------------------------------------------------------- */
+
+// An application written without type arguments is deduced and monomorphised,
+// so the program must build and behave identically for both backends.
+func TestInferredGenericsMatchAcrossBackends(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("no C compiler available")
+	}
+
+	_, entry := writeInferredProject(t)
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("GenerateAllTargets failed: %v", err)
+	}
+
+	cDir := dirs[0]
+	cOut := filepath.Join(cDir, "app.c")
+	if err := CompileProjectTo(entry, cOut); err != nil {
+		t.Fatalf("CompileProjectTo failed: %v", err)
+	}
+	cBinary := filepath.Join(t.TempDir(), "appc")
+	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	if out, err := gcc.CombinedOutput(); err != nil {
+		t.Fatalf("C target did not build: %v\n%s", err, out)
+	}
+	cStdout, err := exec.Command(cBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("C binary failed: %v\n%s", err, cStdout)
+	}
+
+	goDir := dirs[1]
+	vet := exec.Command("go", "vet", "./...")
+	vet.Dir = goDir
+	if out, err := vet.CombinedOutput(); err != nil {
+		t.Fatalf("go vet rejected the generated project: %v\n%s", err, out)
+	}
+	goBinary := filepath.Join(t.TempDir(), "appgo")
+	build := exec.Command("go", "build", "-o", goBinary, ".")
+	build.Dir = goDir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("Go target did not build: %v\n%s", err, out)
+	}
+	goStdout, err := exec.Command(goBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Go binary failed: %v\n%s", err, goStdout)
+	}
+
+	if string(cStdout) != string(goStdout) {
+		t.Fatalf("backends disagree:\nC  = %q\nGo = %q", cStdout, goStdout)
+	}
+	for _, want := range []string{"deduced field", "deduced call", "result ok", "result err", "option some", "option none"} {
+		if !strings.Contains(string(cStdout), want) {
+			t.Fatalf("expected %q in output, got %q", want, cStdout)
+		}
+	}
+}
+
+// writeInferredProject omits type arguments everywhere, so the compiler has to
+// deduce them from field values, call arguments and expected types.
+func writeInferredProject(t *testing.T) (root string, entry string) {
+	t.Helper()
+	root = t.TempDir()
+	entry = filepath.Join(root, "src", "main.rho")
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n  name: inferred\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n\nbuild:\n  language: c\n  targets:\n    - c\n    - go\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := `module app
+
+import std.core.result
+import std.core.option
+
+struct Box[T] {
+    value: T
+}
+
+fn wrap[T](v: T) Box[T] {
+    return Box[T]{ v }
+}
+
+fn parse(good: bool) Result[u32, u32] {
+    if good {
+        return Ok(7)
+    }
+    return Err(1)
+}
+
+fn main() void {
+    // deduced from the field value
+    let a: Box[i32] = Box{ 1 }
+    if a.value == 1 {
+        print("deduced field");
+    }
+    // deduced from the argument
+    let b: Box[u32] = wrap(7)
+    if b.value == 7 {
+        print("deduced call");
+    }
+    // E is supplied only by the declared return type
+    let good: Result[u32, u32] = parse(true)
+    if good.is_ok {
+        print("result ok");
+    }
+    let bad: Result[u32, u32] = parse(false)
+    if !bad.is_ok {
+        print("result err");
+    }
+    let some: Option[u32] = Some(5)
+    if some.is_some {
+        print("option some");
+    }
+    let none: Option[u32] = None()
+    if !none.is_some {
+        print("option none");
+    }
+}
+`
+	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root, entry
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Inference and Defaults End to End                                    */
+/* -------------------------------------------------------------------------- */
+
+// A program with no type annotations and no explicit type arguments must build
+// and behave identically for both backends.
+func TestUnannotatedProgramMatchesAcrossBackends(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("no C compiler available")
+	}
+
+	_, entry := writeUnannotatedProject(t)
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("GenerateAllTargets failed: %v", err)
+	}
+
+	cDir := dirs[0]
+	cOut := filepath.Join(cDir, "app.c")
+	if err := CompileProjectTo(entry, cOut); err != nil {
+		t.Fatalf("CompileProjectTo failed: %v", err)
+	}
+	cBinary := filepath.Join(t.TempDir(), "appc")
+	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	if out, err := gcc.CombinedOutput(); err != nil {
+		t.Fatalf("C target did not build: %v\n%s", err, out)
+	}
+	cStdout, err := exec.Command(cBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("C binary failed: %v\n%s", err, cStdout)
+	}
+
+	goDir := dirs[1]
+	vet := exec.Command("go", "vet", "./...")
+	vet.Dir = goDir
+	if out, err := vet.CombinedOutput(); err != nil {
+		t.Fatalf("go vet rejected the generated project: %v\n%s", err, out)
+	}
+	goBinary := filepath.Join(t.TempDir(), "appgo")
+	build := exec.Command("go", "build", "-o", goBinary, ".")
+	build.Dir = goDir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("Go target did not build: %v\n%s", err, out)
+	}
+	goStdout, err := exec.Command(goBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Go binary failed: %v\n%s", err, goStdout)
+	}
+
+	if string(cStdout) != string(goStdout) {
+		t.Fatalf("backends disagree:\nC  = %q\nGo = %q", cStdout, goStdout)
+	}
+	for _, want := range []string{"inferred int", "inferred string", "result ok", "result err", "option some", "option none"} {
+		if !strings.Contains(string(cStdout), want) {
+			t.Fatalf("expected %q in output, got %q", want, cStdout)
+		}
+	}
+}
+
+// writeUnannotatedProject omits every type annotation and type argument it can,
+// relying on inference and on generic parameter defaults.
+func writeUnannotatedProject(t *testing.T) (root string, entry string) {
+	t.Helper()
+	root = t.TempDir()
+	entry = filepath.Join(root, "src", "main.rho")
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n  name: unannotated\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n\nbuild:\n  language: c\n  targets:\n    - c\n    - go\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := `module app
+
+import std.core.result
+import std.core.option
+
+fn main() void {
+    // no type annotation
+    let total = 1 + 2
+    if total == 3 {
+        print("inferred int");
+    }
+    let label = "hi"
+    if label == "hi" {
+        print("inferred string");
+    }
+    // no type arguments, and E falls back to its default
+    let good = Ok(7)
+    if good.is_ok {
+        print("result ok");
+    }
+    let bad = Err(1)
+    if !bad.is_ok {
+        print("result err");
+    }
+    let some = Some(5)
+    if some.is_some {
+        print("option some");
+    }
+    let none = None()
+    if !none.is_some {
+        print("option none");
+    }
+}
+`
+	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root, entry
+}

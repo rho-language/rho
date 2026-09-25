@@ -23,6 +23,7 @@ package lexer
 
 import (
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -139,6 +140,9 @@ type Lexer struct {
 	length int
 	ch     rune
 	width  int
+	// stringErr records why a string literal was rejected, so the caller can
+	// report an invalid escape instead of a misleading unterminated string.
+	stringErr string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -179,8 +183,12 @@ func (l *Lexer) Next() Token {
 
 	// Strings
 	if l.ch == '"' {
+		l.stringErr = ""
 		str := l.readString()
 		if str == "\x00unterminated" {
+			if l.stringErr != "" {
+				return Token{Kind: TokenIllegal, Lex: l.stringErr, Pos: startPos}
+			}
 			return Token{Kind: TokenIllegal, Lex: "unterminated string", Pos: startPos}
 		}
 		return Token{Kind: TokenString, Lex: str, Pos: startPos}
@@ -432,22 +440,143 @@ func (l *Lexer) readNumber() string {
 	return l.src[start : l.pos-l.width]
 }
 
+// readString scans a double-quoted string and decodes escape sequences.
+//
+// Decoding here keeps a single semantic value: the typechecker re-encodes with
+// strconv.Quote when lowering, which produces escapes valid in both C and Go,
+// so neither backend needs its own escape handling.
 func (l *Lexer) readString() string {
 	// skip opening quote
 	l.readChar()
-	start := l.pos - l.width
-	for l.ch != '"' && l.ch != 0 {
-		l.readChar()
+	var b strings.Builder
+	for {
+		switch {
+		case l.ch == 0:
+			return "\x00unterminated"
+
+		case l.ch == '"':
+			l.readChar()
+			return b.String()
+
+		case l.ch == '\\':
+			l.readChar()
+			r, ok := l.readEscape()
+			if !ok {
+				if l.stringErr == "" {
+					l.stringErr = "unterminated string"
+				}
+				return "\x00unterminated"
+			}
+			b.WriteRune(r)
+
+		default:
+			b.WriteRune(l.ch)
+			l.readChar()
+		}
 	}
+}
+
+// readEscape decodes the escape sequence whose backslash has been consumed.
+// The second return value is false when the sequence is invalid, in which case
+// the lexer has been left in a state that makes readString report a bad token.
+func (l *Lexer) readEscape() (rune, bool) {
 	if l.ch == 0 {
-		return "\x00unterminated"
+		return 0, false
 	}
-	str := l.src[start : l.pos-l.width]
-	// skip closing quote
-	if l.ch == '"' {
+	escape := l.ch
+	l.readChar()
+
+	switch escape {
+	case 'n':
+		return '\n', true
+	case 'r':
+		return '\r', true
+	case 't':
+		return '\t', true
+	case 'a':
+		return '\a', true
+	case 'b':
+		return '\b', true
+	case 'f':
+		return '\f', true
+	case 'v':
+		return '\v', true
+	case '0':
+		return 0, true
+	case '\\':
+		return '\\', true
+	case '"':
+		return '"', true
+	case '\'':
+		return '\'', true
+	case 'x', 'u', 'U':
+		if escape == 'x' {
+			// C-style byte escape: one or two hex digits.
+			value, ok := l.readHexRange(1, 2)
+			if !ok {
+				l.stringErr = "invalid x escape in string literal"
+				return 0, false
+			}
+			return rune(byte(value)), true
+		}
+		digits := 4
+		if escape == 'U' {
+			digits = 8
+		}
+		value, ok := l.readHex(digits)
+		if !ok {
+			l.stringErr = fmt.Sprintf("invalid %s escape in string literal", string(escape))
+			return 0, false
+		}
+		if !utf8.ValidRune(rune(value)) {
+			l.stringErr = fmt.Sprintf("\\%s escape is not a valid unicode code point", string(escape))
+			return 0, false
+		}
+		return rune(value), true
+	default:
+		// An unknown escape is almost always a typo such as "\d". Reporting
+		// it is safer than silently dropping the backslash.
+		l.stringErr = fmt.Sprintf("unknown escape sequence \\%c in string literal", escape)
+		return 0, false
+	}
+}
+
+// readHex reads exactly count hexadecimal digits.
+func (l *Lexer) readHex(count int) (int, bool) {
+	return l.readHexRange(count, count)
+}
+
+// readHexRange reads between min and max hexadecimal digits, stopping as soon
+// as a non-hex character is reached. It fails when fewer than min are present.
+func (l *Lexer) readHexRange(min, max int) (int, bool) {
+	value := 0
+	seen := 0
+	for seen < max {
+		digit, ok := hexValue(l.ch)
+		if !ok {
+			break
+		}
+		value = value*16 + digit
+		seen++
 		l.readChar()
 	}
-	return str
+	if seen < min {
+		return 0, false
+	}
+	return value, true
+}
+
+func hexValue(ch rune) (int, bool) {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return int(ch - '0'), true
+	case ch >= 'a' && ch <= 'f':
+		return int(ch-'a') + 10, true
+	case ch >= 'A' && ch <= 'F':
+		return int(ch-'A') + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func isLetter(ch rune) bool {

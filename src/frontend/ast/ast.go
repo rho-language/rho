@@ -118,6 +118,9 @@ type StructDecl struct {
 	Owner      string
 	Fields     []Field
 	TypeParams []string
+	// TypeParamDefaults holds the default type written for a parameter, as in
+	// `struct Result[T, E = Unit]`. A parameter with no entry has no default.
+	TypeParamDefaults map[string]string
 }
 
 func (StructDecl) declNode() {}
@@ -151,7 +154,10 @@ type FuncDecl struct {
 	ReturnType string
 	Body       []Stmt // Rho 0.1: empty, parser skips body
 	TypeParams []string
-	Extern     bool
+	// TypeParamDefaults holds the default type written for a parameter, as in
+	// `fn Ok[T, E = Unit](v: T)`. A parameter with no entry has no default.
+	TypeParamDefaults map[string]string
+	Extern            bool
 }
 
 func (FuncDecl) declNode() {}

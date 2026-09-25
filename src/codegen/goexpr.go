@@ -439,9 +439,10 @@ func goCompoundType(cType string) string {
 	if goCasts[cType] != "" {
 		return goCasts[cType]
 	}
-	// User structs keep their name.
+	// A user struct, possibly a mangled generic specialisation, uses the same
+	// spelling as its declaration and parameter references.
 	if isValidGoIdent(cType) {
-		return cType
+		return goTypeName(cType)
 	}
 	return ""
 }
@@ -629,7 +630,7 @@ func goTypeForIR(t ir.Type) string {
 	case ir.TypeString:
 		return "string"
 	case ir.TypeStruct:
-		return sanitizeGoTypeName(t.Name)
+		return goTypeName(t.Name)
 	default:
 		return ""
 	}
@@ -638,6 +639,17 @@ func goTypeForIR(t ir.Type) string {
 // sanitizeGoTypeName normalises a struct type name for Go use.
 func sanitizeGoTypeName(name string) string {
 	return strings.NewReplacer("[", "_", "]", "", ",", "_", " ", "").Replace(name)
+}
+
+// goTypeName normalises a declared type name for Go. A name that already reads
+// as an identifier is kept, so exported types such as PID survive; a mangled
+// generic name such as Result_u32_u32 is lower-camel-cased. Definitions and
+// type references must both use this so they resolve to the same identifier.
+func goTypeName(name string) string {
+	if name == "" {
+		return ""
+	}
+	return lowerCamel(sanitizeGoTypeName(name))
 }
 
 // goTypeForCName maps a C type spelling appearing in IR text to Go.
@@ -649,5 +661,5 @@ func goTypeForCName(name string) string {
 	if converted, ok := goCasts[trimmed]; ok {
 		return converted
 	}
-	return lowerCamel(trimmed)
+	return goTypeName(trimmed)
 }
