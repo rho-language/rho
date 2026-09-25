@@ -195,11 +195,12 @@ rho module validate [directory]
 # Show module metadata
 rho module info [directory]
 
-# Publish a module to registry
+# Publish a module to local registry
 rho module publish [directory]
 
 # Unpublish a module version from registry
 rho module unpublish <name@version>
+rho module uninstall <name@version>   # alias for unpublish
 
 # Activate a specific version (only one active at a time per module)
 rho module activate <name@version>
@@ -218,15 +219,22 @@ rho module update [directory]
 
 # Search registry for modules (shows active status)
 rho module search [query]
+rho module list [query]   # alias for search
 ```
 
 **Module Versioning & Active Versions:**
 - Multiple versions of the same module can be installed simultaneously
 - Only one version per module is active at a time
 - Publishing the first version of a module auto-activates it
-- `rho module search` shows `[ACTIVE]` marker for active versions
+- `rho module search` / `rho module list` shows `[ACTIVE]` marker for active versions
 - `rho module unpublish` fails if trying to unpublish an active version that has other versions available (must switch active version first)
 - If unpublishing the only version (even if active), it succeeds and clears from active list
+
+**Remote Registry (Future):**
+- Registry configuration stored in `~/.rho/config/registry.yaml`
+- When a remote registry URL and auth token are configured, `rho module publish` uploads to remote
+- `rho module download` fetches modules from the remote registry
+- Remote results are shown with `[REMOTE]` marker in search results
 
 The `rho module` commands are built into the main `rho` binary - no separate
 build step required.
