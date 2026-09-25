@@ -39,6 +39,10 @@ func Load(src string) (Value, error) {
 		node   *Value
 		parent *Value
 		key    string
+		// isItem marks a frame pushed for a "- item" entry rather than for
+		// a "key:" declaration. Item frames are popped when the next item
+		// starts at the same indent; key frames are not.
+		isItem bool
 	}
 	stack := []frame{{indent: -1, node: &root}}
 
@@ -55,6 +59,25 @@ func Load(src string) (Value, error) {
 			(popAtSameIndent && indent <= stack[len(stack)-1].indent)) {
 			stack = stack[:len(stack)-1]
 		}
+
+		// A key declared with no value stays KindNull until content
+		// follows. Resolve it from the first line it actually owns, so
+		// list-vs-map is decided by the document instead of a fixed
+		// table of key names.
+		if top := &stack[len(stack)-1]; top.node.Kind == KindNull {
+			if strings.HasPrefix(line, "-") {
+				top.node.Kind = KindList
+				top.node.Map = nil
+				top.node.List = []Value{}
+			} else {
+				top.node.Kind = KindMap
+				top.node.Map = map[string]Value{}
+			}
+			if top.parent != nil {
+				top.parent.Map[top.key] = *top.node
+			}
+		}
+
 		current := stack[len(stack)-1].node
 
 		// key: value
@@ -72,12 +95,8 @@ func Load(src string) (Value, error) {
 				continue
 			}
 			if val == "" {
-				child := &Value{Kind: KindMap, Map: map[string]Value{}}
-				if key == "list" || key == "features" || key == "depends" || key == "include_dirs" || key == "source_dirs" || key == "sources" || key == "headers" || key == "required" || key == "optional" || key == "tags" || key == "test_dirs" || key == "test_files" || key == "kconfig_fragments" || key == "hooks" || key == "components" || key == "plugins" {
-					child.Kind = KindList
-					child.Map = nil
-					child.List = []Value{}
-				}
+				// Defer the map-vs-list decision to the content below.
+				child := &Value{Kind: KindNull}
 				if _, exists := current.Map[key]; exists {
 					return Value{}, fmt.Errorf("duplicate YAML key: %q", key)
 				}
@@ -103,6 +122,12 @@ func Load(src string) (Value, error) {
 
 		// list item: "- item"
 		if strings.HasPrefix(line, "-") {
+			// A new item at the same indent as the previous one closes that
+			// item, so pop its frame and return to the owning list.
+			for len(stack) > 1 && stack[len(stack)-1].isItem && stack[len(stack)-1].indent >= indent {
+				stack = stack[:len(stack)-1]
+			}
+			current = stack[len(stack)-1].node
 			if current.Kind != KindList {
 				return Value{}, fmt.Errorf("list item without a list: %q", line)
 			}
@@ -120,7 +145,7 @@ func Load(src string) (Value, error) {
 				}
 				entry := Value{Kind: KindMap, Map: map[string]Value{key: {Kind: KindString, Str: value}}}
 				current.List = append(current.List, entry)
-				stack = append(stack, frame{indent: indent, node: &current.List[len(current.List)-1]})
+				stack = append(stack, frame{indent: indent, node: &current.List[len(current.List)-1], isItem: true})
 				if frame := stack[len(stack)-2]; frame.parent != nil {
 					frame.parent.Map[frame.key] = *current
 				}

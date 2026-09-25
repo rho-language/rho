@@ -28,11 +28,12 @@
 package core
 
 import (
-    "errors"
-    "fmt"
-    "os"
+	"errors"
+	"fmt"
+	"os"
 
-    "rho/src/yaml"
+	"rho/src/schema"
+	"rho/src/yaml"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -58,42 +59,49 @@ type ModuleYAML struct {
 /* -------------------------------------------------------------------------- */
 
 func LoadModuleYAML(path string) (ModuleYAML, error) {
-    data, err := os.ReadFile(path)
-    if err != nil {
-        return ModuleYAML{}, fmt.Errorf("cannot read module.yml: %w", err)
-    }
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ModuleYAML{}, fmt.Errorf("cannot read module.yml: %w", err)
+	}
 
-    root, err := yaml.Load(string(data))
-    if err != nil {
-        return ModuleYAML{}, fmt.Errorf("invalid YAML: %w", err)
-    }
+	root, err := yaml.Load(string(data))
+	if err != nil {
+		return ModuleYAML{}, fmt.Errorf("invalid YAML: %w", err)
+	}
 
-    modMap := root.Map["module"].Map
+	modMap := root.Map["module"].Map
 
-    m := ModuleYAML{
-        Module: ModuleSection{
-            Name:    modMap["name"].Str,
-            Type:    modMap["type"].Str,
-            Version: modMap["version"].Str,
-            Command: modMap["command"].Str,
-        },
-        Main:     root.Map["main"].Str,
-        Features: []string{},
-    }
+	m := ModuleYAML{
+		Module: ModuleSection{
+			Name:    modMap["name"].Str,
+			Type:    modMap["type"].Str,
+			Version: modMap["version"].Str,
+			Command: modMap["command"].Str,
+		},
+		Main:     root.Map["main"].Str,
+		Features: []string{},
+	}
 
-    // Load features
-    if f, ok := root.Map["features"]; ok {
-        for _, item := range f.List {
-            m.Features = append(m.Features, item.Str)
-        }
-    }
+	// Load features
+	if f, ok := root.Map["features"]; ok {
+		for _, item := range f.List {
+			m.Features = append(m.Features, item.Str)
+		}
+	}
 
-    // Validate manifest
-    if err := ValidateModuleYAML(m); err != nil {
-        return ModuleYAML{}, err
-    }
+	// Schema validation
+	moduleType := modMap["type"].Str
+	result := schema.ValidateModuleManifest(root, moduleType)
+	if result.HasErrors() {
+		return ModuleYAML{}, fmt.Errorf("schema validation failed:\n%s", result.ErrorString())
+	}
 
-    return m, nil
+	// Validate manifest
+	if err := ValidateModuleYAML(m); err != nil {
+		return ModuleYAML{}, err
+	}
+
+	return m, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -127,17 +135,17 @@ func SaveModuleYAML(path string, m ModuleYAML) error {
 /* -------------------------------------------------------------------------- */
 
 func ValidateModuleYAML(m ModuleYAML) error {
-    if m.Module.Name == "" {
-        return errors.New("module.name is required")
-    }
-    if m.Module.Type == "" {
-        return errors.New("module.type is required")
-    }
-    if m.Module.Version == "" {
-        return errors.New("module.version is required")
-    }
-    if m.Main == "" {
-        return errors.New("main is required")
-    }
-    return nil
+	if m.Module.Name == "" {
+		return errors.New("module.name is required")
+	}
+	if m.Module.Type == "" {
+		return errors.New("module.type is required")
+	}
+	if m.Module.Version == "" {
+		return errors.New("module.version is required")
+	}
+	if m.Main == "" {
+		return errors.New("main is required")
+	}
+	return nil
 }

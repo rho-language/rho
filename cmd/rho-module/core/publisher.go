@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"rho/internal/paths"
+	"rho/src/schema"
 
 	"rho/cmd/rho-module/remote"
 
@@ -321,22 +322,33 @@ func updateRegistryForPublish(manifest pkgcore.ModuleYAML) error {
 }
 
 func readRegistry(registryPath string) (*Registry, error) {
-    registry := &Registry{
-        Components:  []VersionEntry{},
-        Plugins:     []VersionEntry{},
-        ActiveComponents:  []ActiveEntry{},
-        ActivePlugins:     []ActiveEntry{},
-    }
+	registry := &Registry{
+		Components:       []VersionEntry{},
+		Plugins:          []VersionEntry{},
+		ActiveComponents: []ActiveEntry{},
+		ActivePlugins:    []ActiveEntry{},
+	}
 
-    if _, err := os.Stat(registryPath); err == nil {
-        data, err := os.ReadFile(registryPath)
-        if err == nil {
-            // Simple YAML parsing for our structure
-            parseRegistryYAML(string(data), registry)
-        }
-    }
+	if _, err := os.Stat(registryPath); err == nil {
+		// Schema-validate before parsing
+		result, err := schema.ValidateRegistryFile(registryPath)
+		if err != nil {
+			return registry, fmt.Errorf("cannot read registry: %w", err)
+		}
+		for _, e := range result {
+			if e.IsError() {
+				return registry, fmt.Errorf("registry schema error: %s at %s", e.Message, e.Path)
+			}
+		}
 
-    return registry, nil
+		data, err := os.ReadFile(registryPath)
+		if err == nil {
+			// Simple YAML parsing for our structure
+			parseRegistryYAML(string(data), registry)
+		}
+	}
+
+	return registry, nil
 }
 
 func writeRegistry(registryPath string, registry *Registry) error {

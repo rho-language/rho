@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"os"
 
+	"rho/src/schema"
 	"rho/src/yaml"
 )
 
@@ -94,11 +95,17 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
         }
     }
 
-    // features
+     // Load features
     if featNode, ok := root.Map["features"]; ok {
         for _, f := range featNode.List {
             mod.Features = append(mod.Features, f.Str)
         }
+    }
+
+    // Schema validation
+    schemaResult := schema.ValidateModuleManifest(root, mod.Module.Type)
+    if schemaResult.HasErrors() {
+        return ModuleYAML{}, fmt.Errorf("schema validation failed:\n%s", schemaResult.ErrorString())
     }
 
     // Validate required fields

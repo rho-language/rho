@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"rho/src/schema"
 	"rho/src/yaml"
 )
 
@@ -163,6 +164,14 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse module.yml: %w", err)
 	}
+
+	// Schema validation
+	moduleType := yamlString(doc.Map["module"], "type")
+	scResult := schema.ValidateModuleManifest(doc, moduleType)
+	if scResult.HasErrors() {
+		return nil, fmt.Errorf("schema validation failed:\n%s", scResult.ErrorString())
+	}
+
 	m := &Manifest{}
 	module := doc.Map["module"]
 	if module.Kind == yaml.KindMap {
