@@ -130,3 +130,88 @@ func TestResolverCRepositoryWithoutRhoManifest(t *testing.T) {
 		t.Fatalf("expected one C dependency, got graph=%v lock=%v", graph.Nodes, lock.Packages)
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Source Collection Is Deduplicated                                   */
+/* -------------------------------------------------------------------------- */
+
+// A manifest may list the same translation unit through both build.sources
+// and a build.source_dirs scan. Passing it to the linker twice fails the link
+// step with a multiple-definition error, so collection has to be deduplicated.
+func TestResolverDeduplicatesSources(t *testing.T) {
+	tmp := t.TempDir()
+	lib := filepath.Join(tmp, "clib")
+	if err := os.MkdirAll(filepath.Join(lib, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lib, "src", "error.c"), []byte("int error_fn(void) { return 0; }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `module:
+  name: clib
+  type: interfaces
+  version: 1.0.0
+build:
+  language: c
+  source_dirs:
+    - src
+  sources:
+    - src/error.c
+`
+	if err := os.WriteFile(filepath.Join(lib, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Resolver{Locator: &DefaultLocator{ProjectRoot: tmp}}
+	graph, _, err := r.Resolve(&Manifest{Deps: []DepSpec{{
+		Name: "clib", Type: DepTypeC, Path: "clib", Version: VersionRange{Raw: ">=1.0.0"},
+	}}}, tmp)
+	if err != nil {
+		t.Fatalf("Resolve error: %v", err)
+	}
+
+	sources := graph.Nodes["clib"].SourceFiles
+	seen := map[string]bool{}
+	for _, source := range sources {
+		if seen[source] {
+			t.Fatalf("duplicate source collected: %q in %v", source, sources)
+		}
+		seen[source] = true
+	}
+	if len(sources) != 1 {
+		t.Fatalf("expected one source, got %d: %v", len(sources), sources)
+	}
+}
+
+// Include directories collected from a manifest are deduplicated too.
+func TestResolverDeduplicatesIncludeDirs(t *testing.T) {
+	tmp := t.TempDir()
+	lib := filepath.Join(tmp, "clib")
+	if err := os.MkdirAll(filepath.Join(lib, "include"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `module:
+  name: clib
+  type: interfaces
+  version: 1.0.0
+build:
+  language: c
+  include_dirs:
+    - include
+    - include
+`
+	if err := os.WriteFile(filepath.Join(lib, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Resolver{Locator: &DefaultLocator{ProjectRoot: tmp}}
+	graph, _, err := r.Resolve(&Manifest{Deps: []DepSpec{{
+		Name: "clib", Type: DepTypeC, Path: "clib", Version: VersionRange{Raw: ">=1.0.0"},
+	}}}, tmp)
+	if err != nil {
+		t.Fatalf("Resolve error: %v", err)
+	}
+	if got := len(graph.Nodes["clib"].IncludeDirs); got != 1 {
+		t.Fatalf("expected one include dir, got %d: %v", got, graph.Nodes["clib"].IncludeDirs)
+	}
+}

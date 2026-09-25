@@ -7,3 +7,13 @@ main: src/main.rho
 
 features:
   - math
+
+# Generated project backends. Each target is written to
+# build/generated/<target>/ following the descriptor layout, so one Rho
+# program can ship as a native C executable, a Go command, or a Go web service.
+build:
+  language: c
+  targets:
+    - c
+    - go
+    - go-server

@@ -33,10 +33,10 @@ func HooksSchema() Schema {
 		Name: "hooks.yml",
 		Fields: []FieldSchema{
 			{
-				Name:      "hooks",
-				Required:  true,
+				Name:       "hooks",
+				Required:   true,
 				RejectNull: true,
-				Kind:      KindList,
+				Kind:       KindList,
 				ItemSchema: &ListItemSchema{
 					Kind: KindString,
 				},

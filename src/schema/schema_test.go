@@ -152,9 +152,9 @@ func TestValidateListItems(t *testing.T) {
 		Name: "test",
 		Fields: []FieldSchema{
 			{
-				Name: "items",
-				Required: true,
-				Kind: KindList,
+				Name:       "items",
+				Required:   true,
+				Kind:       KindList,
 				ItemSchema: &ListItemSchema{Kind: KindString},
 			},
 		},
@@ -176,9 +176,9 @@ func TestValidateListItemsWrongKind(t *testing.T) {
 		Name: "test",
 		Fields: []FieldSchema{
 			{
-				Name: "items",
-				Required: true,
-				Kind: KindList,
+				Name:       "items",
+				Required:   true,
+				Kind:       KindList,
 				ItemSchema: &ListItemSchema{Kind: KindString},
 			},
 		},
@@ -204,9 +204,9 @@ func TestValidateNestedMap(t *testing.T) {
 		Name: "test",
 		Fields: []FieldSchema{
 			{
-				Name: "module",
+				Name:     "module",
 				Required: true,
-				Kind: KindMap,
+				Kind:     KindMap,
 				Fields: []FieldSchema{
 					{Name: "name", Required: true, Kind: KindString},
 					{Name: "type", Required: true, Kind: KindString, AllowedValues: []string{"rho", "plugin"}},
@@ -253,4 +253,3 @@ func TestValidationErrorsErrorString(t *testing.T) {
 		t.Fatalf("expected 'module.name' in output: %s", s)
 	}
 }
-

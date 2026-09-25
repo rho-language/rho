@@ -238,3 +238,115 @@ this is not valid yaml
 		t.Fatalf("expected error for invalid YAML")
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: Block Scalars                                                      */
+/* -------------------------------------------------------------------------- */
+
+// Real manifests carry multi-line descriptions with the folded ">" style.
+func TestLoaderBlockScalarFolded(t *testing.T) {
+	src := `module:
+  name: robohub-common
+  description: >
+    Core platform-independent interfaces for the platform.
+    Provides generic types and error codes.
+  version: 1.0.0
+`
+	v, err := Load(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mod := v.Map["module"]
+	got := mod.Map["description"].Str
+	want := "Core platform-independent interfaces for the platform. Provides generic types and error codes."
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	// The key after the block scalar must still be read normally.
+	if mod.Map["version"].Str != "1.0.0" {
+		t.Fatalf("expected the version after the block, got %q", mod.Map["version"].Str)
+	}
+}
+
+// The literal "|" style keeps the line breaks.
+func TestLoaderBlockScalarLiteral(t *testing.T) {
+	src := `notes: |
+  first line
+  second line
+other: kept
+`
+	v, err := Load(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := v.Map["notes"].Str; got != "first line\nsecond line" {
+		t.Fatalf("got %q", got)
+	}
+	if v.Map["other"].Str != "kept" {
+		t.Fatalf("expected the key after the block, got %q", v.Map["other"].Str)
+	}
+}
+
+func TestLoaderBlockScalarEmpty(t *testing.T) {
+	v, err := Load("notes: >\nother: kept\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.Map["notes"].Str != "" {
+		t.Fatalf("expected an empty block scalar, got %q", v.Map["notes"].Str)
+	}
+	if v.Map["other"].Str != "kept" {
+		t.Fatalf("expected the following key to survive, got %q", v.Map["other"].Str)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: Inline Sequences                                                   */
+/* -------------------------------------------------------------------------- */
+
+// Manifests use flow-style empty lists for absent dependency groups.
+func TestLoaderInlineEmptyList(t *testing.T) {
+	src := `dependencies:
+  required: []
+  optional: []
+`
+	v, err := Load(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	deps := v.Map["dependencies"]
+	for _, key := range []string{"required", "optional"} {
+		node := deps.Map[key]
+		if node.Kind != KindList {
+			t.Fatalf("%s: expected a list, got kind %d", key, node.Kind)
+		}
+		if len(node.List) != 0 {
+			t.Fatalf("%s: expected an empty list, got %d items", key, len(node.List))
+		}
+	}
+}
+
+func TestLoaderInlineListWithItems(t *testing.T) {
+	v, err := Load("tags: [core, hal, stable]\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tags := v.Map["tags"]
+	if tags.Kind != KindList || len(tags.List) != 3 {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+	if tags.List[0].Str != "core" || tags.List[2].Str != "stable" {
+		t.Fatalf("unexpected tag content: %#v", tags.List)
+	}
+}
+
+// A quoted value that merely looks like a list must stay a string.
+func TestLoaderQuotedBracketIsString(t *testing.T) {
+	v, err := Load(`expression: "[]"`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.Map["expression"].Kind != KindString || v.Map["expression"].Str != "[]" {
+		t.Fatalf("expected a string, got %#v", v.Map["expression"])
+	}
+}
