@@ -31,6 +31,8 @@ import (
 
 	"rho/internal/paths"
 
+	"rho/cmd/rho-module/remote"
+
 	pkgcore "rho/cmd/rho-pkg/core"
 )
 
@@ -230,16 +232,34 @@ func collectModuleFiles(dir string) ([]string, error) {
 /* -------------------------------------------------------------------------- */
 
 func uploadModule(meta ModuleInfo, pkgPath, sourceArchive string) error {
-    // Placeholder for remote registry upload
-    // In Enterprise v3, this will be implemented via:
-    //   - HTTP POST
-    //   - Git push
-    //   - Nexus upload
-    //
-    // For now, simulate success.
+	// Load remote config
+	cfg, err := remote.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("cannot load registry config: %w", err)
+	}
 
-    fmt.Println("Uploading", pkgPath, "and", sourceArchive, "to registry...")
-    return nil
+	// If remote registry is configured, upload there
+	if cfg.Remote.URL != "" && cfg.Remote.Token != "" {
+		client := remote.NewClient(cfg)
+
+		pkgData, err := os.ReadFile(pkgPath)
+		if err != nil {
+			return fmt.Errorf("cannot read package: %w", err)
+		}
+
+		sourceData, err := os.ReadFile(sourceArchive)
+		if err != nil {
+			return fmt.Errorf("cannot read source archive: %w", err)
+		}
+
+		if err := remote.UploadModule(client, meta.Module.Name, meta.Module.Version, pkgData, sourceData); err != nil {
+			return fmt.Errorf("remote upload failed: %w", err)
+		}
+	}
+
+	// Local mode: publish to local registry only
+	fmt.Println("Publishing", pkgPath, "and", sourceArchive, "to local registry...")
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */
