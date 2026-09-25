@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"rho/src/schema"
 	"rho/src/yaml"
 )
 
@@ -32,34 +33,57 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func ValidateModule(dir string) error {
-    // Load manifest
-    modPath := filepath.Join(dir, "module.yml")
-    manifest, err := LoadModuleYAML(modPath)
-    if err != nil {
-        return err
-    }
+	// Step 1: Schema-validate module.yml
+	modPath := filepath.Join(dir, "module.yml")
+	if _, err := os.Stat(modPath); err != nil {
+		return fmt.Errorf("module.yml not found")
+	}
 
-    // Validate semver
-    if !IsValidSemver(manifest.Module.Version) {
-        return fmt.Errorf("invalid semantic version: %s", manifest.Module.Version)
-    }
+	data, err := os.ReadFile(modPath)
+	if err != nil {
+		return fmt.Errorf("cannot read module.yml: %w", err)
+	}
 
-    // Validate main file (skip for component/plugin - binary is built during pack)
-    if manifest.Module.Type != "component" && manifest.Module.Type != "plugin" {
-        mainPath := filepath.Join(dir, manifest.Main)
-        if _, err := os.Stat(mainPath); err != nil {
-            return fmt.Errorf("main file not found: %s", manifest.Main)
-        }
-    }
+	root, err := yaml.Load(string(data))
+	if err != nil {
+		return fmt.Errorf("invalid YAML in module.yml: %w", err)
+	}
 
-    // Validate plugin structure
-    if manifest.Module.Type == "plugin" {
-        if err := validatePlugin(dir); err != nil {
-            return err
-        }
-    }
+	// Determine module type for type-aware validation
+	moduleType := root.Map["module"].Map["type"].Str
 
-    return nil
+	result := schema.ValidateModuleManifest(root, moduleType)
+	if result.HasErrors() {
+		return fmt.Errorf("schema validation failed:\n%s", result.ErrorString())
+	}
+
+	// Step 2: Load via existing loader (also validates required fields)
+	manifest, err := LoadModuleYAML(modPath)
+	if err != nil {
+		return err
+	}
+
+	// Step 3: Validate semver
+	if !IsValidSemver(manifest.Module.Version) {
+		return fmt.Errorf("invalid semantic version: %s", manifest.Module.Version)
+	}
+
+	// Step 4: Validate main file (skip for component/plugin - binary is built during pack)
+	if manifest.Module.Type != "component" && manifest.Module.Type != "plugin" {
+		mainPath := filepath.Join(dir, manifest.Main)
+		if _, err := os.Stat(mainPath); err != nil {
+			return fmt.Errorf("main file not found: %s", manifest.Main)
+		}
+	}
+
+	// Step 5: Validate plugin structure
+	if manifest.Module.Type == "plugin" {
+		if err := validatePlugin(dir); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -67,39 +91,48 @@ func ValidateModule(dir string) error {
 /* -------------------------------------------------------------------------- */
 
 func validatePlugin(dir string) error {
-    pluginDir := filepath.Join(dir, "plugin")
-    hooksPath := filepath.Join(pluginDir, "hooks.yml")
+	pluginDir := filepath.Join(dir, "plugin")
+	hooksPath := filepath.Join(pluginDir, "hooks.yml")
 
-    if _, err := os.Stat(pluginDir); err != nil {
-        return errors.New("plugin directory missing")
-    }
+	if _, err := os.Stat(pluginDir); err != nil {
+		return errors.New("plugin directory missing")
+	}
 
-    if _, err := os.Stat(hooksPath); err != nil {
-        return errors.New("plugin/hooks.yml missing")
-    }
+	if _, err := os.Stat(hooksPath); err != nil {
+		return errors.New("plugin/hooks.yml missing")
+	}
 
-    // Load hooks.yml
-    data, err := os.ReadFile(hooksPath)
-    if err != nil {
-        return fmt.Errorf("cannot read hooks.yml: %w", err)
-    }
+	// Schema-validate hooks.yml
+	result, err := schema.ValidateHooksFile(hooksPath)
+	if err != nil {
+		return fmt.Errorf("cannot validate hooks.yml: %w", err)
+	}
+		if result.HasErrors() {
+		return fmt.Errorf("hooks.yml schema validation failed:\n%s", result.ErrorString())
+	}
 
-    root, err := yaml.Load(string(data))
-    if err != nil {
-        return fmt.Errorf("invalid hooks.yml: %w", err)
-    }
+	// Load hooks.yml
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		return fmt.Errorf("cannot read hooks.yml: %w", err)
+	}
 
-    hooks := root.Map["hooks"].List
-    if len(hooks) == 0 {
-        return errors.New("plugin has no hooks defined")
-    }
+	root, err := yaml.Load(string(data))
+	if err != nil {
+		return fmt.Errorf("invalid hooks.yml: %w", err)
+	}
 
-    // Validate hook names
-    for _, h := range hooks {
-        if h.Str == "" {
-            return errors.New("empty hook name in hooks.yml")
-        }
-    }
+	hooks := root.Map["hooks"].List
+	if len(hooks) == 0 {
+		return errors.New("plugin has no hooks defined")
+	}
 
-    return nil
+	// Validate hook names
+	for _, h := range hooks {
+		if h.Str == "" {
+			return errors.New("empty hook name in hooks.yml")
+		}
+	}
+
+	return nil
 }

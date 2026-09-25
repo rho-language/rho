@@ -19,7 +19,12 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"rho/internal/paths"
+	"rho/src/schema"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -237,5 +242,82 @@ func TestUnpublishNonExistent(t *testing.T) {
 	err := UnpublishModule("nonexistent", "1.0.0")
 	if err == nil {
 		t.Fatalf("expected error for non-existent module")
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Registry Schema Validation                                          */
+/* -------------------------------------------------------------------------- */
+
+// A corrupt registry.yaml must be reported, not silently parsed as empty.
+func TestReadRegistryRejectsMalformedRegistry(t *testing.T) {
+	tmp, cleanup := SetupTestRegistry(t)
+	defer cleanup()
+	_ = tmp
+
+	registryPath, err := paths.GetRegistryPath()
+	if err != nil {
+		t.Fatalf("GetRegistryPath failed: %v", err)
+	}
+	registryFile := filepath.Join(registryPath, "registry.yaml")
+
+	// An entry without a version violates the registry schema.
+	bad := "components:\n  - name: math\nplugins:\nactive_components:\nactive_plugins:\n"
+	if err := os.WriteFile(registryFile, []byte(bad), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := readRegistry(registryFile); err == nil {
+		t.Fatal("expected schema error for registry entry missing version")
+	}
+}
+
+// A registry entry carrying an unknown field is still readable, but a
+// structurally wrong section type must fail.
+func TestReadRegistryRejectsWrongSectionType(t *testing.T) {
+	_, cleanup := SetupTestRegistry(t)
+	defer cleanup()
+
+	registryPath, err := paths.GetRegistryPath()
+	if err != nil {
+		t.Fatalf("GetRegistryPath failed: %v", err)
+	}
+	registryFile := filepath.Join(registryPath, "registry.yaml")
+
+	bad := "components: not-a-list\nplugins:\nactive_components:\nactive_plugins:\n"
+	if err := os.WriteFile(registryFile, []byte(bad), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := readRegistry(registryFile); err == nil {
+		t.Fatal("expected schema error for components section that is not a list")
+	}
+}
+
+// The registry produced by our own writer must always satisfy the schema.
+func TestWrittenRegistrySatisfiesSchema(t *testing.T) {
+	_, cleanup := SetupTestRegistry(t)
+	defer cleanup()
+
+	registryPath, err := paths.GetRegistryPath()
+	if err != nil {
+		t.Fatalf("GetRegistryPath failed: %v", err)
+	}
+	registryFile := filepath.Join(registryPath, "registry.yaml")
+
+	reg := &Registry{
+		Components:       []VersionEntry{{Name: "math", Version: "1.2.0"}},
+		ActiveComponents: []ActiveEntry{{Name: "math", Version: "1.2.0"}},
+	}
+	if err := writeRegistry(registryFile, reg); err != nil {
+		t.Fatalf("writeRegistry failed: %v", err)
+	}
+
+	result, err := schema.ValidateRegistryFile(registryFile)
+	if err != nil {
+		t.Fatalf("ValidateRegistryFile failed: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("written registry violates schema: %s", result.String())
 	}
 }

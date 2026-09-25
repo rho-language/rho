@@ -33,4 +33,8 @@ const (
     KindString Kind = iota
     KindMap
     KindList
+    // KindNull marks a key that was declared with no value and no
+    // child content (for example `features:` at end of file). The
+    // loader resolves it to a map or list as soon as content follows.
+    KindNull
 )

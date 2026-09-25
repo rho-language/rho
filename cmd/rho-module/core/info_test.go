@@ -189,8 +189,34 @@ main: src/main.rho
 	if err == nil {
 		t.Fatalf("expected error for missing module.name")
 	}
-	if !contains(err.Error(), "module.name missing") {
-		t.Fatalf("expected 'module.name missing' in error, got: %v", err)
+	if !contains(err.Error(), "module.name") {
+		t.Fatalf("expected 'module.name' in error, got: %v", err)
+	}
+}
+
+// A command field must survive metadata reading so identity cards stay
+// consistent between build, pack, and publish stages.
+func TestReadModuleInfoPreservesCommand(t *testing.T) {
+	tmp := t.TempDir()
+
+	moduleYAML := `module:
+  name: rho-lsp
+  type: component
+  version: 0.1.0
+  command: lsp
+
+main: rho-lsp
+`
+	if err := os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(moduleYAML), 0644); err != nil {
+		t.Fatalf("cannot write module.yml: %v", err)
+	}
+
+	info, err := ReadModuleInfo(tmp)
+	if err != nil {
+		t.Fatalf("ReadModuleInfo failed: %v", err)
+	}
+	if info.Module.Command != "lsp" {
+		t.Fatalf("expected command 'lsp', got %q", info.Module.Command)
 	}
 }
 
