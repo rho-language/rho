@@ -39,6 +39,26 @@ type TypeChecker struct {
 	funcs         map[string]functionType
 	fields        map[string]map[string]ir.Type
 	genericParams map[string][]string
+
+	// Generic declarations, kept as templates until monomorphised.
+	genericStructs map[string]ast.StructDecl
+	genericFuncs   map[string]ast.FuncDecl
+
+	// Monomorphisation state.
+	instantiationQueue []instantiation
+	seenInstantiation  map[string]bool
+	emitted            map[string]bool
+	monomorphicStructs map[string]ir.StructIR
+	monomorphicFuncs   map[string]ir.FuncIR
+
+	// currentTypeArgs holds the type-parameter substitution of the generic
+	// function currently being lowered, so nested applications and
+	// `default(T)` resolve against concrete types.
+	currentTypeArgs map[string]ir.Type
+
+	// currentReturnHint is the enclosing function's declared return type, used
+	// as a deduction hint while lowering a return expression.
+	currentReturnHint ir.Type
 }
 
 type functionType struct {
@@ -54,10 +74,16 @@ type functionType struct {
 // New creates a new type checker with built-in primitive types.
 func New() *TypeChecker {
 	tc := &TypeChecker{
-		types:         map[string]ir.Type{},
-		funcs:         map[string]functionType{},
-		fields:        map[string]map[string]ir.Type{},
-		genericParams: map[string][]string{},
+		types:              map[string]ir.Type{},
+		funcs:              map[string]functionType{},
+		fields:             map[string]map[string]ir.Type{},
+		genericParams:      map[string][]string{},
+		genericStructs:     map[string]ast.StructDecl{},
+		genericFuncs:       map[string]ast.FuncDecl{},
+		seenInstantiation:  map[string]bool{},
+		emitted:            map[string]bool{},
+		monomorphicStructs: map[string]ir.StructIR{},
+		monomorphicFuncs:   map[string]ir.FuncIR{},
 	}
 
 	// Built-in types
@@ -83,6 +109,12 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	// First pass: register struct types
 	for _, decl := range m.Decls {
 		if s, ok := decl.(ast.StructDecl); ok {
+			// A generic struct is also a template. Its field types are recorded
+			// with the parameters unresolved, because memberType substitutes
+			// them at each use site.
+			if len(s.TypeParams) > 0 {
+				tc.genericStructs[s.Name] = s
+			}
 			tc.types[s.Name] = ir.Type{Kind: ir.TypeStruct, Name: s.Name}
 			fields := make(map[string]ir.Type, len(s.Fields))
 			for _, field := range s.Fields {
@@ -94,6 +126,11 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	}
 	for _, decl := range m.Decls {
 		if fn, ok := decl.(ast.FuncDecl); ok {
+			// A generic function keeps its declared signature so a use site
+			// supplying type arguments can be checked after substitution.
+			if len(fn.TypeParams) > 0 {
+				tc.genericFuncs[fn.Name] = fn
+			}
 			params := make([]ir.Type, len(fn.Params))
 			for i, param := range fn.Params {
 				params[i] = tc.typeFor(param.Type)
@@ -200,9 +237,23 @@ func (tc *TypeChecker) checkStatements(statements []ast.Stmt, scope map[string]i
 			if _, exists := scope[stmt.Name]; exists {
 				return false, fmt.Errorf("duplicate local %q", stmt.Name)
 			}
-			declared := tc.typeFor(stmt.Type.String())
+			if stmt.Type.Name == "" && stmt.Type.String() == "" {
+				// A type-less binding takes its type from the value.
+				if stmt.Value == nil {
+					return false, fmt.Errorf("cannot infer a type for %q without a value", stmt.Name)
+				}
+				inferred, err := tc.exprType(stmt.Value, scope)
+				if err != nil {
+					return false, err
+				}
+				scope[stmt.Name] = inferred
+				break
+			}
+			declared := tc.declaredType(stmt.Type.String())
 			if stmt.Value != nil {
-				actual, err := tc.exprType(stmt.Value, scope)
+				// The declared type is passed down as the expected type, so a
+				// generic literal can be deduced from it rather than guessed.
+				actual, err := tc.exprTypeExpected(stmt.Value, scope, tc.expectedHint(stmt.Type.String(), declared))
 				if err != nil {
 					return false, err
 				}
@@ -233,7 +284,9 @@ func (tc *TypeChecker) checkStatements(statements []ast.Stmt, scope map[string]i
 					return false, fmt.Errorf("missing return value")
 				}
 			} else {
-				actual, err := tc.exprType(stmt.Value, scope)
+				// The declared return type is the deduction hint, so
+				// `return Ok(7)` can supply a type the argument cannot.
+				actual, err := tc.exprTypeExpected(stmt.Value, scope, result)
 				if err != nil {
 					return false, err
 				}
@@ -297,6 +350,13 @@ func cloneScope(scope map[string]ir.Type) map[string]ir.Type {
 }
 
 func (tc *TypeChecker) exprType(expr ast.Expr, scope map[string]ir.Type) (ir.Type, error) {
+	return tc.exprTypeExpected(expr, scope, ir.Type{})
+}
+
+// exprTypeExpected types an expression with a known expected type. The
+// expected type is only a hint: it seeds deduction of a generic application
+// that was written without type arguments, and is otherwise ignored.
+func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type, expected ir.Type) (ir.Type, error) {
 	switch value := expr.(type) {
 	case ast.IdentifierExpr:
 		if typ, ok := scope[value.Name]; ok {
@@ -399,6 +459,41 @@ func (tc *TypeChecker) exprType(expr ast.Expr, scope map[string]ir.Type) (ir.Typ
 		return converted, nil
 	case ast.CallExpr:
 		var signature functionType
+		// A generic call is checked against the signature with its type
+		// arguments substituted, which is what makes Ok[u32, u32](7) work.
+		// When the arguments are omitted they are deduced from the call site.
+		var subs map[string]ir.Type
+		if identifier, ok := value.Callee.(ast.IdentifierExpr); ok {
+			if decl, generic := tc.genericFuncs[identifier.Name]; generic {
+				args := value.TypeArgs
+				if len(args) == 0 {
+					if deduced := tc.applicationFor(value, scope, expected); len(deduced) > 0 {
+						// Rebuild the deduction as a substitution directly.
+						subs = map[string]ir.Type{}
+						for i, param := range decl.TypeParams {
+							if i < len(deduced) {
+								subs[param] = deduced[i]
+							}
+						}
+					} else {
+						return ir.Type{}, fmt.Errorf("cannot deduce type arguments for %s; %s unresolved, supply them explicitly",
+							identifier.Name, strings.Join(tc.undeducedParams(decl.TypeParams, decl.TypeParamDefaults, subs), ", "))
+					}
+				} else {
+					subs = tc.buildSubstitution(decl.TypeParams, decl.TypeParamDefaults, args)
+				}
+			}
+		}
+		// default(T) is the zero value of T.
+		if typeName, ok := isDefaultCall(value); ok {
+			if resolved, found := tc.currentTypeArgs[typeName]; found {
+				return resolved, nil
+			}
+			if typ, resolved := tc.resolveType(typeName); resolved {
+				return typ, nil
+			}
+			return ir.Type{Kind: ir.TypeStruct, Name: typeName}, nil
+		}
 		if identifier, ok := value.Callee.(ast.IdentifierExpr); ok {
 			var exists bool
 			signature, exists = tc.funcs[identifier.Name]
@@ -446,12 +541,31 @@ func (tc *TypeChecker) exprType(expr ast.Expr, scope map[string]ir.Type) (ir.Typ
 			if err != nil {
 				return ir.Type{}, err
 			}
-			if !assignable(signature.params[i], actual) {
-				return ir.Type{}, fmt.Errorf("argument %d has type %s, want %s", i+1, typeName(actual), typeName(signature.params[i]))
+			want := signature.params[i]
+			if subs != nil {
+				want = tc.substituteType(want, subs)
+			}
+			if !assignable(want, actual) {
+				return ir.Type{}, fmt.Errorf("argument %d has type %s, want %s", i+1, typeName(actual), typeName(want))
 			}
 		}
-		return signature.result, nil
+		result := signature.result
+		if subs != nil {
+			result = tc.substituteType(result, subs)
+		}
+		return result, nil
 	case ast.StructLiteralExpr:
+		// A generic struct literal written without type arguments is deduced
+		// from the field values, preferring the expected type.
+		if len(value.Type.Args) == 0 {
+			if decl, generic := tc.genericStructs[value.Type.Name]; generic {
+				args := tc.applicationFor(value, scope, expected)
+				if len(args) == 0 {
+					return ir.Type{}, fmt.Errorf("cannot deduce type arguments for %s; supply them explicitly", value.Type.Name)
+				}
+				return ir.Type{Kind: ir.TypeStruct, Name: mangleGeneric(decl.Name, args)}, nil
+			}
+		}
 		typ, ok := tc.resolveType(value.Type.String())
 		if !ok {
 			return ir.Type{}, fmt.Errorf("unknown struct %q", value.Type.String())
@@ -632,19 +746,35 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 	out.Features = append(out.Features, "math")
 	out.Features = append(out.Features, m.Features...)
 
-	// Structs
+	// Generic declarations are templates: they are registered for expansion
+	// rather than emitted directly.
 	for _, decl := range m.Decls {
-		if s, ok := decl.(ast.StructDecl); ok {
-			out.Structs = append(out.Structs, tc.structToIR(s))
+		switch decl := decl.(type) {
+		case ast.StructDecl:
+			if len(decl.TypeParams) > 0 {
+				tc.genericStructs[decl.Name] = decl
+				continue
+			}
+			out.Structs = append(out.Structs, tc.structToIR(decl))
 		}
 	}
 
-	// Functions
 	for _, decl := range m.Decls {
 		if fn, ok := decl.(ast.FuncDecl); ok {
+			if len(fn.TypeParams) > 0 {
+				tc.genericFuncs[fn.Name] = fn
+				continue
+			}
 			out.Funcs = append(out.Funcs, tc.funcToIR(fn))
 		}
 	}
+
+	// A type parameter default may name a type the module does not define; give
+	// it a zero-sized definition so the backends can emit it.
+	tc.synthesizeDefaultTypes(m, &out)
+
+	// Expand every generic application the program asks for.
+	tc.monomorphise(m, &out)
 
 	return out
 }
@@ -695,10 +825,20 @@ func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
 		Name:       fn.Name,
 		CName:      qualifiedCName(fn.Owner, fn.Name),
 		Params:     params,
-		ReturnType: tc.typeFor(fn.ReturnType),
-		Body:       tc.lowerStatements(fn.Body, scope),
+		ReturnType: tc.declaredType(fn.ReturnType),
+		Body:       tc.lowerFunctionBody(fn, scope),
 		Extern:     fn.Extern,
 	}
+}
+
+// lowerFunctionBody lowers a function body with the deduction hint that the
+// checking pass used, so both passes pick the same specialisation.
+func (tc *TypeChecker) lowerFunctionBody(fn ast.FuncDecl, scope map[string]ir.Type) []ir.Instr {
+	previous := tc.currentReturnHint
+	tc.currentReturnHint = tc.typeFor(fn.ReturnType)
+	body := tc.lowerStatements(fn.Body, scope)
+	tc.currentReturnHint = previous
+	return body
 }
 
 func qualifiedCName(owner, name string) string {
@@ -762,13 +902,28 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 	switch stmt := statement.(type) {
 	case ast.LetStmt:
 		value := ""
+		declaredName := stmt.Type.String()
 		if stmt.Value != nil {
-			value = tc.lowerExpr(stmt.Value, scope)
+			if declaredName == "" {
+				// A type-less binding lowers with the type of its value, which
+				// may itself be a mangled generic specialisation.
+				inferred, err := tc.exprType(stmt.Value, scope)
+				if err == nil {
+					declaredName = typeName(inferred)
+				}
+			} else {
+				// The declared type is the deduction hint, matching the checking
+				// pass so both agree on the emitted specialisation.
+				declared := tc.declaredType(declaredName)
+				value = tc.lowerExprExpected(stmt.Value, scope, tc.expectedHint(declaredName, declared))
+			}
+			if value == "" {
+				value = tc.lowerExpr(stmt.Value, scope)
+			}
 		}
-		// Record the binding so later expressions in the same body can see
-		// its type when deciding how to lower operators.
-		scope[stmt.Name] = tc.typeFor(stmt.Type.String())
-		return []ir.Instr{{Op: ir.OpLet, Dest: stmt.Name, Type: cTypeForName(stmt.Type.String()), Args: []string{value}}}
+		// Record the binding so later expressions see its type.
+		scope[stmt.Name] = tc.typeFor(declaredName)
+		return []ir.Instr{{Op: ir.OpLet, Dest: stmt.Name, Type: tc.cTypeForTypeName(declaredName), Args: []string{value}}}
 	case ast.AssignStmt:
 		return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{tc.lowerExpr(stmt.Value, scope)}}}
 	case ast.ExprStmt:
@@ -776,7 +931,7 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 	case ast.ReturnStmt:
 		value := ""
 		if stmt.Value != nil {
-			value = tc.lowerExpr(stmt.Value, scope)
+			value = tc.lowerExprExpected(stmt.Value, scope, tc.currentReturnHint)
 		}
 		return []ir.Instr{{Op: ir.OpReturn, Args: []string{value}}}
 	case ast.IfStmt:
@@ -791,6 +946,13 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 }
 
 func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string {
+	return tc.lowerExprExpected(expr, scope, ir.Type{})
+}
+
+// lowerExprExpected lowers an expression with a known expected type, so a
+// generic application written without type arguments deduces the same way the
+// checking pass did.
+func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type, expected ir.Type) string {
 	switch expr := expr.(type) {
 	case ast.IdentifierExpr:
 		return expr.Name
@@ -846,6 +1008,16 @@ func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string
 	case ast.IndexExpr:
 		return tc.lowerExpr(expr.Object, scope) + "[" + tc.lowerExpr(expr.Index, scope) + "]"
 	case ast.CallExpr:
+		// default(T) is the zero value of T, backing Result and Option.
+		if typeName, ok := isDefaultCall(expr); ok {
+			if resolved, found := tc.currentTypeArgs[typeName]; found {
+				return tc.zeroValueFor(resolved.Name)
+			}
+			if typ, resolved := tc.resolveType(typeName); resolved {
+				return tc.zeroValueFor(typ.Name)
+			}
+			return tc.zeroValueFor(typeName)
+		}
 		if callee, ok := expr.Callee.(ast.IdentifierExpr); ok && callee.Name == "print" {
 			if len(expr.Args) == 1 {
 				return "printf(\"%s\\n\", " + tc.lowerExpr(expr.Args[0], scope) + ")"
@@ -854,13 +1026,37 @@ func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string
 		}
 		callee := tc.lowerExpr(expr.Callee, scope)
 		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok {
-			if identifier.Name == "str_eq" {
+			switch {
+			case identifier.Name == "str_eq":
 				callee = "rho_str_eq"
-			} else if signature, found := tc.funcs[identifier.Name]; found && signature.cName != "" {
-				// A function belonging to an imported module is emitted under
-				// its qualified name, so the call site must use the same name
-				// or the generated code will not link.
-				callee = signature.cName
+			case len(expr.TypeArgs) > 0 || isGenericCallee(tc, identifier.Name):
+				// A generic call names a specialisation, so emit the mangled
+				// name the monomorphised function is emitted under, including
+				// the owner prefix when it came from an imported module.
+				typeArgs := tc.resolveTypeArgs(expr.TypeArgs)
+				if len(typeArgs) == 0 {
+					typeArgs = tc.applicationFor(expr, scope, expected)
+				}
+				mangled := mangleGeneric(identifier.Name, typeArgs)
+				if len(typeArgs) > 0 {
+					tc.recordInstantiation(instantiation{
+						Name:     identifier.Name,
+						TypeArgs: typeArgs,
+						IsStruct: false,
+					})
+				}
+				if decl, ok := tc.genericFuncs[identifier.Name]; ok {
+					callee = tc.qualifiedName(decl.Owner, mangled)
+				} else {
+					callee = mangled
+				}
+			default:
+				if signature, found := tc.funcs[identifier.Name]; found && signature.cName != "" {
+					// A function belonging to an imported module is emitted
+					// under its qualified name, so the call site must use the
+					// same name or the generated code will not link.
+					callee = signature.cName
+				}
 			}
 		}
 		args := []string{}
@@ -870,10 +1066,27 @@ func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string
 		return callee + "(" + strings.Join(args, ", ") + ")"
 	case ast.StructLiteralExpr:
 		values := []string{}
+		// A generic struct literal names a specialisation, so record the
+		// application for monomorphisation and emit the mangled name. The type
+		// arguments are taken from the source when written, and deduced
+		// otherwise using the same rules as the checking pass.
+		name := expr.Type.Name
+		if decl, generic := tc.genericStructs[expr.Type.Name]; generic {
+			typeArgs := tc.resolveTypeArgs(expr.Type.Args)
+			if len(typeArgs) == 0 {
+				typeArgs = tc.applicationFor(expr, scope, expected)
+			}
+			if len(typeArgs) > 0 {
+				tc.recordInstantiation(instantiation{Name: decl.Name, TypeArgs: typeArgs, IsStruct: true})
+				name = mangleGeneric(decl.Name, typeArgs)
+			} else {
+				name = decl.Name
+			}
+		}
 		for _, value := range expr.Values {
 			values = append(values, tc.lowerExpr(value, scope))
 		}
-		return "(" + cTypeForName(expr.Type.String()) + "){ " + strings.Join(values, ", ") + " }"
+		return "(" + mangleTypeName(name) + "){ " + strings.Join(values, ", ") + " }"
 	case ast.ArrayLiteralExpr:
 		values := make([]string, len(expr.Values))
 		for index, value := range expr.Values {

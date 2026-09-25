@@ -225,7 +225,9 @@ func TestToIRConversion(t *testing.T) {
 	}
 }
 
-func TestToIRPreservesCompositeTypeShape(t *testing.T) {
+// A generic struct is a template. Until a concrete application is requested
+// there is nothing to emit, because the field type T has no single lowering.
+func TestToIRSkipsUninstantiatedGeneric(t *testing.T) {
 	tc := New()
 	m := ast.Module{Decls: []ast.Decl{
 		ast.StructDecl{Name: "Box", TypeParams: []string{"T"}, Fields: []ast.Field{{Name: "value", Type: "T", TypeExpr: ast.TypeExpr{Name: "T"}}}},
@@ -234,9 +236,40 @@ func TestToIRPreservesCompositeTypeShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	irModule := tc.ToIR(m)
-	fieldType := irModule.Structs[0].Fields[0].Type
-	if fieldType.Name != "T" {
-		t.Fatalf("expected generic field type T, got %#v", fieldType)
+	if len(irModule.Structs) != 0 {
+		t.Fatalf("an uninstantiated generic must not be emitted, got %+v", irModule.Structs)
+	}
+}
+
+// A concrete application is monomorphised: the field type parameter is
+// replaced and the declaration is renamed to the mangled specialisation.
+func TestToIRMonomorphisesGenericStruct(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.StructDecl{Name: "Box", TypeParams: []string{"T"}, Fields: []ast.Field{{Name: "value", Type: "T", TypeExpr: ast.TypeExpr{Name: "T"}}}},
+		ast.FuncDecl{
+			Name:       "make",
+			Params:     []ast.Param{},
+			ReturnType: "Box[u32]",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "b", Type: ast.TypeExpr{Name: "Box", Args: []ast.TypeExpr{{Name: "u32"}}}},
+				ast.ReturnStmt{Value: ast.IdentifierExpr{Name: "b"}},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatal(err)
+	}
+	irModule := tc.ToIR(m)
+	if len(irModule.Structs) != 1 {
+		t.Fatalf("expected one specialisation, got %+v", irModule.Structs)
+	}
+	specialised := irModule.Structs[0]
+	if specialised.Name != "Box_u32" {
+		t.Fatalf("expected the mangled name Box_u32, got %q", specialised.Name)
+	}
+	if field := specialised.Fields[0].Type; field.Name != "u32" {
+		t.Fatalf("expected the field type substituted to u32, got %#v", field)
 	}
 }
 

@@ -1,5 +1,6 @@
 module std.core.option
 
+// Option carries a value that may be absent.
 struct Option[T] {
     is_some: bool
     value: T
@@ -9,8 +10,22 @@ fn Some[T](v: T) Option[T] {
     return Option[T]{ true, v }
 }
 
-fn None[T]() Option[T] {
+// None builds an empty Option. T defaults to Unit, so `None()` on its own
+// means "no value" without an annotation.
+fn None[T = Unit]() Option[T] {
     return Option[T]{ false, default(T) }
+}
+
+fn is_some[T](o: Option[T]) bool {
+    return o.is_some
+}
+
+fn is_none[T](o: Option[T]) bool {
+    return !o.is_some
+}
+
+fn value[T](o: Option[T]) T {
+    return o.value
 }
 
 fn unwrap[T](o: Option[T]) T {

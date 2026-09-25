@@ -78,6 +78,107 @@ rho help
 rho pkg init my-project
 ```
 
+## Language Notes
+
+### String Escapes
+
+String literals decode escape sequences, so a JSON payload can be written
+directly:
+
+```rho
+fn module_json(name: string, version: string) string {
+    return "{\"name\":\"" + name + "\",\"version\":\"" + version + "\"}";
+}
+```
+
+Supported: `\n \r \t \a \b \f \v \0 \\ \" \'`, plus `\xNN` (one or two hex
+digits), `\uNNNN` and `\UNNNNNNNN`. An unknown escape such as `\d` is a lexing
+error rather than a silent surprise, matching C and Go. Escapes are decoded by
+the lexer and re-encoded during lowering, so both backends emit the same bytes.
+
+### Generics
+
+Generic structs and functions are monomorphised: each concrete application is
+expanded into its own specialised declaration.
+
+```rho
+import std.core.result
+
+fn parse(ok: bool) Result[u32, u32] {
+    if ok {
+        return Ok[u32, u32](7)
+    }
+    return Err[u32, u32](1)
+}
+
+let good: Result[u32, u32] = parse(true)
+if good.is_ok {
+    print("ok");
+}
+```
+
+`Result[u32, u32]` above becomes a struct named `Result_u32_u32`, and `Ok`
+becomes `Ok_u32_u32`, so the C and Go backends emit one definition per
+instantiation. A generic that is never applied emits nothing. `default(T)`
+yields the zero value of `T`, which is what backs `Option[T]` and `Result[T, E]`.
+
+Type arguments are deduced, so they only need writing when deduction cannot
+resolve them. A type is taken from the field values, the call arguments, or
+the expected type at the use site:
+
+```rho
+let a: Box[i32] = Box{ 1 }          // T from the field value
+let b: Box[u32> = wrap(7)          // T from the argument
+let ok: Result[u32, u32] = Ok(7)    // E only from the declared type
+```
+
+### Type-less bindings
+
+A `let` may omit its annotation and take the type of its value:
+
+```rho
+let total = 1 + 2        // i32
+let label = "hi"         // string
+let wrapped = wrap(7)    // Box_u32, from the deduced specialisation
+```
+
+A binding with neither an annotation nor a value is rejected, since there is
+nothing to infer from.
+
+### Default type parameters
+
+A type parameter can declare a default, used when deduction cannot resolve it:
+
+```rho
+struct Result[T, E = Unit] {
+    is_ok: bool
+    ok: T
+    err: E
+}
+
+fn Ok[T, E = Unit](v: T) Result[T, E] { ... }
+fn Err[T = Unit, E = Unit](e: E) Result[T, E] { ... }
+```
+
+With those defaults the standard library needs no type arguments at all:
+
+```rho
+let good = Ok(7)     // Result[i32, Unit]
+let bad = Err(1)     // Result[Unit, i32]
+let none = None()    // Option[Unit]
+```
+
+`Unit` is a zero-sized type. It is synthesised when a default names it and the
+program does not define it; a program that declares its own `Unit` (or any
+other type) uses that instead.
+
+A partial application is completed with the defaults before the name is
+mangled, so `Pair[u32]` and a deduced `Pair[u32, Unit]` are the same
+specialisation.
+
+A parameter with neither a binding nor a default is still an error, reported by
+name.
+
 ## CLI Tools
 
 The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`, `module`, and `help`:

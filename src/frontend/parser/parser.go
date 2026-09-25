@@ -159,7 +159,7 @@ func (p *Parser) parseTypeDecl() ast.Decl {
 	name := p.name()
 	if p.current.Kind != lexer.TokenAssign {
 		if p.current.Kind == lexer.TokenLBracket {
-			_ = p.parseTypeParams()
+			_, _ = p.parseTypeParams()
 		}
 		return ast.TypeDecl{Name: name, Type: ast.TypeExpr{Name: name}}
 	}
@@ -168,20 +168,29 @@ func (p *Parser) parseTypeDecl() ast.Decl {
 	return ast.TypeDecl{Name: name, Type: p.parseType()}
 }
 
-func (p *Parser) parseTypeParams() []string {
+// parseTypeParams parses a bracketed type parameter list, including any
+// defaults: `[T, E = Unit]`.
+func (p *Parser) parseTypeParams() ([]string, map[string]string) {
 	params := []string{}
+	defaults := map[string]string{}
 	if p.current.Kind != lexer.TokenLBracket {
-		return params
+		return params, defaults
 	}
 	p.readToken()
 	for p.current.Kind != lexer.TokenRBracket {
-		params = append(params, p.name())
+		name := p.name()
+		params = append(params, name)
+		// An optional default, written after an equals sign.
+		if p.current.Kind == lexer.TokenAssign {
+			p.readToken()
+			defaults[name] = p.parseType().String()
+		}
 		if p.current.Kind == lexer.TokenComma {
 			p.readToken()
 		}
 	}
 	p.readToken()
-	return params
+	return params, defaults
 }
 
 func (p *Parser) parseType() ast.TypeExpr {
@@ -216,7 +225,7 @@ func (p *Parser) parseType() ast.TypeExpr {
 func (p *Parser) parseStructDecl() ast.Decl {
 	p.readToken()
 	name := p.name()
-	typeParams := p.parseTypeParams()
+	typeParams, typeDefaults := p.parseTypeParams()
 	p.expect(lexer.TokenLBrace)
 	p.readToken()
 	fields := []ast.Field{}
@@ -234,7 +243,7 @@ func (p *Parser) parseStructDecl() ast.Decl {
 		}
 	}
 	p.readToken()
-	return ast.StructDecl{Name: name, Fields: fields, TypeParams: typeParams}
+	return ast.StructDecl{Name: name, Fields: fields, TypeParams: typeParams, TypeParamDefaults: typeDefaults}
 }
 
 func (p *Parser) parseFuncDecl() ast.Decl {
@@ -252,7 +261,7 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 		p.readToken()
 	}
 	name := p.name()
-	typeParams := p.parseTypeParams()
+	typeParams, typeDefaults := p.parseTypeParams()
 	p.expect(lexer.TokenLParen)
 	p.readToken()
 	params := []ast.Param{}
@@ -280,7 +289,7 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 	} else if p.current.Kind == lexer.TokenSemicolon {
 		p.readToken()
 	}
-	return ast.FuncDecl{Name: name, Params: params, ReturnType: returnType.String(), TypeParams: typeParams, Extern: extern, Body: body}
+	return ast.FuncDecl{Name: name, Params: params, ReturnType: returnType.String(), TypeParams: typeParams, TypeParamDefaults: typeDefaults, Extern: extern, Body: body}
 }
 
 func (p *Parser) parseBlock() []ast.Stmt {
@@ -311,9 +320,13 @@ func (p *Parser) parseStmt() ast.Stmt {
 	case lexer.TokenLet:
 		p.readToken()
 		name := p.name()
-		p.expect(lexer.TokenColon)
-		p.readToken()
-		declaredType := p.parseType()
+		// The type annotation is optional: `let x = expr` infers it, while
+		// `let x: T = expr` states it and can drive generic deduction.
+		var declaredType ast.TypeExpr
+		if p.current.Kind == lexer.TokenColon {
+			p.readToken()
+			declaredType = p.parseType()
+		}
 		var value ast.Expr
 		if p.current.Kind == lexer.TokenAssign {
 			p.readToken()
