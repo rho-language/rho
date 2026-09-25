@@ -110,6 +110,94 @@ func TestLoaderListOfMaps(t *testing.T) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Tests: List Inference Is Content Driven                                    */
+/* -------------------------------------------------------------------------- */
+
+// A key holding list items becomes a list even when its name was never
+// registered in any table. Schema validation depends on this.
+func TestLoaderInfersListFromContent(t *testing.T) {
+	v, err := Load("any_key_name:\n- alpha\n- beta\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.Map["any_key_name"].Kind != KindList {
+		t.Fatalf("expected inferred list, got kind %d", v.Map["any_key_name"].Kind)
+	}
+	if len(v.Map["any_key_name"].List) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(v.Map["any_key_name"].List))
+	}
+}
+
+// A key holding key/value pairs becomes a map even when its name looks
+// like a list.
+func TestLoaderInfersMapFromContent(t *testing.T) {
+	v, err := Load("features:\n  first: a\n  second: b\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.Map["features"].Kind != KindMap {
+		t.Fatalf("expected inferred map, got kind %d", v.Map["features"].Kind)
+	}
+	if v.Map["features"].Map["first"].Str != "a" {
+		t.Fatalf("unexpected nested map: %#v", v.Map["features"].Map)
+	}
+}
+
+// A key with no content at all stays null so schemas can report it.
+func TestLoaderEmptyKeyIsNull(t *testing.T) {
+	v, err := Load("components:\nplugins:\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.Map["components"].Kind != KindNull {
+		t.Fatalf("expected null for valueless key, got kind %d", v.Map["components"].Kind)
+	}
+}
+
+// Nested lists inside maps must round-trip through the parent copies.
+func TestLoaderNestedListInsideMap(t *testing.T) {
+	src := "build:\n  language: c\n  include_dirs:\n    - include\n    - src/include\n  source_dirs:\n    - src\n"
+	v, err := Load(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	build := v.Map["build"]
+	if build.Map["language"].Str != "c" {
+		t.Fatalf("unexpected language: %q", build.Map["language"].Str)
+	}
+	includeDirs := build.Map["include_dirs"]
+	if includeDirs.Kind != KindList || len(includeDirs.List) != 2 {
+		t.Fatalf("unexpected include_dirs: %#v", includeDirs)
+	}
+	if includeDirs.List[0].Str != "include" || includeDirs.List[1].Str != "src/include" {
+		t.Fatalf("unexpected include_dirs content: %#v", includeDirs.List)
+	}
+	if srcDirs := build.Map["source_dirs"]; srcDirs.Kind != KindList || len(srcDirs.List) != 1 {
+		t.Fatalf("unexpected source_dirs: %#v", srcDirs)
+	}
+}
+
+// Registry-style sections are lists of maps written with indentation.
+func TestLoaderIndentedListOfMaps(t *testing.T) {
+	src := "components:\n  - name: math\n    version: 1.2.0\nactive_components:\n  - name: math\n    version: 1.2.0\n"
+	v, err := Load(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	comps := v.Map["components"]
+	if comps.Kind != KindList || len(comps.List) != 1 {
+		t.Fatalf("unexpected components: %#v", comps)
+	}
+	if comps.List[0].Map["name"].Str != "math" || comps.List[0].Map["version"].Str != "1.2.0" {
+		t.Fatalf("unexpected component entry: %#v", comps.List[0])
+	}
+	active := v.Map["active_components"]
+	if active.Kind != KindList || len(active.List) != 1 || active.List[0].Map["version"].Str != "1.2.0" {
+		t.Fatalf("unexpected active_components: %#v", active)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Tests: Comments and Empty Lines                                           */
 /* -------------------------------------------------------------------------- */
 
