@@ -1,16 +1,10 @@
 //
 // @file main.go
-// @brief Rho Test CLI entrypoint - Enterprise v1.
+// @brief Standalone Rho test runner.
 //
-// Usage:
-//   rho-test <path>
-//
-// Responsibilities:
-//   - Parse CLI arguments
-//   - Discover test files
-//   - Load test cases
-//   - Run test files
-//   - Report results
+// The implementation lives in src/rhotest, which `rho test` calls directly.
+// This binary is the same runner for use on its own, or in a shell that
+// should not go through the rho CLI.
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -24,61 +18,43 @@ package main
 import (
 	"fmt"
 	"os"
-)
 
-/* -------------------------------------------------------------------------- */
-/*  main                                                                       */
-/* -------------------------------------------------------------------------- */
+	"rho/src/rhotest"
+)
 
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
 func run(args []string) int {
-	if len(args) < 1 {
-		fmt.Println("Usage: rho-test <path>")
+	// A test is an ordinary program, so it runs on one backend. The default is
+	// the native one; a Go project is tested with --target go.
+	options := rhotest.Options{Target: rhotest.DefaultTarget}
+	rest := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-target", "--target":
+			if i+1 >= len(args) {
+				fmt.Println("Usage: rho-test <path> [--target c|go]")
+				return 2
+			}
+			options.Target = args[i+1]
+			i++
+		case "-rho", "--rho":
+			if i+1 >= len(args) {
+				fmt.Println("Usage: rho-test <path> [--rho <path-to-rho>]")
+				return 2
+			}
+			options.RhoBinary = args[i+1]
+			i++
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	if len(rest) < 1 {
+		fmt.Println("Usage: rho-test <path> [--target c|go] [--rho <path-to-rho>]")
 		return 2
 	}
-
-	path := args[0]
-
-	/* --------------------------- Discover test files ------------------------ */
-	files, err := Discover(path)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return 1
-	}
-
-	if len(files) == 0 {
-		fmt.Println("No test files found.")
-		return 0
-	}
-
-	var allResults []TestResult
-
-	/* --------------------------- Load + Run each file ----------------------- */
-	for _, f := range files {
-		tf, err := LoadTests(f)
-		if err != nil {
-			fmt.Printf("Error loading %s: %v\n", f, err)
-			return 1
-		}
-
-		results, err := RunTestFile(tf)
-		if err != nil {
-			fmt.Printf("Error running %s: %v\n", f, err)
-			return 1
-		}
-
-		allResults = append(allResults, results...)
-	}
-
-	/* --------------------------- Report final results ----------------------- */
-	Report(allResults)
-	for _, result := range allResults {
-		if !result.Passed {
-			return 1
-		}
-	}
-	return 0
+	options.Path = rest[0]
+	return rhotest.Run(options)
 }

@@ -1,0 +1,95 @@
+module registry
+
+// The remote registry for Rho modules. It speaks the three endpoints the Rho
+// module client uses:
+//
+//	POST /modules/{name}/{version}/rho-pkg   publish a module package
+//	GET  /modules/{name}/{version}/rho-pkg   download a module package
+//	GET  /search?q=<query>                   search published modules
+//
+// The routes, the protocol and the responses are Rho. Storage and the
+// byte-level string helpers sit behind a port, because Rho has no heap and no
+// file I/O yet.
+
+// The storage port is included rather than imported: an included file keeps
+// its declarations in this module, so the extern names stay exactly as
+// declared and the generated port can implement them. An imported module
+// would qualify them with the module name, which a generated port does not.
+include "registry/storage.rho"
+
+import std.web.http
+import registry.validate
+import registry.respond
+
+route POST "/modules/{name}/{version}/rho-pkg" => publish_module
+route GET  "/modules/{name}/{version}/rho-pkg" => download_module
+route GET  "/search"                             => search_modules
+route GET  "/modules/{name}"                     => module_versions
+
+/* -------------------------------------------------------------------------- */
+/*  Handlers                                                                   */
+/* -------------------------------------------------------------------------- */
+
+fn publish_module(req: Request) Response {
+    if !authorized(request_auth(req)) {
+        return error_json(status_unauthorized(), "unauthorized")
+    }
+
+    let name: string = param(req, "name")
+    let version: string = param(req, "version")
+
+    if !valid_name(name) {
+        return error_json(status_bad_request(), "invalid module name")
+    }
+    if !valid_version(version) {
+        return error_json(status_bad_request(), "invalid version")
+    }
+
+    let payload: string = request_body(req)
+    if strlen(payload) == 0 {
+        return error_json(status_bad_request(), "empty package")
+    }
+    if strlen(payload) > max_upload() {
+        return error_json(status_payload_too_large(), "package too large")
+    }
+    if store_has(name, version) {
+        return error_json(status_conflict(), "version already published")
+    }
+
+    // The store validates the module name and refuses to write outside the data
+    // directory, so a rejected name is reported as a bad request.
+    if store_put(name, version, payload, meta_json(name, version)) != 0 {
+        return error_json(status_bad_request(), "invalid module name")
+    }
+    return published_json(name, version)
+}
+
+fn download_module(req: Request) Response {
+    let name: string = param(req, "name")
+    let version: string = param(req, "version")
+
+    if !valid_name(name) || !valid_version(version) {
+        return error_json(status_bad_request(), "invalid module name or version")
+    }
+    if !store_has(name, version) {
+        return error_json(status_not_found(), "not found")
+    }
+
+    let payload: string = store_get(name, version)
+    if strlen(payload) == 0 {
+        return error_json(status_not_found(), "not found")
+    }
+    return Response{ status_ok(), payload, "application/gzip" }
+}
+
+fn search_modules(req: Request) Response {
+    return json(status_ok(), store_search(request_query_param(req, "q")))
+}
+
+fn module_versions(req: Request) Response {
+    return json(status_ok(), store_versions(param(req, "name")))
+}
+
+fn main() void {
+    print("rho registry listening; data dir: " + store_data_dir())
+}

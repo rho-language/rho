@@ -67,6 +67,7 @@ const (
 	TokenTrue
 	TokenFalse
 	TokenType
+	TokenRoute
 
 	// Symbols
 	TokenLBrace       // {
@@ -100,6 +101,7 @@ const (
 	TokenCaret        // ^
 	TokenBitAnd       // &
 	TokenBitOr        // |
+	TokenFatArrow     // =>
 )
 
 /* -------------------------------------------------------------------------- */
@@ -289,6 +291,13 @@ func (l *Lexer) Next() Token {
 			l.readChar()
 			l.readChar()
 			return Token{Kind: TokenEqual, Lex: "==", Pos: startPos}
+		}
+		// "=>" binds a route to its handler, as in
+		// `route GET "/health" => handle_health`.
+		if l.peekChar() == '>' {
+			l.readChar()
+			l.readChar()
+			return Token{Kind: TokenFatArrow, Lex: "=>", Pos: startPos}
 		}
 		l.readChar()
 		return Token{Kind: TokenAssign, Lex: "=", Pos: startPos}
@@ -631,6 +640,8 @@ func lookupKeyword(ident string) Kind {
 		return TokenFalse
 	case "type":
 		return TokenType
+	case "route":
+		return TokenRoute
 	default:
 		return TokenIdent
 	}

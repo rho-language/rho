@@ -1,0 +1,52 @@
+module std.web.http
+
+// Response is what an HTTP handler returns. The Go backend generates the
+// matching type for a server target, so a handler only ever works with these
+// two shapes.
+
+// text builds a plain text response.
+fn text(status: u32, body: string) Response {
+    return Response{ status, body, "text/plain; charset=utf-8" }
+}
+
+// json builds a JSON response.
+fn json(status: u32, body: string) Response {
+    return Response{ status, body, "application/json" }
+}
+
+// Common status codes, so handlers read as protocol rather than as numbers.
+fn status_ok() u32 {
+    return 200
+}
+
+fn status_created() u32 {
+    return 201
+}
+
+fn status_no_content() u32 {
+    return 204
+}
+
+fn status_bad_request() u32 {
+    return 400
+}
+
+fn status_unauthorized() u32 {
+    return 401
+}
+
+fn status_not_found() u32 {
+    return 404
+}
+
+fn status_conflict() u32 {
+    return 409
+}
+
+fn status_payload_too_large() u32 {
+    return 413
+}
+
+fn status_internal() u32 {
+    return 500
+}

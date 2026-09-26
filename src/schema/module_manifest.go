@@ -275,7 +275,40 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 		}
 	}
 
+	// When targets are declared, the declared language should be covered by
+	// one of them. A project generating only a Go server while declaring
+	// language: c is misleading, but a mixed C and Go build is legitimate, so
+	// this is a warning rather than a structural error.
+	if build, ok := data.Map["build"]; ok && build.Kind == yaml.KindMap {
+		language := build.Map["language"].Str
+		targetsNode, hasTargets := build.Map["targets"]
+		if language != "" && hasTargets && targetsNode.Kind == yaml.KindList {
+			if len(targetsNode.List) > 0 && !targetCoversLanguage(targetsNode, language) {
+				errs = append(errs, ValidationError{
+					Path:     "build.language",
+					Message:  fmt.Sprintf("language %q is not covered by build.targets", language),
+					Severity: SeverityWarning,
+				})
+			}
+		}
+	}
+
 	return errs
+}
+
+// targetCoversLanguage reports whether any declared target builds the given
+// language. A target id either names the language outright or is derived from
+// it, as "go-server" is derived from "go".
+func targetCoversLanguage(targets yaml.Value, language string) bool {
+	for _, target := range targets.List {
+		id := target.Str
+		if id == language ||
+			strings.HasPrefix(id, language+"-") ||
+			strings.HasPrefix(id, language+"_") {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateModuleYAMLFile reads and validates a module.yml file.

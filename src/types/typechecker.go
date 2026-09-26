@@ -40,6 +40,9 @@ type TypeChecker struct {
 	fields        map[string]map[string]ir.Type
 	genericParams map[string][]string
 
+	// Structs the module declares itself, as opposed to synthesised ones.
+	userStructs map[string]bool
+
 	// Generic declarations, kept as templates until monomorphised.
 	genericStructs map[string]ast.StructDecl
 	genericFuncs   map[string]ast.FuncDecl
@@ -78,6 +81,7 @@ func New() *TypeChecker {
 		funcs:              map[string]functionType{},
 		fields:             map[string]map[string]ir.Type{},
 		genericParams:      map[string][]string{},
+		userStructs:        map[string]bool{},
 		genericStructs:     map[string]ast.StructDecl{},
 		genericFuncs:       map[string]ast.FuncDecl{},
 		seenInstantiation:  map[string]bool{},
@@ -106,6 +110,11 @@ func New() *TypeChecker {
 // CheckModule validates all declarations inside a module.
 func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	standaloneStdlib := strings.HasPrefix(m.Name, "std.")
+
+	// Handler signature types are registered first so a handler's signature
+	// resolves when the function table is built below.
+	tc.registerProtocolTypes()
+
 	// First pass: register struct types
 	for _, decl := range m.Decls {
 		if s, ok := decl.(ast.StructDecl); ok {
@@ -115,6 +124,7 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			if len(s.TypeParams) > 0 {
 				tc.genericStructs[s.Name] = s
 			}
+			tc.userStructs[s.Name] = true
 			tc.types[s.Name] = ir.Type{Kind: ir.TypeStruct, Name: s.Name}
 			fields := make(map[string]ir.Type, len(s.Fields))
 			for _, field := range s.Fields {
@@ -162,6 +172,10 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				continue
 			}
 			if err := tc.checkFunc(d); err != nil {
+				return err
+			}
+		case ast.RouteDecl:
+			if err := tc.checkRoute(d); err != nil {
 				return err
 			}
 		case ast.TypeDecl:
@@ -512,17 +526,29 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			if identifier.Name == "str_eq" {
 				signature = functionType{params: []ir.Type{{Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeString, Name: "string"}}, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}}
 			}
-			if !exists {
-				if identifier.Name == "clamp_f64" || identifier.Name == "lerp" || identifier.Name == "sqrt" || identifier.Name == "sin" || identifier.Name == "cos" || identifier.Name == "atan2" || identifier.Name == "floor" {
-					return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
+			// A server backend provides this signature, so the generic
+			// fallback below must not claim it.
+			_, hasProtocolSignature := protocolFuncs[identifier.Name]
+			if !exists && hasProtocolSignature {
+				signature = protocolFuncs[identifier.Name]
+			}
+			if !exists && !hasProtocolSignature {
+				// An intrinsic a backend supplies has a known signature, so a
+				// call to it is checked like any other.
+				if intrinsic, isIntrinsic := intrinsicSignatures[identifier.Name]; isIntrinsic {
+					signature = intrinsic
+				} else {
+					if identifier.Name == "clamp_f64" || identifier.Name == "lerp" || identifier.Name == "sqrt" || identifier.Name == "sin" || identifier.Name == "cos" || identifier.Name == "atan2" || identifier.Name == "floor" {
+						return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
+					}
+					if identifier.Name == "str_eq" {
+						return ir.Type{Kind: ir.TypeBool, Name: "bool"}, nil
+					}
+					if strings.HasPrefix(identifier.Name, "c_") || identifier.Name == "sizeof" {
+						return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
+					}
+					return ir.Type{}, nil
 				}
-				if identifier.Name == "str_eq" {
-					return ir.Type{Kind: ir.TypeBool, Name: "bool"}, nil
-				}
-				if strings.HasPrefix(identifier.Name, "c_") || identifier.Name == "sizeof" {
-					return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
-				}
-				return ir.Type{}, nil
 			}
 		} else if member, ok := value.Callee.(ast.MemberExpr); ok && isBuiltinMemberCall(member) {
 			if member.Name == "load" {
@@ -699,14 +725,37 @@ func substituteGeneric(value ir.Type, params []string, args []ir.Type) ir.Type {
 }
 func isCallableBuiltin(name string, types map[string]ir.Type) bool {
 	_, ok := types[name]
-	return ok || name == "Some" || name == "None" || name == "Ok" || name == "Err"
+	if ok || name == "Some" || name == "None" || name == "Ok" || name == "Err" {
+		return true
+	}
+	_, protocol := protocolFuncs[name]
+	return protocol
 }
 
+// intrinsicLowering maps an intrinsic to the name both backends emit. An empty
+// value means the name is used unchanged.
+var intrinsicLowering = map[string]string{
+	"strlen":          "rho_strlen",
+	"str_starts_with": "rho_str_starts_with",
+	"str_trim_prefix": "rho_str_trim_prefix",
+	"str_contains":    "rho_str_contains",
+	"str_at":          "rho_str_at",
+	"str_index_of":    "rho_str_index_of",
+	"env_or":          "rho_env_or",
+}
+
+// isExternalBuiltinNames are the intrinsics a module may call without
+// declaring them, because a backend supplies the implementation.
+var isExternalBuiltinNames = map[string]bool{}
+
 func isExternalBuiltin(name string) bool {
+	if isExternalBuiltinNames[name] {
+		return true
+	}
 	if strings.HasPrefix(name, "c_") {
 		return true
 	}
-	for _, builtin := range []string{"sqrt", "sin", "cos", "atan2", "floor", "clamp_f64", "lerp", "str_eq", "panic", "sizeof", "robohub_platform_init", "robohub_board_register"} {
+	for _, builtin := range []string{"sqrt", "sin", "cos", "atan2", "floor", "clamp_f64", "lerp", "str_eq", "panic", "abort", "sizeof", "robohub_platform_init", "robohub_board_register"} {
 		if name == builtin {
 			return true
 		}
@@ -767,6 +816,17 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 			}
 			out.Funcs = append(out.Funcs, tc.funcToIR(fn))
 		}
+	}
+
+	// Routes are collected for a server target; the C backend has no server, so
+	// it only needs the types to compile.
+	for _, decl := range m.Decls {
+		if route, ok := decl.(ast.RouteDecl); ok {
+			out.Routes = append(out.Routes, tc.routeToIR(route))
+		}
+	}
+	if len(out.Routes) > 0 || irModuleUsesProtocolTypes(out) {
+		tc.synthesiseProtocolTypes(&out)
 	}
 
 	// A type parameter default may name a type the module does not define; give
@@ -1029,6 +1089,13 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			switch {
 			case identifier.Name == "str_eq":
 				callee = "rho_str_eq"
+			case identifier.Name == "panic":
+				// The intrinsic the backends supply for a message abort.
+				callee = "panicf"
+			case intrinsicLowering[identifier.Name] != "":
+				// A string or environment intrinsic, emitted by both backends
+				// under a fixed name.
+				callee = intrinsicLowering[identifier.Name]
 			case len(expr.TypeArgs) > 0 || isGenericCallee(tc, identifier.Name):
 				// A generic call names a specialisation, so emit the mangled
 				// name the monomorphised function is emitted under, including
@@ -1180,4 +1247,97 @@ func cTypeForName(name string) string {
 		return "void"
 	}
 	return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(name)
+}
+
+// intrinsicSignatures are the calls a backend supplies directly. They are
+// declared `extern fn` in the stdlib, so the typechecker has to know their
+// shape even though no function is registered for them.
+var intrinsicSignatures = map[string]functionType{
+	// abort ends the program with a non-zero status.
+	"abort": {
+		params: []ir.Type{},
+		result: ir.Type{Kind: ir.TypeVoid, Name: "void"},
+	},
+	// panic ends the program with a message.
+	"panic": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeVoid, Name: "void"},
+	},
+}
+
+func init() {
+	// String and environment intrinsics. Rho's string library is still thin, so
+	// these are language-level rather than tied to a particular target, which
+	// keeps the code that uses them testable on every backend.
+	stringArg := []ir.Type{{Kind: ir.TypeString, Name: "string"}}
+	twoStrings := []ir.Type{
+		{Kind: ir.TypeString, Name: "string"},
+		{Kind: ir.TypeString, Name: "string"},
+	}
+	intrinsicSignatures["strlen"] = functionType{
+		params: stringArg,
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	}
+	intrinsicSignatures["str_starts_with"] = functionType{
+		params: twoStrings,
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	}
+	intrinsicSignatures["str_trim_prefix"] = functionType{
+		params: twoStrings,
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
+	intrinsicSignatures["str_contains"] = functionType{
+		params: twoStrings,
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	}
+	// str_at reads one byte, which is what lets Rho walk a string itself.
+	intrinsicSignatures["str_at"] = functionType{
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeU32, Name: "u32"},
+		},
+		result: ir.Type{Kind: ir.TypeU8, Name: "u8"},
+	}
+	// str_index_of finds a substring, or returns -1 when it is absent.
+	intrinsicSignatures["str_index_of"] = functionType{
+		params: twoStrings,
+		result: ir.Type{Kind: ir.TypeI32, Name: "i32"},
+	}
+	intrinsicSignatures["env_or"] = functionType{
+		params: twoStrings,
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
+	for _, name := range []string{
+		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
+		"str_index_of", "env_or",
+	} {
+		isExternalBuiltinNames[name] = true
+	}
+}
+
+// irModuleUsesProtocolTypes reports whether a module refers to Request or
+// Response anywhere. Such a module needs the definitions even without routes,
+// which is the case for a test that exercises handler-shaped code.
+func irModuleUsesProtocolTypes(m ir.ModuleIR) bool {
+	mentions := func(name string) bool {
+		for _, structure := range m.Structs {
+			for _, field := range structure.Fields {
+				if field.Type.Name == name {
+					return true
+				}
+			}
+		}
+		for _, fn := range m.Funcs {
+			if fn.ReturnType.Name == name {
+				return true
+			}
+			for _, param := range fn.Params {
+				if param.Type.Name == name {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return mentions(RequestTypeName) || mentions(ResponseTypeName)
 }

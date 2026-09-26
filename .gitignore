@@ -14,6 +14,9 @@ Makefile
 /generated/
 /stage/
 
+# Resolved dependency lockfiles, produced by a build
+rho.lock
+
 # Python caches
 __pycache__/
 *.py[cod]

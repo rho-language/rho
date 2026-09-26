@@ -1,0 +1,29 @@
+module registry.storage
+
+// The storage port for the registry service.
+//
+// Rho has no heap, no globals and no file I/O, so persistence sits behind
+// this interface. The handlers declare these as `extern fn` and ports/store.go
+// supplies the implementation for the Go target, so the split uses the
+// compiler's existing extern mechanism rather than teaching it about a
+// registry.
+//
+// A zero return means success.
+
+// Store an uploaded package and its metadata. Returns 0 on success.
+extern fn store_put(name: string, version: string, payload: string, meta: string) u32
+
+// The stored package for a version, or "" when it is absent.
+extern fn store_get(name: string, version: string) string
+
+// Whether a version is already published.
+extern fn store_has(name: string, version: string) bool
+
+// A JSON array of module metadata matching a query.
+extern fn store_search(query: string) string
+
+// A JSON document listing a module's stored versions.
+extern fn store_versions(name: string) string
+
+// The directory the service stores modules in.
+extern fn store_data_dir() string

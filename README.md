@@ -179,6 +179,59 @@ specialisation.
 A parameter with neither a binding nor a default is still an error, reported by
 name.
 
+### HTTP Routes
+
+A module can bind a Rho function to an HTTP endpoint with a route
+declaration. Paths use `{name}` to capture a segment:
+
+```rho
+route POST "/modules/{name}/{version}/rho-pkg" => publish_module
+route GET  "/search"                             => search_modules
+
+fn publish_module(req: Request) Response {
+    let name: string = param(req, "name")
+    return json(200, "{\"name\":\"" + name + "\"}")
+}
+```
+
+A handler takes a single `Request` and returns a `Response`; both types and the
+helpers a service needs are provided by the server target, so no import is
+required. `Request` and `Response` are synthesised for targets without a server,
+so a module still compiles as C.
+
+The server target generates the wiring: one `net/http` wrapper per route, a
+small path router that matches `{name}` segments, and a `/healthz` endpoint. The
+router is generated rather than relying on the Go 1.22 `ServeMux` wildcards, so
+a generated project builds with any Go toolchain.
+
+**Ports.** A module declares what it cannot yet implement itself as `extern fn`,
+and a descriptor asks the backend to generate that implementation:
+
+```yaml
+targets:
+  - id: go-server
+    emitter: go
+    kind: server
+    ports:
+      - fsstore
+```
+
+The built-in `fsstore` port supplies a filesystem-backed module store. This
+keeps a Rho project pure Rho: nothing outside `src/` is hand-written host code.
+A new port is a new generator, registered in `portGenerators`.
+
+## Applications
+
+| Application | Description |
+|-------------|-------------|
+| [`applications/registry`](applications/registry) | Remote module registry for Rho, written in Rho and compiled to a Go HTTP service |
+
+The registry speaks the endpoints the Rho module client already uses, so
+`rho module publish`, `download` and `search` work against it. See its
+[README](applications/registry/README.md) for the endpoints and configuration,
+and [docs/deployment.md](applications/registry/docs/deployment.md) for the
+deployment options.
+
 ## CLI Tools
 
 The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`, `module`, and `help`:
