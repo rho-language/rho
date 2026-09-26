@@ -20,6 +20,7 @@ include "registry/storage.rho"
 import std.web.http
 import registry.validate
 import registry.respond
+import registry.web
 
 route POST "/modules/{name}/{version}/rho-pkg" => publish_module
 route GET  "/modules/{name}/{version}/rho-pkg" => download_module
@@ -58,7 +59,7 @@ fn publish_module(req: Request) Response {
 
     // The store validates the module name and refuses to write outside the data
     // directory, so a rejected name is reported as a bad request.
-    if store_put(name, version, payload, meta_json(name, version)) != 0 {
+    if store_put(name, version, payload, meta_json(req, name, version)) != 0 {
         return error_json(status_bad_request(), "invalid module name")
     }
     return published_json(name, version)

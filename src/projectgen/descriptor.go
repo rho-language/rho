@@ -35,6 +35,14 @@ const DescriptorFileName = "project.yml"
 // FileRole identifies the part an emitted file plays in a generated project.
 type FileRole = string
 
+// Template is a page template placed in the generated project.
+type Template struct {
+	// Name is how the template is requested, for example "index".
+	Name string
+	// File is the path relative to the Rho project root.
+	File string
+}
+
 // CopyEntry is a hand-written file copied into a generated project, given as a
 // path relative to the Rho project root.
 type CopyEntry struct {
@@ -82,6 +90,9 @@ type Target struct {
 	// Ports names built-in port implementations the backend generates, so a
 	// module's extern declarations are supplied without shipping host code.
 	Ports []string
+	// Templates are page templates carried into the generated project, which
+	// keeps markup out of the Rho sources.
+	Templates []Template
 	// Copy lists hand-written files to place in the generated project.
 	Copy []CopyEntry
 	// Files lists the output files for this target.
@@ -167,6 +178,7 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 			Requires:    []string{},
 			BuildFlags:  []string{},
 			Ports:       []string{},
+			Templates:   []Template{},
 			Copy:        []CopyEntry{},
 			Files:       []DescriptorFile{},
 		}
@@ -201,6 +213,25 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 			if item.Str != "" {
 				target.BuildFlags = append(target.BuildFlags, item.Str)
 			}
+		}
+
+		// Page templates placed in the generated project.
+		for _, entry := range targetNode.Map["templates"].List {
+			if entry.Kind != yaml.KindMap {
+				continue
+			}
+			item := Template{
+				Name: entry.Map["name"].Str,
+				File: entry.Map["file"].Str,
+			}
+			if item.Name == "" || item.File == "" {
+				return nil, fmt.Errorf("target %q has a template entry without a name and file", target.ID)
+			}
+			if filepath.IsAbs(item.File) || strings.Contains(item.File, "..") {
+				return nil, fmt.Errorf("target %q template file must stay inside the project: %q",
+					target.ID, item.File)
+			}
+			target.Templates = append(target.Templates, item)
 		}
 
 		// Built-in port implementations the backend generates.

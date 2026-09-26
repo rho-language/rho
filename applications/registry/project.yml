@@ -39,6 +39,15 @@ targets:
     # handlers declare.
     ports:
       - fsstore
+    # Page markup, kept out of the Rho sources and rendered by the generated
+    # template engine.
+    templates:
+      - name: index
+        file: templates/index.html
+      - name: row
+        file: templates/row.html
+      - name: empty
+        file: templates/empty.html
     files:
       - path: app.go
         role: implementation

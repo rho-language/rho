@@ -29,6 +29,7 @@ import (
 	modcore "rho/cmd/rho-module/core"
 	pkgcli "rho/cmd/rho-pkg/cli"
 
+	modremote "rho/cmd/rho-module/remote"
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
 	"rho/src/rhotest"   // test runner
@@ -78,6 +79,9 @@ func main() {
 
 	case "test":
 		os.Exit(testCLI(os.Args[2:]))
+
+	case "config":
+		os.Exit(configCLI(os.Args[2:]))
 
 	case "pkg":
 		os.Exit(pkgcli.Main(os.Args[2:]))
@@ -260,6 +264,57 @@ func installCLI(args []string) int {
 	fmt.Println()
 
 	return 0
+}
+
+// configCLI reads and writes the remote registry configuration, so a
+// deployment can be pointed at without editing files by hand.
+func configCLI(args []string) int {
+	if len(args) == 0 {
+		fmt.Println("Usage: rho config get | rho config set <key> <value>")
+		return 2
+	}
+
+	switch args[0] {
+	case "get":
+		cfg, err := modremote.LoadConfig()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "rho config:", err)
+			return 1
+		}
+		fmt.Println("remote.url      " + cfg.Remote.URL)
+		// The token is a secret, so only whether one is set is shown.
+		if cfg.Remote.Token == "" {
+			fmt.Println("remote.token    (not set)")
+		} else {
+			fmt.Println("remote.token    (set)")
+		}
+		return 0
+
+	case "set":
+		if len(args) != 3 {
+			fmt.Println("Usage: rho config set <remote.url|remote.token> <value>")
+			return 2
+		}
+		var err error
+		switch args[1] {
+		case "remote.url":
+			err = modremote.SetRemoteRegistryURL(args[2])
+		case "remote.token":
+			err = modremote.SetRemoteRegistryToken(args[2])
+		default:
+			fmt.Println("Usage: rho config set <remote.url|remote.token> <value>")
+			return 2
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "rho config:", err)
+			return 1
+		}
+		fmt.Println("Set", args[1])
+		return 0
+	}
+
+	fmt.Println("Usage: rho config get | rho config set <key> <value>")
+	return 2
 }
 
 func testCLI(args []string) int {

@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"rho/src/ir"
+	"rho/src/types"
 )
 
 // DefaultServerAddr is used when RHO_HTTP_ADDR is unset.
@@ -62,6 +63,7 @@ func EmitGoServer(m ir.ModuleIR) string {
 	b.WriteString("\tjsonenc \"encoding/json\"\n")
 	b.WriteString("\t\"log\"\n")
 	b.WriteString("\t\"net/http\"\n")
+	b.WriteString("\t\"net/url\"\n")
 	b.WriteString("\t\"os\"\n")
 	b.WriteString("\t\"os/signal\"\n")
 	b.WriteString("\t\"strings\"\n")
@@ -243,16 +245,23 @@ func requestQueryParam(req Request, name string) string {
 }
 
 
-// queryParam returns a value from the raw query string.
+// queryParam returns a decoded value from the raw query string. Values arrive
+// percent-encoded, so a space written as "+" has to be turned back into a
+// space rather than shown literally.
 func queryParam(query, name string) string {
 	for _, part := range strings.Split(query, "&") {
 		if part == "" {
 			continue
 		}
 		key, value, _ := strings.Cut(part, "=")
-		if key == name {
+		if key != name {
+			continue
+		}
+		decoded, err := url.QueryUnescape(value)
+		if err != nil {
 			return value
 		}
+		return decoded
 	}
 	return ""
 }
@@ -285,7 +294,14 @@ func goRegisterRoutes(m ir.ModuleIR) string {
 
 // goRouterServe emits the http.Handler that dispatches through the router.
 func goRouterServe() string {
-	return `// notFound writes the response for an unmatched request. It avoids the
+	return `// notImplemented writes the response for a route whose handler is missing.
+func notImplemented(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusNotImplemented)
+	_, _ = w.Write([]byte(message))
+}
+
+// notFound writes the response for an unmatched request. It avoids the
 // text() helper from std/web/http so a generated project always builds.
 func notFound(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -401,28 +417,36 @@ func goRouteFuncName(route ir.RouteIR) string {
 	return "rho" + goFuncName(route.Handler) + "Handler"
 }
 
-// goRouteHandlers emits one net/http wrapper per route. The wrapper decodes the
-// request, calls the Rho function, and writes the response.
+// goRouteHandlers emits one net/http wrapper per distinct handler. The
+// wrapper decodes the request, calls the Rho function, and writes the response.
 func goRouteHandlers(m ir.ModuleIR) string {
 	if len(m.Routes) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("// HTTP wrappers bridging net/http and the Rho handlers.\n")
-	for _, route := range m.Routes {
-		name := goRouteFuncName(route)
+	// Several routes can share a handler, so the wrappers are emitted once each
+	// and the mux binds every path to the same one.
+	for _, handler := range types.RouteHandlers(m) {
+		name := goRouteFuncName(ir.RouteIR{Handler: handler})
 
-		fmt.Fprintf(&b, "// %s serves %s %s.\n", name, route.Method, route.Path)
-		fmt.Fprintf(&b, "func %s(w http.ResponseWriter, r *http.Request) {\n", name)
-		b.WriteString("\treq := newRequest(r)\n")
-
-		handler := goFuncName(route.Handler)
-		if hasGoFunc(m, handler) {
-			fmt.Fprintf(&b, "\t%s(*req).write(w)\n", handler)
-		} else {
-			fmt.Fprintf(&b, "\ttext(http.StatusNotImplemented, %q).write(w)\n", "handler "+route.Handler+" is not defined")
+		if !hasGoFunc(m, handler) {
+			// A route naming a function this module does not define still has
+			// to answer, with a clear status rather than a missing symbol.
+			fmt.Fprintf(&b, "// %s stands in for the undefined handler %s.\n", name, handler)
+			fmt.Fprintf(&b, "func %s(w http.ResponseWriter, r *http.Request) {\n", name)
+			fmt.Fprintf(&b, "\tnotImplemented(w, %q)\n}\n\n", "handler "+handler+" is not defined")
+			continue
 		}
-		b.WriteString("}\n\n")
+
+		// Document every path this handler serves.
+		for _, route := range m.Routes {
+			if route.Handler == handler {
+				fmt.Fprintf(&b, "// %s serves %s %s.\n", name, route.Method, route.Path)
+			}
+		}
+		fmt.Fprintf(&b, "func %s(w http.ResponseWriter, r *http.Request) {\n", name)
+		fmt.Fprintf(&b, "\t%s(*newRequest(r)).write(w)\n}\n\n", goFuncName(handler))
 	}
 	return b.String()
 }

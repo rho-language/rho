@@ -17,10 +17,10 @@
 package install
 
 import (
-    "fmt"
-    "io"
-    "os"
-    "path/filepath"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -29,58 +29,59 @@ import (
 
 // InstallBinary copies a single binary into ~/.rho/bin.
 func InstallBinary(src string) error {
-    binPath, err := GetBinPath()
-    if err != nil {
-        return err
-    }
+	binPath, err := GetBinPath()
+	if err != nil {
+		return err
+	}
 
-    if _, err := os.Stat(src); os.IsNotExist(err) {
-        return fmt.Errorf("source binary does not exist: %s", src)
-    }
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return fmt.Errorf("source binary does not exist: %s", src)
+	}
 
-    dst := filepath.Join(binPath, filepath.Base(src))
+	dst := filepath.Join(binPath, filepath.Base(src))
 
-    // Avoid accidental overwrite
-    if _, err := os.Stat(dst); err == nil {
-        return fmt.Errorf("binary already exists: %s", dst)
-    }
+	// Avoid accidental overwrite
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("binary already exists: %s", dst)
+	}
 
-    in, err := os.Open(src)
-    if err != nil {
-        return fmt.Errorf("cannot open source binary: %w", err)
-    }
-    defer in.Close()
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("cannot open source binary: %w", err)
+	}
+	defer in.Close()
 
-    out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY, 0o755)
-    if err != nil {
-        return fmt.Errorf("cannot create destination binary: %w", err)
-    }
-    defer out.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY, 0o755)
+	if err != nil {
+		return fmt.Errorf("cannot create destination binary: %w", err)
+	}
+	defer out.Close()
 
-    if _, err := io.Copy(out, in); err != nil {
-        return fmt.Errorf("failed to copy binary: %w", err)
-    }
+	if _, err := io.Copy(out, in); err != nil {
+		return fmt.Errorf("failed to copy binary: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // InstallAllBinaries installs all Rho executables.
 func InstallAllBinaries(srcDir string) error {
-    binaries := []string{
-        "rho",
-        "rho-pkg",
-        "rho-fmt",
-        "rho-test",
-        "rho-deps",
-        "rho-doc",
-    }
+	// The same set the installation check verifies. cmd/rho-pkg is a library
+	// with no main package, so there is no binary to install for it.
+	binaries := []string{
+		"rho",
+		"rho-fmt",
+		"rho-test",
+		"rho-deps",
+		"rho-doc",
+	}
 
-    for _, b := range binaries {
-        src := filepath.Join(srcDir, b)
-        if err := InstallBinary(src); err != nil {
-            return fmt.Errorf("failed to install %s: %w", b, err)
-        }
-    }
+	for _, b := range binaries {
+		src := filepath.Join(srcDir, b)
+		if err := InstallBinary(src); err != nil {
+			return fmt.Errorf("failed to install %s: %w", b, err)
+		}
+	}
 
-    return nil
+	return nil
 }
