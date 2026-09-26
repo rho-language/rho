@@ -1,0 +1,147 @@
+module registry.web
+
+// A browsable index for the registry.
+//
+// The service is a JSON API for the Rho module client, but a registry is much
+// easier to sanity check with a page. The markup lives in the template files
+// under templates/, which the descriptor carries into the generated project, so
+// this only decides which values go into which slots.
+
+import std.web.http
+
+/* -------------------------------------------------------------------------- */
+/*  Routes                                                                    */
+/* -------------------------------------------------------------------------- */
+
+route GET "/"   => index_page
+route GET "/ui" => index_page
+
+/* -------------------------------------------------------------------------- */
+/*  Handler                                                                   */
+/* -------------------------------------------------------------------------- */
+
+fn index_page(req: Request) Response {
+    let query: string = request_query_param(req, "q")
+    return html(200, render_index(query, store_list(query)))
+}
+
+// render_index fills the page template with the stored modules.
+fn render_index(query: string, listing: string) string {
+    return template_fill(
+        template_get("index"),
+        "count", count_label(line_count(listing)),
+        "query", query,
+        "heading", heading_for(query),
+        "listing", render_rows(listing)
+    )
+}
+
+// render_rows renders one row per listed module, or the empty state. The
+// listing is "name<TAB>version" per line, which Rho can read without parsing
+// a nested document.
+fn render_rows(listing: string) string {
+    let rows: string = ""
+    let count: u32 = 0
+    let rest: string = listing
+    let guard: u32 = 0
+
+    while guard < 4096 {
+        let stop: i32 = str_index_of(rest, "\n")
+        if stop < 0 {
+            break
+        }
+        let line: string = str_slice(rest, 0, stop as u32)
+        let name: string = field_of(line, 0)
+        let version: string = field_of(line, 1)
+        if name != "" {
+            rows = rows + template_fill(
+                template_get("row"),
+                "name", name,
+                "version", version,
+                "", "", "", ""
+            )
+            count = count + 1
+        }
+        let next: string = str_slice(rest, (stop as u32) + 1, strlen(rest))
+        if strlen(next) >= strlen(rest) {
+            break
+        }
+        rest = next
+        guard = guard + 1
+    }
+
+    if count == 0 {
+        return template_get("empty")
+    }
+    // The rows are markup this module built, so they are inserted verbatim
+    // rather than escaped a second time.
+    return "<ul>" + rows + "</ul>"
+}
+
+// field_of returns one tab-separated field of a line.
+fn field_of(line: string, index: u32) string {
+    let wanted: u32 = index
+    let start: u32 = 0
+    let seen: u32 = 0
+    let length: u32 = strlen(line)
+    let at: u32 = 0
+    while at <= length {
+        if seen == wanted {
+            let stop: i32 = str_index_of(str_slice(line, at, length), "\t")
+            if stop < 0 {
+                return str_slice(line, at, length)
+            }
+            return str_slice(line, at, stop as u32)
+        }
+        if at < length {
+            if str_at(line, at) == 9 {
+                seen = seen + 1
+            }
+        }
+        at = at + 1
+        if at > length {
+            break
+        }
+    }
+    return ""
+}
+
+// line_count counts the entries in a listing.
+fn line_count(listing: string) u32 {
+    let count: u32 = 0
+    let at: i32 = 0
+    let guard: u32 = 0
+    while guard < 4096 {
+        let next: i32 = str_index_of(listing, "\n")
+        if next < 0 {
+            break
+        }
+        count = count + 1
+        let rest: string = str_slice(listing, (next as u32) + 1, strlen(listing))
+        if strlen(rest) >= strlen(listing) {
+            break
+        }
+        listing = rest
+        guard = guard + 1
+    }
+    return count
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Presentation helpers                                                      */
+/* -------------------------------------------------------------------------- */
+
+fn heading_for(query: string) string {
+    if query == "" {
+        return "Modules"
+    }
+    return "Modules matching " + query
+}
+
+fn count_label(count: u32) string {
+    if count == 1 {
+        return "1 module"
+    }
+    return int_to_str(count) + " modules"
+}
+

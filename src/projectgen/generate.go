@@ -101,6 +101,31 @@ func availablePorts(emitter string) []string {
 	}
 }
 
+// generateTemplates embeds the page templates a target carries, so a handler
+// renders markup that lives in template files rather than in Rho string
+// literals.
+func generateTemplates(ctx Context, target Target) error {
+	if len(target.Templates) == 0 {
+		return nil
+	}
+	contents := map[string]string{}
+	for _, template := range target.Templates {
+		data, err := os.ReadFile(filepath.Join(ctx.ProjectRoot, filepath.FromSlash(template.File)))
+		if err != nil {
+			return fmt.Errorf("read template %s: %w", template.File, err)
+		}
+		contents[template.Name] = string(data)
+	}
+	rendered := codegen.EmitGoTemplates(contents)
+	if rendered == "" {
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(ctx.OutputDir, codegen.TemplateFileName), []byte(rendered), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", codegen.TemplateFileName, err)
+	}
+	return nil
+}
+
 // generatePorts writes the port implementations a target asked for. A port is
 // supplied by the backend, so a Rho project needs no hand-written host code.
 func generatePorts(ctx Context, target Target) error {
@@ -200,8 +225,11 @@ func Generate(ctx Context, target Target) (string, error) {
 		}
 	}
 
-	// Built-in ports the backend generates, satisfying the module's extern
-	// declarations without shipping host code.
+	// Page templates, then the built-in ports that satisfy the module's
+	// extern declarations without shipping host code.
+	if err := generateTemplates(ctx, target); err != nil {
+		return "", err
+	}
 	if err := generatePorts(ctx, target); err != nil {
 		return "", err
 	}

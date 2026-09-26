@@ -426,5 +426,23 @@ func storeVersions(name string) string {
 func storeDataDir() string {
 	return dataDir()
 }
+
+// storeList returns the matching modules as "name<TAB>version" lines, one per
+// module, sorted by name then version.
+//
+// A line-based listing exists so a Rho handler can render it without parsing
+// JSON: Rho has no way to walk a nested document, and the store already holds
+// the fields as strings.
+func storeList(query string) string {
+	results := newFSStore().search(query)
+	var out strings.Builder
+	for _, meta := range results {
+		out.WriteString(meta.Name)
+		out.WriteByte('\t')
+		out.WriteString(meta.Version)
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
 `
 }

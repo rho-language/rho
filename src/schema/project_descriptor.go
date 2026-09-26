@@ -119,6 +119,16 @@ func ProjectDescriptorSchema() Schema {
 						// generates, so a Rho project stays pure Rho while its
 						// extern declarations are supplied by the compiler.
 						{Name: "ports", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+						// templates names template files carried into the
+						// generated project, each resolved from
+						// <project root>/templates/<name>.<ext>.
+						{Name: "templates", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+							Kind: KindMap,
+							Fields: []FieldSchema{
+								{Name: "name", Required: true, RejectNull: true, Kind: KindString},
+								{Name: "file", Required: true, RejectNull: true, Kind: KindString},
+							},
+						}},
 						// copy lists hand-written files placed in the generated
 						// project, such as the Go implementations of extern ports.
 						{Name: "copy", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{

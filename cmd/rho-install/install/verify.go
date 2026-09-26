@@ -18,9 +18,9 @@
 package install
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
+	"fmt"
+	"os"
+	"path/filepath"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -29,22 +29,22 @@ import (
 
 // IsInstalled performs a full installation check.
 func IsInstalled() bool {
-    if !pathsExist() {
-        return false
-    }
-    if !binariesExist() {
-        return false
-    }
-    if !RegistryExists() {
-        return false
-    }
-    if !CacheExists() {
-        return false
-    }
-    if !ConfigExists() {
-        return false
-    }
-    return true
+	if !pathsExist() {
+		return false
+	}
+	if !binariesExist() {
+		return false
+	}
+	if !RegistryExists() {
+		return false
+	}
+	if !CacheExists() {
+		return false
+	}
+	if !ConfigExists() {
+		return false
+	}
+	return true
 }
 
 // VerifyInstallation returns an error if installation is incomplete.
@@ -72,47 +72,47 @@ func VerifyInstallation() error {
 /* -------------------------------------------------------------------------- */
 
 func pathsExist() bool {
-    home, err := GetRhoHome()
-    if err != nil {
-        return false
-    }
+	home, err := GetRhoHome()
+	if err != nil {
+		return false
+	}
 
-    dirs := []string{
-        filepath.Join(home, "bin"),
-        filepath.Join(home, "modules", "installed"),
-        filepath.Join(home, "registry", "local"),
-        filepath.Join(home, "cache"),
-        filepath.Join(home, "config"),
-    }
+	dirs := []string{
+		filepath.Join(home, "bin"),
+		filepath.Join(home, "modules", "installed"),
+		filepath.Join(home, "registry", "local"),
+		filepath.Join(home, "cache"),
+		filepath.Join(home, "config"),
+	}
 
-    for _, d := range dirs {
-        if _, err := os.Stat(d); os.IsNotExist(err) {
-            return false
-        }
-    }
+	for _, d := range dirs {
+		if _, err := os.Stat(d); os.IsNotExist(err) {
+			return false
+		}
+	}
 
-    return true
+	return true
 }
 
 func binariesExist() bool {
-    binPath, err := GetBinPath()
-    if err != nil {
-        return false
-    }
+	binPath, err := GetBinPath()
+	if err != nil {
+		return false
+	}
 
-    binaries := []string{
-        "rho",
-        "rho-fmt",
-        "rho-test",
-        "rho-deps",
-        "rho-doc",
-    }
+	binaries := []string{
+		"rho",
+		"rho-fmt",
+		"rho-test",
+		"rho-deps",
+		"rho-doc",
+	}
 
-    for _, b := range binaries {
-        if _, err := os.Stat(filepath.Join(binPath, b)); os.IsNotExist(err) {
-            return false
-        }
-    }
+	for _, b := range binaries {
+		if _, err := os.Stat(filepath.Join(binPath, b)); os.IsNotExist(err) {
+			return false
+		}
+	}
 
-    return true
+	return true
 }

@@ -8,45 +8,53 @@
 # image would be smaller but could not run the build, so this uses a slim
 # Debian base.
 
-# --- Stage 1: build the Rho toolchain -----------------------------------------
-FROM golang:1.22 AS rho-build
-WORKDIR /src
-# The Rho CLI links a C toolchain for its native target.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc \
- && rm -rf /var/lib/apt/lists/*
-COPY go.mod ./
-COPY cmd ./cmd
-COPY src ./src
-COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -o /out/rho ./cmd/rho
+# Build and install the Rho toolchain, then run the registry.
+#
+# The image carries a properly installed rho: the tool home, its binaries, and
+# the registry, cache and config layout it expects. That is what `rho install`
+# produces, run here exactly as a developer would run it.
+#
+# The service starts through `rho run`, so the container generates the Go
+# project from the Rho sources and runs it, and the image needs a Go toolchain
+# for that build.
 
-# --- Stage 2: the service ------------------------------------------------------
-# The Go toolchain builds the project rho generates at start-up.
 FROM golang:1.22-bookworm
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends gcc ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --create-home --home-dir /home/rho --shell /usr/sbin/nologin rho
 
-COPY --from=rho-build /out/rho /usr/local/bin/rho
+# The repository, which is what the toolchain is built from and what the
+# service is compiled against.
+WORKDIR /src
+COPY . .
 
-# The sources rho compiles at run time: the standard library it resolves
-# imports against, and the service itself.
-WORKDIR /app
-COPY --chown=rho:rho std ./std
-COPY --chown=rho:rho applications/registry ./applications/registry
-COPY --chown=rho:rho examples ./examples
+# Build the tools, then install them.
+RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho      ./cmd/rho \
+ && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-fmt   ./cmd/rho-fmt \
+ && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-test  ./cmd/rho-test \
+ && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-deps  ./cmd/rho-deps \
+ && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-doc   ./cmd/rho-doc \
+ && HOME=/home/rho ./bin/rho install --force
 
-# Generated projects and the module store live under the service directory.
+# The runtime tree: an installed toolchain plus the sources rho compiles at
+# start-up, being the standard library and the service.
 RUN mkdir -p /app/applications/registry/data \
- && chown -R rho:rho /app/applications/registry
+ && cp -a /src/std /app/std \
+ && cp -a /src/applications/registry/. /app/applications/registry/ \
+ && rm -rf /app/applications/registry/build \
+ && chown -R rho:rho /app /home/rho
 
 USER rho
 WORKDIR /app
 
-ENV RHO_HTTP_ADDR=:8080 \
+# rho install puts the binaries in the tool home and adds that to PATH
+# through the shell profile, which a container never sources, so PATH is set
+# here as well.
+ENV HOME=/home/rho \
+    PATH=/home/rho/.rho/bin:$PATH \
+    RHO_HTTP_ADDR=:8080 \
     RHO_REGISTRY_DATA=/app/applications/registry/data \
     GOFLAGS=-buildvcs=false \
     GOCACHE=/tmp/go-build
@@ -56,4 +64,4 @@ EXPOSE 8080
 
 # The service is started by rho: it generates the Go project from the Rho
 # sources and then runs it.
-ENTRYPOINT ["rho", "run", "applications/registry/src/main.rho"]
+ENTRYPOINT ["rho", "run", "applications/registry"]

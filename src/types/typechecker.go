@@ -741,6 +741,12 @@ var intrinsicLowering = map[string]string{
 	"str_contains":    "rho_str_contains",
 	"str_at":          "rho_str_at",
 	"str_index_of":    "rho_str_index_of",
+	"str_slice":       "rho_str_slice",
+	"int_to_str":      "rho_int_to_str",
+	"template_get":    "template_get",
+	"template_has":    "template_has",
+	"template_fill":   "template_fill",
+	"str_from_byte":   "rho_str_from_byte",
 	"env_or":          "rho_env_or",
 }
 
@@ -1162,6 +1168,10 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		return "{ " + strings.Join(values, ", ") + " }"
 	case ast.IfExpr:
 		return "(" + tc.lowerExpr(expr.Condition, scope) + " ? " + tc.lowerExpr(expr.Then, scope) + " : " + tc.lowerExpr(expr.Else, scope) + ")"
+	case ast.CastExpr:
+		// A C cast. The Go backend recognises the same spelling and emits a
+		// real conversion, so both backends read one expression.
+		return "(" + cTypeForName(expr.Type.String()) + ")" + tc.lowerExpr(expr.Value, scope)
 	default:
 		return "0"
 	}
@@ -1303,13 +1313,34 @@ func init() {
 		params: twoStrings,
 		result: ir.Type{Kind: ir.TypeI32, Name: "i32"},
 	}
+	// str_slice takes a run of bytes, which is what turns a document into
+	// something Rho can read field by field.
+	// int_to_str renders a number, which text output needs.
+	intrinsicSignatures["int_to_str"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeU32, Name: "u32"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
+	// str_from_byte renders one byte as a one-character string.
+	intrinsicSignatures["str_from_byte"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
+	intrinsicSignatures["str_slice"] = functionType{
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeU32, Name: "u32"},
+			{Kind: ir.TypeU32, Name: "u32"},
+		},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
 	intrinsicSignatures["env_or"] = functionType{
 		params: twoStrings,
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	}
 	for _, name := range []string{
 		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
-		"str_index_of", "env_or",
+		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
+		"template_get", "template_has", "template_fill", "env_or",
 	} {
 		isExternalBuiltinNames[name] = true
 	}

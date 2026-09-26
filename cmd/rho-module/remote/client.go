@@ -16,9 +16,11 @@ package remote
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -46,13 +48,13 @@ func NewClient(cfg *Config) *Client {
 
 // ModuleInfo holds metadata about a module on the remote registry.
 type ModuleInfo struct {
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Main        string   `json:"main"`
-	Command     string   `json:"command"`
-	Features    []string `json:"features"`
+	Name        string            `json:"name"`
+	Version     string            `json:"version"`
+	Type        string            `json:"type"`
+	Description string            `json:"description"`
+	Main        string            `json:"main"`
+	Command     string            `json:"command"`
+	Features    []string          `json:"features"`
 	Deps        map[string]string `json:"deps"`
 }
 
@@ -62,15 +64,23 @@ type ModuleInfo struct {
 
 // UploadModule uploads a module to the remote registry.
 // Returns error if remote registry is not configured.
-func UploadModule(client *Client, name, version string, pkgData, sourceData []byte) error {
+func UploadModule(client *Client, name, version string, pkgData, sourceData []byte, manifest map[string]string) error {
 	if client.BaseURL == "" {
 		return fmt.Errorf("remote registry not configured")
 	}
 
-	// Build upload URL
-	url := fmt.Sprintf("%s/modules/%s/%s/rho-pkg", client.BaseURL, name, version)
+	// Build upload URL. The manifest fields travel as query parameters so a
+	// registry can record what was published without unpacking the archive.
+	query := url.Values{}
+	for key, value := range manifest {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
+	query.Set("version", version)
+	uploadURL := fmt.Sprintf("%s/modules/%s/%s/rho-pkg?%s", client.BaseURL, name, version, query.Encode())
 
-	req, err := http.NewRequest("POST", url, bytes.NewReader(pkgData))
+	req, err := http.NewRequest("POST", uploadURL, bytes.NewReader(pkgData))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -167,5 +177,70 @@ func SearchRemote(client *Client, query string) ([]ModuleInfo, error) {
 
 	// In a future implementation, this would parse the JSON response
 	var results []ModuleInfo
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, fmt.Errorf("cannot read the search response: %w", err)
+	}
 	return results, nil
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Convenience helpers                                                        */
+/*                                                                             */
+/*  These resolve the configured remote once, so a caller does not have to     */
+/*  repeat the config lookup.                                                  */
+/* -------------------------------------------------------------------------- */
+
+// FetchModule downloads a module package from the configured remote.
+func FetchModule(name, version string) ([]byte, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Remote.URL == "" {
+		return nil, fmt.Errorf("remote registry not configured; set it with: rho config set remote.url <url>")
+	}
+	return DownloadModule(NewClient(cfg), name, version)
+}
+
+// AvailableVersions lists the published versions of a module, lowest first.
+// An empty result means the module is not on the remote, or the remote does
+// not publish a version list; callers treat that as "nothing to choose".
+func AvailableVersions(name string) ([]string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Remote.URL == "" {
+		return nil, fmt.Errorf("remote registry not configured; set it with: rho config set remote.url <url>")
+	}
+	client := NewClient(cfg)
+
+	url := fmt.Sprintf("%s/modules/%s", client.BaseURL, name)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if client.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+client.Token)
+	}
+	resp, err := client.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("version list returned %d", resp.StatusCode)
+	}
+
+	var document struct {
+		Versions []string `json:"versions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&document); err != nil {
+		return nil, fmt.Errorf("cannot read the version list: %w", err)
+	}
+	return document.Versions, nil
 }
