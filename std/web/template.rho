@@ -1,0 +1,47 @@
+module std.web.template
+
+// A small template engine for generated Go services.
+//
+// The syntax is deliberately small:
+//
+//	{{ name }}      substitute a value, HTML-escaped
+//	{{{ name }}}    substitute a value verbatim, for markup the Rho code built
+//	{# note #}      a comment, removed
+//
+// Values are given as a single encoded list rather than a parameter per slot,
+// so a template can grow a new placeholder without any function signature
+// changing with it. Each pair is appended with `vars`, and pairs join with `+`:
+
+//	template_fill(
+//	    template_get("page"),
+//	    vars("title", "Registry") + vars("count", "3") + vars("body", rows)
+//	)
+//
+// So a handler takes a fixed two arguments whatever the template needs.
+
+// separator is a non-printing byte, so a value may contain spaces, tabs and
+// newlines without breaking the list apart.
+fn separator() string {
+    return "\x1f"
+}
+
+// vars encodes one name and value for template_fill.
+//
+// The leading separator is what makes the list parseable: the first field of
+// the encoded string is always empty, so names land on odd positions.
+fn vars(name: string, value: string) string {
+    return separator() + name + separator() + value
+}
+
+// fill renders a template with an encoded list of values.
+//
+// A name that is not in the list is left as written, so a typo is visible in
+// the page rather than silently blank.
+fn fill(source: string, pairs: string) string {
+    return template_fill(source, pairs)
+}
+
+// escape makes a value safe to place in element text or an attribute.
+fn escape(value: string) string {
+    return escape_html(value)
+}

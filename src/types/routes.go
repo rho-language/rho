@@ -154,11 +154,67 @@ var protocolFuncs = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
 		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
 	},
-	// store_list is provided by the fsstore port, which renders a listing the
-	// Rho side can read line by line.
+	// Listings the fsstore port provides, rendered as tab-separated lines
+	// because a Rho handler cannot walk a nested document.
 	"store_list": {
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"store_meta": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"store_detail": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"store_latest": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"store_data_dir": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"registry_data_dir": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"registry_access": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"config_get": {
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+		},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"clock_year": {
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	},
+	"escape_html": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"registry_title": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"registry_version": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"registry_site_url": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"registry_token_days": {
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	},
+	"registry_token_max_days": {
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	},
+	"registry_open_tokens": {
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
+	"registry_max_upload_mb": {
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
 	},
 	"template_get": {
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
@@ -167,15 +223,11 @@ var protocolFuncs = map[string]functionType{
 	// template_fill renders a template with up to four name/value pairs. A
 	// pair whose name is empty is skipped, so a caller with fewer values
 	// passes empty ones rather than reaching for a different arity.
+	// template_fill takes the source and one encoded list of values, so a
+	// template can gain placeholders without any signature changing. See
+	// std/web/template.rho for the encoding.
 	"template_fill": {
 		params: []ir.Type{
-			{Kind: ir.TypeString, Name: "string"},
-			{Kind: ir.TypeString, Name: "string"},
-			{Kind: ir.TypeString, Name: "string"},
-			{Kind: ir.TypeString, Name: "string"},
-			{Kind: ir.TypeString, Name: "string"},
-			{Kind: ir.TypeString, Name: "string"},
-			{Kind: ir.TypeString, Name: "string"},
 			{Kind: ir.TypeString, Name: "string"},
 			{Kind: ir.TypeString, Name: "string"},
 		},

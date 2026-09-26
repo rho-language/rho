@@ -1,0 +1,12 @@
+<p class="crumb"><a href="/">index</a> / <a href="/modules/{{ name }}">{{ name }}</a> / {{ version }}</p>
+<h2>{{ name }} <span class="badge">{{ version }}</span></h2>
+<dl>
+  <dt>name</dt><dd><code>{{ name }}</code></dd>
+  <dt>version</dt><dd><code>{{ version }}</code></dd>
+  <dt>type</dt><dd><code>{{ kind }}</code></dd>
+  <dt>description</dt><dd>{{ description }}</dd>
+  <dt>main</dt><dd><code>{{ main }}</code></dd>
+  <dt>command</dt><dd><code>{{ command }}</code></dd>
+</dl>
+<h3>Download</h3>
+<p class="sub"><code>GET /modules/{{ name }}/{{ version }}/rho-pkg</code></p>

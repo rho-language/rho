@@ -216,7 +216,7 @@ func SearchRemote(client *Client, query string) ([]ModuleInfo, error) {
 		return nil, fmt.Errorf("remote registry not configured")
 	}
 
-	url := fmt.Sprintf("%s/search?q=%s", client.BaseURL, query)
+	url := fmt.Sprintf("%s/api/search?q=%s", client.BaseURL, query)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -277,7 +277,7 @@ func AvailableVersions(name string) ([]string, error) {
 	}
 	client := NewClient(cfg)
 
-	url := fmt.Sprintf("%s/modules/%s", client.BaseURL, name)
+	url := fmt.Sprintf("%s/api/modules/%s", client.BaseURL, name)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err

@@ -251,42 +251,65 @@ func TestEmitGoEntrypoint(t *testing.T) {
 	}
 }
 
-// runtime.go must not carry imports for helpers the program never calls. The
-// abort and panic intrinsics are always present, so "os" is expected; what
-// must not appear is an import only a helper would need.
-func TestEmitGoRuntimeIsMinimal(t *testing.T) {
-	empty := EmitGoRuntime("package main\n")
-	if !strings.Contains(empty, "func abort()") {
-		t.Errorf("expected the abort intrinsic, got:\n%s", empty)
+// The language intrinsics are always present, because a module may call any of
+// them and the generated project must compile on its own.
+func TestEmitGoRuntimeAlwaysCarriesIntrinsics(t *testing.T) {
+	out := EmitGoRuntime("package main\n")
+	for _, want := range []string{
+		"func abort()",
+		"func panicf(",
+		"func rhoStrlen(",
+		"func rhoStrAt(",
+		"func rhoStrSlice(",
+		"func rhoStrIndexOf(",
+		"func rhoStrStartsWith(",
+		"func rhoStrContains(",
+		"func rhoIntToStr(",
+		"func rhoIntFromStr(",
+		"func rhoStrFromByte(",
+		"func rhoEnvOr(",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected the intrinsic %s to always be present", want)
+		}
 	}
-	// strconv is only needed by a helper, so its absence is the check.
-	if strings.Contains(empty, "strconv") {
-		t.Errorf("expected no strconv import when no helper is used, got:\n%s", empty)
-	}
-	// The string intrinsics are always present and need strings.
-	if !strings.Contains(empty, "func rhoStrlen(") {
-		t.Errorf("expected the string intrinsics, got:\n%s", empty)
-	}
-
-	withHelpers := EmitGoRuntime("func x() { _ = rhoStrEq(\"a\", \"b\"); _ = rhoStringFromI32(1) }")
-	if !strings.Contains(withHelpers, "import") {
-		t.Error("expected imports for the helpers in use")
-	}
-	if !strings.Contains(withHelpers, "strconv") {
-		t.Error("expected strconv for rhoStringFromI32")
-	}
-	if !strings.Contains(withHelpers, "func rhoStrEq") {
-		t.Error("expected the rhoStrEq helper")
+	// The intrinsics need these, so they are unconditional too.
+	for _, want := range []string{`"os"`, `"strings"`, `"strconv"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected the import %s for the intrinsics", want)
+		}
 	}
 }
 
+// The optional helpers are only emitted when the program calls them, so a
+// generated project does not carry code it never uses.
 func TestEmitGoRuntimeKeepsOnlyReferencedHelpers(t *testing.T) {
-	out := EmitGoRuntime(`func x() { _ = rhoStrEq("a", "b") }`)
-	if strings.Contains(out, "rhoYamlLoad") {
-		t.Error("expected rhoYamlLoad to be omitted when unused")
+	// Nothing optional is used, so nothing optional is emitted.
+	empty := EmitGoRuntime("package main\n")
+	for _, unwanted := range []string{"rhoStrEq", "rhoStringFromI32", "rhoYamlLoad"} {
+		if strings.Contains(empty, unwanted) {
+			t.Errorf("expected %s to be omitted when unused", unwanted)
+		}
 	}
-	if strings.Contains(out, "strconv") {
-		t.Error("expected strconv to be omitted when rhoStringFromI32 is unused")
+
+	// A used helper appears; the others still do not.
+	out := EmitGoRuntime(`func x() { _ = rhoStrEq("a", "b"); _ = rhoStringFromI32(1) }`)
+	for _, want := range []string{"func rhoStrEq", "func rhoStringFromI32"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %s to be emitted when used", want)
+		}
+	}
+	if strings.Contains(out, "rhoYamlLoad") {
+		t.Error("expected rhoYamlLoad to stay omitted when unused")
+	}
+
+	// A different helper brings a different one, not all of them.
+	onlyEq := EmitGoRuntime(`func x() { _ = rhoStrEq("a", "b") }`)
+	if !strings.Contains(onlyEq, "func rhoStrEq") {
+		t.Error("expected rhoStrEq to be emitted when used")
+	}
+	if strings.Contains(onlyEq, "func rhoStringFromI32") {
+		t.Error("expected rhoStringFromI32 to stay omitted when unused")
 	}
 }
 

@@ -88,7 +88,10 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 			Version:     root.Map["module"].Map["version"].Str,
 			Command:     root.Map["module"].Map["command"].Str,
 			Description: root.Map["module"].Map["description"].Str,
-			License:     root.Map["module"].Map["license"].Str,
+			// main sits at the top level of the manifest, beside the module
+			// section, so it is read from there.
+			Main:    root.Map["main"].Str,
+			License: root.Map["module"].Map["license"].Str,
 		},
 		Main:     root.Map["main"].Str,
 		Deps:     map[string]string{},
