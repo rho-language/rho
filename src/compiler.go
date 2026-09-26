@@ -282,6 +282,11 @@ func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (i
 	if err := codegen.ValidateModule(irModule); err != nil {
 		return ir.ModuleIR{}, fmt.Errorf("codegen validation failed: %w", err)
 	}
+	// The manifest version travels with the IR so a generated service can
+	// report which build it is.
+	if manifest, manifestErr := deps.LoadManifest(deps.ManifestPath(ProjectRoot(path))); manifestErr == nil {
+		irModule.Version = manifest.Version
+	}
 	return irModule, nil
 }
 

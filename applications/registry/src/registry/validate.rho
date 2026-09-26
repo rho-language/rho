@@ -6,11 +6,6 @@ module registry.validate
 // escape the data directory, so only the shape the protocol depends on is
 // checked here.
 
-// The largest upload the service accepts, in bytes.
-fn max_upload() u32 {
-    return 268435456
-}
-
 // valid_version accepts a dotted numeric version such as 0.1.0.
 fn valid_version(version: string) bool {
     let length: u32 = strlen(version)
@@ -73,4 +68,16 @@ fn is_digit(byte: u8) bool {
 
 fn is_alpha(byte: u8) bool {
     return (byte >= 97 && byte <= 122) || (byte >= 65 && byte <= 90)
+}
+
+// Whether the registry requires a credential to publish. Reading stays public
+// either way; this only decides who may write.
+fn is_secured() bool {
+    return registry_access() == "secured"
+}
+
+// The largest upload accepted, taken from the settings rather than a constant
+// so a deployment can raise it without a rebuild.
+fn max_upload() u32 {
+    return registry_max_upload_mb() * 1024 * 1024
 }

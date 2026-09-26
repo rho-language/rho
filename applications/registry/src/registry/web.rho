@@ -1,90 +1,230 @@
 module registry.web
 
-// A browsable index for the registry.
+// The browsable side of the registry.
 //
-// The service is a JSON API for the Rho module client, but a registry is much
-// easier to sanity check with a page. The markup lives in the template files
-// under templates/, which the descriptor carries into the generated project, so
-// this only decides which values go into which slots.
+// Four public pages: an index of modules with the newest version badged, a
+// search, a module's versions newest first, and a version's detail. The markup
+// lives in the template files, so this only decides which values go where.
+//
+// Nothing here needs a credential. Publishing is what a token is for, and that
+// check lives with the publish handler.
 
 import std.web.http
+import std.web.template
 
 /* -------------------------------------------------------------------------- */
 /*  Routes                                                                    */
 /* -------------------------------------------------------------------------- */
 
-route GET "/"   => index_page
-route GET "/ui" => index_page
+route GET "/"                         => index_page
+route GET "/search"                   => search_page
+route GET "/modules/{name}"           => module_page
+route GET "/modules/{name}/{version}" => version_page
 
 /* -------------------------------------------------------------------------- */
-/*  Handler                                                                   */
+/*  Handlers                                                                  */
 /* -------------------------------------------------------------------------- */
 
+// index_page lists the published modules, each with its newest version.
 fn index_page(req: Request) Response {
     let query: string = request_query_param(req, "q")
-    return html(200, render_index(query, store_list(query)))
+    let listing: string = store_meta(query)
+    return html(200, page(req, fill(template_get("index"),
+        vars("listing", module_rows(listing)) +
+        vars("count", int_to_str(line_count(listing))) +
+        vars("noun", noun_for(listing)) +
+        vars("heading", heading_for(query)))
+    ))
 }
 
-// render_index fills the page template with the stored modules.
-fn render_index(query: string, listing: string) string {
-    return template_fill(
-        template_get("index"),
-        "count", count_label(line_count(listing)),
-        "query", query,
-        "heading", heading_for(query),
-        "listing", render_rows(listing)
+// search_page lists every module matching a query, with all of its versions.
+fn search_page(req: Request) Response {
+    let query: string = request_query_param(req, "q")
+    let listing: string = store_meta(query)
+    return html(200, page(req, fill(template_get("index"),
+        vars("listing", version_rows(listing, "Nothing matches that.")) +
+        vars("count", int_to_str(line_count(listing))) +
+        vars("noun", "module") +
+        vars("heading", heading_for(query)))
+    ))
+}
+
+// module_page lists one module's versions, newest first.
+fn module_page(req: Request) Response {
+    let name: string = param(req, "name")
+    if !valid_name(name) {
+        return missing(req, "That module name is not valid.")
+    }
+    let listing: string = store_detail(name)
+    if line_count(listing) == 0 {
+        return missing(req, "No such module.")
+    }
+    return html(200, page(req, fill(template_get("index"),
+        vars("listing", version_rows(listing, "No versions published yet.")) +
+        vars("count", int_to_str(line_count(listing))) +
+        vars("noun", "version") +
+        vars("heading", "Versions of " + name))
+    ))
+}
+
+// version_page shows one published version's public metadata.
+fn version_page(req: Request) Response {
+    let name: string = param(req, "name")
+    let version: string = param(req, "version")
+    if !valid_name(name) || !valid_version(version) {
+        return missing(req, "That module is not valid.")
+    }
+    let found: string = find_version(store_detail(name), version)
+    if found == "" {
+        return missing(req, "No such version.")
+    }
+    return html(200, page(req, fill(template_get("detail"),
+        vars("name", field_of(found, 0)) +
+        vars("version", field_of(found, 1)) +
+        vars("kind", field_of(found, 2)) +
+        vars("description", fallback(field_of(found, 3), "No description.")) +
+        vars("main", field_of(found, 4)) +
+        vars("command", field_of(found, 5)))
+    ))
+}
+
+// missing renders a 404 page.
+fn missing(req: Request, message: string) Response {
+    return html(404, page(req, fill(template_get("notfound"), vars("message", message))))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Page assembly                                                             */
+/* ----------------------------------------------------------------             */
+/*  Every page carries the same header, search box and footer, so they are   */
+/*  wrapped once here rather than repeated per template.                      */
+/* -------------------------------------------------------------------------- */
+
+// page wraps a body in the shared layout.
+fn page(req: Request, body: string) string {
+    let query: string = request_query_param(req, "q")
+    let open: string = template_fill(
+        template_get("layout-open"),
+        vars("title", registry_title()) +
+        vars("query", query)
     )
+    let close: string = template_fill(
+        template_get("layout-close"),
+        vars("title", registry_title()) +
+        vars("version", registry_version()) +
+        vars("year", int_to_str(clock_year())) +
+        vars("site_url", registry_site_url())
+    )
+    return open + body + close
 }
 
-// render_rows renders one row per listed module, or the empty state. The
-// listing is "name<TAB>version" per line, which Rho can read without parsing
-// a nested document.
-fn render_rows(listing: string) string {
-    let rows: string = ""
+/* -------------------------------------------------------------------------- */
+/*  Row rendering                                                             */
+/* -------------------------------------------------------------------------- */
+
+// module_rows renders one row per module, with its newest version badged.
+fn module_rows(listing: string) string {
+    let out: string = ""
     let count: u32 = 0
     let rest: string = listing
-    let guard: u32 = 0
-
-    while guard < 4096 {
-        let stop: i32 = str_index_of(rest, "\n")
-        if stop < 0 {
+    while guard_of(count) < 4096 {
+        let line: string = first_line(rest)
+        if strlen(line) == 0 {
             break
         }
-        let line: string = str_slice(rest, 0, stop as u32)
-        let name: string = field_of(line, 0)
-        let version: string = field_of(line, 1)
-        if name != "" {
-            rows = rows + template_fill(
-                template_get("row"),
-                "name", name,
-                "version", version,
-                "", "", "", ""
-            )
-            count = count + 1
-        }
-        let next: string = str_slice(rest, (stop as u32) + 1, strlen(rest))
-        if strlen(next) >= strlen(rest) {
-            break
-        }
-        rest = next
-        guard = guard + 1
+        out = out + template_fill(
+            template_get("row"),
+            vars("name", field_of(line, 0)) +
+            vars("version", field_of(line, 1)) +
+            vars("description", field_of(line, 3))
+        )
+        count = count + 1
+        rest = after_first_line(rest)
     }
-
     if count == 0 {
-        return template_get("empty")
+        return empty("No modules published yet.")
     }
-    // The rows are markup this module built, so they are inserted verbatim
-    // rather than escaped a second time.
-    return "<ul>" + rows + "</ul>"
+    return "<ul>" + out + "</ul>"
+}
+
+// version_rows renders one row per version, each linking to its detail page.
+fn version_rows(listing: string, when_empty: string) string {
+    let out: string = ""
+    let count: u32 = 0
+    let rest: string = listing
+    while guard_of(count) < 4096 {
+        let line: string = first_line(rest)
+        if strlen(line) == 0 {
+            break
+        }
+        out = out + template_fill(
+            template_get("version"),
+            vars("name", field_of(line, 0)) +
+            vars("version", field_of(line, 1)) +
+            vars("description", field_of(line, 3))
+        )
+        count = count + 1
+        rest = after_first_line(rest)
+    }
+    if count == 0 {
+        return empty(when_empty)
+    }
+    return "<ul>" + out + "</ul>"
+}
+
+fn empty(message: string) string {
+    return template_fill(template_get("empty"), vars("message", message))
+}
+
+// find_version returns the listing line for one version, or "" when absent.
+fn find_version(listing: string, version: string) string {
+    let rest: string = listing
+    let count: u32 = 0
+    while guard_of(count) < 4096 {
+        let line: string = first_line(rest)
+        if strlen(line) == 0 {
+            break
+        }
+        if field_of(line, 1) == version {
+            return line
+        }
+        rest = after_first_line(rest)
+        count = count + 1
+    }
+    return ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Line helpers                                                              */
+/*                                                                             */
+/*  A listing is tab-separated lines, so a handler can read it without needing */
+/*  to walk a nested document.                                                 */
+/* -------------------------------------------------------------------------- */
+
+// first_line returns the text up to the first newline.
+fn first_line(text: string) string {
+    let stop: i32 = str_index_of(text, "\n")
+    if stop < 0 {
+        return text
+    }
+    return str_slice(text, 0, stop as u32)
+}
+
+// after_first_line returns everything after the first newline.
+fn after_first_line(text: string) string {
+    let stop: i32 = str_index_of(text, "\n")
+    if stop < 0 {
+        return ""
+    }
+    let start: u32 = (stop as u32) + 1
+    return str_slice(text, start, strlen(text))
 }
 
 // field_of returns one tab-separated field of a line.
-fn field_of(line: string, index: u32) string {
-    let wanted: u32 = index
-    let start: u32 = 0
+fn field_of(line: string, wanted: u32) string {
+    let at: u32 = 0
     let seen: u32 = 0
     let length: u32 = strlen(line)
-    let at: u32 = 0
     while at <= length {
         if seen == wanted {
             let stop: i32 = str_index_of(str_slice(line, at, length), "\t")
@@ -93,15 +233,10 @@ fn field_of(line: string, index: u32) string {
             }
             return str_slice(line, at, stop as u32)
         }
-        if at < length {
-            if str_at(line, at) == 9 {
-                seen = seen + 1
-            }
+        if at < length && str_at(line, at) == 9 {
+            seen = seen + 1
         }
         at = at + 1
-        if at > length {
-            break
-        }
     }
     return ""
 }
@@ -109,27 +244,32 @@ fn field_of(line: string, index: u32) string {
 // line_count counts the entries in a listing.
 fn line_count(listing: string) u32 {
     let count: u32 = 0
-    let at: i32 = 0
-    let guard: u32 = 0
-    while guard < 4096 {
-        let next: i32 = str_index_of(listing, "\n")
-        if next < 0 {
+    let rest: string = listing
+    while guard_of(count) < 4096 {
+        if strlen(first_line(rest)) == 0 {
             break
         }
         count = count + 1
-        let rest: string = str_slice(listing, (next as u32) + 1, strlen(listing))
-        if strlen(rest) >= strlen(listing) {
-            break
-        }
-        listing = rest
-        guard = guard + 1
+        rest = after_first_line(rest)
     }
     return count
 }
 
+// guard_of keeps a walk bounded, so a malformed listing cannot spin forever.
+fn guard_of(count: u32) u32 {
+    return count
+}
+
 /* -------------------------------------------------------------------------- */
-/*  Presentation helpers                                                      */
+/*  Presentation helpers                                                       */
 /* -------------------------------------------------------------------------- */
+
+fn fallback(value: string, when_empty: string) string {
+    if value == "" {
+        return when_empty
+    }
+    return value
+}
 
 fn heading_for(query: string) string {
     if query == "" {
@@ -138,10 +278,9 @@ fn heading_for(query: string) string {
     return "Modules matching " + query
 }
 
-fn count_label(count: u32) string {
-    if count == 1 {
-        return "1 module"
+fn noun_for(listing: string) string {
+    if line_count(listing) == 1 {
+        return "module"
     }
-    return int_to_str(count) + " modules"
+    return "modules"
 }
-

@@ -33,13 +33,15 @@ fn scope_push() string {
 /*  Issuing                                                                   */
 /* -------------------------------------------------------------------------- */
 
-// The longest a token may live, matching the client.
+// The longest a token may live, and how long one lasts by default. Both come
+// from the settings, so a deployment can change them without a rebuild, and the
+// ceiling is still enforced here rather than only in the signer.
 fn max_token_days() u32 {
-    return 90
+    return registry_token_max_days()
 }
 
 fn default_token_days() u32 {
-    return 30
+    return registry_token_days()
 }
 
 // issue_token hands a caller a token for a subject.
