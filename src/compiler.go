@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -122,6 +123,31 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 // When module.yml declares no build.targets the C target is generated, which
 // preserves the behaviour of builds that predate multi-target support.
 func GenerateAllTargets(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string) ([]string, error) {
+	generated, err := GenerateAllTargetsDetailed(path, outputRoot, includePaths, sourceFiles, dependencyRoots, "")
+	if err != nil {
+		return nil, err
+	}
+	dirs := make([]string, 0, len(generated))
+	for _, target := range generated {
+		dirs = append(dirs, target.Dir)
+	}
+	return dirs, nil
+}
+
+// GeneratedTarget is one generated project and how it is built.
+type GeneratedTarget struct {
+	// ID is the target name, for example "c" or "go-server".
+	ID string
+	// Dir is the directory the project was written to.
+	Dir string
+	// Emitter names the backend that produced it, for example "c" or "go".
+	Emitter string
+}
+
+// GenerateAllTargetsDetailed generates one project per requested target and
+// reports how each is built. An only value restricts the build to that single
+// target, which is how a test module asks for the backend it can run.
+func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only string) ([]GeneratedTarget, error) {
 	compiled, err := loadModuleGraphWithDependencies(path, dependencyRoots)
 	if err != nil {
 		return nil, err
@@ -141,6 +167,9 @@ func GenerateAllTargets(path, outputRoot string, includePaths, sourceFiles, depe
 	if err != nil {
 		return nil, err
 	}
+	if only != "" {
+		requested = []string{only}
+	}
 	if len(requested) == 0 {
 		requested = []string{DefaultBuildTarget}
 	}
@@ -149,13 +178,12 @@ func GenerateAllTargets(path, outputRoot string, includePaths, sourceFiles, depe
 		return nil, err
 	}
 
-	// An explicit outputRoot argument wins over the descriptor.
 	root := outputRoot
 	if root == "" {
 		root = filepath.Join(projectRoot, descriptor.OutputRoot(targets[0]))
 	}
 
-	written := make([]string, 0, len(targets))
+	written := make([]GeneratedTarget, 0, len(targets))
 	for _, target := range targets {
 		dir := filepath.Join(root, target.ID)
 		ctx := projectgen.Context{
@@ -169,9 +197,68 @@ func GenerateAllTargets(path, outputRoot string, includePaths, sourceFiles, depe
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err
 		}
-		written = append(written, dir)
+		written = append(written, GeneratedTarget{ID: target.ID, Dir: dir, Emitter: target.Emitter})
 	}
 	return written, nil
+}
+
+// BuildGeneratedTargets compiles the generated projects that are real
+// toolchain builds, currently the Go ones, and returns the binaries it
+// produced. A target the Rho toolchain builds itself, such as C, is left to
+// the native step.
+func BuildGeneratedTargets(targets []GeneratedTarget, moduleName, outputDir string) ([]string, error) {
+	binaries := []string{}
+	for _, target := range targets {
+		if target.Emitter != "go" {
+			continue
+		}
+		// The binary is named after the module, not the target, so a project
+		// has one executable however many Go targets it declares.
+		binary, err := BuildGoProject(target.Dir, outputDir, TargetOutputName(moduleName, target.ID))
+		if err != nil {
+			return binaries, fmt.Errorf("target %q: %w", target.ID, err)
+		}
+		binaries = append(binaries, binary)
+	}
+	return binaries, nil
+}
+
+// ProjectName returns the Rho module name declared by a project's manifest.
+func ProjectName(path string) string {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(ProjectRoot(path)))
+	if err != nil || manifest.ModuleName == "" {
+		return ""
+	}
+	return manifest.ModuleName
+}
+
+// BuildGoProject compiles a generated Go project into a single binary.
+//
+// A Go target is a real project with its own toolchain, so building it is a
+// separate step from generating it. The binary is written to outputDir, which
+// is the descriptor's build_dir, so a project has one obvious artifact.
+func BuildGoProject(generatedDir, outputDir, outputName string) (string, error) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return "", fmt.Errorf("the go toolchain is required to build a Go target: %w", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", err
+	}
+	binary := filepath.Join(outputDir, outputName)
+	cmd := exec.Command("go", "build", "-o", binary, ".")
+	cmd.Dir = generatedDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("go build failed: %w\n%s", err, out)
+	}
+	return binary, nil
+}
+
+// TargetOutputName is the binary name a target's build produces.
+func TargetOutputName(moduleName, targetID string) string {
+	if moduleName != "" {
+		return moduleName
+	}
+	return targetID
 }
 
 // DefaultBuildTarget is generated when a manifest names no targets.
@@ -561,4 +648,64 @@ func replaceExt(path, newExt string) string {
 		}
 	}
 	return path + newExt
+}
+
+// ResolveEntryPoint finds the Rho source a command should act on.
+//
+// The argument may be a source file, a project directory, or omitted, in which
+// case the working directory is used. A directory is resolved through its
+// manifest, so `rho build applications/registry` and `rho run` from inside
+// that project both find the entry point the manifest declares.
+func ResolveEntryPoint(arg string) (entry string, projectRoot string, err error) {
+	candidate := arg
+	if candidate == "" {
+		candidate = "."
+	}
+	absolute, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", "", err
+	}
+
+	info, statErr := os.Stat(absolute)
+	if statErr != nil {
+		return "", "", fmt.Errorf("no such file or project: %s", candidate)
+	}
+	if !info.IsDir() {
+		root := ProjectRoot(absolute)
+		return absolute, root, nil
+	}
+
+	// A directory: the manifest names the entry point.
+	manifest, manifestErr := deps.LoadManifest(deps.ManifestPath(absolute))
+	if manifestErr != nil {
+		return "", "", fmt.Errorf("%s is not a Rho project: %w", candidate, manifestErr)
+	}
+	if manifest.Main == "" {
+		return "", "", fmt.Errorf("%s does not declare a main entry point", candidate)
+	}
+	entry = manifest.Main
+	if !filepath.IsAbs(entry) {
+		entry = filepath.Join(absolute, entry)
+	}
+	return entry, absolute, nil
+}
+
+// BuiltBinary returns the executable a project's build produced. The Go
+// targets build into the descriptor's build_dir, so a project has one obvious
+// artifact to run.
+func BuiltBinary(entry string) (string, bool) {
+	projectRoot := ProjectRoot(entry)
+	descriptor, err := ResolveDescriptor(projectRoot)
+	if err != nil {
+		return "", false
+	}
+	name := ProjectName(entry)
+	if name == "" {
+		return "", false
+	}
+	candidate := filepath.Join(projectRoot, descriptor.BuildRoot(), TargetOutputName(name, ""))
+	if _, statErr := os.Stat(candidate); statErr != nil {
+		return "", false
+	}
+	return candidate, true
 }

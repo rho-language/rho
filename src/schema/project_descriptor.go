@@ -77,6 +77,11 @@ const (
 // ValidEntryKinds lists every supported descriptor entry kind.
 var ValidEntryKinds = []string{EntryKindFile, EntryKindDir}
 
+// PortFSStore is the built-in filesystem module store. It supplies the
+// storage externs a registry service declares, so the project needs no
+// hand-written host code.
+const PortFSStore = "fsstore"
+
 // ProjectDescriptorSchema returns the schema for project.yml.
 func ProjectDescriptorSchema() Schema {
 	return Schema{
@@ -110,6 +115,19 @@ func ProjectDescriptorSchema() Schema {
 						// requires lists extra Go module requirements.
 						{Name: "requires", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 						{Name: "build_flags", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+						// ports names built-in port implementations the backend
+						// generates, so a Rho project stays pure Rho while its
+						// extern declarations are supplied by the compiler.
+						{Name: "ports", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+						// copy lists hand-written files placed in the generated
+						// project, such as the Go implementations of extern ports.
+						{Name: "copy", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+							Kind: KindMap,
+							Fields: []FieldSchema{
+								{Name: "from", Required: true, RejectNull: true, Kind: KindString},
+								{Name: "to", Required: false, Kind: KindString},
+							},
+						}},
 						{
 							Name:       "files",
 							Required:   true,

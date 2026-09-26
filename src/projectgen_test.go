@@ -19,11 +19,14 @@
 package rho
 
 import (
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -878,6 +881,154 @@ fn main() void {
     if !none.is_some {
         print("option none");
     }
+}
+`
+	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root, entry
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: A Routed Server Answers Requests                                    */
+/* -------------------------------------------------------------------------- */
+
+// A module declaring routes must produce a server that answers them. This
+// starts the generated binary and makes real requests, so a route that only
+// compiles but does not dispatch cannot pass.
+func TestRoutedServerAnswersRequests(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+
+	_, entry := writeRoutedProject(t)
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("GenerateAllTargets failed: %v", err)
+	}
+	if len(dirs) == 0 {
+		t.Fatal("expected a generated project")
+	}
+	serverDir := dirs[0]
+
+	build := exec.Command("go", "build", "-o", filepath.Join(serverDir, "server"), ".")
+	build.Dir = serverDir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("generated server did not build: %v\n%s", err, out)
+	}
+
+	// A fixed loopback port, retried until the server is listening.
+	addr := "127.0.0.1:18511"
+	cmd := exec.Command(filepath.Join(serverDir, "server"))
+	cmd.Dir = serverDir
+	cmd.Env = append(os.Environ(), "RHO_HTTP_ADDR="+addr)
+	logFile, err := os.CreateTemp(t.TempDir(), "server-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	base := "http://" + addr
+	client := &http.Client{Timeout: 5 * time.Second}
+	if !waitForServer(base, client) {
+		logged, _ := os.ReadFile(logFile.Name())
+		t.Fatalf("server did not become ready\n%s", logged)
+	}
+
+	cases := []struct {
+		method string
+		path   string
+		want   string
+	}{
+		{"GET", "/healthz", `{"status":"ok"}`},
+		{"GET", "/hello", "hello from rho"},
+		{"GET", "/greet/ada", "hi ada"},
+		{"GET", "/greet/linus", "hi linus"},
+		{"GET", "/missing", "not found"},
+	}
+	for _, tc := range cases {
+		req, err := http.NewRequest(tc.method, base+tc.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", tc.method, tc.path, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("%s %s: %v", tc.method, tc.path, err)
+		}
+		if got := strings.TrimSpace(string(body)); got != tc.want {
+			t.Errorf("%s %s: got %q, want %q", tc.method, tc.path, got, tc.want)
+		}
+	}
+
+	// A route only answers its own method.
+	req, _ := http.NewRequest("POST", base+"/hello", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Errorf("POST /hello: got status %d, want 404", resp.StatusCode)
+	}
+}
+
+// waitForServer polls the health endpoint until the server answers.
+func waitForServer(base string, client *http.Client) bool {
+	for i := 0; i < 60; i++ {
+		resp, err := client.Get(base + "/healthz")
+		if err == nil {
+			_ = resp.Body.Close()
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+// writeRoutedProject builds a project whose handlers are bound by routes.
+func writeRoutedProject(t *testing.T) (root string, entry string) {
+	t.Helper()
+	root = t.TempDir()
+	entry = filepath.Join(root, "src", "main.rho")
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n  name: routed\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n\nbuild:\n  language: go\n  targets:\n    - go-server\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := `module routed
+
+route GET "/hello"        => hello
+route GET "/greet/{name}" => greet
+
+fn text(status: u32, body: string) Response {
+    return Response{ status, body, "text/plain; charset=utf-8" }
+}
+
+fn hello(req: Request) Response {
+    return text(200, "hello from rho")
+}
+
+fn greet(req: Request) Response {
+    return text(200, "hi " + param(req, "name"))
+}
+
+fn main() void {
+    print("routed")
 }
 `
 	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {

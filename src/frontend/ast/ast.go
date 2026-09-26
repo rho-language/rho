@@ -102,6 +102,27 @@ type TypeDecl struct {
 func (TypeDecl) declNode() {}
 
 /* -------------------------------------------------------------------------- */
+/*  HTTP Routes                                                               */
+/* -------------------------------------------------------------------------- */
+
+// RouteDecl exposes a Rho function over HTTP, as in
+//
+//	route GET "/api/v1/modules/{name}" => get_module
+//
+// The path syntax is Go's http.ServeMux pattern syntax, so the Go backend passes
+// it through unchanged. Routes are meaningful only for a server target.
+type RouteDecl struct {
+	// Method is the HTTP method: GET, POST, PUT, DELETE or PATCH.
+	Method string
+	// Path is the ServeMux pattern, for example "/modules/{name}".
+	Path string
+	// Handler names the Rho function serving the route.
+	Handler string
+}
+
+func (RouteDecl) declNode() {}
+
+/* -------------------------------------------------------------------------- */
 /*  Struct Declaration                                                         */
 /* -------------------------------------------------------------------------- */
 

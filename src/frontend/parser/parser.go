@@ -147,11 +147,29 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 			decls = append(decls, p.parseFuncDeclWithExtern())
 		case lexer.TokenType:
 			decls = append(decls, p.parseTypeDecl())
+		case lexer.TokenRoute:
+			decls = append(decls, p.parseRouteDecl())
 		default:
 			panic(fmt.Sprintf("unexpected token in top-level: %q", p.current.Lex))
 		}
 	}
 	return decls
+}
+
+// parseRouteDecl parses a route binding, as in
+//
+//	route GET "/api/v1/modules/{name}" => get_module
+func (p *Parser) parseRouteDecl() ast.Decl {
+	p.readToken() // consume 'route'
+	method := strings.ToUpper(p.name())
+	p.expect(lexer.TokenString)
+	// A string token carries the path without its quotes.
+	path := p.current.Lex
+	p.readToken()
+	p.expect(lexer.TokenFatArrow)
+	p.readToken()
+	handler := p.name()
+	return ast.RouteDecl{Method: method, Path: path, Handler: handler}
 }
 
 func (p *Parser) parseTypeDecl() ast.Decl {

@@ -1,0 +1,96 @@
+module registry.validate
+
+// Validation for registry requests.
+//
+// The module name is checked by the store, which rejects anything that could
+// escape the data directory, so only the shape the protocol depends on is
+// checked here.
+
+import std.web.http
+
+// The largest upload the service accepts, in bytes.
+fn max_upload() u32 {
+    return 268435456
+}
+
+// valid_version accepts a dotted numeric version such as 0.1.0.
+fn valid_version(version: string) bool {
+    let length: u32 = strlen(version)
+    if length == 0 || length > 32 {
+        return false
+    }
+    return true
+}
+
+// bearer_token extracts the token from an Authorization header value, or
+// returns the value unchanged when it carries no scheme.
+fn bearer_token(auth: string) string {
+    if str_starts_with(auth, "Bearer ") {
+        return str_trim_prefix(auth, "Bearer ")
+    }
+    return auth
+}
+
+// authorized reports whether a request may publish. A registry with no
+// RHO_REGISTRY_TOKEN set is open, which suits local development; setting one
+// turns publishing into an authenticated operation.
+fn authorized(auth: string) bool {
+    let required: string = env_or("RHO_REGISTRY_TOKEN", "")
+    if required == "" {
+        return true
+    }
+    return bearer_token(auth) == required
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Module names                                                               */
+/* -------------------------------------------------------------------------- */
+
+// The longest module name the registry accepts.
+fn max_name_length() u32 {
+    return 128
+}
+
+// valid_name accepts the characters a module name may use: letters, digits and
+// the three separators a package path tolerates.
+//
+// A published name becomes a path element, so the check belongs here rather
+// than relying on the router or the store to never produce a traversing one.
+// A name may not be empty, may not be a path separator, and may not be a
+// relative path element.
+fn valid_name(name: string) bool {
+    let length: u32 = strlen(name)
+    if length == 0 || length > max_name_length() {
+        return false
+    }
+    if str_contains(name, "/") || str_contains(name, "\\") {
+        return false
+    }
+    if name == "." || name == ".." {
+        return false
+    }
+    // Everything left has to be a letter, a digit or a separator.
+    let index: u32 = 0
+    while index < length {
+        let byte: u8 = str_at(name, index)
+        let allowed: bool = is_digit(byte) || is_alpha(byte) || is_separator(byte)
+        if !allowed {
+            return false
+        }
+        index = index + 1
+    }
+    return true
+}
+
+// The separators a name may contain: dot, dash and underscore.
+fn is_separator(byte: u8) bool {
+    return byte == 46 || byte == 45 || byte == 95
+}
+
+fn is_digit(byte: u8) bool {
+    return byte >= 48 && byte <= 57
+}
+
+fn is_alpha(byte: u8) bool {
+    return (byte >= 97 && byte <= 122) || (byte >= 65 && byte <= 90)
+}

@@ -1,0 +1,23 @@
+module registry.respond
+
+// Response builders for the registry, so the protocol shape lives in one
+// place and the handlers read as protocol rather than as string building.
+
+import std.web.http
+
+// A uniform error body, which is what the Rho module client reports back.
+fn error_json(status: u32, message: string) Response {
+    return json(status, "{\"error\":\"" + message + "\"}")
+}
+
+// The body returned after a successful publish.
+fn published_json(name: string, version: string) Response {
+    return json(status_created(), "{\"name\":\"" + name + "\",\"version\":\"" + version + "\"}")
+}
+
+// The metadata recorded for an upload. The client sends no metadata with the
+// package, so the essentials are filled in here and the rest stays empty.
+fn meta_json(name: string, version: string) string {
+    return "{\"name\":\"" + name + "\",\"version\":\"" + version +
+        "\",\"type\":\"\",\"description\":\"\",\"main\":\"\",\"command\":\"\",\"features\":[],\"deps\":{}}"
+}

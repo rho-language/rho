@@ -26,7 +26,8 @@ import (
 func EmitGoProject(ctx Context) (Artifacts, error) {
 	artifacts := Artifacts{}
 
-	implementation := codegen.EmitGo(ctx.IR)
+	kind := ctx.Target.TargetKind()
+	implementation := codegen.EmitGoForTarget(ctx.IR, kind)
 	if implementation == "" {
 		return artifacts, errGoUnsupportedMain
 	}
@@ -39,7 +40,7 @@ func EmitGoProject(ctx Context) (Artifacts, error) {
 	requires := ctx.Target.Requires
 	modulePath := ctx.Target.ModulePath
 
-	switch ctx.Target.TargetKind() {
+	switch kind {
 	case "server":
 		artifacts.Server = codegen.EmitGoServer(ctx.IR)
 		artifacts.Entrypoint = codegen.EmitGoServerEntrypoint(ctx.IR)

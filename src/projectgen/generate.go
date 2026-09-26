@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"rho/src/codegen"
 	"rho/src/ir"
 )
 
@@ -88,6 +89,49 @@ var backends = map[string]Backend{
 // RegisterBackend makes a backend available to descriptors.
 func RegisterBackend(emitter string, backend Backend) {
 	backends[emitter] = backend
+}
+
+// availablePorts lists the ports a backend can generate.
+func availablePorts(emitter string) []string {
+	switch emitter {
+	case "go":
+		return codegen.RegisteredPorts()
+	default:
+		return nil
+	}
+}
+
+// generatePorts writes the port implementations a target asked for. A port is
+// supplied by the backend, so a Rho project needs no hand-written host code.
+func generatePorts(ctx Context, target Target) error {
+	if len(target.Ports) == 0 {
+		return nil
+	}
+	available := availablePorts(target.Emitter)
+	for _, name := range target.Ports {
+		if !containsString(available, name) {
+			return fmt.Errorf("target %q: unknown port %q (available: %s)",
+				target.ID, name, strings.Join(available, ", "))
+		}
+	}
+
+	content := codegen.EmitGoPorts(ctx.IR, target.Ports)
+	if content == "" {
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(ctx.OutputDir, codegen.PortFileName), []byte(content), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", codegen.PortFileName, err)
+	}
+	return nil
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 // RegisteredEmitters lists the available emitter ids.
@@ -156,7 +200,39 @@ func Generate(ctx Context, target Target) (string, error) {
 		}
 	}
 
+	// Built-in ports the backend generates, satisfying the module's extern
+	// declarations without shipping host code.
+	if err := generatePorts(ctx, target); err != nil {
+		return "", err
+	}
+
+	// Hand-written files the project optionally supplies.
+	for _, entry := range target.Copy {
+		if err := copyInto(ctx.ProjectRoot, entry.From, ctx.OutputDir, entry.To); err != nil {
+			return "", fmt.Errorf("target %q: %w", target.ID, err)
+		}
+	}
+
 	return ctx.OutputDir, nil
+}
+
+// copyInto copies one project file into the generated project.
+func copyInto(projectRoot, from, outputDir, to string) error {
+	source := filepath.Join(projectRoot, filepath.FromSlash(from))
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", from, err)
+	}
+	dest := filepath.Join(outputDir, filepath.FromSlash(to))
+	if dir := filepath.Dir(dest); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
+	}
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return fmt.Errorf("write %s: %w", to, err)
+	}
+	return nil
 }
 
 func sortedEmitters() []string {

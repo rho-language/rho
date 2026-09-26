@@ -251,14 +251,24 @@ func TestEmitGoEntrypoint(t *testing.T) {
 	}
 }
 
-// runtime.go must not carry imports for helpers the program never calls.
+// runtime.go must not carry imports for helpers the program never calls. The
+// abort and panic intrinsics are always present, so "os" is expected; what
+// must not appear is an import only a helper would need.
 func TestEmitGoRuntimeIsMinimal(t *testing.T) {
 	empty := EmitGoRuntime("package main\n")
-	if strings.Contains(empty, "import") {
-		t.Errorf("expected no imports when no helper is used, got:\n%s", empty)
+	if !strings.Contains(empty, "func abort()") {
+		t.Errorf("expected the abort intrinsic, got:\n%s", empty)
+	}
+	// strconv is only needed by a helper, so its absence is the check.
+	if strings.Contains(empty, "strconv") {
+		t.Errorf("expected no strconv import when no helper is used, got:\n%s", empty)
+	}
+	// The string intrinsics are always present and need strings.
+	if !strings.Contains(empty, "func rhoStrlen(") {
+		t.Errorf("expected the string intrinsics, got:\n%s", empty)
 	}
 
-	withHelpers := EmitGoRuntime(`func x() { _ = rhoStrEq("a", "b"); _ = rhoStringFromI32(1) }`)
+	withHelpers := EmitGoRuntime("func x() { _ = rhoStrEq(\"a\", \"b\"); _ = rhoStringFromI32(1) }")
 	if !strings.Contains(withHelpers, "import") {
 		t.Error("expected imports for the helpers in use")
 	}
@@ -313,9 +323,12 @@ func TestEmitGoServer(t *testing.T) {
 	for _, want := range []string{
 		"package main",
 		"func StartServer(addr string) error",
-		"func registerRoutes(mux *http.ServeMux)",
+		"func registerRoutes(router *router)",
+		"type router struct",
+		"func (rt *router) serve(",
 		"/healthz",
-		"func writeJSON(",
+		"type Request struct",
+		"type Response struct",
 		"const staticDir",
 		"RHO_HTTP_ADDR",
 		"http.Server",

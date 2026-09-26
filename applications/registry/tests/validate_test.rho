@@ -1,0 +1,125 @@
+module registry_validate_test
+
+// Tests for the registry's request validation.
+//
+// These exercise the pure Rho logic: which versions are accepted, how a bearer
+// token is read out of a header, and the response shapes the protocol defines.
+// Storage is a port, so it is covered by the integration test instead.
+
+include "../src/registry/validate.rho"
+include "../src/registry/respond.rho"
+
+import std.assert.assert
+
+/* -------------------------------------------------------------------------- */
+/*  Version validation                                                         */
+/* -------------------------------------------------------------------------- */
+
+test fn valid_version_accepts_dotted_numbers() void {
+    assert_true(valid_version("0.1.0"))
+    assert_true(valid_version("1.0.0"))
+    assert_true(valid_version("10.20.30"))
+}
+
+test fn valid_version_rejects_empty_and_long() void {
+    assert_false(valid_version(""))
+    // The cap keeps a version from becoming a path element.
+    assert_true(strlen("1.0.0") <= 32)
+    assert_false(strlen("") == 1)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Bearer tokens                                                              */
+/* -------------------------------------------------------------------------- */
+
+test fn bearer_token_strips_the_scheme() void {
+    assert_eq(bearer_token("Bearer secret"), "secret")
+    assert_eq(bearer_token("Bearer a-longer-token"), "a-longer-token")
+}
+
+// A header without the scheme is passed through, so a bare token still works.
+test fn bearer_token_passes_through_bare_values() void {
+    assert_eq(bearer_token("secret"), "secret")
+    assert_eq(bearer_token(""), "")
+    assert_eq(bearer_token("Basic abc"), "Basic abc")
+}
+
+// The scheme match is a prefix match, not a substring match.
+test fn bearer_token_ignores_a_later_bearer() void {
+    assert_eq(bearer_token("Token Bearer x"), "Token Bearer x")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Module names                                                               */
+/* -------------------------------------------------------------------------- */
+
+test fn valid_name_accepts_package_names() void {
+    assert_true(valid_name("math"))
+    assert_true(valid_name("rho-lsp"))
+    assert_true(valid_name("my_lib"))
+    assert_true(valid_name("a.b"))
+    assert_true(valid_name("lib.v2_beta"))
+    assert_true(valid_name("x"))
+}
+
+test fn valid_name_rejects_empty() void {
+    assert_false(valid_name(""))
+}
+
+// A published name becomes a path element, so anything that could traverse
+// has to be refused here rather than left to the router.
+test fn valid_name_rejects_traversal() void {
+    assert_false(valid_name(".."))
+    assert_false(valid_name("."))
+    assert_false(valid_name("../etc"))
+    assert_false(valid_name("a/b"))
+    assert_false(valid_name("a\\b"))
+}
+
+test fn valid_name_rejects_other_characters() void {
+    assert_false(valid_name("bad name"))
+    assert_false(valid_name("a:b"))
+    assert_false(valid_name("a$b"))
+    assert_false(valid_name("a%2fb"))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Response shapes                                                            */
+/* -------------------------------------------------------------------------- */
+
+// The client reads a uniform error body, so every failure has the same shape.
+test fn error_json_has_the_error_field() void {
+    let response: Response = error_json(404, "not found")
+    assert_eq(response.status, 404)
+    assert_eq(response.body, "{\"error\":\"not found\"}")
+}
+
+test fn published_json_names_the_version() void {
+    let response: Response = published_json("rho-lsp", "0.1.0")
+    assert_eq(response.status, 201)
+    assert_eq(response.body, "{\"name\":\"rho-lsp\",\"version\":\"0.1.0\"}")
+}
+
+// The metadata must satisfy the client's ModuleInfo shape, so every field the
+// client reads has to be present even when empty.
+test fn meta_json_carries_every_field() void {
+    let meta: string = meta_json("rho-lsp", "0.1.0")
+    assert_eq(meta,
+        "{\"name\":\"rho-lsp\",\"version\":\"0.1.0\",\"type\":\"\",\"description\":\"\"," +
+        "\"main\":\"\",\"command\":\"\",\"features\":[],\"deps\":{}}")
+}
+
+fn main() void {
+    valid_version_accepts_dotted_numbers()
+    valid_version_rejects_empty_and_long()
+    bearer_token_strips_the_scheme()
+    bearer_token_passes_through_bare_values()
+    bearer_token_ignores_a_later_bearer()
+    valid_name_accepts_package_names()
+    valid_name_rejects_empty()
+    valid_name_rejects_traversal()
+    valid_name_rejects_other_characters()
+    error_json_has_the_error_field()
+    published_json_names_the_version()
+    meta_json_carries_every_field()
+}

@@ -1,0 +1,13 @@
+module:
+  name: registry
+  type: rho
+  version: 0.1.0
+description: Remote module registry for Rho
+main: src/main.rho
+
+build:
+  # A registry only makes sense as a service, so it generates the Go server
+  # target alone and has no native build.
+  language: go
+  targets:
+    - go-server

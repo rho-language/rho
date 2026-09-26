@@ -353,7 +353,7 @@ func TestRegisterBackend(t *testing.T) {
 	})
 	t.Cleanup(func() { delete(backends, emitter) })
 
-	if !containsString(RegisteredEmitters(), emitter) {
+	if !containsEmitted(RegisteredEmitters(), emitter) {
 		t.Fatal("expected the backend to be registered")
 	}
 
@@ -405,7 +405,7 @@ func TestArtifactsRoleContent(t *testing.T) {
 	}
 }
 
-func containsString(list []string, want string) bool {
+func containsEmitted(list []string, want string) bool {
 	for _, item := range list {
 		if item == want {
 			return true
