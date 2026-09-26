@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rho module registry</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+        margin: 0 auto;
+        padding: 2.5rem 1.5rem;
+        max-width: 54rem;
+      }
+      h1 { font-size: 1.35rem; margin: 0; }
+      h2 { font-size: 1rem; margin: 2rem 0 0.6rem; font-weight: 600; }
+      .sub { opacity: 0.65; margin: 0.3rem 0 1.4rem; }
+      form { display: flex; gap: 0.5rem; margin: 0 0 0.5rem; }
+      input {
+        flex: 1;
+        padding: 0.5rem 0.65rem;
+        border: 1px solid #8884;
+        border-radius: 0.4rem;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+      }
+      button {
+        padding: 0.5rem 1.1rem;
+        border: 0;
+        border-radius: 0.4rem;
+        background: #3b6ea5;
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+      ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        border: 1px solid #8883;
+        border-radius: 0.5rem;
+        overflow: hidden;
+      }
+      li {
+        padding: 0.65rem 0.9rem;
+        border-bottom: 1px solid #8882;
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+      }
+      li:last-child { border-bottom: 0; }
+      .name { font-weight: 600; }
+      .ver { opacity: 0.6; font-size: 0.9em; }
+      .empty {
+        opacity: 0.7;
+        border: 1px dashed #8884;
+        border-radius: 0.5rem;
+        padding: 1rem 0.9rem;
+      }
+      a { color: inherit; text-decoration: none; }
+      a:hover .name { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <h1>Rho module registry</h1>
+    <p class="sub">{{ count }}</p>
+    <form method="get" action="/">
+      <input name="q" value="{{ query }}" placeholder="search modules" />
+      <button type="submit">Search</button>
+    </form>
+    <h2>{{ heading }}</h2>
+    {{{ listing }}}
+  </body>
+</html>

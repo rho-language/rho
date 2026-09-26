@@ -1,0 +1,7 @@
+# Build output and caches never belong in an image layer.
+build/
+**/build/
+bin/
+.kilo/worktrees/
+*.vsix
+node_modules/

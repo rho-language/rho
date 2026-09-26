@@ -29,11 +29,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"rho/cmd/rho-module/remote"
 	"rho/internal/paths"
 )
 
@@ -85,11 +85,11 @@ func DownloadModule(spec string) error {
 /* -------------------------------------------------------------------------- */
 
 func parseSpec(spec string) (string, string) {
-    if strings.Contains(spec, "@") {
-        parts := strings.Split(spec, "@")
-        return parts[0], parts[1]
-    }
-    return spec, "" // latest
+	if strings.Contains(spec, "@") {
+		parts := strings.Split(spec, "@")
+		return parts[0], parts[1]
+	}
+	return spec, "" // latest
 }
 
 /* -------------------------------------------------------------------------- */
@@ -97,11 +97,11 @@ func parseSpec(spec string) (string, string) {
 /* -------------------------------------------------------------------------- */
 
 func resolveRemoteVersion(name, version string) (string, error) {
-    // Placeholder: always return version or "1.0.0"
-    if version != "" {
-        return version, nil
-    }
-    return "1.0.0", nil
+	// Placeholder: always return version or "1.0.0"
+	if version != "" {
+		return version, nil
+	}
+	return "1.0.0", nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -109,28 +109,28 @@ func resolveRemoteVersion(name, version string) (string, error) {
 /* -------------------------------------------------------------------------- */
 
 func downloadArchive(name, version string) (string, error) {
-    url := fmt.Sprintf("https://registry.rho-lang.org/%s/%s.rho-module", name, version)
+	// The archive is fetched through the configured remote, so the registry a
+	// user points at is the one that is used.
+	data, err := remote.FetchModule(name, version)
+	if err != nil {
+		return "", err
+	}
 
-    resp, err := http.Get(url)
-    if err != nil {
-        return "", fmt.Errorf("http error: %w", err)
-    }
-    defer resp.Body.Close()
+	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("%s-%s.rho-module", name, version))
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", err
+	}
 
-    if resp.StatusCode != 200 {
-        return "", fmt.Errorf("registry returned %d", resp.StatusCode)
-    }
+	if _, err := out.Write(data); err != nil {
+		_ = out.Close()
+		return "", err
+	}
+	if err := out.Close(); err != nil {
+		return "", err
+	}
 
-    tmp := filepath.Join(os.TempDir(), fmt.Sprintf("%s-%s.rho-module", name, version))
-    out, err := os.Create(tmp)
-    if err != nil {
-        return "", err
-    }
-
-    io.Copy(out, resp.Body)
-    out.Close()
-
-    return tmp, nil
+	return tmp, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -157,47 +157,47 @@ func storeInCache(name, version, archive string) error {
 /* -------------------------------------------------------------------------- */
 
 func validateArchive(path string) error {
-    f, err := os.Open(path)
-    if err != nil {
-        return err
-    }
-    defer f.Close()
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 
-    gz, err := gzip.NewReader(f)
-    if err != nil {
-        return err
-    }
-    defer gz.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
 
-    tr := tar.NewReader(gz)
+	tr := tar.NewReader(gz)
 
-    foundModule := false
-    foundBinary := false
+	foundModule := false
+	foundBinary := false
 
-    for {
-        hdr, err := tr.Next()
-        if err == io.EOF {
-            break
-        }
-        if err != nil {
-            return err
-        }
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
 
-        if hdr.Name == "module.yml" {
-            foundModule = true
-        }
-        // Check for binary file (executable)
-        if !strings.HasPrefix(hdr.Name, "src/") && !hdr.FileInfo().IsDir() {
-            foundBinary = true
-        }
-    }
+		if hdr.Name == "module.yml" {
+			foundModule = true
+		}
+		// Check for binary file (executable)
+		if !strings.HasPrefix(hdr.Name, "src/") && !hdr.FileInfo().IsDir() {
+			foundBinary = true
+		}
+	}
 
-    if !foundModule {
-        return errors.New("module.yml missing")
-    }
-    if !foundBinary {
-        return errors.New("binary missing")
-    }
+	if !foundModule {
+		return errors.New("module.yml missing")
+	}
+	if !foundBinary {
+		return errors.New("binary missing")
+	}
 
-    return nil
+	return nil
 }

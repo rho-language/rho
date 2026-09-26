@@ -122,6 +122,33 @@ var protocolFuncs = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// store_list is provided by the fsstore port, which renders a listing the
+	// Rho side can read line by line.
+	"store_list": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"template_get": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	// template_fill renders a template with up to four name/value pairs. A
+	// pair whose name is empty is skipped, so a caller with fewer values
+	// passes empty ones rather than reaching for a different arity.
+	"template_fill": {
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+		},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
 	"request_query_param": {
 		params: []ir.Type{
 			{Kind: ir.TypeStruct, Name: RequestTypeName},
@@ -206,10 +233,33 @@ func (tc *TypeChecker) checkRoute(decl ast.RouteDecl) error {
 }
 
 // routeToIR converts a route declaration for the backends.
+//
+// The handler is recorded under the same identity the call sites use, so a
+// function from an imported module resolves on both sides. Several routes may
+// share a handler, so the wrapper is emitted once.
 func (tc *TypeChecker) routeToIR(decl ast.RouteDecl) ir.RouteIR {
+	handler := decl.Handler
+	if signature, ok := tc.funcs[decl.Handler]; ok && signature.cName != "" {
+		handler = signature.cName
+	}
 	return ir.RouteIR{
 		Method:  decl.Method,
 		Path:    decl.Path,
-		Handler: decl.Handler,
+		Handler: handler,
 	}
+}
+
+// RouteHandlers returns the distinct handlers a module's routes use, in the
+// order they first appear.
+func RouteHandlers(m ir.ModuleIR) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, route := range m.Routes {
+		if seen[route.Handler] {
+			continue
+		}
+		seen[route.Handler] = true
+		out = append(out, route.Handler)
+	}
+	return out
 }

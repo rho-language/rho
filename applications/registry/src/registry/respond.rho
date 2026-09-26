@@ -15,9 +15,16 @@ fn published_json(name: string, version: string) Response {
     return json(status_created(), "{\"name\":\"" + name + "\",\"version\":\"" + version + "\"}")
 }
 
-// The metadata recorded for an upload. The client sends no metadata with the
-// package, so the essentials are filled in here and the rest stays empty.
-fn meta_json(name: string, version: string) string {
+// The metadata recorded for an upload. The name and version come from the
+// path the client posted to; the rest is what the client sent as query
+// parameters, so a listing shows the manifest rather than blanks.
+fn meta_json(req: Request, name: string, version: string) string {
+    let kind: string = request_query_param(req, "type")
+    let description: string = request_query_param(req, "description")
+    let main: string = request_query_param(req, "main")
+    let command: string = request_query_param(req, "command")
     return "{\"name\":\"" + name + "\",\"version\":\"" + version +
-        "\",\"type\":\"\",\"description\":\"\",\"main\":\"\",\"command\":\"\",\"features\":[],\"deps\":{}}"
+        "\",\"type\":\"" + kind + "\",\"description\":\"" + description +
+        "\",\"main\":\"" + main + "\",\"command\":\"" + command +
+        "\",\"features\":[],\"deps\":{}}"
 }

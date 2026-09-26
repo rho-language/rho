@@ -50,3 +50,8 @@ fn status_payload_too_large() u32 {
 fn status_internal() u32 {
     return 500
 }
+
+// html builds an HTML response, for a page served alongside the API.
+fn html(status: u32, body: string) Response {
+    return Response{ status, body, "text/html; charset=utf-8" }
+}
