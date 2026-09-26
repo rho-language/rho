@@ -101,6 +101,21 @@ func availablePorts(emitter string) []string {
 	}
 }
 
+// generateAuth renders the authentication support a server target needs.
+func generateAuth(ctx Context, target Target) error {
+	if target.TargetKind() != "server" {
+		return nil
+	}
+	rendered := codegen.EmitGoAuth()
+	if rendered == "" {
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(ctx.OutputDir, codegen.AuthFileName), []byte(rendered), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", codegen.AuthFileName, err)
+	}
+	return nil
+}
+
 // generateTemplates embeds the page templates a target carries, so a handler
 // renders markup that lives in template files rather than in Rho string
 // literals.
@@ -225,8 +240,11 @@ func Generate(ctx Context, target Target) (string, error) {
 		}
 	}
 
-	// Page templates, then the built-in ports that satisfy the module's
-	// extern declarations without shipping host code.
+	// Authentication, then page templates, then the built-in ports that
+	// satisfy the module's extern declarations without shipping host code.
+	if err := generateAuth(ctx, target); err != nil {
+		return "", err
+	}
 	if err := generateTemplates(ctx, target); err != nil {
 		return "", err
 	}

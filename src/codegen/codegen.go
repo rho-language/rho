@@ -109,6 +109,7 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 	cg.b.WriteString("static const char* rho_str_slice(const char* s, uint32_t start, uint32_t length);\n\n")
 	cg.b.WriteString("static const char* rho_int_to_str(uint32_t n);\n\n")
 	cg.b.WriteString("static const char* rho_str_from_byte(uint8_t b);\n\n")
+	cg.b.WriteString("static uint32_t rho_int_from_str(const char* s);\n\n")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -207,6 +208,15 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 	cg.b.WriteString("    out[0] = (char)b;\n")
 	cg.b.WriteString("    out[1] = 0;\n")
 	cg.b.WriteString("    return out;\n")
+	cg.b.WriteString("}\n\n")
+	cg.b.WriteString("static uint32_t rho_int_from_str(const char* s) {\n")
+	cg.b.WriteString("    if (!s || !*s) return 0;\n")
+	cg.b.WriteString("    uint32_t total = 0;\n")
+	cg.b.WriteString("    for (const char* p = s; *p; p++) {\n")
+	cg.b.WriteString("        if (*p < '0' || *p > '9') return 0;\n")
+	cg.b.WriteString("        total = total * 10 + (uint32_t)(*p - '0');\n")
+	cg.b.WriteString("    }\n")
+	cg.b.WriteString("    return total;\n")
 	cg.b.WriteString("}\n\n")
 	cg.b.WriteString("static bool rho_str_eq(const char* a, const char* b) {\n")
 	cg.b.WriteString("    return a != NULL && b != NULL && strcmp(a, b) == 0;\n")

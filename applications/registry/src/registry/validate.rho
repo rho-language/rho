@@ -6,8 +6,6 @@ module registry.validate
 // escape the data directory, so only the shape the protocol depends on is
 // checked here.
 
-import std.web.http
-
 // The largest upload the service accepts, in bytes.
 fn max_upload() u32 {
     return 268435456
@@ -22,25 +20,7 @@ fn valid_version(version: string) bool {
     return true
 }
 
-// bearer_token extracts the token from an Authorization header value, or
-// returns the value unchanged when it carries no scheme.
-fn bearer_token(auth: string) string {
-    if str_starts_with(auth, "Bearer ") {
-        return str_trim_prefix(auth, "Bearer ")
-    }
-    return auth
-}
 
-// authorized reports whether a request may publish. A registry with no
-// RHO_REGISTRY_TOKEN set is open, which suits local development; setting one
-// turns publishing into an authenticated operation.
-fn authorized(auth: string) bool {
-    let required: string = env_or("RHO_REGISTRY_TOKEN", "")
-    if required == "" {
-        return true
-    }
-    return bearer_token(auth) == required
-}
 
 /* -------------------------------------------------------------------------- */
 /*  Module names                                                               */

@@ -66,15 +66,19 @@ func DownloadModule(spec string) error {
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
+	// A download that turns out not to be an archive is discarded here, while
+	// the file still exists. Caching first would move it away, leaving nothing
+	// to inspect.
+	defer os.Remove(archive)
 
-	// Step 3: Store in cache
-	if err := storeInCache(name, resolved, archive); err != nil {
-		return fmt.Errorf("cache error: %w", err)
-	}
-
-	// Step 4: Validate archive
+	// Step 3: Validate archive
 	if err := validateArchive(archive); err != nil {
 		return fmt.Errorf("invalid archive: %w", err)
+	}
+
+	// Step 4: Store in cache
+	if err := storeInCache(name, resolved, archive); err != nil {
+		return fmt.Errorf("cache error: %w", err)
 	}
 
 	return nil
@@ -96,12 +100,23 @@ func parseSpec(spec string) (string, string) {
 /*  Resolve Version (Remote Registry)                                          */
 /* -------------------------------------------------------------------------- */
 
+// resolveRemoteVersion picks the version to download. An explicit version is
+// used as given; otherwise the registry is asked which versions exist and the
+// highest is chosen.
 func resolveRemoteVersion(name, version string) (string, error) {
-	// Placeholder: always return version or "1.0.0"
 	if version != "" {
 		return version, nil
 	}
-	return "1.0.0", nil
+
+	versions, err := remote.AvailableVersions(name)
+	if err != nil {
+		return "", fmt.Errorf("cannot list versions of %s: %w", name, err)
+	}
+	if len(versions) == 0 {
+		return "", fmt.Errorf("the registry has no published version of %s", name)
+	}
+	// The registry returns versions lowest first, so the last is the newest.
+	return versions[len(versions)-1], nil
 }
 
 /* -------------------------------------------------------------------------- */
