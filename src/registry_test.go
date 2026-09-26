@@ -18,6 +18,7 @@ package rho
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,12 @@ type registryServer struct {
 // startRegistry generates and builds the registry, then runs it on a loopback
 // port with a private data directory.
 func startRegistry(t *testing.T, token string) *registryServer {
+	return startRegistryWithSettings(t, token, "")
+}
+
+// startRegistryWithSettings runs the registry with a settings file, which is how
+// a deployment configures it.
+func startRegistryWithSettings(t *testing.T, token, settings string) *registryServer {
 	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not available")
@@ -74,9 +81,20 @@ func startRegistry(t *testing.T, token string) *registryServer {
 	cmd.Dir = serverDir
 	cmd.Env = append(os.Environ(),
 		"RHO_HTTP_ADDR="+addr,
-		"RHO_REGISTRY_DATA="+data,
 		"RHO_REGISTRY_TOKEN="+token,
 	)
+	if !strings.Contains(settings, "data_dir") {
+		// An environment variable outranks the setting, so it is only set
+		// when the test is not exercising the setting itself.
+		cmd.Env = append(cmd.Env, "RHO_REGISTRY_DATA="+data)
+	}
+	if settings != "" {
+		confPath := filepath.Join(t.TempDir(), "registry.conf")
+		if err := os.WriteFile(confPath, []byte(settings), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd.Env = append(cmd.Env, "RHO_REGISTRY_CONFIG="+confPath)
+	}
 	logFile, err := os.CreateTemp(t.TempDir(), "registry-*.log")
 	if err != nil {
 		t.Fatal(err)
@@ -113,8 +131,9 @@ func waitForRegistry(base string, client *http.Client) bool {
 	return false
 }
 
-// request performs a request against the registry.
-func (s *registryServer) request(t *testing.T, method, path string, body []byte, auth bool) (int, string) {
+// request performs a request against the registry, presenting a token when one
+// is given.
+func (s *registryServer) request(t *testing.T, method, path string, body []byte, token string) (int, string) {
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -124,8 +143,8 @@ func (s *registryServer) request(t *testing.T, method, path string, body []byte,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if auth && s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -151,7 +170,7 @@ func TestRegistryPublishesAndDownloads(t *testing.T) {
 	// A gzip-like payload, including bytes that are not printable text.
 	payload := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 'r', 'h', 'o', 0xff, 0xfe, 0x00}
 
-	status, body := server.request(t, "POST", "/modules/math/0.1.0/rho-pkg", payload, false)
+	status, body := server.request(t, "POST", "/modules/math/0.1.0/rho-pkg", payload, "")
 	if status != 201 {
 		t.Fatalf("publish: got %d %s, want 201", status, body)
 	}
@@ -159,7 +178,7 @@ func TestRegistryPublishesAndDownloads(t *testing.T) {
 		t.Errorf("publish body should name the module and version, got %q", body)
 	}
 
-	status, body = server.request(t, "GET", "/modules/math/0.1.0/rho-pkg", nil, false)
+	status, body = server.request(t, "GET", "/modules/math/0.1.0/rho-pkg", nil, "")
 	if status != 200 {
 		t.Fatalf("download: got %d %s, want 200", status, body)
 	}
@@ -172,18 +191,18 @@ func TestRegistryPublishesAndDownloads(t *testing.T) {
 func TestRegistryKeepsVersionsApart(t *testing.T) {
 	server := startRegistry(t, "")
 
-	if status, body := server.request(t, "POST", "/modules/math/0.1.0/rho-pkg", []byte("a"), false); status != 201 {
+	if status, body := server.request(t, "POST", "/modules/math/0.1.0/rho-pkg", []byte("a"), ""); status != 201 {
 		t.Fatalf("publish 0.1.0: %d %s", status, body)
 	}
-	if status, body := server.request(t, "POST", "/modules/math/0.2.0/rho-pkg", []byte("b"), false); status != 201 {
+	if status, body := server.request(t, "POST", "/modules/math/0.2.0/rho-pkg", []byte("b"), ""); status != 201 {
 		t.Fatalf("publish 0.2.0: %d %s", status, body)
 	}
 
-	status, body := server.request(t, "GET", "/modules/math/0.2.0/rho-pkg", nil, false)
+	status, body := server.request(t, "GET", "/modules/math/0.2.0/rho-pkg", nil, "")
 	if status != 200 || body != "b" {
 		t.Errorf("download 0.2.0: got %d %q, want 200 \"b\"", status, body)
 	}
-	status, body = server.request(t, "GET", "/modules/math", nil, false)
+	status, body = server.request(t, "GET", "/api/modules/math", nil, "")
 	if status != 200 {
 		t.Fatalf("versions: %d %s", status, body)
 	}
@@ -201,12 +220,12 @@ func TestRegistryKeepsVersionsApart(t *testing.T) {
 func TestRegistrySearch(t *testing.T) {
 	server := startRegistry(t, "")
 	for _, module := range []string{"math", "math-linalg", "core"} {
-		if status, body := server.request(t, "POST", "/modules/"+module+"/1.0.0/rho-pkg", []byte(module), false); status != 201 {
+		if status, body := server.request(t, "POST", "/modules/"+module+"/1.0.0/rho-pkg", []byte(module), ""); status != 201 {
 			t.Fatalf("publish %s: %d %s", module, status, body)
 		}
 	}
 
-	status, body := server.request(t, "GET", "/search?q=math", nil, false)
+	status, body := server.request(t, "GET", "/api/search?q=math", nil, "")
 	if status != 200 {
 		t.Fatalf("search: %d %s", status, body)
 	}
@@ -218,7 +237,7 @@ func TestRegistrySearch(t *testing.T) {
 	}
 
 	// An empty query lists everything.
-	status, body = server.request(t, "GET", "/search?q=", nil, false)
+	status, body = server.request(t, "GET", "/api/search?q=", nil, "")
 	if status != 200 || !strings.Contains(body, `"name":"core"`) {
 		t.Errorf("an empty query should list everything, got %d %q", status, body)
 	}
@@ -227,10 +246,10 @@ func TestRegistrySearch(t *testing.T) {
 // The search result has to satisfy the client's ModuleInfo shape.
 func TestRegistrySearchResponseShape(t *testing.T) {
 	server := startRegistry(t, "")
-	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), false); status != 201 {
+	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), ""); status != 201 {
 		t.Fatalf("publish failed with %d", status)
 	}
-	_, body := server.request(t, "GET", "/search?q=math", nil, false)
+	_, body := server.request(t, "GET", "/api/search?q=math", nil, "")
 	for _, field := range []string{`"name"`, `"version"`, `"type"`, `"description"`, `"main"`, `"command"`, `"features"`, `"deps"`} {
 		if !strings.Contains(body, field) {
 			t.Errorf("search result is missing %s: %q", field, body)
@@ -243,17 +262,18 @@ func TestRegistrySearchResponseShape(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestRegistryRequiresTokenToPublish(t *testing.T) {
-	server := startRegistry(t, "secret")
+	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
+	issued := server.mintToken(t, "miraur")
 
-	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), false)
+	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), "")
 	if status != 401 {
 		t.Fatalf("publishing without a token: got %d %s, want 401", status, body)
 	}
-	if !strings.Contains(body, "unauthorized") {
-		t.Errorf("expected an unauthorized error, got %q", body)
+	if !strings.Contains(body, "token") {
+		t.Errorf("expected the error to mention a token, got %q", body)
 	}
 
-	status, body = server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), true)
+	status, body = server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), issued)
 	if status != 201 {
 		t.Fatalf("publishing with a token: got %d %s, want 201", status, body)
 	}
@@ -261,11 +281,12 @@ func TestRegistryRequiresTokenToPublish(t *testing.T) {
 
 // Reading does not require a token, so a client can install without credentials.
 func TestRegistryReadsWithoutToken(t *testing.T) {
-	server := startRegistry(t, "secret")
-	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), true); status != 201 {
+	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
+	issued := server.mintToken(t, "miraur")
+	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), issued); status != 201 {
 		t.Fatalf("seed publish failed")
 	}
-	if status, _ := server.request(t, "GET", "/modules/math/1.0.0/rho-pkg", nil, false); status != 200 {
+	if status, _ := server.request(t, "GET", "/modules/math/1.0.0/rho-pkg", nil, ""); status != 200 {
 		t.Errorf("download without a token: got %d, want 200", status)
 	}
 }
@@ -276,10 +297,10 @@ func TestRegistryReadsWithoutToken(t *testing.T) {
 
 func TestRegistryRejectsDuplicateVersion(t *testing.T) {
 	server := startRegistry(t, "")
-	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("a"), false); status != 201 {
+	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("a"), ""); status != 201 {
 		t.Fatalf("first publish failed")
 	}
-	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("b"), false)
+	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("b"), "")
 	if status != 409 {
 		t.Fatalf("duplicate publish: got %d %s, want 409", status, body)
 	}
@@ -287,7 +308,7 @@ func TestRegistryRejectsDuplicateVersion(t *testing.T) {
 
 func TestRegistryRejectsEmptyPackage(t *testing.T) {
 	server := startRegistry(t, "")
-	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte{}, false)
+	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte{}, "")
 	if status != 400 {
 		t.Fatalf("empty publish: got %d %s, want 400", status, body)
 	}
@@ -295,7 +316,7 @@ func TestRegistryRejectsEmptyPackage(t *testing.T) {
 
 func TestRegistryUnknownModuleIsNotFound(t *testing.T) {
 	server := startRegistry(t, "")
-	status, body := server.request(t, "GET", "/modules/nope/1.0.0/rho-pkg", nil, false)
+	status, body := server.request(t, "GET", "/modules/nope/1.0.0/rho-pkg", nil, "")
 	if status != 404 {
 		t.Fatalf("missing module: got %d %s, want 404", status, body)
 	}
@@ -342,7 +363,7 @@ func TestRegistryRejectsPathTraversal(t *testing.T) {
 		"/modules/%2e%2e%2fescape/1.0.0/rho-pkg",
 	}
 	for _, path := range attempts {
-		status, body := server.request(t, "POST", path, []byte("x"), false)
+		status, body := server.request(t, "POST", path, []byte("x"), "")
 		if status == 201 {
 			t.Errorf("traversal %q was accepted: %s", path, body)
 		}
@@ -375,7 +396,7 @@ func TestRegistryRejectsPathTraversal(t *testing.T) {
 // The health endpoint is what a load balancer polls.
 func TestRegistryHealth(t *testing.T) {
 	server := startRegistry(t, "")
-	status, body := server.request(t, "GET", "/healthz", nil, false)
+	status, body := server.request(t, "GET", "/healthz", nil, "")
 	if status != 200 || !strings.Contains(body, `"status":"ok"`) {
 		t.Fatalf("healthz: got %d %q", status, body)
 	}
@@ -387,6 +408,60 @@ func TestRegistryHealth(t *testing.T) {
 
 // The service listens on the address it is given and honours its data
 // directory, which is what the systemd and container units depend on.
+// A public registry lets anyone publish, which suits a trusted network.
+func TestRegistryPublicAccessAllowsPublish(t *testing.T) {
+	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = public\n")
+	_ = server
+	if status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), ""); status != 201 {
+		t.Errorf("a public registry should allow publishing, got %d %s", status, body)
+	}
+}
+
+// The data directory comes from the settings, so an install cannot erase it.
+func TestRegistryHonoursDataDirSetting(t *testing.T) {
+	data := filepath.Join(t.TempDir(), "elsewhere")
+	server := startRegistryWithSettings(t, "", "data_dir = "+data+"\n")
+	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), ""); status != 201 {
+		t.Fatalf("publish failed with %d", status)
+	}
+	if _, err := os.Stat(filepath.Join(data, "modules", "math", "1.0.0")); err != nil {
+		t.Errorf("expected the package under the configured data_dir: %v", err)
+	}
+}
+
+// A token may never outlive the ceiling the settings allow.
+func TestRegistryTokenLifetimeHonoursSettings(t *testing.T) {
+	server := startRegistryWithSettings(t, "", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\ntoken_days = 5\ntoken_max_days = 7\n")
+
+	asked := func(days string) int64 {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(
+			server.base+"/auth/token?user=x&host=y&days="+days, "application/octet-stream", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		payload, _ := io.ReadAll(resp.Body)
+		var answer struct {
+			IssuedAt  int64 `json:"iat"`
+			ExpiresAt int64 `json:"exp"`
+		}
+		if err := json.Unmarshal(payload, &answer); err != nil {
+			t.Fatalf("cannot read the token response: %s", payload)
+		}
+		return (answer.ExpiresAt - answer.IssuedAt) / 86400
+	}
+
+	if got := asked("3"); got != 3 {
+		t.Errorf("a 3 day request should be honoured, got %d days", got)
+	}
+	if got := asked("999"); got != 7 {
+		t.Errorf("a 999 day request should be clamped to the 7 day ceiling, got %d", got)
+	}
+	if got := asked("0"); got != 5 {
+		t.Errorf("no request should use the 5 day default, got %d", got)
+	}
+}
+
 func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not available")
@@ -448,4 +523,244 @@ func clientPost(url, body string) (int, string) {
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(payload)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Pages and Settings                                                  */
+/* -------------------------------------------------------------------------- */
+
+// registryPost publishes a package, optionally with a credential.
+func registryPost(t *testing.T, base, path, body, token string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest("POST", base+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(payload)
+}
+
+// seedRegistry publishes a few versions so the pages have something to show.
+// It mints a token first, so it works whatever the access mode is.
+func seedRegistry(t *testing.T, server *registryServer) {
+	t.Helper()
+	token := server.mintToken(t, "seed")
+	for _, module := range []struct{ name, version string }{
+		{"math", "0.1.0"},
+		{"math", "0.2.0"},
+		{"rho-lsp", "0.1.0"},
+	} {
+		body := "package-" + module.name + "-" + module.version
+		path := "/modules/" + module.name + "/" + module.version + "/rho-pkg"
+		if status, text := registryPost(t, server.base, path, body, token); status != 201 {
+			t.Fatalf("publish %s@%s: %d %s", module.name, module.version, status, text)
+		}
+	}
+}
+
+// mintToken asks the registry for a token, the way a client would.
+func (s *registryServer) mintToken(t *testing.T, user string) string {
+	t.Helper()
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(
+		s.base+"/auth/token?user="+user+"&host=test&days=1&scopes=pull%20push",
+		"application/octet-stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	var answer struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(payload, &answer); err != nil || answer.Token == "" {
+		t.Fatalf("no token issued: %s", payload)
+	}
+	return answer.Token
+}
+
+// getPage fetches a page and returns its status and body.
+func getPage(t *testing.T, base, path string) (int, string) {
+	t.Helper()
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(base + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(payload)
+}
+
+// The index lists each module once, badged with its newest version.
+func TestRegistryIndexBadgesNewestVersion(t *testing.T) {
+	server := startRegistry(t, "")
+	seedRegistry(t, server)
+
+	status, body := getPage(t, server.base, "/")
+	if status != 200 {
+		t.Fatalf("index: got %d", status)
+	}
+	if strings.Count(body, `>math</span>`) != 1 {
+		t.Errorf("the index should list math once, got:\n%s", body)
+	}
+	// The badge is the newest version, and it links to that version's page.
+	if !strings.Contains(body, `>0.2.0</a>`) {
+		t.Errorf("the badge should be the newest version 0.2.0, got:\n%s", body)
+	}
+	// Scoped to math: another module may legitimately hold an older version.
+	if strings.Contains(body, `href="/modules/math/0.1.0"`) {
+		t.Errorf("the index should not link an older version of math, got:\n%s", body)
+	}
+}
+
+// A module page lists every version, newest first.
+func TestRegistryModulePageListsVersionsNewestFirst(t *testing.T) {
+	server := startRegistry(t, "")
+	seedRegistry(t, server)
+
+	status, body := getPage(t, server.base, "/modules/math")
+	if status != 200 {
+		t.Fatalf("module page: got %d", status)
+	}
+	newest := strings.Index(body, ">0.2.0</span>")
+	oldest := strings.Index(body, ">0.1.0</span>")
+	if newest < 0 || oldest < 0 {
+		t.Fatalf("expected both versions, got:\n%s", body)
+	}
+	if newest > oldest {
+		t.Errorf("versions should be newest first, got:\n%s", body)
+	}
+}
+
+// A version page shows the public metadata for that version.
+func TestRegistryVersionPageShowsMetadata(t *testing.T) {
+	server := startRegistry(t, "")
+	seedRegistry(t, server)
+
+	status, body := getPage(t, server.base, "/modules/math/0.1.0")
+	if status != 200 {
+		t.Fatalf("version page: got %d", status)
+	}
+	for _, want := range []string{"math", "0.1.0", "rho-pkg"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q on the version page, got:\n%s", want, body)
+		}
+	}
+}
+
+func TestRegistryVersionPageUnknownVersion(t *testing.T) {
+	server := startRegistry(t, "")
+	seedRegistry(t, server)
+
+	if status, _ := getPage(t, server.base, "/modules/math/9.9.9"); status != 404 {
+		t.Errorf("an unknown version should be 404, got %d", status)
+	}
+	if status, _ := getPage(t, server.base, "/modules/nope"); status != 404 {
+		t.Errorf("an unknown module should be 404, got %d", status)
+	}
+}
+
+// Every page carries the footer: the registry version, the year, and a link.
+func TestRegistryFooterOnEveryPage(t *testing.T) {
+	server := startRegistry(t, "")
+	seedRegistry(t, server)
+
+	pages := []string{"/", "/search", "/search?q=math", "/modules/math", "/modules/math/0.2.0"}
+	for _, path := range pages {
+		status, body := getPage(t, server.base, path)
+		if status != 200 {
+			t.Errorf("%s: got %d", path, status)
+			continue
+		}
+		for _, want := range []string{"<footer>", "Rho programming language", "rho-lang.org", "v0.1.0"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: expected %q in the footer, got:\n%s", path, want, body)
+			}
+		}
+	}
+}
+
+// The client surface stays JSON while the pages stay HTML.
+func TestRegistryAPIIsJSON(t *testing.T) {
+	server := startRegistry(t, "")
+	seedRegistry(t, server)
+
+	status, body := getPage(t, server.base, "/api/modules/math")
+	if status != 200 || !strings.HasPrefix(strings.TrimSpace(body), "{") {
+		t.Errorf("the versions endpoint should be JSON, got %d %q", status, body)
+	}
+	status, body = getPage(t, server.base, "/api/search?q=math")
+	if status != 200 || !strings.HasPrefix(strings.TrimSpace(body), "[") {
+		t.Errorf("the search endpoint should be JSON, got %d %q", status, body)
+	}
+}
+
+// Searching is public and needs no credential, whatever the access mode.
+func TestRegistrySearchStaysPublic(t *testing.T) {
+	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
+	seedRegistry(t, server)
+
+	if status, body := getPage(t, server.base, "/api/search?q=math"); status != 200 {
+		t.Errorf("search should stay public, got %d %q", status, body)
+	}
+	if status, _ := getPage(t, server.base, "/modules/math/0.1.0/rho-pkg"); status != 200 {
+		t.Errorf("downloads should stay public, got %d", status)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Page Layout                                                         */
+/* -------------------------------------------------------------------------- */
+
+// A short page must not overflow the viewport, or the footer ends up below the
+// fold behind a scrollbar nobody asked for.
+//
+// The cause is subtle: min-height: 100vh with the default content-box sizing
+// adds the body's padding on top of the viewport height, so the page is always
+// taller than the window. The stylesheet therefore has to include the padding
+// in the height, and the body has to fill the viewport so the flex layout can
+// place the footer at the bottom.
+func TestRegistryLayoutDoesNotOverflow(t *testing.T) {
+	server := startRegistry(t, "")
+
+	_, body := getPage(t, server.base, "/")
+	if !strings.Contains(body, "No modules published yet.") {
+		t.Fatalf("expected the empty state, got:\n%s", body)
+	}
+
+	for _, rule := range []string{
+		// Padding counted inside the declared height, not added to it.
+		"box-sizing: border-box",
+		// The body fills the viewport, so the flex layout can place the footer.
+		"html, body { height: 100%; }",
+		"min-height: 100vh",
+		// The content column grows to fill the space above the footer.
+		"main { flex: 1 0 auto; }",
+	} {
+		if !strings.Contains(body, rule) {
+			t.Errorf("the stylesheet is missing %q, so a short page will overflow", rule)
+		}
+	}
+
+	// The footer must be present even when there is nothing to list, since that
+	// is the case the overflow was reported against.
+	if !strings.Contains(body, "<footer>") || !strings.Contains(body, "</footer>") {
+		t.Error("the footer should be present on the empty page")
+	}
+}
+
+// The footer stays at the bottom on every page, not only the empty one.
+func TestRegistryFooterOnTheEmptyPage(t *testing.T) {
+	server := startRegistry(t, "")
+	_, body := getPage(t, server.base, "/")
+	if !strings.Contains(body, "Rho programming language") {
+		t.Errorf("expected the copyright in the footer, got:\n%s", body)
+	}
 }

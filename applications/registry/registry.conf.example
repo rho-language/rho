@@ -1,0 +1,34 @@
+# Registry settings.
+#
+# Read at start-up from, in order of precedence:
+#   1. the file named by RHO_REGISTRY_CONFIG
+#   2. ~/.rho/registry/registry.conf
+#
+# Every setting has a default, so a registry runs with no settings file at all.
+# The file is `key = value` lines; # starts a comment.
+
+# Where published modules are stored. Keep this outside the application
+# directory, so installing a new build cannot take the modules with it.
+# An environment variable RHO_REGISTRY_DATA overrides it, which is what a
+# container uses.
+data_dir = data
+
+# public  - anyone may publish, suited to a trusted network
+# secured - publishing needs a token, reads stay public
+access = public
+
+# Shown on the pages.
+title = Rho module registry
+site_url = https://rho-lang.org
+
+# How long an issued token lasts, and the ceiling a caller may ask for.
+# token_days is clamped to token_max_days, and never exceeds 90 days.
+token_days = 30
+token_max_days = 90
+
+# Whether a token can be issued without already holding one. Leave this open so
+# the first token can be obtained, then set it to false once tokens are in place.
+open_tokens = true
+
+# The largest package accepted, in megabytes.
+max_upload_mb = 256

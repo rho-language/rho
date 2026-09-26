@@ -42,12 +42,22 @@ targets:
     # Page markup, kept out of the Rho sources and rendered by the generated
     # template engine.
     templates:
+      - name: layout-open
+        file: templates/layout-open.html
+      - name: layout-close
+        file: templates/layout-close.html
       - name: index
         file: templates/index.html
       - name: row
         file: templates/row.html
+      - name: version
+        file: templates/version.html
+      - name: detail
+        file: templates/detail.html
       - name: empty
         file: templates/empty.html
+      - name: notfound
+        file: templates/notfound.html
     files:
       - path: app.go
         role: implementation

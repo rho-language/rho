@@ -100,13 +100,57 @@ hand after editing generated sources:
 cd build/generated/go-server && go build -o ../../registry .
 ```
 
+## Pages
+
+All public, no credential needed:
+
+| Path                          | What it shows                                        |
+|-------------------------------|------------------------------------------------------|
+| `/`                           | every module, with its newest version badged         |
+| `/search?q=`                  | matching modules, one row per version                |
+| `/modules/{name}`             | one module's versions, newest first                  |
+| `/modules/{name}/{version}`   | that version's public metadata and its download path |
+
+Every page carries a footer with the registry version from its manifest, the
+year, and a link to rho-lang.org.
+
+The machine surface is kept apart under `/api`, so a client and a person get
+what each expects from the same service:
+
+| Path                          | What it returns                        |
+|-------------------------------|----------------------------------------|
+| `/api/search?q=`              | JSON array of module metadata          |
+| `/api/modules/{name}`         | JSON with the published version list   |
+| `/modules/{name}/{v}/rho-pkg` | the uploaded package, verbatim        |
+
 ## Configuration
 
-| Variable              | Default   | Purpose                                   |
-|-----------------------|-----------|-------------------------------------------|
-| `RHO_HTTP_ADDR`       | `:8080`   | Listen address                            |
-| `RHO_REGISTRY_DATA`   | `./data`  | Where packages are stored                 |
-| `RHO_REGISTRY_TOKEN`  | unset     | Bearer token required to publish; open if unset |
+Settings are read at start-up from `RHO_REGISTRY_CONFIG`, or
+`~/.rho/registry/registry.conf`, as `key = value` lines. See
+[registry.conf.example](registry.conf.example); every setting has a default, so
+the service runs with no settings file at all.
+
+| Setting           | Default                   | Purpose                                    |
+|-------------------|---------------------------|--------------------------------------------|
+| `data_dir`        | `data`                    | where modules are stored                   |
+| `access`          | `public`                  | `public`, or `secured` to require a token to publish |
+| `title`           | `Rho module registry`    | the name on the pages                      |
+| `site_url`        | `https://rho-lang.org`   | the footer link                            |
+| `token_days`      | `30`                      | how long an issued token lasts             |
+| `token_max_days`  | `90`                      | the ceiling, never exceeded               |
+| `open_tokens`     | `true`                    | whether a token can be issued without one  |
+| `max_upload_mb`   | `256`                     | the largest package accepted               |
+
+**Keep `data_dir` outside the application directory.** That is the point of it:
+installing a new build over the old one cannot take the published modules with
+it. `/var/lib/rho-registry` is a good place on a server, and
+`RHO_REGISTRY_DATA` overrides the setting, which is what a container uses.
+
+Reading is always public. `access = secured` turns on rho-auth for publishing
+only, so the index, search and downloads stay open.
+
+Environment overrides: `RHO_HTTP_ADDR` (default `:8080`), `RHO_REGISTRY_DATA`,
+`RHO_REGISTRY_CONFIG`.
 
 Data is stored as:
 

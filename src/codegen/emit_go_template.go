@@ -86,18 +86,23 @@ func templateHas(name string) bool {
 	return ok
 }
 
-// templateFill renders a template, substituting up to four name/value pairs.
+// templateSep separates the encoded name/value list. It is a non-printing byte,
+// so a value may contain spaces, tabs and newlines.
+const templateSep = "\x1f"
+
+// templateFill renders a template with the values in an encoded list.
+//
+// The list is the concatenation of name, value, name, value pairs, each
+// preceded by templateSep, which is what std/web/template.rho's vars builds.
+// Because the list is a single string, a template can gain a placeholder
+// without any signature here changing.
 //
 // {{ name }} is HTML-escaped, which is what a page needs by default. The
 // triple-brace form {{{ name }}} inserts a value verbatim, for markup a Rho
-// handler built itself. A pair with an empty name is skipped, so a caller with
-// fewer values passes empty ones rather than reaching for another arity.
-//
-// The pairs are positional because Rho has no runtime maps or variadics; the
-// typechecker carries this exact arity.
-func templateFill(source string, name1, value1, name2, value2, name3, value3, name4, value4 string) string {
-	names := []string{name1, name2, name3, name4}
-	values := []string{value1, value2, value3, value4}
+// handler built itself. A name that is not in the list is left as written, so
+// a typo shows up in the page rather than silently disappearing.
+func templateFill(source, pairs string) string {
+	names, values := decodeTemplatePairs(pairs)
 	var out strings.Builder
 	for i := 0; i < len(source); {
 		open := strings.Index(source[i:], "{{")
@@ -133,7 +138,7 @@ func templateFill(source string, name1, value1, name2, value2, name3, value3, na
 				if raw {
 					out.WriteString(value)
 				} else {
-					out.WriteString(escapeHTML(value))
+					out.WriteString(escapeHtml(value))
 				}
 			}
 		}
@@ -147,6 +152,20 @@ func templateFill(source string, name1, value1, name2, value2, name3, value3, na
 	return out.String()
 }
 
+// decodeTemplatePairs splits an encoded list into parallel name and value
+// slices. The first field is empty, because every pair is preceded by the
+// separator, so names land on odd positions.
+func decodeTemplatePairs(pairs string) ([]string, []string) {
+	fields := strings.Split(pairs, templateSep)
+	names := []string{}
+	values := []string{}
+	for i := 1; i+1 < len(fields); i += 2 {
+		names = append(names, fields[i])
+		values = append(values, fields[i+1])
+	}
+	return names, values
+}
+
 // lookupPair finds a name among the supplied pairs.
 func lookupPair(names []string, values []string, key string) (string, bool) {
 	for i, name := range names {
@@ -158,7 +177,7 @@ func lookupPair(names []string, values []string, key string) (string, bool) {
 }
 
 // escapeHTML makes a value safe to place in element text or an attribute.
-func escapeHTML(value string) string {
+func escapeHtml(value string) string {
 	var out strings.Builder
 	for _, r := range value {
 		switch r {

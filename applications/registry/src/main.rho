@@ -25,18 +25,18 @@ import registry.auth
 
 route POST "/modules/{name}/{version}/rho-pkg" => publish_module
 route GET  "/modules/{name}/{version}/rho-pkg" => download_module
-route GET  "/search"                             => search_modules
-route GET  "/modules/{name}"                     => module_versions
+route GET  "/api/search"                         => search_modules
+route GET  "/api/modules/{name}"                 => module_versions
 
 /* -------------------------------------------------------------------------- */
 /*  Handlers                                                                   */
 /* -------------------------------------------------------------------------- */
 
 fn publish_module(req: Request) Response {
-    // Reading is public, so publishing is what a credential is for. With
-    // RHO_REGISTRY_REQUIRE_AUTH unset the registry stays open, which suits
-    // local development.
-    if auth_required() && !auth_is_authenticated(request_auth(req)) {
+    // Reading is public, so publishing is what a credential is for. A registry
+    // configured access = public lets anyone publish, which suits a trusted
+    // network; access = secured requires a valid token.
+    if is_secured() && !auth_is_authenticated(request_auth(req)) {
         return error_json(status_unauthorized(), "a token is required to publish")
     }
 

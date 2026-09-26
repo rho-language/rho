@@ -52,7 +52,9 @@ type Type struct {
 
 // ModuleIR is the IR representation of a Rho module.
 type ModuleIR struct {
-	Name     string
+	Name string
+	// Version is the manifest version, so a generated service can report it.
+	Version  string
 	Features []string
 	Funcs    []FuncIR
 	Structs  []StructIR
