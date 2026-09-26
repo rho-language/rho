@@ -91,3 +91,78 @@ func TestModuleInfoStructure(t *testing.T) {
 		t.Fatalf("expected 2 features, got %d", len(info.Features))
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Credentials On The Wire                                              */
+/* -------------------------------------------------------------------------- */
+
+// A token is presented as a bearer credential on every exchange, the way a web
+// API expects one, rather than being passed as a parameter.
+func TestClientPresentsABearerToken(t *testing.T) {
+	client := NewClient(&Config{Remote: RemoteConfig{URL: "http://127.0.0.1:8080", Token: "a-token"}})
+	if got := client.credentialFor(); got != "Bearer a-token" {
+		t.Fatalf("got %q, want a bearer credential", got)
+	}
+}
+
+// An issued token takes precedence over a static one, because it can carry
+// scopes and an expiry.
+func TestIssuedTokenWinsOverConfigured(t *testing.T) {
+	SetTokenReader(func(registry string) string {
+		if registry == "http://127.0.0.1:8080" {
+			return "issued-token"
+		}
+		return ""
+	})
+	t.Cleanup(func() { SetTokenReader(nil) })
+
+	client := NewClient(&Config{Remote: RemoteConfig{URL: "http://127.0.0.1:8080", Token: "configured"}})
+	if client.Token != "issued-token" {
+		t.Fatalf("got %q, want the issued token", client.Token)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: Transport Safety                                                    */
+/* -------------------------------------------------------------------------- */
+
+// A bearer token authenticates a request but does not hide it, so it is not
+// sent over plain HTTP to a remote host.
+func TestTokenIsNotSentOverPlainHTTP(t *testing.T) {
+	cases := map[string]bool{
+		"https://registry.example.com": true,
+		"http://localhost:8080":        true,
+		"http://127.0.0.1:8080":        true,
+		"http://[::1]:8080":            true,
+		"http://registry.example.com":  false,
+		"http://10.0.0.5:8080":         false,
+	}
+	for registry, want := range cases {
+		if got := TokenSafeFor(registry); got != want {
+			t.Errorf("TokenSafeFor(%q) = %v, want %v", registry, got, want)
+		}
+	}
+}
+
+func TestClientWithholdsAnUnsafeCredential(t *testing.T) {
+	client := NewClient(&Config{Remote: RemoteConfig{URL: "http://registry.example.com", Token: "a-token"}})
+	if got := client.credentialFor(); got != "" {
+		t.Fatalf("a credential must not go out over plain HTTP, got %q", got)
+	}
+}
+
+// A deployment that terminates TLS in front of an http registry can say so.
+func TestInsecureTransportCanBeAllowed(t *testing.T) {
+	t.Setenv("RHO_ALLOW_INSECURE_REGISTRY", "1")
+	client := NewClient(&Config{Remote: RemoteConfig{URL: "http://registry.example.com", Token: "a-token"}})
+	if got := client.credentialFor(); got != "Bearer a-token" {
+		t.Fatalf("expected the credential to be sent once allowed, got %q", got)
+	}
+}
+
+func TestNoCredentialWhenNoneIsConfigured(t *testing.T) {
+	client := NewClient(&Config{Remote: RemoteConfig{URL: "https://registry.example.com"}})
+	if got := client.credentialFor(); got != "" {
+		t.Fatalf("got %q, want no credential", got)
+	}
+}

@@ -402,7 +402,13 @@ func storeHas(name, version string) bool {
 
 // storeSearch returns a JSON array of matching module metadata.
 func storeSearch(query string) string {
-	encoded, err := jsonenc.Marshal(newFSStore().search(query))
+	results := newFSStore().search(query)
+	if results == nil {
+		// An empty registry is an empty list, not a null, so a Rho handler
+		// walking the response finds nothing rather than a missing value.
+		return "[]"
+	}
+	encoded, err := jsonenc.Marshal(results)
 	if err != nil {
 		return "[]"
 	}
@@ -412,9 +418,13 @@ func storeSearch(query string) string {
 // storeVersions returns a JSON document listing a module's versions.
 func storeVersions(name string) string {
 	s := newFSStore()
+	versions := s.versions(name)
+	if versions == nil {
+		versions = []string{}
+	}
 	encoded, err := jsonenc.Marshal(map[string]any{
 		"name":     name,
-		"versions": s.versions(name),
+		"versions": versions,
 	})
 	if err != nil {
 		return fmt.Sprintf("{\"name\":%q,\"versions\":[]}", name)
@@ -435,6 +445,9 @@ func storeDataDir() string {
 // the fields as strings.
 func storeList(query string) string {
 	results := newFSStore().search(query)
+	if results == nil {
+		return ""
+	}
 	var out strings.Builder
 	for _, meta := range results {
 		out.WriteString(meta.Name)

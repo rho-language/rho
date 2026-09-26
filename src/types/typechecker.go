@@ -743,9 +743,12 @@ var intrinsicLowering = map[string]string{
 	"str_index_of":    "rho_str_index_of",
 	"str_slice":       "rho_str_slice",
 	"int_to_str":      "rho_int_to_str",
+	"int_from_str":    "rho_int_from_str",
 	"template_get":    "template_get",
 	"template_has":    "template_has",
 	"template_fill":   "template_fill",
+	"auth_bearer":     "auth_bearer",
+	"auth_subject":    "auth_subject",
 	"str_from_byte":   "rho_str_from_byte",
 	"env_or":          "rho_env_or",
 }
@@ -1320,6 +1323,11 @@ func init() {
 		params: []ir.Type{{Kind: ir.TypeU32, Name: "u32"}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	}
+	// int_from_str reads a run of digits, returning 0 for anything else.
+	intrinsicSignatures["int_from_str"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	}
 	// str_from_byte renders one byte as a one-character string.
 	intrinsicSignatures["str_from_byte"] = functionType{
 		params: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}},
@@ -1341,6 +1349,8 @@ func init() {
 		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
 		"template_get", "template_has", "template_fill", "env_or",
+		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",
+		"auth_required", "auth_open_tokens", "auth_issue", "int_from_str",
 	} {
 		isExternalBuiltinNames[name] = true
 	}

@@ -21,6 +21,7 @@ import std.web.http
 import registry.validate
 import registry.respond
 import registry.web
+import registry.auth
 
 route POST "/modules/{name}/{version}/rho-pkg" => publish_module
 route GET  "/modules/{name}/{version}/rho-pkg" => download_module
@@ -32,8 +33,11 @@ route GET  "/modules/{name}"                     => module_versions
 /* -------------------------------------------------------------------------- */
 
 fn publish_module(req: Request) Response {
-    if !authorized(request_auth(req)) {
-        return error_json(status_unauthorized(), "unauthorized")
+    // Reading is public, so publishing is what a credential is for. With
+    // RHO_REGISTRY_REQUIRE_AUTH unset the registry stays open, which suits
+    // local development.
+    if auth_required() && !auth_is_authenticated(request_auth(req)) {
+        return error_json(status_unauthorized(), "a token is required to publish")
     }
 
     let name: string = param(req, "name")

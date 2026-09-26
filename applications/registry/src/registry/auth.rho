@@ -1,0 +1,81 @@
+module registry.auth
+
+// Token issuance and checking for the registry.
+//
+// Reading is public, so anyone can browse the index, search, and pull a
+// published package. Publishing is not: it needs a token, obtained by logging
+// in with `rho auth login`.
+//
+// A token is minted here rather than by the client, so the signing secret
+// never leaves this service.
+
+import std.web.http
+
+/* -------------------------------------------------------------------------- */
+/*  Routes                                                                    */
+/* -------------------------------------------------------------------------- */
+
+route POST "/auth/token" => issue_token
+
+/* -------------------------------------------------------------------------- */
+/*  Scopes                                                                    */
+/* -------------------------------------------------------------------------- */
+
+fn scope_pull() string {
+    return "pull"
+}
+
+fn scope_push() string {
+    return "push"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Issuing                                                                   */
+/* -------------------------------------------------------------------------- */
+
+// The longest a token may live, matching the client.
+fn max_token_days() u32 {
+    return 90
+}
+
+fn default_token_days() u32 {
+    return 30
+}
+
+// issue_token hands a caller a token for a subject.
+//
+// The lifetime asked for is capped, so a caller cannot ask for a credential
+// that outlives the maximum.
+fn issue_token(req: Request) Response {
+    let user: string = request_query_param(req, "user")
+    let host: string = request_query_param(req, "host")
+    let days: u32 = parse_days(request_query_param(req, "days"))
+    let scopes: string = request_query_param(req, "scopes")
+
+    if user == "" {
+        return error_json(status_bad_request(), "user is required")
+    }
+    if days > max_token_days() {
+        days = max_token_days()
+    }
+    if days == 0 {
+        days = default_token_days()
+    }
+
+    // Issuing is open by default so the first token can be obtained at all;
+    // it can be closed once tokens are in place, and then a caller has to
+    // present the one it already holds.
+    if !auth_open_tokens() && !auth_is_authenticated(request_auth(req)) {
+        return error_json(status_unauthorized(), "token issuance is closed; present an existing token")
+    }
+
+    return json(status_created(), auth_issue(user, host, days, scopes))
+}
+
+// parse_days reads a requested lifetime, treating anything unusable as unset.
+fn parse_days(value: string) u32 {
+    if value == "" {
+        return 0
+    }
+    return int_from_str(value)
+}

@@ -122,6 +122,38 @@ var protocolFuncs = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// Authentication, supplied by a server target's generated auth.go.
+	"auth_bearer": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"auth_subject": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"auth_is_authenticated": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
+	"auth_required": {
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
+	"auth_open_tokens": {
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
+	"auth_issue": {
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeU32, Name: "u32"},
+			{Kind: ir.TypeString, Name: "string"},
+		},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	"auth_expires": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	},
 	// store_list is provided by the fsstore port, which renders a listing the
 	// Rho side can read line by line.
 	"store_list": {
