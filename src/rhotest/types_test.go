@@ -9,7 +9,7 @@
 // SPDX-License-Identifier: MIT
 //
 
-package main
+package rhotest
 
 import "testing"
 

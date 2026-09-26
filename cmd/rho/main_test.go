@@ -56,8 +56,10 @@ version 0.1.0
 /*  Tests for CLI subcommands (internal functions)                             */
 /* -------------------------------------------------------------------------- */
 
+// rho test takes a path and, optionally, the target to run on. More than that
+// is a usage error.
 func TestTestCLIRejectsTooManyArguments(t *testing.T) {
-    if code := testCLI([]string{"one", "two"}); code != 2 {
+    if code := testCLI([]string{"one", "go", "three"}); code != 2 {
         t.Fatalf("testCLI returned %d, want 2", code)
     }
 }

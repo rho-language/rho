@@ -1,0 +1,29 @@
+# systemd unit for the Rho module registry.
+#
+# The service is a single static binary that only needs its data directory
+# writable, so the unit below locks everything else down.
+
+[Unit]
+Description=Rho module registry
+After=network.target
+
+[Service]
+Type=simple
+User=rho
+Group=rho
+Environment=RHO_HTTP_ADDR=127.0.0.1:8080
+Environment=RHO_REGISTRY_DATA=/var/lib/rho-registry
+# Put RHO_REGISTRY_TOKEN in /etc/rho/registry.env with 0600 permissions.
+EnvironmentFile=-/etc/rho/registry.env
+ExecStart=/usr/local/bin/registry
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/rho-registry
+
+[Install]
+WantedBy=multi-user.target

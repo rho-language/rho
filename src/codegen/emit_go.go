@@ -42,6 +42,14 @@ const AppInitName = "AppInit"
 
 // EmitGo generates the implementation file (app.go) for an IR module.
 func EmitGo(m ir.ModuleIR) string {
+	return EmitGoForTarget(m, "cli")
+}
+
+// EmitGoForTarget generates the implementation file for a Go target. A server
+// target receives Request and Response from its own server file, so those are
+// not repeated here; every other target needs the definitions emitted.
+func EmitGoForTarget(m ir.ModuleIR, kind string) string {
+	isServer := kind == "server"
 	var body strings.Builder
 
 	if flags := goFeatureFlags(m.Features); len(flags) > 0 {
@@ -53,7 +61,7 @@ func EmitGo(m ir.ModuleIR) string {
 	}
 
 	for _, structure := range m.Structs {
-		emitGoStruct(&body, structure)
+		emitGoStructForTarget(&body, structure, isServer)
 	}
 	if len(m.Structs) > 0 {
 		body.WriteString("\n")
@@ -113,6 +121,16 @@ func EmitGo(m ir.ModuleIR) string {
 }
 
 func emitGoStruct(b *strings.Builder, structure ir.StructIR) {
+	emitGoStructForTarget(b, structure, false)
+}
+
+func emitGoStructForTarget(b *strings.Builder, structure ir.StructIR, isServer bool) {
+	// The server target defines the HTTP protocol types itself, because it has
+	// to decode a net/http request into them. Emitting them again would
+	// redeclare them.
+	if isServer && isProtocolType(structure.Name) {
+		return
+	}
 	// Name is the spelling type references use; CName carries the owner
 	// prefix, which is only for cross-module C linkage. Matching Name keeps
 	// definitions and references on the same identifier.
@@ -252,11 +270,12 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 		if len(instr.Args) != 1 {
 			return
 		}
-		if strings.HasSuffix(instr.Dest, "=") {
-			fmt.Fprintf(b, "%s%s %s\n", pad, goFieldName(strings.TrimSuffix(instr.Dest, "=")), ToGoExpr(instr.Args[0]))
-			return
-		}
-		fmt.Fprintf(b, "%s%s = %s\n", pad, goFieldName(instr.Dest), ToGoExpr(instr.Args[0]))
+		// The IR carries the operator in the destination, as the C backend
+		// expects. An assignment is always `name = value` in Go; a
+		// declaration is OpLet, not a trailing "=" here.
+		dest := strings.TrimSpace(instr.Dest)
+		dest = strings.TrimRight(dest, "=+-*/")
+		fmt.Fprintf(b, "%s%s = %s\n", pad, goFieldName(strings.TrimSpace(dest)), ToGoExpr(instr.Args[0]))
 
 	case ir.OpLet:
 		goType := goTypeForCName(instr.Type)
@@ -455,8 +474,43 @@ func hasGoInit(m ir.ModuleIR) bool {
 
 // EmitGoRuntime returns runtime.go containing only the helpers the generated
 // implementation actually references, so the file never carries an unused
-// import.
+// import. The abort and panic intrinsics are always present: they back the
+// `extern fn abort()` and `panic()` builtins, and a test module reaches them
+// through the assert library.
 func EmitGoRuntime(implementation string) string {
+	var body strings.Builder
+	imports := []string{}
+
+	// The abort and panic intrinsics. println writes to stderr and needs no
+	// import; os.Exit is the only other dependency.
+	body.WriteString("// abort ends the program with a non-zero status, backing Rho's abort().\n")
+	body.WriteString("func abort() {\n\tprintln(\"rho: aborted\")\n\tos.Exit(1)\n}\n\n")
+	body.WriteString("// panicf ends the program with a message, backing Rho's panic().\n")
+	body.WriteString("func panicf(msg string) {\n\tprintln(\"rho: \" + msg)\n\tos.Exit(1)\n}\n\n")
+	imports = append(imports, "os")
+
+	// String and environment intrinsics, so the same Rho code builds and
+	// behaves the same for every Go target.
+	body.WriteString("// rhoStrlen returns the length of s in bytes.\n")
+	body.WriteString("func rhoStrlen(s string) uint32 { return uint32(len(s)) }\n\n")
+	body.WriteString("// rhoStrStartsWith reports whether s begins with prefix.\n")
+	body.WriteString("func rhoStrStartsWith(s, prefix string) bool { return strings.HasPrefix(s, prefix) }\n\n")
+	body.WriteString("// rhoStrTrimPrefix removes prefix from s when present.\n")
+	body.WriteString("func rhoStrTrimPrefix(s, prefix string) string { return strings.TrimPrefix(s, prefix) }\n\n")
+	body.WriteString("// rhoStrContains reports whether haystack contains needle.\n")
+	body.WriteString("func rhoStrContains(haystack, needle string) bool { return strings.Contains(haystack, needle) }\n\n")
+	body.WriteString("// rhoStrAt returns the byte at an index, or 0 past the end.\n")
+	body.WriteString("func rhoStrAt(s string, i uint32) byte {\n")
+	body.WriteString("\tif int(i) >= len(s) {\n\t\treturn 0\n\t}\n")
+	body.WriteString("\treturn s[i]\n}\n\n")
+	body.WriteString("// rhoStrIndexOf finds a substring, or -1 when it is absent.\n")
+	body.WriteString("func rhoStrIndexOf(haystack, needle string) int32 { return int32(strings.Index(haystack, needle)) }\n\n")
+	body.WriteString("// rhoEnvOr returns an environment variable, or fallback.\n")
+	body.WriteString("func rhoEnvOr(name, fallback string) string {\n")
+	body.WriteString("\tif value, ok := os.LookupEnv(name); ok {\n\t\treturn value\n\t}\n")
+	body.WriteString("\treturn fallback\n}\n\n")
+	imports = append(imports, "strings")
+
 	needed := []struct {
 		call    string
 		define  string
@@ -483,12 +537,10 @@ func EmitGoRuntime(implementation string) string {
 				"\t\t}\n" +
 				"\t}\n" +
 				"\treturn \"unknown\"\n}\n",
-			imports: []string{"os", "strings"},
+			imports: []string{"strings"},
 		},
 	}
 
-	var body strings.Builder
-	imports := []string{}
 	for _, helper := range needed {
 		if !strings.Contains(implementation, helper.call) {
 			continue

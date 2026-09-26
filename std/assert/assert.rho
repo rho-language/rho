@@ -22,8 +22,9 @@
 
 module std.assert.assert
 
-extern fn print(msg: string)
-extern fn abort()
+// print and abort are language intrinsics supplied by the backends, so this
+// module does not redeclare them: a local extern declaration would shadow the
+// intrinsic and be qualified with this module's name.
 
 fn fail(msg: string) {
     print("ASSERTION FAILED: " + msg)

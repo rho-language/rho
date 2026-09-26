@@ -56,6 +56,9 @@ type ModuleIR struct {
 	Features []string
 	Funcs    []FuncIR
 	Structs  []StructIR
+	// Routes are the HTTP routes the module exposes, meaningful for a server
+	// target.
+	Routes []RouteIR
 }
 
 /* -------------------------------------------------------------------------- */
@@ -139,4 +142,19 @@ func NewModuleIR(name string) ModuleIR {
 		Funcs:   []FuncIR{},
 		Structs: []StructIR{},
 	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  HTTP Routes                                                               */
+/* -------------------------------------------------------------------------- */
+
+// RouteIR is a compiled HTTP route: an HTTP method and ServeMux pattern bound
+// to the Rho function that serves it.
+type RouteIR struct {
+	// Method is the HTTP method, upper case.
+	Method string
+	// Path is the ServeMux pattern, for example "/modules/{name}".
+	Path string
+	// Handler is the name of the serving Rho function.
+	Handler string
 }

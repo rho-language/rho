@@ -35,6 +35,15 @@ const DescriptorFileName = "project.yml"
 // FileRole identifies the part an emitted file plays in a generated project.
 type FileRole = string
 
+// CopyEntry is a hand-written file copied into a generated project, given as a
+// path relative to the Rho project root.
+type CopyEntry struct {
+	// From is the source path, relative to the Rho project root.
+	From string
+	// To is the destination path, relative to the generated project directory.
+	To string
+}
+
 // DescriptorFile is one output file of a generated project.
 type DescriptorFile struct {
 	// Path is the file path relative to the generated project directory.
@@ -70,6 +79,11 @@ type Target struct {
 	Requires []string
 	// BuildFlags lists extra flags to record for the build role.
 	BuildFlags []string
+	// Ports names built-in port implementations the backend generates, so a
+	// module's extern declarations are supplied without shipping host code.
+	Ports []string
+	// Copy lists hand-written files to place in the generated project.
+	Copy []CopyEntry
 	// Files lists the output files for this target.
 	Files []DescriptorFile
 }
@@ -152,6 +166,8 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 			OutputDir:   targetNode.Map["output_dir"].Str,
 			Requires:    []string{},
 			BuildFlags:  []string{},
+			Ports:       []string{},
+			Copy:        []CopyEntry{},
 			Files:       []DescriptorFile{},
 		}
 
@@ -185,6 +201,36 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 			if item.Str != "" {
 				target.BuildFlags = append(target.BuildFlags, item.Str)
 			}
+		}
+
+		// Built-in port implementations the backend generates.
+		for _, item := range targetNode.Map["ports"].List {
+			if item.Str != "" {
+				target.Ports = append(target.Ports, item.Str)
+			}
+		}
+
+		// Hand-written files placed in the generated project.
+		for _, entry := range targetNode.Map["copy"].List {
+			if entry.Kind != yaml.KindMap {
+				continue
+			}
+			item := CopyEntry{
+				From: entry.Map["from"].Str,
+				To:   entry.Map["to"].Str,
+			}
+			if item.To == "" {
+				item.To = item.From
+			}
+			if item.From == "" {
+				return nil, fmt.Errorf("target %q has a copy entry without a from path", target.ID)
+			}
+			if filepath.IsAbs(item.From) || strings.Contains(item.From, "..") ||
+				filepath.IsAbs(item.To) || strings.Contains(item.To, "..") {
+				return nil, fmt.Errorf("target %q copy paths must stay inside the project: %q -> %q",
+					target.ID, item.From, item.To)
+			}
+			target.Copy = append(target.Copy, item)
 		}
 
 		seenPaths := map[string]bool{}
