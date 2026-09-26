@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 )
 
@@ -36,14 +37,60 @@ type Client struct {
 }
 
 // NewClient creates a new remote registry client.
+//
+// A token issued by `rho auth login` is preferred over the static token in the
+// configuration, because it can carry scopes and an expiry. It is sent as a
+// bearer credential on every request, the way a web API expects one.
 func NewClient(cfg *Config) *Client {
+	token := cfg.Remote.Token
+	if issued := issuedToken(cfg.Remote.URL); issued != "" {
+		token = issued
+	}
 	return &Client{
 		BaseURL: cfg.Remote.URL,
-		Token:   cfg.Remote.Token,
+		Token:   token,
 		HTTP: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// TokenSafeFor reports whether a credential may be sent to a registry URL.
+//
+// A bearer token authenticates a request but does not hide it, so sending one
+// over plain HTTP would hand it to anyone on the path. Loopback is exempt
+// because nothing else can observe it, and a deployment that terminates TLS
+// in front of an http registry can say so.
+func TokenSafeFor(registryURL string) bool {
+	parsed, err := url.Parse(registryURL)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme == "https" {
+		return true
+	}
+	if os.Getenv("RHO_ALLOW_INSECURE_REGISTRY") == "1" {
+		return true
+	}
+	switch parsed.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+// credentialFor returns the header value to present, or "" when presenting a
+// credential would be unsafe. The caller then proceeds unauthenticated, which
+// the registry accepts for public reads and refuses for writes.
+func (c *Client) credentialFor() string {
+	if c.Token == "" {
+		return ""
+	}
+	if !TokenSafeFor(c.BaseURL) {
+		return ""
+	}
+	return "Bearer " + c.Token
 }
 
 // ModuleInfo holds metadata about a module on the remote registry.
@@ -56,6 +103,21 @@ type ModuleInfo struct {
 	Command     string            `json:"command"`
 	Features    []string          `json:"features"`
 	Deps        map[string]string `json:"deps"`
+}
+
+// tokenReader is set by the CLI so this package can find an issued credential
+// without importing the auth store itself. It keeps the dependency one way.
+var tokenReader func(registry string) string
+
+// SetTokenReader registers how an issued token is looked up.
+func SetTokenReader(reader func(registry string) string) { tokenReader = reader }
+
+// issuedToken returns a token issued for a registry, if there is a valid one.
+func issuedToken(registry string) string {
+	if tokenReader == nil || registry == "" {
+		return ""
+	}
+	return tokenReader(registry)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -86,8 +148,8 @@ func UploadModule(client *Client, name, version string, pkgData, sourceData []by
 	}
 
 	req.Header.Set("Content-Type", "application/gzip")
-	if client.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+client.Token)
+	if credential := client.credentialFor(); credential != "" {
+		req.Header.Set("Authorization", credential)
 	}
 
 	resp, err := client.HTTP.Do(req)
@@ -121,8 +183,8 @@ func DownloadModule(client *Client, name, version string) ([]byte, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	if client.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+client.Token)
+	if credential := client.credentialFor(); credential != "" {
+		req.Header.Set("Authorization", credential)
 	}
 
 	resp, err := client.HTTP.Do(req)
@@ -161,8 +223,8 @@ func SearchRemote(client *Client, query string) ([]ModuleInfo, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	if client.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+client.Token)
+	if credential := client.credentialFor(); credential != "" {
+		req.Header.Set("Authorization", credential)
 	}
 
 	resp, err := client.HTTP.Do(req)
@@ -220,8 +282,8 @@ func AvailableVersions(name string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if client.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+client.Token)
+	if credential := client.credentialFor(); credential != "" {
+		req.Header.Set("Authorization", credential)
 	}
 	resp, err := client.HTTP.Do(req)
 	if err != nil {

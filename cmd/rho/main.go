@@ -28,6 +28,7 @@ import (
 	modcli "rho/cmd/rho-module/cli"
 	modcore "rho/cmd/rho-module/core"
 	pkgcli "rho/cmd/rho-pkg/cli"
+	"time"
 
 	modremote "rho/cmd/rho-module/remote"
 	src "rho/src"       // compiler orchestrator v3
@@ -40,6 +41,16 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func main() {
+	// The module client presents a token issued by `rho auth login` when one
+	// is stored, so the two ways of configuring a registry stay in step.
+	modremote.SetTokenReader(func(registry string) string {
+		credential, err := lookupCredential(registry)
+		if err != nil || credential.Expired(time.Now()) {
+			return ""
+		}
+		return credential.Secret
+	})
+
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: rho <command> [args]")
 		return
@@ -82,6 +93,9 @@ func main() {
 
 	case "config":
 		os.Exit(configCLI(os.Args[2:]))
+
+	case "auth":
+		os.Exit(authCLI(os.Args[2:]))
 
 	case "pkg":
 		os.Exit(pkgcli.Main(os.Args[2:]))
@@ -667,5 +681,6 @@ func printHelp() {
 	fmt.Println("  rho module <command>        Module management (init, validate, info, publish, download, install, remove, update, search)")
 	fmt.Println("  rho lsp                     Start the Rho language server")
 	fmt.Println("  rho test [path]             Run Rho tests")
+	fmt.Println("  rho auth <command>          Registry credentials: login, status, list, revoke")
 	fmt.Println("  rho help                    Show this help")
 }
