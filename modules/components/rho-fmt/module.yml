@@ -1,0 +1,12 @@
+module:
+  name: rho-fmt
+  type: component
+  version: 0.1.0
+  description: Source formatter
+  command: fmt
+
+main: rho-fmt
+
+features:
+  - format
+  - canonical

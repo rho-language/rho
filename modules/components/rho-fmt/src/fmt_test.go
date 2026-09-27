@@ -14,8 +14,8 @@
 package main
 
 import (
-    "os"
-    "testing"
+	"os"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -23,7 +23,7 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestFormatFile(t *testing.T) {
-    src := `
+	src := `
 module  test
 
 struct  A   {
@@ -34,7 +34,7 @@ fn   f (a: u8)   void {
 }
 `
 
-    expected := `module test
+	expected := `module test
 
 struct A {
     x: u8
@@ -44,21 +44,21 @@ fn f(a: u8) void {
 }
 `
 
-    in := "fmt_test.rho"
-    defer os.Remove(in)
+	in := "fmt_test.rho"
+	defer os.Remove(in)
 
-    if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-        t.Fatalf("write failed: %v", err)
-    }
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
 
-    out, err := FormatFile(in)
-    if err != nil {
-        t.Fatalf("FormatFile failed: %v", err)
-    }
+	out, err := FormatFile(in)
+	if err != nil {
+		t.Fatalf("FormatFile failed: %v", err)
+	}
 
-    if out != expected {
-        t.Fatalf("unexpected formatting:\n--- got ---\n%s\n--- want ---\n%s", out, expected)
-    }
+	if out != expected {
+		t.Fatalf("unexpected formatting:\n--- got ---\n%s\n--- want ---\n%s", out, expected)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -66,28 +66,28 @@ fn f(a: u8) void {
 /* -------------------------------------------------------------------------- */
 
 func TestCLIWrite(t *testing.T) {
-    src := `
+	src := `
 module  x
 fn  main() void {}
 `
 
-    expected := `module x
+	expected := `module x
 
 fn main() void {
 }
 `
 
-    in := "fmt_cli.rho"
-    defer os.Remove(in)
+	in := "fmt_cli.rho"
+	defer os.Remove(in)
 
-    os.WriteFile(in, []byte(src), 0644)
+	os.WriteFile(in, []byte(src), 0644)
 
-    // simulate: rho fmt -w fmt_cli.rho
-    os.Args = []string{"rho-fmt", "-w", in}
-    main()
+	// simulate: rho fmt -w fmt_cli.rho
+	os.Args = []string{"rho-fmt", "-w", in}
+	main()
 
-    out, _ := os.ReadFile(in)
-    if string(out) != expected {
-        t.Fatalf("CLI -w did not write expected output")
-    }
+	out, _ := os.ReadFile(in)
+	if string(out) != expected {
+		t.Fatalf("CLI -w did not write expected output")
+	}
 }
