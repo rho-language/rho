@@ -108,6 +108,11 @@ provides:
     - page
 ```
 
+Two components take plugins today: `rho-doc`, whose hooks are `index` over a
+finished set of pages and `page` over one page, and `rho-test`, whose are
+`discover` over the test files a run found and `run` over its results.
+`rho-doc-toc` and `rho-test-junit` are the worked examples, one for each.
+
 That pair is the whole extension contract, and it is checked rather than
 assumed:
 

@@ -11,6 +11,9 @@
 // just one page, so an extension can do something a single page cannot, such as
 // building a table of contents over the finished set.
 //
+// The finding and the running of plugins are the toolchain's; this file holds
+// what a documentation build asks them about and what it does with the answer.
+//
 // @project Rho
 // @version 0.1
 // @date 2026
@@ -20,112 +23,140 @@
 
 package rhodoc
 
-import "sort"
+import (
+	"sort"
+
+	"rho/src/plugins"
+)
 
 /* -------------------------------------------------------------------------- */
 /*  Describing the site                                                       */
 /* -------------------------------------------------------------------------- */
 
-// Describe renders the site as a plugin request: what it is called, where it is
-// written, and what pages it has.
-func (site *Site) Describe(out string) PluginRequest {
-	request := PluginRequest{
-		Version: ProtocolVersion,
-		Site:    site.Title,
-		Project: site.Project,
-		Out:     out,
-	}
+// sitePayload is what a plugin is asked about a whole build: the site, where it
+// is written, and the pages it has.
+type sitePayload struct {
+	Site  string       `json:"site"`
+	Out   string       `json:"out,omitempty"`
+	Pages []PluginPage `json:"pages"`
+}
+
+// pagePayload is what a plugin is asked about one page: the page itself, and
+// the site it belongs to.
+type pagePayload struct {
+	Site string     `json:"site"`
+	Page PluginPage `json:"page"`
+}
+
+// describe renders the site as a plugin would see it.
+func (site *Site) describe(out string) sitePayload {
+	payload := sitePayload{Site: site.Title, Out: out}
 	for _, page := range site.Pages {
-		request.Pages = append(request.Pages, PluginPage{
+		payload.Pages = append(payload.Pages, PluginPage{
 			Target:  page.Target,
 			Title:   page.Title,
 			Href:    page.Href,
 			Section: page.Section,
 		})
 	}
-	return request
+	return payload
 }
 
 /* -------------------------------------------------------------------------- */
 /*  Running                                                                   */
 /* -------------------------------------------------------------------------- */
 
-// RunPlugins runs the plugins over a built site and folds what they returned in.
+// RunPlugins runs the plugins this site was built with, and folds what they
+// answered in.
 //
-// A plugin failure is a diagnostic on the build, not a failure of the build:
-// the documentation of everything else is still worth writing.
-func (site *Site) RunPlugins(plugins []Plugin, out string) {
-	if len(plugins) == 0 {
+// A plugin failure is a diagnostic on the build, not a failure of the build: the
+// documentation of everything else is still worth writing.
+func (site *Site) RunPlugins(out string) {
+	if len(site.plugins) == 0 {
 		return
 	}
-	request := site.Describe(out)
-
 	// The whole-site pass comes first, so a per-page pass sees the pages a
 	// whole-site plugin added.
-	whole := RunHooks(plugins, HookIndex, request)
-	site.merge(whole)
+	site.merge(site.run(HookIndex, site.describe(out)))
 
-	// The per-page pass runs once for every page, with that page in the
-	// request. A plugin that renders a page itself answers with a replacement
-	// body rather than adding a second page.
+	// The per-page pass runs once for every page, with that page in the request.
+	// A plugin that renders a page itself answers with a replacement body rather
+	// than adding a second page with the same target.
 	//
-	// The pages are copied before the loop: merging a result reorders the
+	// The pages are copied before the loop: merging an answer reorders the
 	// slice, and a loop over a slice that is reordered underneath it visits a
 	// page twice and skips another.
 	snapshot := append([]*SitePage{}, site.Pages...)
 	for _, page := range snapshot {
-		one := site.Describe(out)
-		one.Page = &PluginPage{
+		payload := pagePayload{Site: site.Title, Page: PluginPage{
 			Target:  page.Target,
 			Title:   page.Title,
 			Href:    page.Href,
 			Section: page.Section,
 			HTML:    page.Body,
 			Plain:   page.Plain,
-		}
+		}}
 		// The whole set travels with every request, so a page hook can also see
 		// the site the page belongs to.
-		result := RunHooks(plugins, HookPage, one)
-		site.merge(result)
+		site.merge(site.run(HookPage, payload))
 	}
 }
 
-// HookIndex is the whole-site hook: a plugin that builds something over the
-// finished set of pages.
-const HookIndex = "index"
-
-// HookPage is the per-page hook: a plugin that renders or rewrites one page.
-const HookPage = "page"
-
-// ComponentName is this component's own name, which is what a plugin has to say
-// in order to be loaded by it. A component knows its own name; that is the one
-// thing it does not have to be told.
-const ComponentName = "rho-doc"
-
-// OfferedHooks are the hooks a run of this generator goes through, and so the
-// hooks a plugin may answer. They are declared in the component's manifest as
-// well, because that is what a plugin is validated against; the test beside
-// this file checks the two agree, so the list is written once in the manifest
-// and read here.
-var OfferedHooks = []string{HookIndex, HookPage}
-
-// offers reports whether this generator runs a hook at all. A build asks for
-// nothing it does not run, whatever a plugin claims.
-func offers(hook string) bool {
-	for _, offered := range OfferedHooks {
-		if offered == hook {
-			return true
+// run answers one hook and returns what the plugins said about it.
+func (site *Site) run(hook string, payload any) PluginResult {
+	if !offers(hook) {
+		return PluginResult{}
+	}
+	// A run asks for nothing it does not run, whatever a plugin claims.
+	answer := plugins.RunHooks(site.plugins, ComponentName, hook, payload)
+	result := PluginResult{Replacements: map[string]string{}}
+	for _, page := range answer.Pages {
+		// A plugin names a page and may leave the rest to the build: its
+		// address is the page's own name, and a page with no section belongs
+		// with the other pages a plugin added.
+		href := page.Href
+		if href == "" {
+			href = page.Target + ".html"
 		}
+		section := page.Section
+		if section == "" {
+			section = DefaultExtensionSection
+		}
+		result.Pages = append(result.Pages, &SitePage{
+			Target:  page.Target,
+			Title:   page.Title,
+			Href:    href,
+			Section: section,
+			Body:    page.HTML,
+			Plain:   page.Plain,
+		})
 	}
-	return false
+	if page := pageOf(payload); page != nil {
+		result.Replacements[page.Target] = answer.Replacements[page.Target]
+	}
+	for _, diagnostic := range answer.Diagnostics {
+		result.Diagnostics = append(result.Diagnostics, Diagnostic{Message: diagnostic.String()})
+	}
+	return result
 }
 
-// merge folds a plugin result into the site.
+// pageOf is the page a per-page request carries, or nil for a whole-site one.
+func pageOf(payload any) *PluginPage {
+	if one, ok := payload.(pagePayload); ok {
+		return &one.Page
+	}
+	return nil
+}
+
+// merge folds what the plugins answered into the site.
 func (site *Site) merge(result PluginResult) {
 	if len(result.Pages) > 0 {
 		site.Pages = append(site.Pages, result.Pages...)
 	}
 	for target, body := range result.Replacements {
+		if body == "" {
+			continue
+		}
 		if replaced := site.find(target); replaced != nil {
 			replaced.Body = body
 			replaced.Plain = plainFromHTML(body)

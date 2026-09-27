@@ -108,7 +108,7 @@ func TestTheTreesOwnPluginsAreNotRunByDefault(t *testing.T) {
 	writePlugin(t, root, "toc", ComponentName, "  - "+HookIndex+"\n",
 		"\ncommands:\n"+aCommand(t, "contents", HookIndex, "contents"))
 
-	if plugins := (Plugins{Tree: root}).DiscoverPlugins(ComponentName); len(plugins) != 0 {
+	if plugins := (Source{Tree: root}).Discover(ComponentName); len(plugins) != 0 {
 		t.Fatalf("expected a build to leave the tree's own plugins alone, got %+v", plugins)
 	}
 }

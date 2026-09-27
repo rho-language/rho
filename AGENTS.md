@@ -32,11 +32,12 @@ go build -o ./bin/rho ./cmd/rho
 - `src/codegen/` - C and Go code generation backends, and the built-in ports
 - `src/projectgen/` - Generated-project descriptors and backends
 - `src/schema/` - YAML schema validation
+- `src/plugins/` - How plugins are found and run for a component
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
 - `modules/components/` - Components: `rho-auth`, `rho-doc`, `rho-fmt`, `rho-log`, `rho-lsp`, `rho-test`
-- `modules/plugins/` - Plugins: `rho-doc-toc`
+- `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
 `modules/components/` is a component: published, installed and dispatched to by

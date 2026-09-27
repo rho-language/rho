@@ -9,4 +9,5 @@ use (
 	./modules/components/rho-lsp
 	./modules/components/rho-test
 	./modules/plugins/rho-doc-toc
+	./modules/plugins/rho-test-junit
 )
