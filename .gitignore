@@ -17,6 +17,11 @@ Makefile
 # Resolved dependency lockfiles, produced by a build
 rho.lock
 
+# A component's or plugin's built command, which `rho module publish` packs
+# beside the manifest. It is a build artefact of the module, not a source file.
+modules/components/*/rho-*
+modules/plugins/*/rho-*
+
 # Python caches
 __pycache__/
 *.py[cod]
