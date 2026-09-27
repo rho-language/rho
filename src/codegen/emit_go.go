@@ -115,6 +115,12 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	if strings.Contains(body.String(), "fmt.") {
 		b.WriteString("\nimport \"fmt\"\n")
 	}
+
+// RhoUnit is what a Rho value that means "no value" is in Go: a real,
+	// nameable and empty type, so a program that binds one can hold it. It goes
+	// after the imports, because Go reads the file in order.
+	b.WriteString("\n// RhoUnit is the type of a Rho value that means \"no value\".\n")
+	b.WriteString("type RhoUnit struct{}\n")
 	b.WriteString("\n")
 	b.WriteString(body.String())
 	return b.String()
@@ -395,6 +401,8 @@ func goZeroValue(t ir.Type) string {
 			return "nil"
 		}
 		return name + "{}"
+	case ir.TypePtr:
+		return "nil"
 	default:
 		return "nil"
 	}

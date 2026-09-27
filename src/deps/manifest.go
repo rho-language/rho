@@ -131,6 +131,9 @@ type Manifest struct {
 	BuildIncludeDirs []string
 	BuildSourceDirs  []string
 	BuildSources     []string
+	// Connection is the native library a project links, and the headers it may
+	// call. Nil means the project generates nothing that needs one.
+	Connection *CConnection
 	// Config is the Kconfig bridge a project declares: the fragments that
 	// define its symbols, the values it sets, and which dialect the generated
 	// headers are written in.
@@ -320,6 +323,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	// rather than with the build fields: a project that declares a build and one
 	// that only declares a configuration are both possible, and a section read
 	// inside another would be read only when that other is there.
+	m.Connection = parseCConnection(doc.Map["c_connection"])
 	m.Config = parseConfigManifest(doc.Map["config"])
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
@@ -366,6 +370,63 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	return m, nil
 }
 
+// CConnection is the link between a Rho project and a native library.
+//
+// A project that calls C says which library it links, which headers it may
+// call, and which vendor library implements each build target: a target is what
+// a person names (`--target stm32`) and the library is what a build links
+// (`robohub_stm32`).
+type CConnection struct {
+	// Library is the CMake target every build of this project links.
+	Library string
+	// Path is a compiled library to link on a host run, where there is no CMake
+	// to resolve a target name. Empty for a project that is only ever built by
+	// CMake, which is the normal case.
+	Path string
+	// Headers are the C headers the foreign interface is derived from.
+	Headers []string
+	// IncludeDirs are passed to the compiler and used to read a header by path.
+	IncludeDirs []string
+	// Defines are the macros a build always has.
+	Defines []string
+	// Variants are the build targets that change what is linked, keyed by the
+	// target name a person types.
+	Variants map[string]CVariant
+}
+
+// CVariant is one build target of a connected project: the vendor libraries it
+// links, and the macros that select the implementation at compile time.
+type CVariant struct {
+	// Target is the vendor CMake target, such as robohub_stm32.
+	Target string
+	// Libraries are the vendor libraries, when there is more than one.
+	Libraries []string
+	// Defines select the implementation in the sources.
+	Defines []string
+	// IncludeDirs are the headers the vendor adds.
+	IncludeDirs []string
+}
+
+// LinkLibraries are the libraries a variant links: its own target first, then
+// anything else it names. A build that links nothing extra links the target.
+func (v CVariant) LinkLibraries() []string {
+	libs := []string{}
+	if v.Target != "" {
+		libs = append(libs, v.Target)
+	}
+	libs = append(libs, v.Libraries...)
+	return libs
+}
+
+// Variant returns the build target a name names, and whether there is one.
+func (c *CConnection) Variant(name string) (CVariant, bool) {
+	if c == nil {
+		return CVariant{}, false
+	}
+	variant, found := c.Variants[name]
+	return variant, found
+}
+
 // ConfigManifest is the Kconfig bridge a project declares.
 //
 // The fragments are Kconfig files: they define the symbols a project may set and
@@ -390,6 +451,35 @@ type ConfigManifest struct {
 	// the project root. It is read with the compiler's own front end, so a
 	// value written in Rho is a value the compiler would accept.
 	Module string
+}
+
+// parseCConnection reads the native library a project links.
+func parseCConnection(node yaml.Value) *CConnection {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	connection := &CConnection{
+		Library:     yamlString(node, "library"),
+		Path:        yamlString(node, "path"),
+		Headers:     yamlStrings(node.Map["headers"]),
+		IncludeDirs: yamlStrings(node.Map["include_dirs"]),
+		Defines:     yamlStrings(node.Map["defines"]),
+		Variants:    map[string]CVariant{},
+	}
+	if variants, ok := node.Map["variants"]; ok && variants.Kind == yaml.KindMap {
+		for name, value := range variants.Map {
+			if value.Kind != yaml.KindMap {
+				continue
+			}
+			connection.Variants[name] = CVariant{
+				Target:      yamlString(value, "target"),
+				Libraries:   yamlStrings(value.Map["libraries"]),
+				Defines:     yamlStrings(value.Map["defines"]),
+				IncludeDirs: yamlStrings(value.Map["include_dirs"]),
+			}
+		}
+	}
+	return connection
 }
 
 // parseConfigManifest reads the Kconfig bridge from a manifest.
