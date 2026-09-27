@@ -137,6 +137,27 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// The package section describes what goes into a published
+				// archive. Defaults come from the module type, so a component,
+				// a plugin and an application can differ without the packager
+				// carrying a hardcoded list per kind.
+				Name:     "package",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "kind", Required: false, Kind: KindString, AllowedValues: []string{"component", "plugin", "application", "library"}},
+					{Name: "binary", Required: false, Kind: KindString},
+					{Name: "artifact_dir", Required: false, Kind: KindString},
+					{Name: "include", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// interface lists the Rho declarations a caller compiles
+					// against: the header, in C terms. The implementation is
+					// supplied by a port, so a library package carries no host
+					// source and nothing a user could edit.
+					{Name: "interface", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					{Name: "require", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
 				Name:     "exports",
 				Required: false,
 				Kind:     KindMap,

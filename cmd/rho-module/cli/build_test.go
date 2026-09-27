@@ -72,8 +72,9 @@ go 1.18
 		t.Fatalf("Build failed: %v", err)
 	}
 
-	// Check that binary was built in the module directory
-	binaryPath := filepath.Join(tmpDir, "test-build")
+	// The binary is a build artefact, so it lands in the project's build
+	// directory rather than beside the sources.
+	binaryPath := filepath.Join(tmpDir, "build", "test-build")
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
 		t.Fatalf("binary not built at %s", binaryPath)
 	}

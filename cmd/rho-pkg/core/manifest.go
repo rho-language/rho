@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"rho/src/schema"
 	"rho/src/yaml"
@@ -41,22 +42,104 @@ import (
 /* -------------------------------------------------------------------------- */
 
 type ModuleSection struct {
-    Name    string
-    Type    string
-    Version string
-    Command string
+	Name    string
+	Type    string
+	Version string
+	Command string
+}
+
+// PackageSpec is the manifest's `package:` section: what the archive holds.
+type PackageSpec struct {
+	// Kind overrides which default layout applies.
+	Kind string
+	// Binary says whether to compile a command into the archive.
+	Binary bool
+	// HasBinary distinguishes an explicit false from an absent value.
+	HasBinary bool
+	// ArtifactDir is where intermediate build files are written.
+	ArtifactDir string
+	// Include lists the paths that go into the archive.
+	Include []string
+	// Interface lists the Rho declarations a caller compiles against, the way
+	// a C header declares what a library offers. A library package is the
+	// manifest, the documentation and these files, and nothing else.
+	Interface []string
+	// Require lists the paths that must exist.
+	Require []string
 }
 
 type ModuleYAML struct {
-    Module   ModuleSection
-    Main     string
-    Deps     map[string]string
-    Features []string
+	Module ModuleSection
+	Main   string
+	// Package describes what a published archive holds.
+	Package  PackageSpec
+	Deps     map[string]string
+	Features []string
 }
 
 /* -------------------------------------------------------------------------- */
 /*  Load Manifest                                                              */
 /* -------------------------------------------------------------------------- */
+
+// readPackageSpec reads the `package:` section, if the manifest has one.
+func readPackageSpec(root yaml.Value) PackageSpec {
+	var spec PackageSpec
+	section, ok := root.Map["package"]
+	if !ok || section.Kind != yaml.KindMap {
+		return spec
+	}
+	spec.Kind = section.Map["kind"].Str
+	if value, present := section.Map["binary"]; present {
+		spec.Binary = isTrueWord(value.Str)
+		spec.HasBinary = true
+	}
+	spec.ArtifactDir = section.Map["artifact_dir"].Str
+	for _, item := range section.Map["include"].List {
+		if item.Str != "" {
+			spec.Include = append(spec.Include, item.Str)
+		}
+	}
+	for _, item := range section.Map["interface"].List {
+		if item.Str != "" {
+			spec.Interface = append(spec.Interface, item.Str)
+		}
+	}
+	for _, item := range section.Map["require"].List {
+		if item.Str != "" {
+			spec.Require = append(spec.Require, item.Str)
+		}
+	}
+	return spec
+}
+
+// isTrueWord reads a boolean written as a word, since the manifest loader
+// keeps map values as strings.
+func isTrueWord(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "yes", "1", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// Layout returns the package layout for this manifest, with the defaults for
+// the module type and any `package:` overrides applied.
+func (m ModuleYAML) Layout() PackageLayout {
+	layout := LayoutFor(m.Module.Type).WithOverrides(
+		m.Package.Kind, m.Package.Binary, m.Package.HasBinary,
+		m.Package.ArtifactDir, m.Package.Include, m.Package.Require)
+
+	// A package with a declared interface is a library: it carries the header
+	// and nothing else. The implementation is supplied by a port, so shipping
+	// host sources would only invite someone to edit them.
+	if len(m.Package.Interface) > 0 && !layout.Binary {
+		layout.Interface = m.Package.Interface
+		layout.Include = append([]string{"module.yml", "README.md"}, m.Package.Interface...)
+		layout.Require = append([]string{"module.yml"}, m.Package.Interface...)
+	}
+	return layout
+}
 
 func LoadModuleYAML(path string) (ModuleYAML, error) {
 	data, err := os.ReadFile(path)
@@ -79,6 +162,7 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 			Command: modMap["command"].Str,
 		},
 		Main:     root.Map["main"].Str,
+		Package:  readPackageSpec(root),
 		Features: []string{},
 	}
 
@@ -109,25 +193,25 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 /* -------------------------------------------------------------------------- */
 
 func SaveModuleYAML(path string, m ModuleYAML) error {
-    out := "module:\n"
-    out += "  name: " + m.Module.Name + "\n"
-    out += "  type: " + m.Module.Type + "\n"
-    out += "  version: " + m.Module.Version + "\n"
-    if m.Module.Command != "" {
-        out += "  command: " + m.Module.Command + "\n"
-    }
-    out += "\n"
+	out := "module:\n"
+	out += "  name: " + m.Module.Name + "\n"
+	out += "  type: " + m.Module.Type + "\n"
+	out += "  version: " + m.Module.Version + "\n"
+	if m.Module.Command != "" {
+		out += "  command: " + m.Module.Command + "\n"
+	}
+	out += "\n"
 
-    out += "main: " + m.Main + "\n\n"
+	out += "main: " + m.Main + "\n\n"
 
-    if len(m.Features) > 0 {
-        out += "features:\n"
-        for _, f := range m.Features {
-            out += "  - " + f + "\n"
-        }
-    }
+	if len(m.Features) > 0 {
+		out += "features:\n"
+		for _, f := range m.Features {
+			out += "  - " + f + "\n"
+		}
+	}
 
-    return os.WriteFile(path, []byte(out), 0644)
+	return os.WriteFile(path, []byte(out), 0644)
 }
 
 /* -------------------------------------------------------------------------- */

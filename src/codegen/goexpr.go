@@ -132,6 +132,10 @@ var goMustEscape = map[string]bool{
 	"error":      true,
 	"any":        true,
 	"comparable": true,
+	// `init` is reserved by Go: a package initializer cannot be called, and
+	// referencing it as a function is an error. Rho uses `init` for startup
+	// code, so the emitted function is renamed and the caller names it here.
+	"init": true,
 }
 
 // goPassThroughWords keep their C spelling so the call translator can still

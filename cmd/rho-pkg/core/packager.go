@@ -57,7 +57,7 @@ func PackProjectWithBinary(dir string, prebuiltBinaryPath string) (string, error
 	// Use pre-built binary if provided, otherwise build
 	if prebuiltBinaryPath != "" {
 		binaryPath = prebuiltBinaryPath
-	} else if manifest.Module.Type == "component" || manifest.Module.Type == "plugin" {
+	} else if manifest.Layout().Binary {
 		binaryPath, err = BuildBinary(dir, manifest)
 		if err != nil {
 			return "", fmt.Errorf("build binary: %w", err)
@@ -85,7 +85,14 @@ func PackProjectWithBinary(dir string, prebuiltBinaryPath string) (string, error
 			manifest.Module.Version,
 		)
 	}
-	pkgPath := filepath.Join(dir, pkgName)
+	// The package lands in the build directory too, so a failed run leaves
+	// nothing in the source tree. A library package has no binary, so nothing
+	// has created the directory yet.
+	artifacts := ArtifactDir(dir)
+	if err := os.MkdirAll(artifacts, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create the build directory: %w", err)
+	}
+	pkgPath := filepath.Join(artifacts, pkgName)
 
 	// Create archive
 	if err := writeArchive(pkgPath, files, dir); err != nil {
@@ -101,13 +108,118 @@ func PackProjectWithBinary(dir string, prebuiltBinaryPath string) (string, error
 /*  Build Binary (exported for reuse)                                          */
 /* -------------------------------------------------------------------------- */
 
+// PackageLayout describes what a published archive contains.
+//
+// It is data rather than a hardcoded list, so a component, a plugin, an
+// application and a library can each be described differently, and a new kind
+// is a layout rather than a new branch in the packager.
+type PackageLayout struct {
+	// Kind is the module kind this layout describes.
+	Kind string
+	// Binary says whether the archive carries a compiled command.
+	Binary bool
+	// Include lists the paths, relative to the project, that go in. A path may
+	// be a file or a directory, and a directory is taken whole.
+	Include []string
+	// Require lists the paths that must exist, failing the pack otherwise.
+	Require []string
+	// ArtifactDir is where the build writes intermediate files.
+	ArtifactDir string
+	// Interface lists the header files a library package carries. When set, the
+	// package is the manifest, the documentation and these files alone.
+	Interface []string
+	// Exclude lists file extensions left out of the package. The command is
+	// shipped prebuilt and a caller reads only the header, so the host sources
+	// are not needed in an installed component, and leaving them out means
+	// there is nothing there for someone to edit.
+	Exclude []string
+}
+
+// layouts are the defaults, per module kind. A manifest may override any of them
+// with a `package:` section.
+var layouts = map[string]PackageLayout{
+	"component": {
+		Kind:    "component",
+		Binary:  true,
+		Include: []string{"module.yml", "README.md", "src", "lib", "config"},
+		Require: []string{"module.yml", "README.md", "src"},
+	},
+	"plugin": {
+		Kind:    "plugin",
+		Binary:  true,
+		Include: []string{"module.yml", "README.md", "src", "lib", "plugin", "config"},
+		Require: []string{"module.yml", "README.md", "src"},
+	},
+	"application": {
+		// An application is a Rho program, so it carries no command binary;
+		// the rho toolchain builds it.
+		Kind:    "application",
+		Include: []string{"module.yml", "README.md", "src", "config", "project.yml"},
+		Require: []string{"module.yml", "src"},
+	},
+	"library": {
+		Kind:    "library",
+		Include: []string{"module.yml", "README.md", "src", "lib"},
+		Require: []string{"module.yml", "src"},
+	},
+}
+
+// LayoutFor returns the layout for a module type, falling back to a component
+// so an unknown kind still packs something sensible.
+func LayoutFor(moduleType string) PackageLayout {
+	if layout, ok := layouts[moduleType]; ok {
+		return layout
+	}
+	return layouts["component"]
+}
+
+// WithOverrides applies a manifest's `package:` section to a layout, so a
+// project can add or replace entries without the packager changing.
+func (l PackageLayout) WithOverrides(kind string, binary bool, hasBinary bool, artifactDir string, include, require []string) PackageLayout {
+	if kind != "" {
+		l.Kind = kind
+	}
+	if hasBinary {
+		l.Binary = binary
+	}
+	if artifactDir != "" {
+		l.ArtifactDir = artifactDir
+	}
+	if len(include) > 0 {
+		l.Include = include
+	}
+	if len(require) > 0 {
+		l.Require = require
+	}
+	return l
+}
+
+// ArtifactDir is where a build writes its intermediate artefacts: the
+// compiled binary and the packed archives.
+//
+// They are deliberately not written beside the sources, so a run that fails
+// part way does not leave a package sitting in the source tree, and the
+// directory is ignored by git.
+func ArtifactDirFor(dir string, manifest ModuleYAML) string {
+	if location := manifest.Layout().ArtifactDir; location != "" {
+		return filepath.Join(dir, filepath.FromSlash(location))
+	}
+	return filepath.Join(dir, "build")
+}
+
+func ArtifactDir(dir string) string { return filepath.Join(dir, "build") }
+
 func BuildBinary(dir string, manifest ModuleYAML) (string, error) {
 	// Determine binary output name
 	binaryName := manifest.Module.Name
 	if runtime.GOOS == "windows" {
 		binaryName += ".exe"
 	}
-	binaryPath := filepath.Join(dir, binaryName)
+	artifacts := ArtifactDir(dir)
+	if err := os.MkdirAll(artifacts, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create the build directory: %w", err)
+	}
+	binaryPath := filepath.Join(artifacts, binaryName)
 
 	// Determine the Go package to build
 	// First, read the module path from go.mod
@@ -180,25 +292,80 @@ func hasGoSources(dir string) bool {
 /*  Collect Files                                                              */
 /* -------------------------------------------------------------------------- */
 
+// collectFiles gathers what a binary package holds: the layout's entries, plus
+// the command when the layout says this kind of module has one.
 func collectFiles(dir string, binaryPath string, manifest ModuleYAML) ([]string, error) {
+	files, err := CollectLayoutFiles(dir, manifest.Layout())
+	if err != nil {
+		return nil, err
+	}
+	if binaryPath == "" {
+		return files, nil
+	}
+	if _, err := os.Stat(binaryPath); err != nil {
+		return nil, fmt.Errorf("missing binary: %s", binaryPath)
+	}
+	return append(files, binaryPath), nil
+}
+
+// CollectLayoutFiles resolves a layout into the files it names, taking a
+// directory whole. Both packers use it, so a module's shape is described once.
+func CollectLayoutFiles(dir string, layout PackageLayout) ([]string, error) {
 	var out []string
-
-	// Required: module.yml
-	modPath := filepath.Join(dir, "module.yml")
-	if _, err := os.Stat(modPath); err != nil {
-		return nil, fmt.Errorf("missing required file: module.yml")
-	}
-	out = append(out, modPath)
-
-	// Required: binary (only for component/plugin)
-	if binaryPath != "" {
-		if _, err := os.Stat(binaryPath); err != nil {
-			return nil, fmt.Errorf("missing binary: %s", binaryPath)
+	for _, required := range layout.Require {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(required))); err != nil {
+			return nil, fmt.Errorf("missing required file: %s", required)
 		}
-		out = append(out, binaryPath)
 	}
+	// A package carries the manifest, the documentation, the interface and the
+	// prebuilt command. The host sources are build input, not output, so they
+	// are excluded by default.
+	exclude := layout.Exclude
+	if len(exclude) == 0 {
+		exclude = []string{".go"}
+	}
+	_ = exclude
 
+	seen := map[string]bool{}
+	for _, entry := range layout.Include {
+		path := filepath.Join(dir, filepath.FromSlash(entry))
+		info, err := os.Stat(path)
+		if err != nil {
+			// An optional entry that is absent is not an error.
+			continue
+		}
+		if !info.IsDir() {
+			if !seen[path] {
+				out = append(out, path)
+				seen[path] = true
+			}
+			continue
+		}
+		filepath.Walk(path, func(walked string, walkedInfo os.FileInfo, walkErr error) error {
+			if walkErr != nil || walkedInfo.IsDir() || seen[walked] {
+				return nil
+			}
+			if excludedExtension(walked, exclude) {
+				return nil
+			}
+			out = append(out, walked)
+			seen[walked] = true
+			return nil
+		})
+	}
 	return out, nil
+}
+
+// excludedExtension reports whether a path carries an extension the layout
+// leaves out.
+func excludedExtension(path string, exclude []string) bool {
+	extension := filepath.Ext(path)
+	for _, unwanted := range exclude {
+		if extension == unwanted {
+			return true
+		}
+	}
+	return false
 }
 
 /* -------------------------------------------------------------------------- */
@@ -218,8 +385,15 @@ func writeArchive(pkgPath string, files []string, baseDir string) error {
 	tarw := tar.NewWriter(gz)
 	defer tarw.Close()
 
+	// A build artefact is written flat in the archive, whatever folder it was
+	// produced in, so the installed module keeps the shape callers expect.
+	artifacts := ArtifactDir(baseDir)
+
 	for _, file := range files {
 		rel, _ := filepath.Rel(baseDir, file)
+		if strings.HasPrefix(file, artifacts+string(filepath.Separator)) {
+			rel = filepath.Base(file)
+		}
 
 		info, err := os.Stat(file)
 		if err != nil {

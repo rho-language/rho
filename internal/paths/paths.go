@@ -27,6 +27,10 @@ import (
 
 const (
 	RhoHomeDirName = ".rho"
+	// RhoHomeEnvVar names the directory an installation lives in. It is
+	// honoured everywhere the Rho home is asked for, so the tool, the module
+	// commands and the compiler cannot disagree about where it is.
+	RhoHomeEnvVar = "RHO_HOME"
 )
 
 var (
@@ -46,12 +50,17 @@ func SetTestRhoHome(path string) {
 	testRhoHome = path
 }
 
-// GetRhoHome returns the absolute path to ~/.rho.
+// GetRhoHome returns the absolute path to ~/.rho, or the directory RHO_HOME
+// names when it is set. A sandbox, a CI runner or a test points the
+// installation somewhere else rather than writing into a real user home.
 func GetRhoHome() (string, error) {
 	testMu.Lock()
 	defer testMu.Unlock()
 	if testRhoHome != "" {
 		return testRhoHome, nil
+	}
+	if home := os.Getenv(RhoHomeEnvVar); home != "" {
+		return home, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
