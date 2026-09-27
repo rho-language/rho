@@ -11,6 +11,7 @@ module registry.web
 
 import std.web.http
 import std.web.template
+import registry.docs
 
 /* -------------------------------------------------------------------------- */
 /*  Routes                                                                    */
@@ -30,6 +31,7 @@ fn index_page(req: Request) Response {
     let query: string = request_query_param(req, "q")
     let listing: string = store_meta(query)
     return html(200, page(req, fill(template_get("index"),
+        vars("crumb", crumb("")) +
         vars("listing", module_rows(listing)) +
         vars("count", int_to_str(line_count(listing))) +
         vars("noun", noun_for(listing)) +
@@ -42,6 +44,7 @@ fn search_page(req: Request) Response {
     let query: string = request_query_param(req, "q")
     let listing: string = store_meta(query)
     return html(200, page(req, fill(template_get("index"),
+        vars("crumb", crumb(search_trail(query))) +
         vars("listing", version_rows(listing, "Nothing matches that.")) +
         vars("count", int_to_str(line_count(listing))) +
         vars("noun", "module") +
@@ -60,6 +63,7 @@ fn module_page(req: Request) Response {
         return missing(req, "No such module.")
     }
     return html(200, page(req, fill(template_get("index"),
+        vars("crumb", crumb(module_trail(name))) +
         vars("listing", version_rows(listing, "No versions published yet.")) +
         vars("count", int_to_str(line_count(listing))) +
         vars("noun", "version") +
@@ -79,12 +83,14 @@ fn version_page(req: Request) Response {
         return missing(req, "No such version.")
     }
     return html(200, page(req, fill(template_get("detail"),
+        vars("crumb", crumb(version_trail(name, version))) +
         vars("name", field_of(found, 0)) +
         vars("version", field_of(found, 1)) +
         vars("kind", field_of(found, 2)) +
         vars("description", fallback(field_of(found, 3), "No description.")) +
         vars("main", field_of(found, 4)) +
-        vars("command", field_of(found, 5)))
+        vars("command", field_of(found, 5)) +
+        vars("doc", doc_link(field_of(found, 0), version)))
     ))
 }
 
@@ -102,15 +108,22 @@ fn missing(req: Request, message: string) Response {
 
 // page wraps a body in the shared layout.
 fn page(req: Request, body: string) string {
-    let query: string = request_query_param(req, "q")
+    return page_shell(registry_title(), request_query_param(req, "q"), body)
+}
+
+// page_shell wraps a body in the shared layout without a request, for a handler
+// that has no search box to fill: a page the service answers on its own, such as
+// the not-found page for a module with no documentation. Wrapping lives here, so
+// a second copy of the layout cannot drift from this one.
+fn page_shell(title: string, query: string, body: string) string {
     let open: string = template_fill(
         template_get("layout-open"),
-        vars("title", registry_title()) +
+        vars("title", title) +
         vars("query", query)
     )
     let close: string = template_fill(
         template_get("layout-close"),
-        vars("title", registry_title()) +
+        vars("title", title) +
         vars("version", registry_version()) +
         vars("year", int_to_str(clock_year())) +
         vars("site_url", registry_site_url())
@@ -136,7 +149,8 @@ fn module_rows(listing: string) string {
             template_get("row"),
             vars("name", field_of(line, 0)) +
             vars("version", field_of(line, 1)) +
-            vars("description", field_of(line, 3))
+            vars("description", field_of(line, 3)) +
+            vars("doc", doc_badge(field_of(line, 0), field_of(line, 1)))
         )
         count = count + 1
         rest = after_first_line(rest)
@@ -161,7 +175,8 @@ fn version_rows(listing: string, when_empty: string) string {
             template_get("version"),
             vars("name", field_of(line, 0)) +
             vars("version", field_of(line, 1)) +
-            vars("description", field_of(line, 3))
+            vars("description", field_of(line, 3)) +
+            vars("doc", doc_badge(field_of(line, 0), field_of(line, 1)))
         )
         count = count + 1
         rest = after_first_line(rest)
@@ -170,6 +185,32 @@ fn version_rows(listing: string, when_empty: string) string {
         return empty(when_empty)
     }
     return "<ul>" + out + "</ul>"
+}
+
+// crumb is the trail at the top of a page: where it is, and the way back up.
+//
+// Every page about a module carries one. A registry's pages are a hierarchy —
+// the index, a module, a version — and a reader who is three levels down needs to
+// see the way back without reading the address.
+fn crumb(trail: string) string {
+    return template_fill(template_get("crumb"),
+        vars("home", registry_title()) +
+        vars("trail", trail))
+}
+
+fn search_trail(query: string) string {
+    if query == "" {
+        return ""
+    }
+    return " / <a href=\"/search?q=" + query + "\">search " + query + "</a>"
+}
+
+fn module_trail(name: string) string {
+    return " / " + name
+}
+
+fn version_trail(name: string, version: string) string {
+    return module_trail(name) + " / " + version
 }
 
 fn empty(message: string) string {

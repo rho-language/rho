@@ -33,7 +33,6 @@ type Kind string
 
 const (
 	// Blocks.
-	BlockDocument   Kind = "document"
 	BlockHeading    Kind = "heading"
 	BlockParagraph  Kind = "paragraph"
 	BlockList       Kind = "list"
@@ -116,10 +115,14 @@ type Diagnostic struct {
 }
 
 func (d Diagnostic) String() string {
-	if d.Path == "" {
-		return d.Path
+	switch {
+	case d.Path == "" && d.Line > 0:
+		return "line " + itoa(d.Line) + ": " + d.Message
+	case d.Path == "":
+		return d.Message
+	default:
+		return d.Path + ":" + itoa(d.Line) + ": " + d.Message
 	}
-	return d.Path + ":" + itoa(d.Line) + ": " + d.Message
 }
 
 func itoa(value int) string {

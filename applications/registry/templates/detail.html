@@ -1,4 +1,4 @@
-<p class="crumb"><a href="/">index</a> / <a href="/modules/{{ name }}">{{ name }}</a> / {{ version }}</p>
+{{{ crumb }}}
 <h2>{{ name }} <span class="badge">{{ version }}</span></h2>
 <dl>
   <dt>name</dt><dd><code>{{ name }}</code></dd>
@@ -8,5 +8,7 @@
   <dt>main</dt><dd><code>{{ main }}</code></dd>
   <dt>command</dt><dd><code>{{ command }}</code></dd>
 </dl>
+<h3>Documentation</h3>
+{{{ doc }}}
 <h3>Download</h3>
 <p class="sub"><code>GET /modules/{{ name }}/{{ version }}/rho-pkg</code></p>

@@ -115,3 +115,43 @@ func TestDocPortCarriesTheLibraryInterface(t *testing.T) {
 		t.Errorf("expected the port to reach the component as a process")
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Documentation side of the store                                            */
+/* -------------------------------------------------------------------------- */
+
+// The registry documents a module from what it received, so the store has to
+// hand the generator a source tree and read the pages back.
+func TestStorePortCarriesTheDocumentationOperations(t *testing.T) {
+	body := EmitGoPorts(ir.ModuleIR{Name: "registry", Version: "0.1.0"}, []string{"fsstore"})
+
+	for _, want := range []string{
+		"func storeUnpack(name, version string) string",
+		"func storeDocPage(name, version, page string) string",
+		"func storeHasDocs(name, version string) bool",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected the store port to carry %s", want)
+		}
+	}
+	// Unpacking a package is a filesystem read of an archive, so the archive
+	// packages have to be imported by the generated file.
+	for _, want := range []string{`"archive/tar"`, `"compress/gzip"`, `"io"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected the store port to import %s", want)
+		}
+	}
+}
+
+func TestStorePortRefusesAPackageEntryThatLeavesTheDirectory(t *testing.T) {
+	// A package is a file list, and a file list that climbs out of the directory
+	// it is unpacked into would write wherever it names.
+	body := EmitGoPorts(ir.ModuleIR{Name: "registry", Version: "0.1.0"}, []string{"fsstore"})
+
+	if !strings.Contains(body, "leaves the package directory") {
+		t.Error("expected the unpack to refuse an entry outside the package directory")
+	}
+	if !strings.Contains(body, "func withinDir(dir, path string) bool") {
+		t.Error("expected the containment check to be present")
+	}
+}

@@ -46,6 +46,12 @@ type SiteOptions struct {
 	Project string
 	// Version is the project version a page reports.
 	Version string
+	// Home is the address of the site this documentation was published into,
+	// and HomeTitle what it is called there. A standalone site has neither, and
+	// a published one has both: a reader who arrived from the site that
+	// publishes it needs a way back, and a generator cannot invent that address.
+	Home      string
+	HomeTitle string
 }
 
 // Site is a whole documentation set: the pages, grouped the way a sidebar
@@ -54,6 +60,13 @@ type Site struct {
 	Title   string
 	Project string
 	Version string
+	// Home is the address of the site this documentation was published into,
+	// and HomeTitle what it is called there. A site built on its own has
+	// neither; a published one has both, because a reader who followed a link
+	// out of the site that publishes it needs a way back, and a generator
+	// cannot invent that address.
+	Home      string
+	HomeTitle string
 	// Sections are the sidebar groups, in order.
 	Sections []SectionGroup
 	// Pages are every page, in site order.
@@ -62,9 +75,6 @@ type Site struct {
 	Diagnostics []Diagnostic
 	// Requests are the cross-references that resolved to nothing.
 	Requests []UnresolvedRef
-	// Formats are the output formats a plugin reported it can render, which a
-	// build reports so a reader knows what else is available.
-	Formats []string
 }
 
 // SectionGroup is one sidebar group: a section of pages under a heading.
@@ -128,7 +138,13 @@ func (u UnresolvedRef) String() string {
 // the same name do not overwrite one another, and every link inside the site is
 // written as the target's own file.
 func BuildSite(modules []ModuleDoc, api ApiSet, options SiteOptions) *Site {
-	site := &Site{Title: options.Title, Project: options.Project, Version: options.Version}
+	site := &Site{
+		Title:     options.Title,
+		Project:   options.Project,
+		Version:   options.Version,
+		Home:      options.Home,
+		HomeTitle: options.HomeTitle,
+	}
 	if site.Title == "" {
 		site.Title = site.Project
 	}
@@ -152,6 +168,7 @@ func BuildSite(modules []ModuleDoc, api ApiSet, options SiteOptions) *Site {
 			module:    "",
 			generated: true,
 			landing:   document.Target == "api",
+			searchText: api.SearchText(document.Target),
 		})
 	}
 	for _, module := range modules {
@@ -160,14 +177,20 @@ func BuildSite(modules []ModuleDoc, api ApiSet, options SiteOptions) *Site {
 			// A page is addressed by where it lives in the tree that documents
 			// it, not by its file name alone: two modules may each have an
 			// index, and a reference to one of them has to be able to say which.
-			document.Target = sourceTarget(source, module.Root, stripDocsRoot)
+			document.Target = pageTarget(module.Name, module.Section, source, module.Root)
+			landing := module.Index != "" && strings.HasSuffix(document.Path, filepath.FromSlash(module.Index))
+			// A module describes itself in its manifest, and the page it leads
+			// a section with is where that description belongs: a reader who
+			// arrives at a component's page is owed a line saying what it is.
+			if landing {
+				document.applyModuleSummary(module)
+			}
 			site.Diagnostics = append(site.Diagnostics, document.Diagnostics...)
 			page := &parsedPage{
 				document: document,
 				section:  module.Section,
 				module:   module.Name,
-				root:     module.Root,
-				landing:  module.Index != "" && strings.HasSuffix(document.Path, filepath.FromSlash(module.Index)),
+				landing:  landing,
 			}
 			documents = append(documents, page)
 		}
@@ -202,7 +225,7 @@ func BuildSite(modules []ModuleDoc, api ApiSet, options SiteOptions) *Site {
 			Module:    page.module,
 			Body:      RenderPage(page.document).Body,
 			Sections:  page.document.Sections,
-			Plain:     plainText(page.document),
+			Plain:     indexText(page),
 			Generated: page.generated,
 		})
 	}
@@ -218,8 +241,11 @@ type parsedPage struct {
 	document  *Document
 	section   string
 	module    string
-	root      string
 	generated bool
+	// searchText is text to index that the page body does not contain: a
+	// reference page's declarations are drawn as markup, so its names are
+	// carried here to stay searchable.
+	searchText string
 	// landing marks the page a reader arrives on within its module.
 	landing bool
 }
@@ -240,38 +266,47 @@ func readSource(path string) *Document {
 // (`index`, `deployment`) rather than with a directory every page repeats.
 const stripDocsRoot = "docs"
 
-// sourceTarget is the name a cross-reference uses to reach a page: its path
-// relative to the root its documentation is written in, without the extension
-// and without the documentation directory itself.
-func sourceTarget(source, root string, strip string) string {
+// pageTarget is the name a cross-reference uses to reach a page.
+//
+// A page is named for the module it documents and its path inside that module,
+// so `{ref}`rho-log/index`` reaches one component's page from another's. A
+// repository's own pages are named for the directory they were written in,
+// which is their section. Both are unique across a site by construction, which
+// is what a site-wide name has to be.
+func pageTarget(module, section, source, root string) string {
 	relative, err := filepath.Rel(root, source)
 	if err != nil {
 		relative = filepath.Base(source)
 	}
 	relative = filepath.ToSlash(relative)
 	relative = strings.TrimSuffix(relative, filepath.Ext(relative))
-	if strip != "" && strings.HasPrefix(relative, strip+"/") {
-		relative = relative[len(strip)+1:]
+	if strip := stripDocsRoot + "/"; strings.HasPrefix(relative, strip) {
+		relative = relative[len(strip):]
+	}
+	// A README is the page a module leads with, so it is named index: a module
+	// documented from its package and a module documented from its own sources
+	// then address their front page the same way.
+	if strings.EqualFold(relative, "README") {
+		relative = "index"
+	}
+	if module != "" {
+		return module + "/" + relative
+	}
+	// A repository page carries the section it belongs to, so the front page of
+	// a repository is not the same name as the index of the site.
+	if section != "" && !strings.HasPrefix(relative, section+"/") {
+		return section + "/" + relative
 	}
 	return relative
 }
 
 // pageHref is where a page is written, relative to the site root.
 //
-// A module's page is addressed by its section and its module, because two
-// modules commonly document a page of the same name: every component has an
-// index. A repository's page already carries its section in its target, which
-// came from the directory it was written in, so it is used as it stands.
+// The target is already unique across the site, so the address is the target:
+// one rule, and no page can be written over another. The generated index takes
+// `index.html`, which is why no page's target is a bare `index`.
 func pageHref(page *parsedPage) string {
-	if page.module == "" {
-		return page.document.Target + ".html"
-	}
-	parts := []string{}
-	if page.section != "" {
-		parts = append(parts, page.section)
-	}
-	parts = append(parts, headingSlug(page.module), page.document.Target)
-	return strings.Join(parts, "/") + ".html"
+	return page.document.Target + ".html"
 }
 
 // sortParsedPages orders the pages the way a reader walks them: by section, by
@@ -298,6 +333,32 @@ func sortParsedPages(pages []*parsedPage, modules []ModuleDoc) {
 		}
 		return left.document.Title < right.document.Title
 	})
+}
+
+// applyModuleSummary puts what a manifest says about a module on the page the
+// module leads its section with: the title it declares becomes the summary line
+// and the module's own description is shown. Both are declarations the manifest
+// already carries, so a module that describes itself is described once, where it
+// was written.
+func (d *Document) applyModuleSummary(module ModuleDoc) {
+	summary := module.Description
+	if module.DocsTitle != "" {
+		summary = module.DocsTitle
+	}
+	if summary == "" {
+		return
+	}
+	// A page that already says it does not need the line repeated. A README
+	// opens with what the module is, so the summary is for the page that does
+	// not: a docs page written for a reader who arrived from elsewhere.
+	if strings.EqualFold(summary, d.Title) || strings.Contains(strings.ToLower(plainText(d)), strings.ToLower(summary)) {
+		return
+	}
+	d.Blocks = append([]*Node{{
+		Kind:     BlockParagraph,
+		Line:     1,
+		Children: parseInline(summary),
+	}}, d.Blocks...)
 }
 
 // isLandingPage reports whether a page is the one a reader arrives on: the
@@ -407,10 +468,17 @@ func resolveReferences(site *Site, documents []*parsedPage, targets map[string]*
 // the real address of the target they name. A page is written at its own
 // address, so a link to it is the target itself; a heading is an address within
 // a page, so a link to one is the page plus a fragment.
+//
+// Only the markup a role produces is rewritten. A role is written as
+// `<a class="xref" href="#name">`, and matching that whole form leaves an
+// author's own `[text](#name)` link alone, which a page with a heading of that
+// name would otherwise have silently redirected.
 func resolveInBody(body string, targets map[string]*SitePage, fragments, labels map[string]string) string {
 	out := body
 	rewrite := func(href, resolved string) {
-		out = strings.ReplaceAll(out, "href=\"#"+html.EscapeString(href)+"\"", "href=\""+html.EscapeString(resolved)+"\"")
+		out = strings.ReplaceAll(out,
+			"class=\"xref\" href=\"#"+html.EscapeString(href)+"\"",
+			"class=\"xref\" href=\""+html.EscapeString(resolved)+"\"")
 	}
 	for target, page := range targets {
 		if page == nil || page.Href == "" {
@@ -506,6 +574,18 @@ func (site *Site) groupSections(modules []ModuleDoc) {
 /*  Plain text                                                                */
 /* -------------------------------------------------------------------------- */
 
+// indexText is what a page contributes to the search index: its own text, plus
+// whatever the page carries that is drawn as markup rather than written. A
+// reference page names its declarations in a table, so those names are added
+// explicitly, which is what makes searching for a function find its module.
+func indexText(page *parsedPage) string {
+	text := plainText(page.document)
+	if page.searchText == "" {
+		return text
+	}
+	return text + " " + page.searchText
+}
+
 // plainText is the text of a page without markup, which is what a search index
 // holds: it stores words, not the page that draws them.
 func plainText(document *Document) string {
@@ -558,7 +638,10 @@ func (site *Site) Write(out string) error {
 		return err
 	}
 	for _, page := range site.Pages {
-		path := filepath.Join(out, filepath.FromSlash(page.Href))
+		path, err := pagePath(out, page.Href)
+		if err != nil {
+			return err
+		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
@@ -571,6 +654,30 @@ func (site *Site) Write(out string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(out, "search-index.json"), []byte(site.searchIndex()), 0o644)
+}
+
+// pagePath is where a page is written, checked to be inside the output
+// directory.
+//
+// A page's address comes from what a module declares: its section, its name,
+// and the paths of its sources. A repository that names a section of
+// `../../.ssh` would otherwise write wherever it liked, so an address that
+// leaves the output directory is refused rather than followed. A documentation
+// build must not be a way to write outside the directory it was given.
+func pagePath(out, href string) (string, error) {
+	base, err := filepath.Abs(out)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(base, filepath.FromSlash(href))
+	relative, err := filepath.Rel(base, path)
+	if err != nil {
+		return "", fmt.Errorf("page address %q is not inside %s", href, out)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("page address %q is outside %s", href, out)
+	}
+	return path, nil
 }
 
 // searchIndex is the JSON a page's search box reads. It is a document per

@@ -43,6 +43,7 @@ var portAliases = []struct {
 	{"registry_access", "configGetAccess", "string"},
 	{"registry_title", "configGetTitle", "string"},
 	{"registry_site_url", "configGetSiteURL", "string"},
+	{"registry_url", "configGetRegistryURL", "string"},
 	{"registry_open_tokens", "OpenTokens", "bool"},
 	{"registry_max_upload_mb", "MaxUploadMB", "uint32"},
 }
@@ -142,6 +143,10 @@ func emitFSStorePort(m ir.ModuleIR) ([]string, string) {
 		version = "0.0.0"
 	}
 	imports := []string{
+		`"archive/tar"`,
+		`"bytes"`,
+		`"compress/gzip"`,
+		`"io"`,
 		`jsonenc "encoding/json"`,
 		`"fmt"`,
 		`"os"`,
@@ -232,6 +237,11 @@ var registrySettings = []struct {
 	{"access", "public", "public, or secured to require a token for publishing"},
 	{"title", "Rho module registry", "the name shown on the pages"},
 	{"site_url", "https://rho-lang.org", "where the footer links to"},
+	// The address this service is published under, which is what the pages of a
+	// module's documentation lead back to. It is a setting rather than something
+	// read from the request because the documentation is generated once, at
+	// publish, from outside any request.
+	{"registry_url", "/", "the address this service is published under, used by generated documentation"},
 	{"token_days", "30", "how long an issued token lasts"},
 	{"token_max_days", "90", "the longest a token may ever last"},
 	{"open_tokens", "true", "whether a token can be issued without holding one"},
@@ -270,6 +280,7 @@ func configGet(key, fallback string) string {
 func configGetAccess() string  { return configGet("access", "public") }
 func configGetTitle() string  { return configGet("title", "Rho module registry") }
 func configGetSiteURL() string { return configGet("site_url", "https://rho-lang.org") }
+func configGetRegistryURL() string { return configGet("registry_url", "/") }
 func clockYear() uint32        { return uint32(time.Now().Year()) }
 
 func registryTokenDays() uint32 {
@@ -563,11 +574,195 @@ func parseVersionNumber(value string) (int, error) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Documentation                                                              */
+/*                                                                             */
+/*  A registry documents a module from what it received: the published package */
+/*  is unpacked into a source tree, the documentation generator is run over that */
+/*  tree, and the pages it wrote are served from here. The generator writes the */
+/*  files itself, so the store's part is the directory they go in, unpacking,  */
+/*  and reading a page back.                                                    */
+/* -------------------------------------------------------------------------- */
+
+// docsDir is where the generated pages of one version live. It sits beside the
+// modules rather than inside them, because a page is not part of the package: it
+// is derived from it, and a re-publish replaces it.
+func (s *fsStore) docsDir(name, version string) string {
+	return filepath.Join(s.root, "docs", name, version)
+}
+
+// sourceDir is where a published package is unpacked, which is the tree the
+// generator is given.
+func (s *fsStore) sourceDir(name, version string) string {
+	return filepath.Join(s.versionDir(name, version), "src")
+}
+
+// unpack extracts a published package into the version's source directory and
+// returns it, or "" when the package cannot be read.
+//
+// An entry that would leave the directory is refused rather than written, so a
+// package cannot write outside the data directory by naming an entry "../../".
+func (s *fsStore) unpack(name, version string) (string, error) {
+	if err := safeSegment(name); err != nil {
+		return "", err
+	}
+	if err := safeSegment(version); err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, err := os.ReadFile(filepath.Join(s.versionDir(name, version), "package.rho-pkg"))
+	if err != nil {
+		return "", err
+	}
+	// The previous tree is replaced rather than merged: a package may carry a
+	// different file list, and leaving the old one behind would document files
+	// this version does not have.
+	dest := s.sourceDir(name, version)
+	if err := os.RemoveAll(dest); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return "", err
+	}
+	reader, err := gzip.NewReader(bytesReader(payload))
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+	archive := tar.NewReader(reader)
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		target := filepath.Join(dest, filepath.FromSlash(header.Name))
+		// The check is on the cleaned path, so an entry that climbs out through
+		// a subdirectory is refused as well as one that names ".." directly.
+		if !withinDir(dest, target) {
+			return "", fmt.Errorf("package entry %q leaves the package directory", header.Name)
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return "", err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return "", err
+			}
+			file, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+			if err != nil {
+				return "", err
+			}
+			if _, err := io.Copy(file, archive); err != nil {
+				file.Close()
+				return "", err
+			}
+			if err := file.Close(); err != nil {
+				return "", err
+			}
+		}
+	}
+	return dest, nil
+}
+
+// docPage reads one generated page, or "" when there is none.
+func (s *fsStore) docPage(name, version, page string) ([]byte, error) {
+	if err := safeSegment(name); err != nil {
+		return nil, err
+	}
+	if err := safeSegment(version); err != nil {
+		return nil, err
+	}
+	if page == "" {
+		page = "index.html"
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return os.ReadFile(filepath.Join(s.docsDir(name, version), filepath.FromSlash(page)))
+}
+
+// hasDocs reports whether a version has documentation, which is what a page
+// checks before it offers a link to it.
+func (s *fsStore) hasDocs(name, version string) bool {
+	if safeSegment(name) != nil || safeSegment(version) != nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, err := os.Stat(filepath.Join(s.docsDir(name, version), "index.html"))
+	return err == nil
+}
+
+// bytesReader reads a payload without copying it.
+func bytesReader(data []byte) *bytes.Reader { return bytes.NewReader(data) }
+
+// withinDir reports whether a path is inside a directory.
+func withinDir(dir, path string) bool {
+	relative, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Port entry points                                                          */
 /*                                                                             */
 /*  These satisfy the extern declarations a Rho module makes. The Go spelling  */
 /*  is lowerCamel, which is how a Rho call site is emitted.                     */
 /* -------------------------------------------------------------------------- */
+
+// storeUnpack extracts a published package and returns the source tree, which
+// is what a documentation generator is given. The empty string means the package
+// could not be read.
+func storeUnpack(name, version string) string {
+	dir, err := newFSStore().unpack(name, version)
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// storeDocPage returns a generated documentation page, or "" when it is absent.
+func storeDocPage(name, version, page string) string {
+	data, err := newFSStore().docPage(name, version, page)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// docHomeSet is called at start-up by the service that publishes documentation.
+//
+// The address a site is published under is a property of the service, not of the
+// generator, so the service passes it in: a reader who followed a link out of a
+// registry and into a module's documentation needs a way back, and a generator
+// cannot invent the address it was published at.
+func docHomeSet(home string, title string) {
+	if home != "" {
+		os.Setenv("RHO_DOC_HOME", home)
+	}
+	if title != "" {
+		os.Setenv("RHO_DOC_HOME_TITLE", title)
+	}
+}
+
+// storeDocHome is the Rho-facing name of the setter, so a service that publishes
+// documentation declares it as an extern and sets the address at start-up
+// without the generated file needing to know who calls it.
+func storeDocHome(home string, title string) {
+	docHomeSet(home, title)
+}
+
+// storeHasDocs reports whether a version has documentation published for it.
+func storeHasDocs(name, version string) bool {
+	return newFSStore().hasDocs(name, version)
+}
 
 // storePut stores an uploaded package and its metadata, returning 0 on success.
 func storePut(name, version string, payload string, metaJSON string) uint32 {

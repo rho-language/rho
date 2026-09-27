@@ -1,0 +1,12 @@
+go 1.22
+
+use (
+	.
+	./modules/components/rho-auth
+	./modules/components/rho-doc
+	./modules/components/rho-fmt
+	./modules/components/rho-log
+	./modules/components/rho-lsp
+	./modules/components/rho-test
+	./modules/plugins/rho-doc-toc
+)

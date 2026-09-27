@@ -10,7 +10,23 @@
          below the fold. */
       *, *::before, *::after { box-sizing: border-box; }
 
-      :root { color-scheme: light dark; }
+      :root {
+        color-scheme: light dark;
+        --doc: #0f766e;
+        --doc-line: #0f766e55;
+        --doc-wash: #0f766e14;
+        --crumb-ink: #6b7278;
+        --crumb-line: #e3e6ea;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --doc: #5eead4;
+          --doc-line: #5eead455;
+          --doc-wash: #5eead41a;
+          --crumb-ink: #8b9299;
+          --crumb-line: #2a3036;
+        }
+      }
       html, body { height: 100%; }
       body {
         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -58,8 +74,45 @@
         opacity: 0.8;
       }
       .desc { opacity: 0.7; font-size: 0.9em; }
+      /* The documentation marker. It has its own colour rather than the
+         version badge's, so a listing reads at a glance: a grey badge is a
+         version and a teal one is documentation. */
+      .doc-badge {
+        margin-left: auto;
+        font-size: 0.7rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 0.05rem 0.45rem;
+        border-radius: 0.7rem;
+        color: var(--doc);
+        border: 1px solid var(--doc-line);
+        background: var(--doc-wash);
+      }
+      .doc-badge:hover { border-color: var(--doc); text-decoration: none; filter: brightness(1.1); }
+      .doc-link {
+        display: inline-block;
+        margin: 0.3rem 0;
+        padding: 0.15rem 0.5rem;
+        border: 1px solid var(--doc-line);
+        border-radius: 0.4rem;
+        color: var(--doc);
+        background: var(--doc-wash);
+      }
+      .doc-link:hover { border-color: var(--doc); text-decoration: none; }
+      .doc-none { opacity: 0.55; }
       .empty { opacity: 0.7; border: 1px dashed #8884; border-radius: 0.5rem; padding: 1rem 0.9rem; }
-      .crumb { opacity: 0.7; font-size: 0.9em; margin: 0.4rem 0 0; }
+      /* The trail at the top of a page: small, and quiet enough to read past,
+         with the parts that go back underlined on hover. */
+      .crumb {
+        margin: 0 0 1.1rem;
+        padding-bottom: 0.5rem;
+        font-size: 0.85rem;
+        color: var(--crumb-ink);
+        border-bottom: 1px solid var(--crumb-line);
+      }
+      .crumb a { color: var(--crumb-ink); }
+      .crumb a:hover { color: var(--doc); }
+      .crumb a + a::before, .crumb a + span::before { content: "/"; margin: 0 0.4rem; opacity: 0.5; }
       dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0.5rem 0 0; }
       dt { opacity: 0.7; }
       dd { margin: 0; }

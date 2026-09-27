@@ -25,6 +25,16 @@ deps:
 # this component it answers, and is measured against this list, so it cannot
 # claim a stage the generator never runs. A component that offers no hooks
 # offers no place for a plugin to stand.
+# The component documents itself: the pages below ship with the package, so a
+# registry that receives it can publish the same documentation a build here does.
+docs:
+  title: Documentation generator
+  section: components
+  order: "40"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+
 provides:
   hooks:
     # Once, over the finished set of pages: a table of contents, an index.
@@ -45,6 +55,7 @@ package:
   include:
     - module.yml
     - README.md
+    - docs
     - src
   require:
     - module.yml

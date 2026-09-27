@@ -38,4 +38,4 @@ nothing is rewritten behind the reader's back.
 The formatter also owns the shape of a log record, which is why the logger
 depends on it: a record written by a device and a record written by a service
 are formatted by the same code, so the two cannot drift apart. See
-{ref}`components/rho-log` for the record format itself.
+{ref}`rho-log/index` for the record format itself.

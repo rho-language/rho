@@ -16,6 +16,7 @@
 //	-section NAME            put the pages of a path in this section
 //	-title TITLE             the site title
 //	-plugins / -no-plugins   run the installed plugins (default: run them)
+//	-tree-plugins            also run the plugins the tree being documented carries
 //	-list-plugins            list the plugins that extend the generator
 //	-strict                  fail when a source has a diagnostic
 //
@@ -78,6 +79,10 @@ func runCommand(args []string) int {
 	// flag a person actually types when they want a build with no extensions.
 	noPlugins := fs.Bool("no-plugins", false, "do not run the plugins that extend the build")
 	strict := fs.Bool("strict", false, "fail when a source reports a problem")
+	// A plugin is a program, and the tree being documented may have been
+	// written by someone the caller does not know, so running the tree's own
+	// plugins is a decision the caller makes rather than a default.
+	treePlugins := fs.Bool("tree-plugins", false, "run the plugins the tree being documented carries, not only the installed ones")
 	listPlugins := fs.Bool("list-plugins", false, "list the plugins that extend the generator and exit")
 	// Flags are read wherever they appear, because `rho doc <path> -out <dir>`
 	// is what a person types first and a flag parser that stops at the path
@@ -108,13 +113,14 @@ func runCommand(args []string) int {
 	if *noPlugins {
 		*usePlugins = false
 	}
+	discovery := rhodoc.Plugins{Tree: absolute, RhoHome: deps.RhoHome(), TrustTree: *treePlugins}
 	plugins := []rhodoc.Plugin{}
 	if *usePlugins {
-		plugins = rhodoc.DiscoverPlugins(absolute, deps.RhoHome(), rhodoc.ComponentName)
+		plugins = discovery.DiscoverPlugins(rhodoc.ComponentName)
 	}
 	if *listPlugins {
 		listPluginsFound(plugins)
-		listOtherPlugins(absolute)
+		listOtherPlugins(discovery)
 		return 0
 	}
 
@@ -226,9 +232,6 @@ func listPluginsFound(plugins []rhodoc.Plugin) {
 			}
 			detail = " hooks: " + strings.Join(hooks, ", ")
 		}
-		if len(plugin.Formats) > 0 {
-			detail += " formats: " + strings.Join(plugin.Formats, ", ")
-		}
 		if len(plugin.Pages) > 0 {
 			detail += fmt.Sprintf(" pages: %d", len(plugin.Pages))
 		}
@@ -241,8 +244,8 @@ func listPluginsFound(plugins []rhodoc.Plugin) {
 // A plugin is loaded by the component it names, so one written for another
 // tool is inert here. Saying so is the difference between a plugin that does
 // nothing and a plugin whose author cannot tell why.
-func listOtherPlugins(root string) {
-	for _, plugin := range rhodoc.DiscoverAllPlugins(root, deps.RhoHome()) {
+func listOtherPlugins(discovery rhodoc.Plugins) {
+	for _, plugin := range discovery.All() {
 		if plugin.Extends == rhodoc.ComponentName {
 			continue
 		}
@@ -262,9 +265,6 @@ func report(site *rhodoc.Site, unreadable []string) {
 	}
 	for _, request := range site.Requests {
 		fmt.Fprintf(os.Stderr, "rho doc: %s\n", request)
-	}
-	if len(site.Formats) > 0 {
-		fmt.Fprintf(os.Stderr, "rho doc: a plugin can also render: %s\n", strings.Join(site.Formats, ", "))
 	}
 }
 

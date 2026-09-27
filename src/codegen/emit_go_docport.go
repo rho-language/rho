@@ -144,7 +144,18 @@ func rhoDocCheck(root string) string {
 // rhoDocWriteSite builds a site into a directory and returns the number of pages
 // written, or 0 when the build failed. rhoDocCheck says why.
 func rhoDocWriteSite(root string, out string, title string) uint32 {
-	answer, err := rhoDocCall("write", root, out, title)
+	// Where the site is published is told to the generator, so a reader who
+	// arrived from the service that serves the documentation has a way back to
+	// it. A site built on its own has neither setting, and the generator writes
+	// no link to anywhere.
+	arguments := []string{"write", root, out, title}
+	if home := os.Getenv("RHO_DOC_HOME"); home != "" {
+		arguments = append(arguments, "--home", home)
+	}
+	if label := os.Getenv("RHO_DOC_HOME_TITLE"); label != "" {
+		arguments = append(arguments, "--home-title", label)
+	}
+	answer, err := rhoDocCall(arguments...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rho doc: %v\n", err)
 		return 0
