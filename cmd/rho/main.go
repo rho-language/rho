@@ -17,6 +17,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,7 +34,6 @@ import (
 	modremote "rho/cmd/rho-module/remote"
 	src "rho/src"       // compiler orchestrator v3
 	deps "rho/src/deps" // dependency system
-	"rho/src/rhotest"   // test runner
 )
 
 /* -------------------------------------------------------------------------- */
@@ -41,15 +41,18 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func main() {
+	// A component is a separate process, so it needs to be told which rho
+	// invoked it. Without this a component can pick up a different, possibly
+	// older, rho from PATH and fail on a flag this one has.
+	if os.Getenv("RHO_BIN") == "" {
+		if self, err := os.Executable(); err == nil {
+			_ = os.Setenv("RHO_BIN", self)
+		}
+	}
+
 	// The module client presents a token issued by `rho auth login` when one
 	// is stored, so the two ways of configuring a registry stay in step.
-	modremote.SetTokenReader(func(registry string) string {
-		credential, err := lookupCredential(registry)
-		if err != nil || credential.Expired(time.Now()) {
-			return ""
-		}
-		return credential.Secret
-	})
+	modremote.SetTokenReader(issuedToken)
 
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: rho <command> [args]")
@@ -88,14 +91,8 @@ func main() {
 	case "help":
 		printHelp()
 
-	case "test":
-		os.Exit(testCLI(os.Args[2:]))
-
 	case "config":
 		os.Exit(configCLI(os.Args[2:]))
-
-	case "auth":
-		os.Exit(authCLI(os.Args[2:]))
 
 	case "pkg":
 		os.Exit(pkgcli.Main(os.Args[2:]))
@@ -197,9 +194,12 @@ func buildRhoExecutables() error {
 		name string
 		path string
 	}{
+		// The core toolchain only. The formatter, the test runner, the logger
+		// and the credential manager are components: separate modules with
+		// their own go.mod, published like any other module and dispatched to
+		// at run time. Building them here would put them back in the core and
+		// defeat the point of late binding.
 		{"rho", "./cmd/rho"},
-		{"rho-fmt", "./cmd/rho-fmt"},
-		{"rho-test", "./cmd/rho-test"},
 		{"rho-deps", "./cmd/rho-deps"},
 		{"rho-doc", "./cmd/rho-doc"},
 	}
@@ -331,34 +331,6 @@ func configCLI(args []string) int {
 	return 2
 }
 
-func testCLI(args []string) int {
-	if len(args) > 2 {
-		fmt.Fprintln(os.Stderr, "Usage: rho test [path] [target]")
-		return 2
-	}
-
-	// The runner lives in src/rhotest and is called in process, so there is no
-	// separate test binary to locate. The only thing still resolved is this
-	// rho, which the runner needs in order to build the tests.
-	options := rhotest.Options{Path: argOrCwd(args), Target: rhotest.DefaultTarget}
-	if len(args) == 2 {
-		options.Target = args[1]
-	} else if len(args) == 1 && isTargetName(args[0]) {
-		// A lone target name, as in `rho test go`, tests the project in the
-		// working directory on that backend.
-		if _, statErr := os.Stat(args[0]); statErr != nil {
-			options.Path = "."
-			options.Target = args[0]
-		}
-	}
-	if rho, err := os.Executable(); err == nil {
-		if _, statErr := os.Stat(rho); statErr == nil {
-			options.RhoBinary = rho
-		}
-	}
-	return rhotest.Run(options)
-}
-
 /* -------------------------------------------------------------------------- */
 /*  rho run                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -450,6 +422,48 @@ func isTargetName(word string) bool {
 	default:
 		return false
 	}
+}
+
+// issuedToken returns the credential the auth component stored for a registry.
+//
+// The file is read here rather than through the component, because the core must
+// not depend on a component: that is the whole point of late binding. The
+// format is therefore a published contract the auth component owns, and this is
+// the only place in the core that knows it.
+func issuedToken(registry string) string {
+	home := os.Getenv("RHO_HOME")
+	if home == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		home = filepath.Join(userHome, ".rho")
+	}
+	data, err := os.ReadFile(filepath.Join(home, "auth", "credentials.json"))
+	if err != nil {
+		return ""
+	}
+	var file struct {
+		Credentials []struct {
+			Registry  string    `json:"registry"`
+			Method    string    `json:"method"`
+			Secret    string    `json:"secret"`
+			ExpiresAt time.Time `json:"expires_at"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return ""
+	}
+	for _, credential := range file.Credentials {
+		if credential.Registry != registry {
+			continue
+		}
+		if !credential.ExpiresAt.IsZero() && !time.Now().Before(credential.ExpiresAt) {
+			return ""
+		}
+		return credential.Secret
+	}
+	return ""
 }
 
 // argOrCwd returns the command's path argument, defaulting to the working

@@ -19,8 +19,13 @@ import (
 	"fmt"
 	"os"
 
-	"rho/src/rhotest"
+	rholog "github.com/rho/rho-log/src/logger"
+	"github.com/rho/rho-test/src/rhotest"
 )
+
+// log is the runner's own logger, so a test run is identifiable in a shared log
+// without every line having to say so.
+var log = rholog.Default("rho-test")
 
 func main() {
 	os.Exit(run(os.Args[1:]))

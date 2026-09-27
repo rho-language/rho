@@ -1,0 +1,17 @@
+module:
+  name: rho-auth
+  type: component
+  version: 0.1.0
+  description: Registry credentials
+  command: auth
+
+main: rho-auth
+
+features:
+  - auth
+  - credentials
+
+# The command logs through the shared logger, so a login is identifiable in a
+# shared log without every line having to say so.
+deps:
+  rho-log: ">=0.1.0"

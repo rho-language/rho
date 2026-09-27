@@ -69,6 +69,11 @@ func ModuleSchema() Schema {
 					{Name: "type", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidModuleTypes},
 					{Name: "version", Required: true, RejectNull: true, Kind: KindString},
 					{Name: "command", Required: false, Kind: KindString},
+					// import_path is the dotted name Rho code uses to reach this
+					// component's Rho sources, which cannot be guessed from the
+					// module name: a component published as ext-probe may expose
+					// its sources as ext.probe.
+					{Name: "import_path", Required: false, Kind: KindString},
 					// Descriptive metadata carried by published modules.
 					{Name: "description", Required: false, Kind: KindString},
 					{Name: "maintainer", Required: false, Kind: KindString},

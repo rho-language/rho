@@ -63,7 +63,15 @@ fn publish_module(req: Request) Response {
 
     // The store validates the module name and refuses to write outside the data
     // directory, so a rejected name is reported as a bad request.
-    if store_put(name, version, payload, meta_json(req, name, version)) != 0 {
+    // The handler reads the request, so the response shaping stays pure.
+    let meta: string = meta_json(
+        name, version,
+        request_query_param(req, "type"),
+        request_query_param(req, "description"),
+        request_query_param(req, "main"),
+        request_query_param(req, "command")
+    )
+    if store_put(name, version, payload, meta) != 0 {
         return error_json(status_bad_request(), "invalid module name")
     }
     return published_json(name, version)

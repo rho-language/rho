@@ -228,3 +228,19 @@ func CheckSignature(secret []byte, token string) bool {
 	}
 	return hmac.Equal(signSegment(parts[0]+"."+parts[1], secret), provided)
 }
+
+// Remaining describes how long a credential has left, in words a person can act
+// on rather than a bare count.
+func Remaining(expiry time.Time) string {
+	remaining := time.Until(expiry)
+	switch {
+	case remaining <= 0:
+		return "expired"
+	case remaining < time.Hour:
+		return "in under an hour"
+	case remaining < 24*time.Hour:
+		return fmt.Sprintf("in %d hours", int(remaining.Hours()))
+	default:
+		return fmt.Sprintf("in %d days", int(remaining.Hours()/24))
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"rho/src/schema"
@@ -36,10 +37,13 @@ type DepSpec struct {
 }
 
 type Manifest struct {
-	ModuleName       string
-	ModuleType       string
-	Version          string
-	Main             string
+	ModuleName string
+	ModuleType string
+	Version    string
+	Main       string
+	// ImportPath is the dotted name Rho code uses to import this component's
+	// Rho sources. Empty means the component exports no Rho library.
+	ImportPath       string
 	Features         []string
 	Deps             []DepSpec
 	BuildLanguage    string
@@ -77,11 +81,40 @@ func LoadManifest(path string) (*Manifest, error) {
 
 	m := &Manifest{}
 	var currentDep *DepSpec
+	// inDepsBlock tracks a `deps:` map so its entries are not mistaken for
+	// other top-level keys.
+	var inDepsBlock bool
 
 	lines := strings.Split(string(data), "\n")
-	for _, ln := range lines {
-		ln = strings.TrimSpace(ln)
+	for _, raw := range lines {
+		ln := strings.TrimSpace(raw)
 		if ln == "" || strings.HasPrefix(ln, "#") {
+			continue
+		}
+
+		// The manifest form for dependencies is a map, which is what the schema
+		// declares and what modules actually write:
+		//
+		//	deps:
+		//	  math: ">=1.0.0"
+		//
+		// Detecting the block needs the original indentation, so it is read from
+		// the raw line before the text is trimmed.
+		indented := len(raw) > 0 && (raw[0] == ' ' || raw[0] == '\t')
+		if inDepsBlock && indented {
+			if name, constraint, found := strings.Cut(ln, ":"); found && strings.TrimSpace(name) != "" {
+				m.Deps = append(m.Deps, DepSpec{
+					Name:    strings.TrimSpace(name),
+					Version: VersionRange{Raw: unquote(strings.TrimSpace(constraint))},
+				})
+				continue
+			}
+		}
+		if ln == "}" || !indented {
+			inDepsBlock = false
+		}
+		if !inDepsBlock && (ln == "deps:" || ln == "deps") {
+			inDepsBlock = true
 			continue
 		}
 
@@ -179,6 +212,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		m.ModuleName = yamlString(module, "name")
 		m.ModuleType = yamlString(module, "type")
 		m.Version = yamlString(module, "version")
+		m.ImportPath = yamlString(module, "import_path")
 	}
 	build := doc.Map["build"]
 	if build.Kind == yaml.KindMap {
@@ -190,6 +224,22 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	}
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
+
+	// `deps` is a map of name to version constraint, which is what the schema
+	// declares:
+	//
+	//	deps:
+	//	  math: ">=1.0.0"
+	//
+	// The name is kept whole and the constraint becomes the version range, so
+	// the dependency system and the import resolution see the same thing.
+	for name, constraint := range doc.Map["deps"].Map {
+		spec := DepSpec{Name: name}
+		spec.Version.Raw = constraint.Str
+		m.Deps = append(m.Deps, spec)
+	}
+	sort.Slice(m.Deps, func(i, j int) bool { return m.Deps[i].Name < m.Deps[j].Name })
+
 	for _, item := range doc.Map["depends"].List {
 		if item.Kind != yaml.KindMap {
 			return nil, fmt.Errorf("depends entries must be maps")

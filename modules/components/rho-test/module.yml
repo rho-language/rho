@@ -1,0 +1,17 @@
+module:
+  name: rho-test
+  type: component
+  version: 0.1.0
+  description: Test runner
+  command: test
+
+main: rho-test
+
+features:
+  - test
+  - discovery
+
+# The runner logs through the shared logger, so a test run carries its own
+# component name rather than an unlabelled line.
+deps:
+  rho-log: ">=0.1.0"

@@ -1,0 +1,18 @@
+module:
+  name: rho-log
+  type: component
+  version: 0.1.0
+  description: Structured logging
+  command: log
+
+main: rho-log
+
+features:
+  - logging
+  - structured
+
+# The record format is the shared contract between a device writing to a serial
+# console and a server writing to stdout, so the formatter lives in its own
+# component rather than being copied in here.
+deps:
+  rho-fmt: ">=0.1.0"

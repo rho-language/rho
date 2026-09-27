@@ -516,6 +516,76 @@ func markModuleOwnership(module *ast.Module, owner string) {
 	}
 }
 
+// declaresDependency reports whether a manifest names a module as a dependency.
+func declaresDependency(manifest *deps.Manifest, name string) bool {
+	for _, spec := range manifest.Deps {
+		if spec.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// installedComponent is a component dependency, with the import name it
+// answers to.
+type installedComponent struct {
+	root       string
+	importPath string
+}
+
+// matchesImport reports whether an import name reaches a component. A dotted
+// name matches itself, and a shorter prefix matches the component it names, so
+// `import ext.probe` and `import ext.probe.util` both work.
+func matchesImport(importPath, wanted string) bool {
+	if importPath == wanted {
+		return true
+	}
+	return strings.HasPrefix(wanted, importPath+".")
+}
+
+// dependencyComponents returns the component dependencies a project declared,
+// whether they came from this repository or were installed from elsewhere.
+//
+// Only declared dependencies are returned: a component is a dependency by being
+// named in the manifest, which is also what installs it, so an import and the
+// install list cannot disagree.
+func dependencyComponents(projectRoot string) []installedComponent {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil || manifest == nil {
+		return nil
+	}
+	// A component type is loaded from a component source root; a Rho library from
+	// the module cache. Only the component tree is searched here, because that
+	// is where a component keeps its Rho sources alongside its command.
+	found := []installedComponent{}
+	installed := filepath.Join(os.Getenv("HOME"), ".rho", "modules", "installed", "component")
+	entries, err := os.ReadDir(installed)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name, _, _ := strings.Cut(entry.Name(), "@")
+		if !declaresDependency(manifest, name) {
+			continue
+		}
+		// The manifest of the component itself says which import name it
+		// answers to, so a component published under one name can be
+		// imported under another.
+		componentManifest, manifestErr := deps.LoadManifest(filepath.Join(installed, entry.Name(), "module.yml"))
+		if manifestErr != nil {
+			continue
+		}
+		found = append(found, installedComponent{
+			root:       filepath.Join(installed, entry.Name()),
+			importPath: componentManifest.ImportPath,
+		})
+	}
+	return found
+}
+
 func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []string) (string, error) {
 	stdImport := strings.HasPrefix(name, "std.")
 	moduleName := strings.TrimPrefix(name, "std.")
@@ -524,6 +594,36 @@ func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []strin
 		filepath.Join(projectRoot, "src", relative+".rho"),
 		filepath.Join(projectRoot, relative+".rho"),
 		filepath.Join(filepath.Dir(sourcePath), relative+".rho"),
+	}
+	// A component declared as a dependency contributes its Rho sources too, so
+	// `import rho.log` reaches an installed component rather than only the
+	// project tree. The dependency has to be declared, so an import cannot pull
+	// in a component the project did not ask for.
+	for _, component := range dependencyComponents(projectRoot) {
+		// The component states the import name it answers to, because that
+		// cannot be derived from a published module name.
+		imported := component.importPath
+		if imported == "" {
+			continue
+		}
+		if !matchesImport(imported, moduleName) {
+			continue
+		}
+		// The full dotted path is tried first, so a component exporting several
+		// packages keeps them apart. A component exporting one package may
+		// simply call the file after the last segment, which is what
+		// `ext.probe` mapping to `src/probe.rho` means.
+		componentRelative := filepath.FromSlash(strings.ReplaceAll(imported, ".", "/"))
+		lastSegment := imported
+		if index := strings.LastIndex(imported, "."); index >= 0 {
+			lastSegment = imported[index+1:]
+		}
+		candidates = append(candidates,
+			filepath.Join(component.root, "src", componentRelative+".rho"),
+			filepath.Join(component.root, componentRelative+".rho"),
+			filepath.Join(component.root, "src", componentRelative, "index.rho"),
+			filepath.Join(component.root, "src", lastSegment+".rho"),
+		)
 	}
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {

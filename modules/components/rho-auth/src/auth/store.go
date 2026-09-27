@@ -19,9 +19,14 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -221,4 +226,93 @@ func (s *Store) Revoke(registry string) (bool, error) {
 	}
 	contents.Credentials = kept
 	return true, s.save(contents)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Locating the store                                                        */
+/* -------------------------------------------------------------------------- */
+
+// RhoHome returns the Rho home directory, which is where credentials live.
+func RhoHome() (string, error) {
+	if home := os.Getenv("RHO_HOME"); home != "" {
+		return home, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot locate the home directory: %w", err)
+	}
+	return filepath.Join(home, ".rho"), nil
+}
+
+// StoreForHost opens the credential store for the current user's home.
+func StoreForHost() (*Store, error) {
+	home, err := RhoHome()
+	if err != nil {
+		return nil, err
+	}
+	return Open(DefaultStorePath(home)), nil
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Obtaining a token                                                          */
+/* -------------------------------------------------------------------------- */
+
+// IssueTokenFor asks a registry to issue a token.
+//
+// The signing secret stays on the registry: a client asks for a token and
+// receives a signed one, so a stolen credential file cannot be used to mint new
+// credentials.
+func IssueTokenFor(store *Store, registry, subject, host string, days int) (string, TokenClaims, error) {
+	var claims TokenClaims
+
+	if subject == "" {
+		subject = "unknown"
+	}
+	if days <= 0 {
+		days = int(DefaultTokenLifetime.Hours() / 24)
+	}
+
+	query := url.Values{}
+	query.Set("user", subject)
+	query.Set("host", host)
+	query.Set("days", strconv.Itoa(days))
+	query.Set("scopes", strings.Join([]string{ScopePull, ScopePush}, " "))
+	endpoint := strings.TrimRight(registry, "/") + "/auth/token?" + query.Encode()
+
+	req, err := http.NewRequest("POST", endpoint, nil)
+	if err != nil {
+		return "", claims, err
+	}
+	// An existing credential doubles as proof of identity, so a registry that
+	// has closed issuance still recognises a client it already knows.
+	if existing, lookupErr := store.Get(registry, ""); lookupErr == nil && existing.Secret != "" {
+		req.Header.Set("Authorization", Authorization(existing.Secret))
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", claims, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", claims, err
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", claims, fmt.Errorf("the registry answered %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var answer struct {
+		Token string `json:"token"`
+		TokenClaims
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return "", claims, fmt.Errorf("cannot read the token response: %w", err)
+	}
+	if answer.Token == "" {
+		return "", claims, fmt.Errorf("the registry returned no token")
+	}
+	return answer.Token, answer.TokenClaims, nil
 }
