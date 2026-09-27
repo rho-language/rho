@@ -380,31 +380,36 @@ func loadModuleGraph(entry string) (*ast.Module, error) {
 }
 
 func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*ast.Module, error) {
+	projectRoot := ProjectRoot(entry)
+	// The declared components are resolved once for the whole graph. Every
+	// import asks the same question, and answering it per import re-reads the
+	// manifests for a result that cannot differ inside one load.
+	components := dependencyComponents(projectRoot)
 	visited := map[string]bool{}
-	root, err := loadModuleFile(entry, ProjectRoot(entry), dependencyRoots, visited)
+	root, err := loadModuleFile(entry, projectRoot, dependencyRoots, components, visited)
 	if err != nil {
 		return nil, err
 	}
-	if manifest, manifestErr := deps.LoadManifest(filepath.Join(ProjectRoot(entry), "rho.mod")); manifestErr == nil {
+	if manifest, manifestErr := deps.LoadManifest(filepath.Join(projectRoot, "rho.mod")); manifestErr == nil {
 		root.Features = append(root.Features, manifest.Features...)
 	}
-	if err := loadFeatureModules(root, entry, ProjectRoot(entry), dependencyRoots, visited); err != nil {
+	if err := loadFeatureModules(root, entry, projectRoot, dependencyRoots, components, visited); err != nil {
 		return nil, err
 	}
 	return root, nil
 }
 
-func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, dependencyRoots []string, visited map[string]bool) error {
+func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) error {
 	for _, feature := range module.Features {
 		if !strings.HasPrefix(feature, "math.") {
 			continue
 		}
 		name := "std." + feature
-		featurePath, err := resolveImport(name, sourcePath, projectRoot, dependencyRoots)
+		featurePath, err := resolveImport(name, sourcePath, projectRoot, dependencyRoots, components)
 		if err != nil {
 			return fmt.Errorf("feature %q: %w", feature, err)
 		}
-		featureModule, err := loadModuleFile(featurePath, projectRoot, dependencyRoots, visited)
+		featureModule, err := loadModuleFile(featurePath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			return fmt.Errorf("load feature %q: %w", feature, err)
 		}
@@ -413,7 +418,7 @@ func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, depe
 	return nil
 }
 
-func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited map[string]bool) (*ast.Module, error) {
+func loadModuleFile(path, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) (*ast.Module, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source path: %w", err)
@@ -442,7 +447,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited 
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(filepath.Dir(abs), includePath)
 		}
-		included, err := loadModuleFile(includePath, projectRoot, dependencyRoots, visited)
+		included, err := loadModuleFile(includePath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
 		}
@@ -450,11 +455,11 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited 
 		merged.Features = append(merged.Features, included.Features...)
 	}
 	for _, imp := range mod.Imports {
-		importPath, err := resolveImport(imp.Name, abs, projectRoot, dependencyRoots)
+		importPath, err := resolveImport(imp.Name, abs, projectRoot, dependencyRoots, components)
 		if err != nil {
 			return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
 		}
-		imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, visited)
+		imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			return nil, err
 		}
@@ -462,7 +467,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, visited 
 		merged.Decls = append(merged.Decls, imported.Decls...)
 		merged.Features = append(merged.Features, imported.Features...)
 	}
-	if err := loadFeatureModules(merged, abs, projectRoot, dependencyRoots, visited); err != nil {
+	if err := loadFeatureModules(merged, abs, projectRoot, dependencyRoots, components, visited); err != nil {
 		return nil, err
 	}
 	return merged, nil
@@ -516,16 +521,6 @@ func markModuleOwnership(module *ast.Module, owner string) {
 	}
 }
 
-// declaresDependency reports whether a manifest names a module as a dependency.
-func declaresDependency(manifest *deps.Manifest, name string) bool {
-	for _, spec := range manifest.Deps {
-		if spec.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 // installedComponent is a component dependency, with the import name it
 // answers to.
 type installedComponent struct {
@@ -558,35 +553,51 @@ func dependencyComponents(projectRoot string) []installedComponent {
 	// the module cache. Only the component tree is searched here, because that
 	// is where a component keeps its Rho sources alongside its command.
 	found := []installedComponent{}
-	installed := filepath.Join(os.Getenv("HOME"), ".rho", "modules", "installed", "component")
-	entries, err := os.ReadDir(installed)
-	if err != nil {
-		return nil
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for _, spec := range manifest.Deps {
+		root, importPath, ok := componentRoot(projectRoot, spec)
+		if !ok {
 			continue
 		}
-		name, _, _ := strings.Cut(entry.Name(), "@")
-		if !declaresDependency(manifest, name) {
-			continue
-		}
-		// The manifest of the component itself says which import name it
-		// answers to, so a component published under one name can be
-		// imported under another.
-		componentManifest, manifestErr := deps.LoadManifest(filepath.Join(installed, entry.Name(), "module.yml"))
-		if manifestErr != nil {
-			continue
-		}
-		found = append(found, installedComponent{
-			root:       filepath.Join(installed, entry.Name()),
-			importPath: componentManifest.ImportPath,
-		})
+		found = append(found, installedComponent{root: root, importPath: importPath})
 	}
 	return found
 }
 
-func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []string) (string, error) {
+// componentRoot returns the directory a declared dependency is read from as a
+// component, together with the import name that directory answers to. It
+// reports false when the dependency is not a component of this project.
+//
+// A dependency that names a source of its own is never answered from a
+// component tree: that source is where its code comes from, and the Rho sources
+// the compiler reads have to be the copy the build links. The installation
+// answers next, and only the version the dependency resolver would pick, so a
+// project with two versions installed does not compile the older one. A project
+// with nothing installed falls back to the component in the working tree of the
+// repository it lives in, which is what lets a checkout build on a machine that
+// has never installed anything.
+func componentRoot(projectRoot string, spec deps.DepSpec) (root string, importPath string, ok bool) {
+	if spec.Path != "" || spec.GitURL != "" || spec.EnvVar != "" || spec.Type == deps.DepTypeC {
+		return "", "", false
+	}
+	root = deps.InstalledComponentRoot(spec.Name)
+	if root == "" {
+		root = deps.VendoredComponentRoot(projectRoot, spec.Name)
+	}
+	if root == "" {
+		return "", "", false
+	}
+	// A directory in a component tree is a component by construction, and its
+	// own manifest says which import name it answers to: a component published
+	// under one name can be imported under another, and a manifest that is not
+	// a component at all does not answer a Rho import.
+	componentManifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
+	if err != nil || componentManifest.ModuleType != "component" {
+		return "", "", false
+	}
+	return root, componentManifest.ImportPath, true
+}
+
+func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []string, components []installedComponent) (string, error) {
 	stdImport := strings.HasPrefix(name, "std.")
 	moduleName := strings.TrimPrefix(name, "std.")
 	relative := filepath.FromSlash(strings.ReplaceAll(moduleName, ".", "/"))
@@ -596,10 +607,10 @@ func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []strin
 		filepath.Join(filepath.Dir(sourcePath), relative+".rho"),
 	}
 	// A component declared as a dependency contributes its Rho sources too, so
-	// `import rho.log` reaches an installed component rather than only the
-	// project tree. The dependency has to be declared, so an import cannot pull
-	// in a component the project did not ask for.
-	for _, component := range dependencyComponents(projectRoot) {
+	// `import rho.log` reaches a component rather than only the project tree.
+	// The dependency has to be declared, so an import cannot pull in a component
+	// the project did not ask for.
+	for _, component := range components {
 		// The component states the import name it answers to, because that
 		// cannot be derived from a published module name.
 		imported := component.importPath

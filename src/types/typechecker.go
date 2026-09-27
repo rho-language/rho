@@ -1127,10 +1127,13 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 					callee = mangled
 				}
 			default:
-				if signature, found := tc.funcs[identifier.Name]; found && signature.cName != "" {
-					// A function belonging to an imported module is emitted
-					// under its qualified name, so the call site must use the
-					// same name or the generated code will not link.
+				// A function belonging to an imported module is emitted under
+				// its qualified name, so the call site must use the same name
+				// or the generated code will not link. An intrinsic is exempt:
+				// the backend supplies it unprefixed, so a module that declares
+				// one is documenting it rather than defining it.
+				_, isIntrinsic := intrinsicSignatures[identifier.Name]
+				if signature, found := tc.funcs[identifier.Name]; found && signature.cName != "" && !isIntrinsic {
 					callee = signature.cName
 				}
 			}
@@ -1276,6 +1279,16 @@ var intrinsicSignatures = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
 		result: ir.Type{Kind: ir.TypeVoid, Name: "void"},
 	},
+	// emit writes one log record. The rho-log library declares it and a backend
+	// supplies it, so the library is the only surface a caller needs.
+	"emit": {
+		params: []ir.Type{
+			{Kind: ir.TypeU32, Name: "u32"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+		},
+		result: ir.Type{Kind: ir.TypeVoid, Name: "void"},
+	},
 }
 
 func init() {
@@ -1350,7 +1363,7 @@ func init() {
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
 		"template_get", "template_has", "template_fill", "env_or",
 		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",
-		"auth_required", "auth_open_tokens", "auth_issue", "int_from_str",
+		"auth_required", "auth_open_tokens", "auth_issue", "int_from_str", "emit",
 		"store_list", "store_meta", "store_detail", "store_latest", "store_data_dir",
 		"registry_data_dir", "registry_access", "config_get", "clock_year",
 		"registry_title", "registry_version", "registry_site_url", "registry_token_days",

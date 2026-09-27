@@ -272,3 +272,206 @@ func TestCompilerDiagnosticIncludesSourceLocation(t *testing.T) {
 		t.Fatalf("expected source-aware compiler error, got %v", err)
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Component imports                                                          */
+/* -------------------------------------------------------------------------- */
+
+// writeRepository marks a directory as the repository root, which is where the
+// search for a component in the working tree stops.
+func writeRepository(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// A linked checkout carries a .git file rather than a directory, so a
+	// repository marker is written as a file.
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeComponent writes a component that exports a Rho library, which is the
+// shape a project imports: a manifest naming the import path, and the library
+// sources next to it. The marker ends up in the generated C, so a test can see
+// which copy of the component answered for the import.
+func writeComponent(t *testing.T, root, marker string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n" +
+		"  name: rho-log\n" +
+		"  type: component\n" +
+		"  version: 0.1.0\n" +
+		"  command: log\n" +
+		"  import_path: rho.log\n" +
+		"\n" +
+		"main: log\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	library := "module rho.log\n\nfn subject() string {\n    return \"" + marker + "\";\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "src", "log.rho"), []byte(library), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeComponentProject writes an application that imports the component. The
+// dependency is declared unless it is left out, because a component is a
+// dependency by being named in the manifest.
+func writeComponentProject(t *testing.T, root string, declareDependency bool) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n" +
+		"  name: app\n" +
+		"  type: rho\n" +
+		"  version: 0.1.0\n" +
+		"\n" +
+		"main: src/main.rho\n"
+	if declareDependency {
+		manifest += "\ndeps:\n  rho-log: \">=0.1.0\"\n"
+	}
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	entry := "module app\nimport rho.log\n\nfn main() void {\n    print(subject());\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "src", "main.rho"), []byte(entry), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestComponentImportResolvesFromRepositoryTree(t *testing.T) {
+	// Nothing is installed, which is what a fresh machine and a CI runner look
+	// like: the component the repository carries is the only copy there is.
+	t.Setenv("RHO_HOME", t.TempDir())
+	repo := t.TempDir()
+	writeRepository(t, repo)
+	writeComponent(t, filepath.Join(repo, "modules", "components", "rho-log"), "from-repository")
+	project := writeComponentProject(t, filepath.Join(repo, "applications", "app"), true)
+
+	out := filepath.Join(t.TempDir(), "app.c")
+	if err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), out); err != nil {
+		t.Fatalf("compile component import: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "from-repository") {
+		t.Fatal("the component in the repository tree did not answer the import")
+	}
+}
+
+func TestInstalledComponentWinsOverRepositoryTree(t *testing.T) {
+	rhoHome := t.TempDir()
+	t.Setenv("RHO_HOME", rhoHome)
+	repo := t.TempDir()
+	writeRepository(t, repo)
+	writeComponent(t, filepath.Join(repo, "modules", "components", "rho-log"), "from-repository")
+	installed := filepath.Join(rhoHome, "modules", "installed", "component", "rho-log@0.1.0")
+	writeComponent(t, installed, "from-installation")
+	project := writeComponentProject(t, filepath.Join(repo, "applications", "app"), true)
+
+	out := filepath.Join(t.TempDir(), "app.c")
+	if err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), out); err != nil {
+		t.Fatalf("compile component import: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "from-installation") {
+		t.Fatal("the installed component did not answer the import")
+	}
+}
+
+func TestComponentImportResolvesNewestInstalledVersion(t *testing.T) {
+	// The version the build links is the version the import has to compile.
+	rhoHome := t.TempDir()
+	t.Setenv("RHO_HOME", rhoHome)
+	repo := t.TempDir()
+	writeRepository(t, repo)
+	installed := filepath.Join(rhoHome, "modules", "installed", "component")
+	writeComponent(t, filepath.Join(installed, "rho-log@0.1.0"), "from-0-1-0")
+	writeComponent(t, filepath.Join(installed, "rho-log@0.2.0"), "from-0-2-0")
+	project := writeComponentProject(t, filepath.Join(repo, "applications", "app"), true)
+
+	out := filepath.Join(t.TempDir(), "app.c")
+	if err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), out); err != nil {
+		t.Fatalf("compile component import: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "from-0-2-0") {
+		t.Fatal("the import did not resolve the newest installed component")
+	}
+}
+
+func TestSourcedDependencyDoesNotAnswerAComponentImport(t *testing.T) {
+	// A dependency that names its own source is not read from a component
+	// tree: the sources the compiler reads have to be the ones the build links.
+	t.Setenv("RHO_HOME", t.TempDir())
+	repo := t.TempDir()
+	writeRepository(t, repo)
+	writeComponent(t, filepath.Join(repo, "modules", "components", "rho-log"), "from-repository")
+	project := filepath.Join(repo, "applications", "app")
+	writeComponentProject(t, project, false)
+
+	// A native dependency, declared the way an application that links a C
+	// library declares it.
+	manifest := "module:\n" +
+		"  name: app\n" +
+		"  type: rho\n" +
+		"  version: 0.1.0\n" +
+		"\n" +
+		"main: src/main.rho\n" +
+		"\n" +
+		"depends:\n" +
+		"  - name: rho-log\n" +
+		"    type: c\n" +
+		"    version: 1.0.0\n" +
+		"    path: /nowhere/rho-log\n"
+	if err := os.WriteFile(filepath.Join(project, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), filepath.Join(t.TempDir(), "app.c"))
+	if err == nil || !strings.Contains(err.Error(), "rho.log") {
+		t.Fatalf("expected a sourced dependency not to answer a component import, got %v", err)
+	}
+}
+
+func TestUndeclaredComponentImportDoesNotResolve(t *testing.T) {
+	t.Setenv("RHO_HOME", t.TempDir())
+	repo := t.TempDir()
+	writeRepository(t, repo)
+	writeComponent(t, filepath.Join(repo, "modules", "components", "rho-log"), "from-repository")
+	project := writeComponentProject(t, filepath.Join(repo, "applications", "app"), false)
+
+	err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), filepath.Join(t.TempDir(), "app.c"))
+	if err == nil || !strings.Contains(err.Error(), "rho.log") {
+		t.Fatalf("expected an undeclared component import to fail, got %v", err)
+	}
+}
+
+func TestComponentImportStopsAtTheRepository(t *testing.T) {
+	// A component directory above the repository belongs to some other
+	// project, so it must not decide what this project compiles.
+	t.Setenv("RHO_HOME", t.TempDir())
+	outer := t.TempDir()
+	writeComponent(t, filepath.Join(outer, "modules", "components", "rho-log"), "from-outside")
+	repo := filepath.Join(outer, "repo")
+	writeRepository(t, repo)
+	project := writeComponentProject(t, filepath.Join(repo, "applications", "app"), true)
+
+	err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), filepath.Join(t.TempDir(), "app.c"))
+	if err == nil || !strings.Contains(err.Error(), "rho.log") {
+		t.Fatalf("expected the component search to stop at the repository, got %v", err)
+	}
+}

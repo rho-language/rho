@@ -21,6 +21,7 @@ targets:
     description: Registry logic as a command-line program
     ports:
       - fsstore
+      - logemit
     files:
       - path: app.go
         role: implementation
@@ -39,6 +40,7 @@ targets:
     # handlers declare.
     ports:
       - fsstore
+      - logemit
     # Page markup, kept out of the Rho sources and rendered by the generated
     # template engine.
     templates:

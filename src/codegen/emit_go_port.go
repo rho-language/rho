@@ -70,6 +70,7 @@ type portGenerator func(ir.ModuleIR) (imports []string, body string)
 // portGenerators are the built-in ports a descriptor may request.
 var portGenerators = map[string]portGenerator{
 	"fsstore": emitFSStorePort,
+	"logemit": emitLogPort,
 }
 
 // RegisteredPorts lists the available port names.

@@ -5,6 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+
+	"rho/internal/paths"
 )
 
 type Locator interface {
@@ -17,9 +21,149 @@ type DefaultLocator struct {
 	LocalCache  string // e.g. .rho-deps
 }
 
+// RhoHome returns the directory a Rho installation keeps its state in, or ""
+// when there is no home to speak of. It is the one place the compiler and the
+// module commands ask, so they cannot resolve different installations.
+func RhoHome() string {
+	home, err := paths.GetRhoHome()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// installedModuleRoot returns the directory of the highest installed version
+// of a module, or "" when the module is not installed.
+//
+// Both the component and the plugin trees are searched, so a dependency does not
+// have to care how the module was published. This is what lets a project depend
+// on a component and import its Rho sources.
+func installedModuleRoot(name string) string {
+	return highestInstalledRoot(name, "component", "plugin", "library", "module")
+}
+
+// InstalledComponentRoot returns the directory of the highest installed version
+// of a component, or "" when no component of that name is installed.
+//
+// Only the component tree counts here, and only the newest version of it: a Rho
+// import resolves against a component, and it has to resolve against the same
+// copy the dependency resolver picked, or the sources compiled and the library
+// linked come from different versions.
+func InstalledComponentRoot(name string) string {
+	return highestInstalledRoot(name, "component")
+}
+
+// highestInstalledRoot returns the newest installed directory named `name`
+// across the given publication kinds.
+func highestInstalledRoot(name string, kinds ...string) string {
+	home := RhoHome()
+	if home == "" {
+		return ""
+	}
+	base := filepath.Join(home, "modules", "installed")
+
+	best := ""
+	bestVersion := ""
+	for _, kind := range kinds {
+		entries, err := os.ReadDir(filepath.Join(base, kind))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			installed, version, cut := strings.Cut(entry.Name(), "@")
+			if !cut || installed != name || version == "" {
+				continue
+			}
+			if best == "" || compareModuleVersions(version, bestVersion) > 0 {
+				best = filepath.Join(base, kind, entry.Name())
+				bestVersion = version
+			}
+		}
+	}
+	return best
+}
+
+// compareModuleVersions orders dotted numeric versions, so the newest
+// installed version wins.
+func compareModuleVersions(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		an, aerr := strconv.Atoi(as[i])
+		bn, berr := strconv.Atoi(bs[i])
+		switch {
+		case aerr != nil || berr != nil:
+			if as[i] != bs[i] {
+				if as[i] < bs[i] {
+					return -1
+				}
+				return 1
+			}
+		case an != bn:
+			if an < bn {
+				return -1
+			}
+			return 1
+		}
+	}
+	switch {
+	case len(as) < len(bs):
+		return -1
+	case len(as) > len(bs):
+		return 1
+	}
+	return 0
+}
+
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// VendoredComponentRoot returns the directory of a component that ships in the
+// repository the project lives in, or "" when the project is not inside such a
+// repository or the component is not there.
+//
+// A component keeps its own sources under modules/components of the repository
+// that holds it, so a project in that repository can build against the
+// component in the working tree. That is what lets a checkout build without an
+// installation having been made first.
+//
+// The walk stops at the repository the project belongs to. Above that boundary
+// a components directory belongs to some other project, so honouring one would
+// let a shared parent directory decide what a project compiles.
+func VendoredComponentRoot(projectRoot, name string) string {
+	if projectRoot == "" || name == "" || filepath.Base(filepath.Clean(name)) != name || name == "." {
+		return ""
+	}
+	for current := projectRoot; ; {
+		root := filepath.Join(current, "modules", "components", name)
+		if isComponentDir(root) {
+			return root
+		}
+		// A linked directory is not followed: the boundary is the repository,
+		// and a link is a way out of it.
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return ""
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		current = parent
+	}
+}
+
+// isComponentDir reports whether a path is a component directory: a real
+// directory carrying the manifest that makes it one.
+func isComponentDir(root string) bool {
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	return exists(filepath.Join(root, "module.yml"))
 }
 
 func gitClone(url, dest, tag, branch string) error {
@@ -86,19 +230,46 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 		}
 	}
 
-	// 3. Global cache
+	// 3. Installed modules.
+	//
+	// A component or library installed with `rho module install` lives in the
+	// Rho home rather than in a cache, so it is found here. This is what lets
+	// a project depend on a component and import its Rho sources.
+	if root := installedModuleRoot(dep.Name); root != "" {
+		return root, nil
+	}
+
+	// 3b. Component in the repository the project lives in.
+	//
+	// An installation answers first: it is what was published, and it is what a
+	// project outside the repository depends on. A project inside the repository
+	// falls back to the component in the working tree, so a build from a
+	// checkout resolves the dependency without an install step having been run
+	// on that machine.
+	//
+	// Only a dependency with no source of its own is answered this way. A
+	// dependency that names a path, a repository or an environment variable is
+	// resolved from that source, because its lockfile entry has to say where
+	// the code came from.
+	if dep.GitURL == "" && dep.Path == "" && dep.EnvVar == "" {
+		if root := VendoredComponentRoot(l.ProjectRoot, dep.Name); root != "" {
+			return root, nil
+		}
+	}
+
+	// 4. Global cache
 	g := filepath.Join(l.GlobalCache, dep.Name)
 	if exists(g) {
 		return g, nil
 	}
 
-	// 4. Local cache
+	// 5. Local cache
 	loc := filepath.Join(l.LocalCache, dep.Name)
 	if exists(loc) {
 		return loc, nil
 	}
 
-	// 5. Git clone → local cache
+	// 6. Git clone → local cache
 	if dep.GitURL == "" {
 		return "", fmt.Errorf("dependency %s has no source", dep.Name)
 	}

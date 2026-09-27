@@ -112,15 +112,18 @@ func main() {
 	}
 }
 
+// runDynamicModule dispatches a command a module published, so a component is
+// reachable by the name it installed itself under.
 func runDynamicModule(cmd string, args []string) bool {
 	// First, try to find a module with matching command
-	registryPath := filepath.Join(os.Getenv("HOME"), ".rho", "registry", "local", "registry.yaml")
+	rhoHome := deps.RhoHome()
+	registryPath := filepath.Join(rhoHome, "registry", "local", "registry.yaml")
 
 	// Read registry to find modules with this command
 	if _, err := os.Stat(registryPath); err == nil {
 		// Parse registry to find module with matching command
 		// We need to check each installed module's manifest for the command field
-		modulesDir := filepath.Join(os.Getenv("HOME"), ".rho", "modules", "installed")
+		modulesDir := filepath.Join(rhoHome, "modules", "installed")
 
 		for _, moduleType := range []string{"component", "plugin"} {
 			typeDir := filepath.Join(modulesDir, moduleType)
@@ -230,12 +233,19 @@ func installCLI(args []string) int {
 	}
 
 	if force {
-		home, err := install.GetRhoHome()
+		// --force means reinstall the toolchain over an existing installation,
+		// so only the binaries it owns are replaced. The registry, the installed
+		// modules, the module cache, the credentials and the configuration all
+		// belong to the user and survive: reinstalling must not take them.
+		binPath, err := install.GetBinPath()
 		if err != nil {
 			fmt.Println("rho install:", err)
 			return 1
 		}
-		os.RemoveAll(home)
+		if err := os.RemoveAll(binPath); err != nil {
+			fmt.Println("rho install:", err)
+			return 1
+		}
 	}
 
 	steps := []struct {
@@ -431,13 +441,9 @@ func isTargetName(word string) bool {
 // format is therefore a published contract the auth component owns, and this is
 // the only place in the core that knows it.
 func issuedToken(registry string) string {
-	home := os.Getenv("RHO_HOME")
+	home := deps.RhoHome()
 	if home == "" {
-		userHome, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		home = filepath.Join(userHome, ".rho")
+		return ""
 	}
 	data, err := os.ReadFile(filepath.Join(home, "auth", "credentials.json"))
 	if err != nil {

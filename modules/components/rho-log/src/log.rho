@@ -1,0 +1,28 @@
+module rho.log
+
+// A small Rho-side logging surface, so a Rho service can emit records through
+// the same formatter the component's own Go command uses.
+//
+// The backend supplies the sinks; this is the vocabulary around them.
+
+extern fn emit(level: u32, subject: string, message: string)
+
+fn trace(subject: string, message: string) void {
+    emit(0, subject, message)
+}
+
+fn debug(subject: string, message: string) void {
+    emit(1, subject, message)
+}
+
+fn info(subject: string, message: string) void {
+    emit(2, subject, message)
+}
+
+fn warn(subject: string, message: string) void {
+    emit(3, subject, message)
+}
+
+fn error(subject: string, message: string) void {
+    emit(4, subject, message)
+}

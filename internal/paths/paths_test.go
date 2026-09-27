@@ -42,6 +42,38 @@ func TestGetRhoHome(t *testing.T) {
 	}
 }
 
+func TestGetRhoHomeFollowsTheEnvironment(t *testing.T) {
+	// A sandbox or a CI runner points the installation somewhere else, and the
+	// tool, the module commands and the compiler all have to agree on where.
+	tmp := t.TempDir()
+	t.Setenv(RhoHomeEnvVar, tmp)
+
+	home, err := GetRhoHome()
+	if err != nil {
+		t.Fatalf("GetRhoHome failed: %v", err)
+	}
+	if home != tmp {
+		t.Fatalf("expected %s, got %s", tmp, home)
+	}
+}
+
+func TestTestRhoHomeOverridesTheEnvironment(t *testing.T) {
+	// The test override is the stronger of the two, so a test that installs a
+	// Rho home for itself is not redirected by the ambient environment.
+	t.Setenv(RhoHomeEnvVar, t.TempDir())
+	tmp := t.TempDir()
+	SetTestRhoHome(tmp)
+	defer SetTestRhoHome("")
+
+	home, err := GetRhoHome()
+	if err != nil {
+		t.Fatalf("GetRhoHome failed: %v", err)
+	}
+	if home != tmp {
+		t.Fatalf("expected %s, got %s", tmp, home)
+	}
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Test: GetRegistryPath                                                      */
 /* -------------------------------------------------------------------------- */
