@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -107,6 +108,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 		IR:           irModule,
 		IncludePaths: includePaths,
 		SourceFiles:  sourceFiles,
+		Config:       configBridge(path, outputDir),
 	}
 	for _, target := range targets {
 		if _, err := projectgen.Generate(ctx, target); err != nil {
@@ -193,6 +195,7 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 			IR:           irModule,
 			IncludePaths: includePaths,
 			SourceFiles:  sourceFiles,
+			Config:       configBridge(projectRoot, dir),
 		}
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err
@@ -324,6 +327,82 @@ func BuildTargetIDs(projectRoot string) ([]string, error) {
 
 // ProjectRoot returns the directory containing rho.mod, or the source file's
 // directory when the file is not part of a project.
+// configBridge is the Kconfig bridge a project declared, carried into
+// generation.
+//
+// The fragments are copied into the generated project rather than referenced in
+// place, because a generated project is a directory someone may build on its own
+// and move: it has to carry what it needs. A project that declared no bridge
+// gets none, and its build is what it was.
+func configBridge(projectRoot, outputDir string) *projectgen.Config {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil || manifest == nil || manifest.Config == nil {
+		return nil
+	}
+	declared := manifest.Config
+	bridge := &projectgen.Config{
+		Dialect:   declared.Dialect,
+		OutputDir: outputDir,
+	}
+	if bridge.Dialect == "" {
+		// The Linux-style .config and its header are what the C target already
+		// speaks, so a project that says nothing gets them.
+		bridge.Dialect = "linux"
+	}
+
+	// Fragments keep the order they were declared in, because two fragments may
+	// define the same symbol and the later one is the one that says what a
+	// project gets.
+	fragments := []string{}
+	copied := filepath.Join(outputDir, "kconfig")
+	for _, fragment := range declared.Fragments {
+		source := filepath.Join(projectRoot, filepath.FromSlash(fragment))
+		data, readErr := os.ReadFile(source)
+		if readErr != nil {
+			// A fragment that cannot be read is reported by the merge, which
+			// runs where the error is useful: in front of a build.
+			continue
+		}
+		if err := os.MkdirAll(copied, 0o755); err != nil {
+			return nil
+		}
+		name := filepath.Base(filepath.FromSlash(fragment))
+		if err := os.WriteFile(filepath.Join(copied, name), data, 0o644); err != nil {
+			return nil
+		}
+		fragments = append(fragments, filepath.Join("kconfig", name))
+	}
+
+	// The values a project sets are written as a defconfig, which is the format
+	// every dialect already reads, so a project needs no syntax of its own.
+	if len(declared.Values) > 0 {
+		if err := os.MkdirAll(copied, 0o755); err == nil {
+			names := make([]string, 0, len(declared.Values))
+			for name := range declared.Values {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			var defconfig strings.Builder
+			for _, name := range names {
+				fmt.Fprintf(&defconfig, "%s=%s\n", name, declared.Values[name])
+			}
+			path := filepath.Join(copied, "rho-defconfig")
+			if err := os.WriteFile(path, []byte(defconfig.String()), 0o644); err == nil {
+				bridge.Defconfig = filepath.Join("kconfig", "rho-defconfig")
+			}
+		}
+	}
+	// A Rho module of constants is a fragment too: the merge reads it with the
+	// compiler's own front end, so a value written in Rho is one the compiler
+	// would accept.
+	if declared.Module != "" {
+		fragments = append(fragments, filepath.Join("..", filepath.FromSlash(declared.Module)))
+	}
+	bridge.Fragments = fragments
+	bridge.ValuesFile = ".config"
+	return bridge
+}
+
 func ProjectRoot(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rho/src/yaml"
 )
 
 func TestLoadManifest(t *testing.T) {
@@ -292,5 +294,78 @@ func TestLoadYAMLManifestWithoutAProvidesSectionOffersNothing(t *testing.T) {
 	}
 	if m.Provides != nil {
 		t.Fatalf("expected nothing offered, got %+v", m.Provides)
+	}
+}
+
+func TestLoadYAMLManifestReadsTheConfigBridge(t *testing.T) {
+	// The bridge a project declares is what the generator copies and the
+	// component resolves, so all four parts of it are read.
+	path := writeManifest(t, `module:
+  name: sensorhub
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+config:
+  dialect: espidf
+  kconfig_fragments:
+    - kconfig/board.Kconfig
+  values:
+    CONFIG_UART_BAUD: "57600"
+    CONFIG_SPI_MASTER: "y"
+  module: config.rho
+`)
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Config == nil {
+		t.Fatal("expected the configuration bridge to be read")
+	}
+	if m.Config.Dialect != "espidf" {
+		t.Errorf("expected the dialect, got %q", m.Config.Dialect)
+	}
+	if len(m.Config.Fragments) != 1 || m.Config.Fragments[0] != "kconfig/board.Kconfig" {
+		t.Errorf("expected the fragments, got %+v", m.Config.Fragments)
+	}
+	if len(m.Config.Values) != 2 || m.Config.Values["CONFIG_UART_BAUD"] != "57600" {
+		t.Errorf("expected the values, got %+v", m.Config.Values)
+	}
+	if m.Config.Module != "config.rho" {
+		t.Errorf("expected the module of constants, got %q", m.Config.Module)
+	}
+}
+
+func TestLoadYAMLManifestWithoutAConfigSectionHasNoBridge(t *testing.T) {
+	// Most projects declare no configuration, and that is a decision: a section
+	// that says nothing is no section rather than one that configures nothing.
+	path := writeManifest(t, "module:\n  name: plain\n  type: rho\n  version: 1.0.0\n\nmain: src/main.rho\n")
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Config != nil {
+		t.Fatalf("expected no bridge, got %+v", m.Config)
+	}
+}
+
+func TestAConfigSectionThatDeclaresNothingIsNoSection(t *testing.T) {
+	// A section that names nothing is no section, rather than one that
+	// configures nothing: a build with no bridge and a build with an empty
+	// bridge should say the same thing, because they do the same thing.
+	// (The YAML in use cannot write an empty section, so this is asked of the
+	// reader directly.)
+	empty := map[string]yaml.Value{}
+	if config := parseConfigManifest(yaml.Value{Kind: yaml.KindMap, Map: empty}); config != nil {
+		t.Fatalf("expected no bridge, got %+v", config)
+	}
+	onlyAValue := map[string]yaml.Value{"dialect": {Kind: yaml.KindString, Str: "linux"}}
+	config := parseConfigManifest(yaml.Value{Kind: yaml.KindMap, Map: onlyAValue})
+	if config == nil {
+		t.Fatal("expected a section that names a dialect to be a section")
+	}
+	if config.Dialect != "linux" {
+		t.Fatalf("expected the dialect to be read, got %+v", config)
 	}
 }

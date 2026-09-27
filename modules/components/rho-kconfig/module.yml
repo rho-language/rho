@@ -1,0 +1,51 @@
+module:
+  name: rho-kconfig
+  type: component
+  version: 0.1.0
+  description: Configuration bridge between a Rho project and the Kconfig tooling around it
+  command: kconfig
+  import_path: rho.kconfig
+
+main: rho-kconfig
+
+features:
+  - configuration
+  - kconfig
+  - embedded
+
+# A Rho program reads a generated configuration through this library, so a value
+# chosen at build time is visible to code that runs.
+package:
+  kind: component
+  binary: true
+  import_path: rho.kconfig
+  interface:
+    - src/kconfig.rho
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+# The hooks a build goes through. A dialect is the part that differs between the
+# tools that read a configuration, so it is the part worth extending: a plugin
+# answers `render` and writes one more kind of header.
+provides:
+  hooks:
+    # Once, after the fragments are merged and before anything is written: a
+    # plugin renders the resolved configuration in its own dialect.
+    - render
+    # Once, after every dialect has been written.
+    - write
+
+docs:
+  title: Configuration bridge
+  section: components
+  order: "50"
+  index: docs/index.md
+  sources:
+    - docs/index.md

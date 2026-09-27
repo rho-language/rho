@@ -1,0 +1,56 @@
+module rho.kconfig
+
+// The configuration a program was built with.
+//
+// A value is chosen when the project is built, and the choice is written into a
+// header the generated code includes. This is the read side: a program asks what
+// its build was configured with, and answers from what the bridge wrote.
+
+// Whether a symbol is set, which is what a flag is asked.
+extern fn kconfig_enabled(symbol: string) bool
+
+// A symbol's value as text, which is what an int or a string symbol is asked
+// for. An absent symbol is the empty string.
+extern fn kconfig_value(symbol: string) string
+
+// A symbol's value as a number, and 0 when it is absent or is not a number.
+extern fn kconfig_number(symbol: string) i64
+
+// Whether a fragment declared a symbol at all, which is how a program tells a
+// symbol that is off from one that was never offered.
+extern fn kconfig_declared(symbol: string) bool
+
+// A symbol's help text, which is what a program shows when a setting is wrong.
+// The empty string when the symbol carries no help.
+extern fn kconfig_help(symbol: string) string
+
+// The symbols a build resolved, one per line, each `name=value`.
+extern fn kconfig_symbols() string
+
+/* -------------------------------------------------------------------------- */
+/*  Reading it as a program does                                              */
+/* -------------------------------------------------------------------------- */
+
+// enabled is a symbol read as a flag.
+fn enabled(symbol: string) bool {
+    return kconfig_enabled(symbol);
+}
+
+// value is a symbol read as text.
+fn value(symbol: string) string {
+    return kconfig_value(symbol);
+}
+
+// number is a symbol read as a number, with a fallback for a symbol that is not
+// set: a program that needs a baud rate still runs on the default it was given
+// rather than on zero.
+fn number(symbol: string, fallback: i64) i64 {
+    if !kconfig_declared(symbol) {
+        return fallback;
+    }
+    let read: i64 = kconfig_number(symbol);
+    if read == 0 && kconfig_value(symbol) == "" {
+        return fallback;
+    }
+    return read;
+}

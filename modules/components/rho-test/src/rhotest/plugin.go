@@ -253,4 +253,3 @@ func decodePayloads[T any](payloads []json.RawMessage) []T {
 	}
 	return out
 }
-

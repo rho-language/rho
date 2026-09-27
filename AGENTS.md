@@ -36,7 +36,7 @@ go build -o ./bin/rho ./cmd/rho
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-doc`, `rho-fmt`, `rho-log`, `rho-lsp`, `rho-test`
+- `modules/components/` - Components: `rho-auth`, `rho-doc`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-test`
 - `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
@@ -105,4 +105,20 @@ cd <project-dir>/build/generated/c && cmake -B out && cmake --build out
 
 A target may ask for a port, which is how a project gets what only a host can
 supply: `logemit` for logging, `fsstore` for a module store, `docemit` for the
-documentation generator.
+documentation generator, `kconfig` for a resolved configuration.
+
+## Configuration
+
+A project declares its configuration once, in a top-level `config:` section, and the
+`rho-kconfig` component writes it in the form the toolchain it targets reads:
+
+```sh
+rho build <project>            # generates a project whose CMake resolves it
+rho kconfig list --root <dir>  # every symbol, its value, and where it came from
+```
+
+The generator copies the declared fragments into the generated project and emits
+the CMake that runs the merge, so the configuration is resolved by the build
+rather than baked into a generated file. The dialects are `linux` (`.config` and
+`autoconf.h`), `espidf` (`sdkconfig` and `sdkconfig.h`) and `freertos`
+(`FreeRTOSConfig.h`).
