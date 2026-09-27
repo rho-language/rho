@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"rho/src/plugins"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -193,6 +195,10 @@ func runGoTestFile(tf TestFile, target, rhoBinary string) ([]TestResult, error) 
 	exe := filepath.Join(generatedDir, filepath.Base(strings.TrimSuffix(tempPath, ".rho")))
 	cmdGo := exec.Command("go", "build", "-o", exe, ".")
 	cmdGo.Dir = generatedDir
+	// A generated project stands on its own: it has no requirements beyond the
+	// standard library, and it is built inside the repository that generated it,
+	// which may have a Go workspace that would otherwise claim it.
+	cmdGo.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := cmdGo.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("go build: %w: %s", err, out)
 	}
@@ -246,6 +252,13 @@ type Options struct {
 	// RhoBinary is the rho to build with. Empty falls back to RHO_BIN and
 	// then to whatever is on PATH.
 	RhoBinary string
+	// Plugins are the plugins the run hands its discovery and its results to.
+	// A run without them is a plain run.
+	Plugins Plugins
+	// ReportDir is where a plugin's report is written. Empty writes it beside
+	// the project's build directory, which is where a build already keeps what
+	// a run produced.
+	ReportDir string
 }
 
 // Run discovers, runs and reports a test suite, returning a process exit code:
@@ -254,36 +267,118 @@ func Run(options Options) int {
 	if options.Target == "" {
 		options.Target = DefaultTarget
 	}
-	files, err := Discover(options.Path)
+	discovered, err := Discover(options.Path)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return 1
 	}
+	// The discover hook runs before the run does, so a plugin that knows a
+	// project's own test layout adds to what is about to be run.
+	files, diagnostics := options.Plugins.Discover(projectRootFor(discoveredPath(discovered)), options.Target, describe(discovered))
+	reportDiagnostics(diagnostics)
+
 	if len(files) == 0 {
 		fmt.Println("No test files found.")
 		return 0
 	}
 
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
 	all := []TestResult{}
 	for _, file := range files {
-		loaded, loadErr := LoadTests(file)
+		loaded, loadErr := LoadTests(file.Path)
 		if loadErr != nil {
-			fmt.Printf("Error loading %s: %v\n", file, loadErr)
+			fmt.Printf("Error loading %s: %v\n", file.Path, loadErr)
 			return 1
 		}
 		results, runErr := RunTestFileForTarget(loaded, options.Target, options.RhoBinary)
 		if runErr != nil {
-			fmt.Printf("Error running %s: %v\n", file, runErr)
+			fmt.Printf("Error running %s: %v\n", file.Path, runErr)
 			return 1
 		}
 		all = append(all, results...)
 	}
 
 	Report(all)
+
+	// The run hook runs after the report, so a plugin is told what the run
+	// actually did rather than what it was asked to do.
+	outcome := options.Plugins.Run(projectRootFor(discoveredPath(paths)), options.Target, all)
+	reportOutcome(options, outcome)
+	reportDiagnostics(outcome.Diagnostics)
+
 	for _, result := range all {
 		if !result.Passed {
 			return 1
 		}
 	}
 	return 0
+}
+
+/* -------------------------------------------------------------------------- */
+/*  What the plugins said                                                     */
+/* -------------------------------------------------------------------------- */
+
+// describe turns the files the run found into what a plugin is asked about
+// them: a path, and the cases each file holds.
+func describe(paths []string) []DiscoveredFile {
+	files := make([]DiscoveredFile, 0, len(paths))
+	for _, path := range paths {
+		file := DiscoveredFile{Path: path}
+		if loaded, err := LoadTests(path); err == nil {
+			file.Tests = loaded.Tests
+		}
+		files = append(files, file)
+	}
+	return files
+}
+
+// reportOutcome prints what the plugins said, and writes what they wrote.
+//
+// A report is a document a system reads, so it is written to a file rather than
+// printed: printed, it is a wall of text in the middle of a test run; written,
+// a CI system can pick it up.
+func reportOutcome(options Options, outcome RunOutcome) {
+	for _, note := range outcome.Notes {
+		fmt.Println(note)
+	}
+	if len(outcome.Reports) == 0 {
+		return
+	}
+	dir := options.ReportDir
+	if dir == "" {
+		dir = filepath.Join(projectRootFor(options.Path), "build", "test-reports")
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "rho test: cannot write a report: %v\n", err)
+		return
+	}
+	for index, report := range outcome.Reports {
+		name := filepath.Join(dir, fmt.Sprintf("plugin-%d.txt", index+1))
+		if err := os.WriteFile(name, []byte(report), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "rho test: cannot write %s: %v\n", name, err)
+			continue
+		}
+		fmt.Println("report:", name)
+	}
+}
+
+// reportDiagnostics prints what the plugins reported, on standard error, so a
+// note about a plugin does not read as a test result.
+func reportDiagnostics(diagnostics []plugins.Diagnostic) {
+	for _, diagnostic := range diagnostics {
+		fmt.Fprintln(os.Stderr, "rho test:", diagnostic)
+	}
+}
+
+// discoveredPath is the path of the first file a run found, which is how the run
+// finds the project it belongs to. An empty run has none, and is over the
+// directory it was pointed at.
+func discoveredPath(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
 }

@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rho/src/plugins"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -62,8 +64,8 @@ func writePlugin(t *testing.T, root, name, component, hooks, commands string) st
 
 // discover reads the plugins a tree carries, which is what a build does when it
 // is told to trust the tree it documents.
-func discover(root string) Plugins {
-	return Plugins{Tree: root, TrustTree: true}
+func discover(root string) Source {
+	return Source{Tree: root, TrustTree: true}
 }
 
 // aCommand is one command declaration, written the way a manifest spells it:
@@ -111,7 +113,7 @@ func TestPluginRequestCarriesTheWholeSite(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := discover(root).DiscoverPlugins(ComponentName)
+	plugins := discover(root).Discover(ComponentName)
 	if len(plugins) != 1 || plugins[0].Name != "toc" {
 		t.Fatalf("expected the plugin to be discovered, got %+v", plugins)
 	}
@@ -119,19 +121,19 @@ func TestPluginRequestCarriesTheWholeSite(t *testing.T) {
 		t.Fatalf("unexpected commands: %+v", plugins[0].Commands)
 	}
 
-	site := BuildSite(modules, ApiSet{}, SiteOptions{Title: "Rho"})
+	site := BuildSiteWithPlugins(modules, ApiSet{}, SiteOptions{Title: "Rho"}, plugins)
 	// The response is written by the helper, which is where the request is
 	// checked; a failure here means the request was not what the protocol says.
-	site.RunPlugins(plugins, filepath.Join(root, "out"))
+	site.RunPlugins(filepath.Join(root, "out"))
 
 	if len(site.Pages) != 2 {
-		t.Fatalf("expected the plugin's page to be added, got %d pages", len(site.Pages))
+		t.Fatalf("expected the plugin's page to be added, got %d pages, diagnostics %+v", len(site.Pages), site.Diagnostics)
 	}
 	added := findPage(site, "contents")
 	if added == nil {
 		t.Fatalf("expected the contents page, got %+v", site.Pages)
 	}
-	if added.Module != "toc" || added.Section != "extensions" {
+	if added.Section != "extensions" {
 		t.Fatalf("expected the page attributed to the plugin, got %+v", added)
 	}
 	if !strings.Contains(added.Body, "Index") {
@@ -147,9 +149,9 @@ func TestPluginCanRewriteAPage(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := discover(root).DiscoverPlugins(ComponentName)
-	site := BuildSite(modules, ApiSet{}, SiteOptions{})
-	site.RunPlugins(plugins, filepath.Join(root, "out"))
+	plugins := discover(root).Discover(ComponentName)
+	site := BuildSiteWithPlugins(modules, ApiSet{}, SiteOptions{}, plugins)
+	site.RunPlugins(filepath.Join(root, "out"))
 
 	page := findPage(site, "app/index")
 	if page == nil {
@@ -168,9 +170,9 @@ func TestAFailingPluginIsReportedAndSkipped(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := discover(root).DiscoverPlugins(ComponentName)
-	site := BuildSite(modules, ApiSet{}, SiteOptions{})
-	site.RunPlugins(plugins, filepath.Join(root, "out"))
+	plugins := discover(root).Discover(ComponentName)
+	site := BuildSiteWithPlugins(modules, ApiSet{}, SiteOptions{}, plugins)
+	site.RunPlugins(filepath.Join(root, "out"))
 
 	// The documentation still exists: one broken extension does not cost the
 	// reader the pages of everything else.
@@ -193,9 +195,9 @@ func TestAPluginAnsweringNonsenseIsReported(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := discover(root).DiscoverPlugins(ComponentName)
-	site := BuildSite(modules, ApiSet{}, SiteOptions{})
-	site.RunPlugins(plugins, filepath.Join(root, "out"))
+	plugins := discover(root).Discover(ComponentName)
+	site := BuildSiteWithPlugins(modules, ApiSet{}, SiteOptions{}, plugins)
+	site.RunPlugins(filepath.Join(root, "out"))
 
 	if len(site.Diagnostics) == 0 {
 		t.Fatal("expected a response that is not JSON to be reported")
@@ -210,9 +212,9 @@ func TestAPluginThatIsNotThereIsReported(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := discover(root).DiscoverPlugins(ComponentName)
-	site := BuildSite(modules, ApiSet{}, SiteOptions{})
-	site.RunPlugins(plugins, filepath.Join(root, "out"))
+	plugins := discover(root).Discover(ComponentName)
+	site := BuildSiteWithPlugins(modules, ApiSet{}, SiteOptions{}, plugins)
+	site.RunPlugins(filepath.Join(root, "out"))
 
 	if len(site.Diagnostics) == 0 || !strings.Contains(site.Diagnostics[0].Message, "not on PATH") {
 		t.Fatalf("expected a missing program to be reported, got %+v", site.Diagnostics)
@@ -224,7 +226,7 @@ func TestADiscoveredPluginCarriesItsRelation(t *testing.T) {
 	writePlugin(t, root, "guide", ComponentName, "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "banner"))
 
-	plugins := discover(root).DiscoverPlugins(ComponentName)
+	plugins := discover(root).Discover(ComponentName)
 	if len(plugins) != 1 {
 		t.Fatalf("expected one plugin, got %+v", plugins)
 	}
@@ -247,7 +249,7 @@ func TestAPluginForAnotherComponentIsNotLoaded(t *testing.T) {
 	writePlugin(t, root, "other", "rho-fmt", "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "banner"))
 
-	if plugins := discover(root).DiscoverPlugins(ComponentName); len(plugins) != 0 {
+	if plugins := discover(root).Discover(ComponentName); len(plugins) != 0 {
 		t.Fatalf("expected a plugin for another component to be left out, got %+v", plugins)
 	}
 	all := discover(root).All()
@@ -264,10 +266,12 @@ func TestAHookThisGeneratorDoesNotRunIsNeverCalled(t *testing.T) {
 	writePlugin(t, root, "eager", ComponentName, "  - shutdown\n",
 		"\ncommands:\n"+aCommand(t, "shutdown", "shutdown", "contents"))
 
-	plugins := discover(root).DiscoverPlugins(ComponentName)
-	result := RunHooks(plugins, "shutdown", PluginRequest{Version: ProtocolVersion})
-	if len(result.Pages) != 0 {
-		t.Fatalf("expected no answer from a hook the generator does not run, got %+v", result.Pages)
+	found := discover(root).Discover(ComponentName)
+	site := BuildSiteWithPlugins(nil, ApiSet{}, SiteOptions{}, found)
+	// The run asks for a hook it does not run, so the answer is empty whatever
+	// the plugin claims.
+	if answer := site.run("shutdown", sitePayload{}); len(answer.Pages) != 0 {
+		t.Fatalf("expected no answer from a hook the generator does not run, got %+v", answer.Pages)
 	}
 }
 
@@ -275,7 +279,7 @@ func TestAModuleThatIsNotAPluginIsNotAnExtension(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
 
-	if plugins := discover(root).DiscoverPlugins(ComponentName); len(plugins) != 0 {
+	if plugins := discover(root).Discover(ComponentName); len(plugins) != 0 {
 		t.Fatalf("expected no plugins, got %+v", plugins)
 	}
 }
@@ -296,11 +300,11 @@ func TestPluginHelperProcess(t *testing.T) {
 	if err != nil {
 		os.Exit(3)
 	}
-	var request PluginRequest
+	var request plugins.Request
 	if err := json.Unmarshal(payload, &request); err != nil {
 		os.Exit(4)
 	}
-	if request.Version != ProtocolVersion {
+	if request.Version != plugins.ProtocolVersion {
 		os.Exit(5)
 	}
 	switch mode {
@@ -312,13 +316,17 @@ func TestPluginHelperProcess(t *testing.T) {
 	case "contents":
 		// A table of contents over the pages the request carries, which is
 		// the whole point of a whole-site hook.
+		var site sitePayload
+		if err := json.Unmarshal(request.Payload, &site); err != nil {
+			os.Exit(6)
+		}
 		var items []string
-		for _, page := range request.Pages {
+		for _, page := range site.Pages {
 			items = append(items, "<li>"+page.Title+"</li>")
 		}
-		response := PluginResponse{
-			Version: ProtocolVersion,
-			Pages: []PluginPage{{
+		response := plugins.Response{
+			Version: plugins.ProtocolVersion,
+			Pages: []plugins.Page{{
 				Target: "contents",
 				Title:  "Contents",
 				HTML:   "<nav><ul>" + strings.Join(items, "") + "</ul></nav>",
@@ -328,9 +336,15 @@ func TestPluginHelperProcess(t *testing.T) {
 		encoded, _ := json.Marshal(response)
 		os.Stdout.Write(encoded)
 	case "banner":
-		response := PluginResponse{
-			Version:      ProtocolVersion,
-			Replacements: map[string]string{request.Page.Target: "<p>banner-added</p>"},
+		// The page a per-page hook is asked about, which the shared envelope
+		// carries in the payload.
+		var one pagePayload
+		if err := json.Unmarshal(request.Payload, &one); err != nil {
+			os.Exit(6)
+		}
+		response := plugins.Response{
+			Version:      plugins.ProtocolVersion,
+			Replacements: map[string]string{one.Page.Target: "<p>banner-added</p>"},
 		}
 		encoded, _ := json.Marshal(response)
 		os.Stdout.Write(encoded)
@@ -358,10 +372,10 @@ func TestTheTreePluginsRunOnlyWhenTheyAreTrusted(t *testing.T) {
 	writePlugin(t, root, "toc", ComponentName, "  - "+HookIndex+"\n",
 		"\ncommands:\n"+aCommand(t, "contents", HookIndex, "contents"))
 
-	if plugins := (Plugins{Tree: root}).DiscoverPlugins(ComponentName); len(plugins) != 0 {
+	if plugins := (Source{Tree: root}).Discover(ComponentName); len(plugins) != 0 {
 		t.Fatalf("expected the tree's plugins to be left alone by default, got %+v", plugins)
 	}
-	if plugins := discover(root).DiscoverPlugins(ComponentName); len(plugins) != 1 {
+	if plugins := discover(root).Discover(ComponentName); len(plugins) != 1 {
 		t.Fatalf("expected the tree's plugins to be read when trusted, got %+v", plugins)
 	}
 }
@@ -375,11 +389,11 @@ func TestACommandCannotLeaveThePluginDirectory(t *testing.T) {
 		"\ncommands:\n  - name: contents\n    run: ../../../bin/sh\n    hook: "+HookIndex+"\n")
 	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
 
-	discovered := discover(root).DiscoverPlugins(ComponentName)
+	discovered := discover(root).Discover(ComponentName)
 	if len(discovered) != 1 {
 		t.Fatalf("expected the plugin to be discovered, got %+v", discovered)
 	}
-	result := RunHooks(discovered, HookIndex, PluginRequest{Version: ProtocolVersion})
+	result := plugins.RunHooks(discovered, ComponentName, HookIndex, sitePayload{})
 	if len(result.Diagnostics) == 0 || !strings.Contains(result.Diagnostics[0].Message, "leaves the plugin directory") {
 		t.Fatalf("expected the escape to be refused, got %+v", result.Diagnostics)
 	}

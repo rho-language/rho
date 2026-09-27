@@ -1,0 +1,40 @@
+module:
+  name: rho-test-junit
+  type: plugin
+  version: 0.1.0
+  description: Writes a JUnit report for a test run, which is what a CI system reads
+
+main: rho-test-junit
+
+features:
+  - test
+  - junit
+  - ci
+
+# The component this plugin plugs into, and the hooks of it this plugin answers.
+# A run of that component is the only thing that ever calls it, and every hook
+# here has to be one the component offers.
+extends: rho-test
+
+hooks:
+  # Once, over the results of a finished run.
+  - run
+
+# The executable that answers the hook. The request arrives as JSON on standard
+# input and the report is read back as JSON from standard output.
+commands:
+  - name: junit
+    run: rho-test-junit
+    hook: run
+
+package:
+  kind: plugin
+  interface: []
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src

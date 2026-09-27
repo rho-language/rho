@@ -16,6 +16,19 @@ features:
 deps:
   rho-log: ">=0.1.0"
 
+# The hooks a run goes through, which a plugin answers. A plugin is a third
+# party's answer to a question about a test run, so the two questions worth
+# asking are the ones only a project can answer: what a run found, and how a
+# result should be reported.
+provides:
+  hooks:
+    # Once, over the test files the run found: a plugin that knows a project's
+    # own test layout, or that generates tests, answers here.
+    - discover
+    # Once, over the results of a finished run: a plugin that reports a run
+    # in a form a system reads, such as JUnit XML or a CI summary.
+    - run
+
 # The runner documents itself: what it discovers, and what it reports.
 docs:
   title: Test runner

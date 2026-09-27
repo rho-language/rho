@@ -145,7 +145,10 @@ only thing that ever calls it, and it loads the plugins that name it. See
 
 A hook is run at most once per plugin, and only if the plugin declared it. The
 answer arrives as a process: the generator writes a request to the plugin's
-standard input and reads a response from its standard output, both JSON:
+standard input and reads a response from its standard output, both JSON. The
+envelope is the toolchain's rather than this component's — `rho/src/plugins` —
+so a plugin is written the same way whichever component it extends, and only the
+payload differs: pages for a documentation build, test results for a test run.
 
 ```json
 {

@@ -75,6 +75,21 @@ type Site struct {
 	Diagnostics []Diagnostic
 	// Requests are the cross-references that resolved to nothing.
 	Requests []UnresolvedRef
+	// plugins are the plugins this build runs, remembered so a hook pass does
+	// not have to be handed them again.
+	plugins []Plugin
+}
+
+// PluginResult is what the plugins answered one hook with, in the terms a site
+// works in: pages they added, bodies they rewrote, and what they reported.
+type PluginResult struct {
+	// Pages are the pages the plugins added.
+	Pages []*SitePage
+	// Replacements are rewritten bodies, keyed by the target of the page they
+	// belong to.
+	Replacements map[string]string
+	// Diagnostics is what the plugins reported.
+	Diagnostics []Diagnostic
 }
 
 // SectionGroup is one sidebar group: a section of pages under a heading.
@@ -138,7 +153,19 @@ func (u UnresolvedRef) String() string {
 // the same name do not overwrite one another, and every link inside the site is
 // written as the target's own file.
 func BuildSite(modules []ModuleDoc, api ApiSet, options SiteOptions) *Site {
+	return buildSite(modules, api, options, nil)
+}
+
+// BuildSiteWithPlugins builds a site that hands itself to the named plugins on
+// the way out. A caller that discovered plugins passes them here rather than
+// after the build, so a hook pass sees the same set the caller chose.
+func BuildSiteWithPlugins(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plugin) *Site {
+	return buildSite(modules, api, options, found)
+}
+
+func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plugin) *Site {
 	site := &Site{
+		plugins:   found,
 		Title:     options.Title,
 		Project:   options.Project,
 		Version:   options.Version,

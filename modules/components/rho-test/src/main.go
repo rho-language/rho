@@ -18,6 +18,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"rho/src/deps"
 
 	rholog "github.com/rho/rho-log/src/logger"
 	"github.com/rho/rho-test/src/rhotest"
@@ -36,8 +39,21 @@ func run(args []string) int {
 	// the native one; a Go project is tested with --target go.
 	options := rhotest.Options{Target: rhotest.DefaultTarget}
 	rest := []string{}
+	noPlugins := false
+	listPlugins := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "-no-plugins", "--no-plugins":
+			noPlugins = true
+		case "-list-plugins", "--list-plugins":
+			listPlugins = true
+		case "-report-dir", "--report-dir":
+			if i+1 >= len(args) {
+				fmt.Println("Usage: rho-test <path> [--report-dir DIR]")
+				return 2
+			}
+			options.ReportDir = args[i+1]
+			i++
 		case "-target", "--target":
 			if i+1 >= len(args) {
 				fmt.Println("Usage: rho-test <path> [--target c|go]")
@@ -61,5 +77,33 @@ func run(args []string) int {
 		return 2
 	}
 	options.Path = rest[0]
+
+	// The plugins are found before the run rather than during it, so a run is
+	// either answered by them or not at all, and never halfway.
+	if !noPlugins {
+		source := rhotest.Source{Tree: options.Path, RhoHome: deps.RhoHome()}
+		if listPlugins {
+			list(rhotest.DiscoverPlugins(source))
+			return 0
+		}
+		options.Plugins = rhotest.WithPlugins(rhotest.DiscoverPlugins(source))
+	}
 	return rhotest.Run(options)
+}
+
+// list names the plugins that extend this runner, so an author can see whether
+// the one they wrote is the one that would run.
+func list(found []rhotest.Plugin) {
+	if len(found) == 0 {
+		fmt.Println("No plugin extends the test runner.")
+		return
+	}
+	fmt.Printf("%d plugin(s) extend the test runner:\n", len(found))
+	for _, plugin := range found {
+		hooks := []string{}
+		for _, command := range plugin.Commands {
+			hooks = append(hooks, command.Stage())
+		}
+		fmt.Printf("  %s %s hooks: %s\n", plugin.Name, plugin.Version, strings.Join(hooks, ", "))
+	}
 }
