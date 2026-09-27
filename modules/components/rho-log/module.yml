@@ -4,8 +4,31 @@ module:
   version: 0.1.0
   description: Structured logging
   command: log
+  import_path: rho.log
 
 main: rho-log
+
+# The component is published as a command and, in the same structure, as a Rho
+# library: src/log.rho is imported as `rho.log` by anything that depends on it.
+# Setting binary to false publishes the library form, the way a C project with
+# no main is built as a library rather than an executable.
+package:
+  kind: component
+  # The command form carries the whole component. The library form is the
+  # header alone: src/log.rho declares what a caller compiles against, and the
+  # implementation comes from the logemit port, so no host source travels.
+  binary: true
+  import_path: rho.log
+  interface:
+    - src/log.rho
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
 
 features:
   - logging

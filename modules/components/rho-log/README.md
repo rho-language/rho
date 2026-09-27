@@ -47,7 +47,76 @@ Adding one is adding a type, not changing the logger.
 
 A sink that fails never takes the component down with it.
 
+## Using it from Rho
+
+The component ships a Rho library alongside the command, in the same structure:
+`src/log.rho` is the interface a caller sees, the way a header is, and
+`src/main.go` is the command. A project depends on the component, imports the
+library, and asks the backend for the port behind it:
+
+```yaml
+deps:
+  rho-log: ">=0.1.0"
+```
+
+```rho
+import rho.log
+
+fn main() void {
+    info("registry", "listening", "port=8080")
+}
+```
+
+```yaml
+# project.yml
+targets:
+  - id: go
+    ports:
+      - logemit
+```
+
+Nothing from the component's internals is copied into the project: the library
+is the only surface it needs, and the backend supplies `emit`.
+
+## Published forms
+
+The same component publishes in two forms, the way a C project either has a
+`main` and becomes an executable or has none and becomes a library.
+
+`binary: true` — the command form — carries the manifest, the documentation,
+the header and the prebuilt command:
+
+```
+module.yml
+README.md
+rho-log          the command, prebuilt
+src/log.rho      the interface a caller compiles against
+```
+
+`binary: false` — the library form — carries the header alone, with no command.
+
+Neither form carries host source. The command is shipped built, and a caller
+compiles against the header, so the `.go` files are build input rather than
+something an installation needs. Leaving them out means there is nothing in an
+installed component for a user to edit, and nothing to keep in step with the
+component's own copy. The implementation comes from the `logemit` port, which
+the backend supplies.
+
+The library is declared with `interface:`, so a package that ships a header
+cannot accidentally ship an implementation with it:
+
+```yaml
+package:
+  binary: false
+  interface:
+    - src/log.rho
+```
+
 ## Extending
 
 A later plugin, such as forwarding to a collector, implements `Sink` and is
 registered in the component's descriptor. Nothing in the logger changes.
+
+A later *port*, for a capability the library exposes to Rho, is a new entry in
+`portGenerators` in `src/codegen`. The library declares the function; the port
+implements it; a project names the port.

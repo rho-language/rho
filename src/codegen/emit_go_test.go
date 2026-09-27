@@ -226,8 +226,13 @@ func TestEmitGoCallsAppInitWhenPresent(t *testing.T) {
 	if !strings.Contains(out, "func AppInit()") {
 		t.Error("expected AppInit to be generated")
 	}
-	if !strings.Contains(out, "\tinit()") {
-		t.Error("expected AppInit to call the Rho init function")
+	// `init` is reserved by Go, so the emitted function and the call both use
+	// the escaped name. Without it the generated project does not compile.
+	if !strings.Contains(out, "func init_()") {
+		t.Errorf("expected the Rho init to be emitted under an escaped name, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\tinit_()") {
+		t.Error("expected AppInit to call the escaped init function")
 	}
 	if !strings.Contains(EmitGoEntrypoint(m), "AppInit()") {
 		t.Error("expected the entrypoint to call AppInit")
@@ -628,5 +633,26 @@ func unusedLocalIR() ir.ModuleIR {
 				},
 			},
 		},
+	}
+}
+
+// A Rho `init` function collides with Go's reserved initializer, so it is
+// emitted under an escaped name. This is the same class as `error`: a Rho name
+// that Go cannot accept as written.
+func TestEmitGoEscapesReservedInit(t *testing.T) {
+	m := greetIR()
+	m.Funcs = append([]ir.FuncIR{{
+		Name:       "init",
+		CName:      "init",
+		ReturnType: ir.Type{Kind: ir.TypeVoid},
+		Body:       []ir.Instr{{Op: ir.OpExpr, Args: []string{`printf("ready\n")`}}},
+	}}, m.Funcs...)
+
+	out := EmitGo(m)
+	if strings.Contains(out, "func init(") {
+		t.Errorf("a Go initializer must not be emitted for a Rho init:\n%s", out)
+	}
+	if !strings.Contains(out, "func init_()") {
+		t.Errorf("expected the escaped definition, got:\n%s", out)
 	}
 }

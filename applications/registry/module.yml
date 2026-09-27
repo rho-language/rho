@@ -11,3 +11,9 @@ build:
   language: go
   targets:
     - go-server
+
+# The application logs its own domain events: a publish accepted or refused, a
+# download served or missed. The service manager already collects the process's
+# own records, so these are the ones worth keeping in an application log.
+deps:
+  rho-log: ">=0.1.0"

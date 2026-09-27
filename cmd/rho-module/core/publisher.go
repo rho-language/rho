@@ -53,17 +53,12 @@ func PublishModule(dir string) error {
 		return fmt.Errorf("cannot read module info: %w", err)
 	}
 
-	// Convert to pkg ModuleYAML
-	pkgManifest := pkgcore.ModuleYAML{
-		Module: pkgcore.ModuleSection{
-			Name:    meta.Module.Name,
-			Type:    meta.Module.Type,
-			Version: meta.Module.Version,
-			Command: meta.Module.Command,
-		},
-		Main:     meta.Main,
-		Deps:     meta.Deps,
-		Features: meta.Features,
+	// The manifest is loaded rather than rebuilt from metadata, so every
+	// section the packager reads travels with it. Rebuilding it dropped the
+	// `package:` section, which is what decides whether a command is built.
+	pkgManifest, err := pkgcore.LoadModuleYAML(filepath.Join(dir, "module.yml"))
+	if err != nil {
+		return fmt.Errorf("cannot load module.yml: %w", err)
 	}
 
 	var binaryPath string
@@ -84,8 +79,11 @@ func PublishModule(dir string) error {
 	}
 	defer cleanup()
 
-	// Step 3: Build binary (for component/plugin)
-	if pkgManifest.Module.Type == "component" || pkgManifest.Module.Type == "plugin" {
+	// Step 3: Build the command, when the package layout says this kind of
+	// module has one. A component published as a library has no command, the
+	// same way a C project with no main is built as a library rather than an
+	// executable, and only its interface is published.
+	if pkgManifest.Layout().Binary {
 		binaryPath, err = pkgcore.BuildBinary(dir, pkgManifest)
 		if err != nil {
 			return fmt.Errorf("build binary: %w", err)
@@ -111,7 +109,7 @@ func PublishModule(dir string) error {
 	}
 
 	// Step 7: Install locally
-	if err := installLocally(pkgManifest, pkgPath); err != nil {
+	if err := installLocally(pkgManifest, pkgPath, sourceArchive); err != nil {
 		return fmt.Errorf("local install failed: %w", err)
 	}
 
@@ -130,7 +128,11 @@ func packModuleSources(dir string, meta ModuleInfo) (string, error) {
 		meta.Module.Name,
 		meta.Module.Version,
 	)
-	archivePath := filepath.Join(dir, archiveName)
+	// The source archive is a build artefact, not a source file.
+	archivePath := filepath.Join(pkgcore.ArtifactDirFor(dir, mustManifest(dir)), archiveName)
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
+		return "", fmt.Errorf("cannot create the build directory: %w", err)
+	}
 
 	out, err := os.Create(archivePath)
 	if err != nil {
@@ -144,7 +146,7 @@ func packModuleSources(dir string, meta ModuleInfo) (string, error) {
 	tw := tar.NewWriter(gz)
 	defer tw.Close()
 
-	// Collect source files (module.yml, src/, plugin/, README.md, config/)
+	// The layout decides what the source archive holds.
 	files, err := collectModuleFiles(dir)
 	if err != nil {
 		return "", err
@@ -174,58 +176,23 @@ func packModuleSources(dir string, meta ModuleInfo) (string, error) {
 /*  Collect Files                                                              */
 /* -------------------------------------------------------------------------- */
 
+// mustManifest loads a manifest for a path that is known to have one.
+func mustManifest(dir string) pkgcore.ModuleYAML {
+	manifest, err := pkgcore.LoadModuleYAML(filepath.Join(dir, "module.yml"))
+	if err != nil {
+		return pkgcore.ModuleYAML{}
+	}
+	return manifest
+}
+
+// collectModuleFiles gathers what the source archive holds, which is the same
+// layout the binary package uses, so the two cannot disagree.
 func collectModuleFiles(dir string) ([]string, error) {
-	var out []string
-
-	required := []string{
-		"module.yml",
-		"README.md",
+	manifest, err := pkgcore.LoadModuleYAML(filepath.Join(dir, "module.yml"))
+	if err != nil {
+		return nil, err
 	}
-
-	for _, f := range required {
-		path := filepath.Join(dir, f)
-		if _, err := os.Stat(path); err != nil {
-			return nil, fmt.Errorf("missing required file: %s", f)
-		}
-		out = append(out, path)
-	}
-
-	// src/
-	srcDir := filepath.Join(dir, "src")
-	if _, err := os.Stat(srcDir); err != nil {
-		return nil, fmt.Errorf("missing src/ directory")
-	}
-
-	filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			out = append(out, path)
-		}
-		return nil
-	})
-
-	// config/ (optional)
-	configDir := filepath.Join(dir, "config")
-	if _, err := os.Stat(configDir); err == nil {
-		filepath.Walk(configDir, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() {
-				out = append(out, path)
-			}
-			return nil
-		})
-	}
-
-	// plugin/ (optional)
-	pluginDir := filepath.Join(dir, "plugin")
-	if _, err := os.Stat(pluginDir); err == nil {
-		filepath.Walk(pluginDir, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() {
-				out = append(out, path)
-			}
-			return nil
-		})
-	}
-
-	return out, nil
+	return pkgcore.CollectLayoutFiles(dir, manifest.Layout())
 }
 
 /* -------------------------------------------------------------------------- */
@@ -275,7 +242,7 @@ func uploadModule(meta ModuleInfo, pkgPath, sourceArchive string) error {
 /*  Local Install (same as build)                                              */
 /* -------------------------------------------------------------------------- */
 
-func installLocally(meta pkgcore.ModuleYAML, pkgPath string) error {
+func installLocally(meta pkgcore.ModuleYAML, pkgPath, sourceArchive string) error {
 	// Install to ~/.rho/modules/installed/<type>/
 	modulesDir, err := paths.GetModulesInstalledPath()
 	if err != nil {
@@ -283,8 +250,25 @@ func installLocally(meta pkgcore.ModuleYAML, pkgPath string) error {
 	}
 	moduleDir := filepath.Join(modulesDir, meta.Module.Type, fmt.Sprintf("%s@%s", meta.Module.Name, meta.Module.Version))
 
+	// The target is replaced rather than merged. Publishing a component in a
+	// different form, or one whose file list changed, must not leave the
+	// previous form's files behind.
+	if err := os.RemoveAll(moduleDir); err != nil {
+		return fmt.Errorf("cannot clear the previous installation: %w", err)
+	}
 	if err := pkgcore.UnpackArchive(pkgPath, moduleDir); err != nil {
 		return fmt.Errorf("failed to install module: %w", err)
+	}
+
+	// The source archive is unpacked as well, so an installed component is the
+	// whole project rather than just its command. That is what lets a project
+	// depend on the component and import the Rho library it publishes.
+	if sourceArchive != "" {
+		if _, statErr := os.Stat(sourceArchive); statErr == nil {
+			if err := pkgcore.UnpackArchive(sourceArchive, moduleDir); err != nil {
+				return fmt.Errorf("failed to install module sources: %w", err)
+			}
+		}
 	}
 
 	// Update registry.yaml

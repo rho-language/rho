@@ -152,6 +152,49 @@ only, so the index, search and downloads stay open.
 Environment overrides: `RHO_HTTP_ADDR` (default `:8080`), `RHO_REGISTRY_DATA`,
 `RHO_REGISTRY_CONFIG`.
 
+## Logging
+
+The application logs through `rho-log`, so it depends on that component and asks
+the backend for its port:
+
+```yaml
+# module.yml
+deps:
+  rho-log: ">=0.1.0"
+
+# project.yml
+targets:
+  - id: go-server
+    ports:
+      - fsstore
+      - logemit
+```
+
+What it records is the application's own decisions rather than the traffic a
+service manager already sees: a publish accepted or refused and why, a download
+served or missed, a store that refused a write, and what this instance is on
+startup.
+
+```
+[2026-09-27T09:25:39.464Z] [info] [registry] starting, data_dir=/tmp/rl3/data access=secured
+[2026-09-27T09:25:41.514Z] [info] [registry] published math@1.0.0
+[2026-09-27T09:25:41.523Z] [warn] [registry] download missed nope@1.0.0
+```
+
+The generated HTTP middleware writes its own request line separately, so the
+two do not compete:
+
+```
+2026/09/27 12:25:41 POST /modules/math/1.0.0/rho-pkg 182.895µs
+```
+
+Records go to standard error, which systemd collects. Setting `RHO_LOG_FILE`
+also appends them to a file, so the application's own events survive
+independently of whoever captured the process output.
+
+Startup belongs in an `init` function rather than `main`: a server target runs
+its own entry point and calls `init`, so `main` would never run.
+
 Data is stored as:
 
 ```

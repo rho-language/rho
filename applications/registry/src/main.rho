@@ -18,6 +18,7 @@ module registry
 include "registry/storage.rho"
 
 import std.web.http
+import rho.log
 import registry.validate
 import registry.respond
 import registry.web
@@ -37,6 +38,7 @@ fn publish_module(req: Request) Response {
     // configured access = public lets anyone publish, which suits a trusted
     // network; access = secured requires a valid token.
     if is_secured() && !auth_is_authenticated(request_auth(req)) {
+        warn("registry", "publish refused, no valid token")
         return error_json(status_unauthorized(), "a token is required to publish")
     }
 
@@ -44,9 +46,11 @@ fn publish_module(req: Request) Response {
     let version: string = param(req, "version")
 
     if !valid_name(name) {
+        warn("registry", "publish refused, invalid module name")
         return error_json(status_bad_request(), "invalid module name")
     }
     if !valid_version(version) {
+        warn("registry", "publish refused, invalid version")
         return error_json(status_bad_request(), "invalid version")
     }
 
@@ -58,6 +62,7 @@ fn publish_module(req: Request) Response {
         return error_json(status_payload_too_large(), "package too large")
     }
     if store_has(name, version) {
+        warn("registry", "publish refused, version already published")
         return error_json(status_conflict(), "version already published")
     }
 
@@ -72,8 +77,10 @@ fn publish_module(req: Request) Response {
         request_query_param(req, "command")
     )
     if store_put(name, version, payload, meta) != 0 {
+        error("registry", "publish failed, the store refused the write")
         return error_json(status_bad_request(), "invalid module name")
     }
+    info("registry", "published " + name + "@" + version)
     return published_json(name, version)
 }
 
@@ -85,13 +92,16 @@ fn download_module(req: Request) Response {
         return error_json(status_bad_request(), "invalid module name or version")
     }
     if !store_has(name, version) {
+        warn("registry", "download missed " + name + "@" + version)
         return error_json(status_not_found(), "not found")
     }
 
     let payload: string = store_get(name, version)
     if strlen(payload) == 0 {
+        error("registry", "download failed, stored package is empty")
         return error_json(status_not_found(), "not found")
     }
+    debug("registry", "served " + name + "@" + version)
     return Response{ status_ok(), payload, "application/gzip" }
 }
 
@@ -103,6 +113,10 @@ fn module_versions(req: Request) Response {
     return json(status_ok(), store_versions(param(req, "name")))
 }
 
-fn main() void {
+// init runs before the service starts, on every target: the generated server
+// calls it, and so does the native entry point. Startup belongs here rather
+// than in main, which a server target does not use.
+fn init() void {
     print("rho registry listening; data dir: " + store_data_dir())
+    info("registry", "starting, data_dir=" + store_data_dir() + " access=" + registry_access())
 }
