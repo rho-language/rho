@@ -165,6 +165,12 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 		return nil, err
 	}
 
+	// A connected project has two kinds of build target: the emitters it
+	// generates from (c, go) and the variants a person names, which are the
+	// vendor library a build links. `--target stm32` is the second kind: it is
+	// answered by the connection, and the project it generates is the C target
+	// with that variant's library behind it.
+	connection := cConnection(projectRoot)
 	requested, err := BuildTargetIDs(projectRoot)
 	if err != nil {
 		return nil, err
@@ -175,7 +181,19 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 	if len(requested) == 0 {
 		requested = []string{DefaultBuildTarget}
 	}
-	targets, err := descriptor.ResolveTargets(requested)
+	// A variant is answered by the emitter it builds for, and the variant is
+	// carried on the context so the backend can link what it names.
+	emitters := make([]string, 0, len(requested))
+	variants := map[string]string{}
+	for _, name := range requested {
+		if _, isVariant := connection.Variant(name); isVariant {
+			emitters = append(emitters, ConnectionVariantEmitter)
+			variants[ConnectionVariantEmitter] = name
+			continue
+		}
+		emitters = append(emitters, name)
+	}
+	targets, err := descriptor.ResolveTargets(emitters)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +214,8 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 			IncludePaths: includePaths,
 			SourceFiles:  sourceFiles,
 			Config:       configBridge(projectRoot, dir),
+			Connection:   connection,
+			Variant:      variants[target.ID],
 		}
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err
@@ -323,6 +343,21 @@ func BuildTargetIDs(projectRoot string) ([]string, error) {
 		return nil, fmt.Errorf("cannot read project manifest: %w", err)
 	}
 	return manifest.BuildTargets, nil
+}
+
+// ConnectionVariantEmitter is the target a variant is built as. A variant names
+// the vendor library a build links, not a different backend, so it is answered
+// by the emitter of the language it compiles.
+const ConnectionVariantEmitter = "c"
+
+// cConnection is the native library a project links, or nil when it declared
+// none.
+func cConnection(projectRoot string) *deps.CConnection {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil || manifest == nil {
+		return nil
+	}
+	return manifest.Connection
 }
 
 // ProjectRoot returns the directory containing rho.mod, or the source file's

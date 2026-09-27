@@ -81,9 +81,19 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		"#define _POSIX_C_SOURCE 200809L\n#include <stdint.h>\n#include <stdbool.h>\n" +
 		"#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stddef.h>\n\n" +
 		runtimeBody
+	// A connected project compiles against its library's headers, so they are
+	// included here: the types a foreign declaration names are the library's, and
+	// without its headers every `LibType*` in the interface is an unknown type
+	// to the C compiler.
+	connectionIncludes := ""
+	if ctx.Connection != nil {
+		for _, header := range ctx.Connection.Headers {
+			connectionIncludes += "#include <" + filepath.ToSlash(header) + ">\n"
+		}
+	}
 	artifacts.Interface = cBanner(ctx.ModuleName, "app.h", "Generated Rho application interface.") +
 		"#pragma once\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n" +
-		"#include <stdint.h>\n#include <stdbool.h>\n#include <stddef.h>\n" + configInclude +
+		"#include <stdint.h>\n#include <stdbool.h>\n#include <stddef.h>\n" + connectionIncludes + configInclude +
 		"\nint app_main(void);\nvoid app_init(void);\n\n#ifdef __cplusplus\n}\n#endif\n"
 	artifacts.Entrypoint = cBanner(ctx.ModuleName, "main.c", "Generated native system entry point for a Rho application.") +
 		"#include \"app.h\"\n\nint main(void)\n{\n    app_init();\n    return app_main();\n}\n"
@@ -94,6 +104,14 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 	// wrote. The build is the single place the configuration is resolved, which
 	// is what lets a person re-run it and change a value without a rebuild of
 	// the toolchain.
+	sources, err := copyProjectSources(ctx)
+	if err != nil {
+		return artifacts, err
+	}
+	for name, content := range sources {
+		artifacts.Extra[name] = content
+	}
+
 	if ctx.Config.Configured() {
 		extra, err := emitConfigArtifacts(ctx)
 		if err != nil {
@@ -223,8 +241,15 @@ func emitCMakeLists(ctx Context) string {
 		b.WriteString("             APPEND PROPERTY OBJECT_DEPENDS ${RHO_CONFIG_VALUES})\n\n")
 	}
 
+	// A connected project compiles against its library's headers as well as
+	// its own, so the connection's include paths join the target's.
+	link, includePaths := connectionCMake(ctx, name)
+
 	fmt.Fprintf(&b, "target_include_directories(%s PRIVATE\n    ${CMAKE_CURRENT_SOURCE_DIR}\n", name)
 	for _, include := range ctx.IncludePaths {
+		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(include))
+	}
+	for _, include := range includePaths {
 		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(include))
 	}
 	b.WriteString(")\n")
@@ -239,7 +264,96 @@ func emitCMakeLists(ctx Context) string {
 			b.WriteString("target_include_directories(" + name + " PRIVATE ${RHO_CONFIG_OUT}/" + directory + ")\n")
 		}
 	}
+
+	b.WriteString(link)
 	return b.String()
+}
+
+// copyProjectSources brings the C a project declares into the generated project.
+//
+// A declared source is written as the project wrote it, because that is the path
+// a person reads in their manifest. A generated project is a directory someone
+// can build on its own, so the file travels with it rather than being referenced
+// from where it happened to be generated.
+func copyProjectSources(ctx Context) (map[string]string, error) {
+	files := map[string]string{}
+	for _, source := range ctx.SourceFiles {
+		// A source is named the way the project named it: relative to the
+		// project, or already absolute when it comes from a dependency. Joining
+		// blindly would make an absolute path a path inside the project.
+		from := filepath.FromSlash(source)
+		if !filepath.IsAbs(from) {
+			from = filepath.Join(ctx.ProjectRoot, from)
+		}
+		data, err := os.ReadFile(from)
+		if err != nil {
+			// A source a project declares but has not written yet is left to the
+			// build to report: another step may produce it, and a generator that
+			// stopped over it would be one step in front of the wrong problem.
+			continue
+		}
+		files[source] = string(data)
+	}
+	return files, nil
+}
+
+// connectionCMake is what a build of a connected project needs: the headers it
+// compiles against, the macros that select an implementation, and the library it
+// links.
+//
+// A build target a person names and a library a build links are different
+// things, and this is where they meet: `--target stm32` is resolved by the
+// connection to the vendor target robohub_stm32, and the generated project links
+// that. Without a variant the project links the library it declared, which is
+// what a host build of the same project does.
+func connectionCMake(ctx Context, name string) (link string, includes []string) {
+	if ctx.Connection == nil {
+		return "", nil
+	}
+	connection := ctx.Connection
+	variant, _ := connection.Variant(ctx.Variant)
+
+	includes = append(includes, connection.IncludeDirs...)
+	includes = append(includes, variant.IncludeDirs...)
+	defines := append([]string{}, connection.Defines...)
+	defines = append(defines, variant.Defines...)
+	// A variant is selected at compile time, and the macros say which: a vendor
+	// library compiles its own implementation behind them, and a project that
+	// only linked it would compile the wrong one.
+	if ctx.Variant != "" {
+		defines = append(defines, "ROBOHUB_PLATFORM="+strings.ToUpper(ctx.Variant))
+	}
+
+	// A library is linked when it is named, and a build with nothing to link
+	// gets no link line rather than an empty one.
+	libraries := []string{}
+	if connection.Library != "" {
+		libraries = append(libraries, connection.Library)
+	}
+	libraries = append(libraries, variant.LinkLibraries()...)
+
+	var b strings.Builder
+	for _, define := range defines {
+		fmt.Fprintf(&b, "add_compile_definitions(%s=%s)\n", define, cMakeValue(define))
+	}
+	if len(libraries) > 0 {
+		fmt.Fprintf(&b, "target_link_libraries(%s PRIVATE %s)\n", name, strings.Join(libraries, " "))
+	}
+	// The include paths are returned rather than written here, because they
+	// belong with the other include directories the target already carries.
+	return b.String(), includes
+}
+
+// cMakeValue is a define's value as CMake writes it: a bare word is a word, a
+// string is quoted.
+func cMakeValue(value string) string {
+	if value == "" {
+		return "\"\""
+	}
+	if strings.ContainsAny(value, " \"") {
+		return "\"" + strings.ReplaceAll(value, "\"", "\\\"") + "\""
+	}
+	return value
 }
 
 // cmakeProjectName keeps module names usable as CMake targets.

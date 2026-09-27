@@ -1,0 +1,29 @@
+module rho.cimport
+
+// A C interface, read from headers.
+//
+// This library is for the generator rather than for a program: it exposes what
+// a generation found, so a tool that drives `rho cimport` can report on it
+// without shelling out and parsing its output. A program's own view of a C
+// library is the generated interface in src/ffi.rho, and the ergonomic one is
+// src/lib.rho.
+
+// What a generation read and wrote.
+struct Result {
+	// files are the generated files, relative to the project.
+	files: string
+	// declarations is how many declarations the headers made.
+	declarations: u32
+	// shims is how many calls Rho cannot make and the generated C makes.
+	shims: u32
+	// diagnostics is everything that could not be read or could not be mapped.
+	diagnostics: string
+}
+
+// Generate the foreign interface of the headers a project links, writing the
+// interface and the C shim into src/.
+extern fn cimport_generate(root: string, module: string, force: bool) Result
+
+// What a project's C headers declare, one line per declaration, without
+// generating anything.
+extern fn cimport_declarations(root: string) string

@@ -615,8 +615,6 @@ func isValidGoIdent(name string) bool {
 // goTypeForIR maps an IR type to its Go spelling.
 func goTypeForIR(t ir.Type) string {
 	switch t.Kind {
-	case ir.TypeVoid:
-		return ""
 	case ir.TypeBool:
 		return "bool"
 	case ir.TypeU8:
@@ -635,6 +633,15 @@ func goTypeForIR(t ir.Type) string {
 		return "string"
 	case ir.TypeStruct:
 		return goTypeName(t.Name)
+	case ir.TypePtr:
+		if len(t.Args) == 0 {
+			return "unsafe.Pointer"
+		}
+		element := goTypeForIR(t.Args[0])
+		if element == "" {
+			return "unsafe.Pointer"
+		}
+		return "*" + element
 	default:
 		return ""
 	}

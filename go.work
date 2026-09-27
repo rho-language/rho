@@ -3,6 +3,7 @@ go 1.22
 use (
 	.
 	./modules/components/rho-auth
+	./modules/components/rho-cimport
 	./modules/components/rho-doc
 	./modules/components/rho-fmt
 	./modules/components/rho-kconfig
