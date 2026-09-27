@@ -259,6 +259,10 @@ type Options struct {
 	// the project's build directory, which is where a build already keeps what
 	// a run produced.
 	ReportDir string
+	// ProjectRoot is the project the run is over, resolved by the run itself and
+	// passed on, so a report lands beside the project rather than beside
+	// whatever directory the run was pointed at.
+	ProjectRoot string
 }
 
 // Run discovers, runs and reports a test suite, returning a process exit code:
@@ -274,7 +278,8 @@ func Run(options Options) int {
 	}
 	// The discover hook runs before the run does, so a plugin that knows a
 	// project's own test layout adds to what is about to be run.
-	files, diagnostics := options.Plugins.Discover(projectRootFor(discoveredPath(discovered)), options.Target, describe(discovered))
+	options.ProjectRoot = projectRootFor(discoveredPath(discovered))
+	files, diagnostics := options.Plugins.Discover(options.ProjectRoot, options.Target, describe(discovered))
 	reportDiagnostics(diagnostics)
 
 	if len(files) == 0 {
@@ -304,8 +309,10 @@ func Run(options Options) int {
 	Report(all)
 
 	// The run hook runs after the report, so a plugin is told what the run
-	// actually did rather than what it was asked to do.
-	outcome := options.Plugins.Run(projectRootFor(discoveredPath(paths)), options.Target, all)
+	// actually did rather than what it was asked to do. The project root is
+	// resolved once, here, and used for both the hook and where a report goes.
+	options.ProjectRoot = projectRootFor(discoveredPath(paths))
+	outcome := options.Plugins.Run(options.ProjectRoot, options.Target, all)
 	reportOutcome(options, outcome)
 	reportDiagnostics(outcome.Diagnostics)
 
@@ -349,7 +356,11 @@ func reportOutcome(options Options, outcome RunOutcome) {
 	}
 	dir := options.ReportDir
 	if dir == "" {
-		dir = filepath.Join(projectRootFor(options.Path), "build", "test-reports")
+		root := options.ProjectRoot
+		if root == "" {
+			root = projectRootFor(options.Path)
+		}
+		dir = filepath.Join(root, "build", "test-reports")
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "rho test: cannot write a report: %v\n", err)

@@ -131,6 +131,10 @@ type Manifest struct {
 	BuildIncludeDirs []string
 	BuildSourceDirs  []string
 	BuildSources     []string
+	// Config is the Kconfig bridge a project declares: the fragments that
+	// define its symbols, the values it sets, and which dialect the generated
+	// headers are written in.
+	Config *ConfigManifest
 	// Docs is the doc-as-code this module carries. Nil means the module says
 	// nothing about its documentation.
 	Docs *DocManifest
@@ -312,6 +316,11 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
 		m.BuildSources = yamlStrings(build.Map["sources"])
 	}
+	// The configuration bridge is a top-level section, so it is read here
+	// rather than with the build fields: a project that declares a build and one
+	// that only declares a configuration are both possible, and a section read
+	// inside another would be read only when that other is there.
+	m.Config = parseConfigManifest(doc.Map["config"])
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
 
@@ -355,6 +364,59 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	m.Provides = parseProvides(doc.Map["provides"])
 	m.Extends = parseExtends(doc)
 	return m, nil
+}
+
+// ConfigManifest is the Kconfig bridge a project declares.
+//
+// The fragments are Kconfig files: they define the symbols a project may set and
+// the defaults it starts from. The values are the symbols this project sets, and
+// a module of Rho constants may set more. The dialect says which headers the
+// generated build writes, because the same symbols are spelled differently by the
+// tools that read them.
+//
+// It is declared at the top level of a manifest rather than under build: what a
+// project configures is a property of the project, not of one target, and a
+// project with a C target and a Go target is configured the same way for both.
+type ConfigManifest struct {
+	// Fragments are the Kconfig files that define the symbols, relative to the
+	// project root.
+	Fragments []string
+	// Values are the symbols this project sets, as text: a bool is true or
+	// false, an int or hex is its digits, a string is the string.
+	Values map[string]string
+	// Dialect is which headers the build writes: linux, espidf or freertos.
+	Dialect string
+	// Module is a Rho module of typed constants that sets symbols, relative to
+	// the project root. It is read with the compiler's own front end, so a
+	// value written in Rho is a value the compiler would accept.
+	Module string
+}
+
+// parseConfigManifest reads the Kconfig bridge from a manifest.
+func parseConfigManifest(node yaml.Value) *ConfigManifest {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	config := &ConfigManifest{
+		Fragments: yamlStrings(node.Map["kconfig_fragments"]),
+		Dialect:   yamlString(node, "dialect"),
+		Module:    yamlString(node, "module"),
+	}
+	if values, ok := node.Map["values"]; ok && values.Kind == yaml.KindMap {
+		config.Values = map[string]string{}
+		for key, value := range values.Map {
+			config.Values[key] = value.Str
+		}
+	}
+	if len(config.Fragments) == 0 && len(config.Values) == 0 && config.Module == "" && config.Dialect == "" {
+		// A section that declares nothing is no section, rather than one that
+		// silently configures nothing. A section that names only a dialect is
+		// read, because a manifest said something: a project with no fragments
+		// and a dialect is a bridge the merge will report on, not a bridge to
+		// be dropped here.
+		return nil
+	}
+	return config
 }
 
 // parseProvides reads what a component offers a plugin.

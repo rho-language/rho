@@ -281,3 +281,81 @@ func helperMode() string {
 	}
 	return ""
 }
+
+/* -------------------------------------------------------------------------- */
+/*  What a run does with what the plugins said                                 */
+/* -------------------------------------------------------------------------- */
+
+func TestAReportsAreWrittenWhereABuildLooksForThem(t *testing.T) {
+	// A report is a document a system reads, so it is written to a file rather
+	// than printed: printed, it is a wall of text in the middle of a run.
+	root := t.TempDir()
+	reportOutcome(Options{ReportDir: root, Path: root}, RunOutcome{
+		Reports: []string{"<testsuites/>", "<testsuites>second</testsuites>"},
+	})
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("expected the reports to be written, got %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected one file per report, got %d", len(entries))
+	}
+	// Two plugins writing a report do not write over one another.
+	if entries[0].Name() == entries[1].Name() {
+		t.Fatalf("expected distinct files, got %s twice", entries[0].Name())
+	}
+}
+
+func TestAReportGoesBesideTheProjectWhenNoDirectoryIsNamed(t *testing.T) {
+	// The default is where a build already keeps what a run produced, so a
+	// person finds it where they look.
+	root := t.TempDir()
+	reportOutcome(Options{ProjectRoot: root}, RunOutcome{Reports: []string{"<testsuites/>"}})
+
+	if _, err := os.Stat(filepath.Join(root, "build", "test-reports")); err != nil {
+		t.Fatalf("expected the reports beside the project, got %v", err)
+	}
+}
+
+func TestAReportIsNotWrittenWhereItCannotBe(t *testing.T) {
+	// A report that cannot be written is reported and does not stop the run: the
+	// tests themselves have already run by this point.
+	// A path that is a file cannot hold a directory.
+	root := t.TempDir()
+	blocker := filepath.Join(root, "blocked")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reportOutcome(Options{ReportDir: blocker, ProjectRoot: root}, RunOutcome{Reports: []string{"<testsuites/>"}})
+
+	// The run carries on: nothing here panics and the file is untouched.
+	written, err := os.ReadFile(blocker)
+	if err != nil || string(written) != "not a directory" {
+		t.Fatalf("expected the existing file to be left alone, got %q", written)
+	}
+}
+
+func TestTheProjectIsFoundFromTheTestsThatWereRun(t *testing.T) {
+	// A plugin is told which project the run was over, so a report can name it,
+	// and the project is found by walking up from a test file the way every
+	// other part of the toolchain finds one.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte("module:\n  name: app\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	test := filepath.Join(root, "tests", "a_test.rho")
+	if err := os.WriteFile(test, []byte("module tests.a_test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectRootFor(test); got != root {
+		t.Fatalf("expected the project root, got %q", got)
+	}
+	// A run over nothing is over the directory it was pointed at.
+	if got := projectRootFor(""); got == "" {
+		t.Fatal("expected a run with no tests to still have a root")
+	}
+}

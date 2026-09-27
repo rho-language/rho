@@ -248,11 +248,20 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// The Kconfig bridge: the fragments that define a project's
+				// symbols, the values it sets, the module of Rho constants it
+				// may set them in, and the dialect the generated headers are
+				// written in. The rho-kconfig component does the merging and
+				// the build runs it, so a value can change without the project
+				// being regenerated.
 				Name:     "config",
 				Required: false,
 				Kind:     KindMap,
 				Fields: []FieldSchema{
 					{Name: "kconfig_fragments", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					{Name: "dialect", Required: false, Kind: KindString, AllowedValues: []string{"linux", "espidf", "freertos"}},
+					{Name: "module", Required: false, Kind: KindString},
+					{Name: "values", Required: false, Kind: KindMap},
 				},
 			},
 			{
