@@ -10,3 +10,13 @@ main: rho-fmt
 features:
   - format
   - canonical
+
+# The formatter documents itself, and its notes are what a project pointed at it
+# is told about round-trip safety.
+docs:
+  title: Source formatter
+  section: components
+  order: "10"
+  index: docs/index.md
+  sources:
+    - docs/index.md

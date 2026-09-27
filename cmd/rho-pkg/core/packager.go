@@ -215,7 +215,14 @@ func BuildBinary(dir string, manifest ModuleYAML) (string, error) {
 	if runtime.GOOS == "windows" {
 		binaryName += ".exe"
 	}
-	artifacts := ArtifactDir(dir)
+	// The artifact path is made absolute because it is named twice, from two
+	// places: `go build` reads it from the directory the build runs in, and the
+	// caller reads it from its own. A relative directory would resolve them
+	// differently and the caller would look for the binary where it is not.
+	artifacts, err := filepath.Abs(ArtifactDir(dir))
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve the build directory: %w", err)
+	}
 	if err := os.MkdirAll(artifacts, 0o755); err != nil {
 		return "", fmt.Errorf("cannot create the build directory: %w", err)
 	}
@@ -387,14 +394,34 @@ func writeArchive(pkgPath string, files []string, baseDir string) error {
 
 	// A build artefact is written flat in the archive, whatever folder it was
 	// produced in, so the installed module keeps the shape callers expect.
-	artifacts := ArtifactDir(baseDir)
+	//
+	// The comparison is made on resolved paths. A build artefact is named by
+	// the build and its files are named by the layout, and the two are not
+	// always spelled the same way: one is often absolute and the other
+	// relative to the process. A prefix that does not match would write the
+	// artefact under a path escaping the module, and unpacking it would fail.
+	artifacts, err := filepath.Abs(ArtifactDir(baseDir))
+	if err != nil {
+		return fmt.Errorf("cannot resolve the build directory: %w", err)
+	}
+	base, err := filepath.Abs(baseDir)
+	if err != nil {
+		return fmt.Errorf("cannot resolve %s: %w", baseDir, err)
+	}
 
 	for _, file := range files {
-		rel, _ := filepath.Rel(baseDir, file)
-		if strings.HasPrefix(file, artifacts+string(filepath.Separator)) {
-			rel = filepath.Base(file)
+		resolved, resolveErr := filepath.Abs(file)
+		if resolveErr != nil {
+			return fmt.Errorf("cannot resolve %s: %w", file, resolveErr)
 		}
-
+		rel, relErr := filepath.Rel(base, resolved)
+		if relErr != nil {
+			return fmt.Errorf("cannot place %s in the package: %w", file, relErr)
+		}
+		if strings.HasPrefix(resolved, artifacts+string(filepath.Separator)) {
+			rel = filepath.Base(resolved)
+		}
+		file = resolved
 		info, err := os.Stat(file)
 		if err != nil {
 			return err

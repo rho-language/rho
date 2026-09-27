@@ -51,10 +51,17 @@ func Info(args []string) error {
 		}
 	}
 
-	if meta.Module.Type == "plugin" && len(meta.Hooks) > 0 {
+	// A plugin is attached to a component, so the report leads with what it
+	// plugs into: the hooks alone say nothing about whether it will ever run.
+	if meta.Module.Type == "plugin" && meta.Extends != "" {
+		fmt.Println("Extends:", meta.Extends)
 		fmt.Println("Hooks:")
 		for _, h := range meta.Hooks {
 			fmt.Println("  -", h)
+		}
+		fmt.Println("Commands:")
+		for _, command := range meta.Commands {
+			fmt.Println("  -", command)
 		}
 	}
 

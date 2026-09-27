@@ -75,6 +75,10 @@ func runInit(name, mtype string) error {
 	// Write default source file
 	var srcFile string
 	var srcContent string
+	// pluginRelation is the declaration a plugin needs and nothing else does,
+	// so it is appended to the manifest rather than built into the struct that
+	// writes it.
+	var pluginRelation string
 
 	switch mtype {
 	case "rho":
@@ -101,14 +105,24 @@ pub fn init() void {
     print("Plugin initialized");
 }
 `
-		// Create plugin/ directory
-		if err := os.MkdirAll(filepath.Join(name, "plugin"), 0755); err != nil {
-			return fmt.Errorf("cannot create plugin/: %w", err)
-		}
+		// A plugin is not free-floating: it names the component it plugs into
+		// and the hooks of that component it answers. The scaffold writes that
+		// declaration, because a plugin without it is a module nothing calls.
+		// The component and the hook names are the two things to replace.
+		pluginRelation = `
 
-		// Write hooks.yml
-		hooks := "hooks:\n  - init\n"
-		os.WriteFile(filepath.Join(name, "plugin", "hooks.yml"), []byte(hooks), 0644)
+# The component this plugin plugs into, and the hooks of it this plugin
+# answers. A run of that component is the only thing that ever calls it.
+extends: rho-fmt
+
+hooks:
+  - init
+
+commands:
+  - name: init
+    run: ` + name + `
+    hook: init
+`
 	}
 
 	if err := os.WriteFile(filepath.Join(srcDir, srcFile), []byte(srcContent), 0644); err != nil {
@@ -134,6 +148,15 @@ pub fn init() void {
 
 	if err := core.SaveModuleYAML(modPath, manifest); err != nil {
 		return fmt.Errorf("cannot write module.yml: %w", err)
+	}
+	if pluginRelation != "" {
+		written, err := os.ReadFile(modPath)
+		if err != nil {
+			return fmt.Errorf("cannot read module.yml: %w", err)
+		}
+		if err := os.WriteFile(modPath, append(written, []byte(pluginRelation)...), 0644); err != nil {
+			return fmt.Errorf("cannot write module.yml: %w", err)
+		}
 	}
 
 	return nil

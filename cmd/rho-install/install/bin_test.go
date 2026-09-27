@@ -61,7 +61,7 @@ func TestInstallAllBinaries(t *testing.T) {
 
 	// Create fake binaries
 	names := []string{
-		"rho", "rho-fmt", "rho-test", "rho-deps", "rho-doc",
+		"rho", "rho-deps",
 	}
 
 	for _, n := range names {

@@ -66,7 +66,8 @@ and PATH integration:
 
 The install command:
 - Creates `~/.rho/{bin,modules,registry,cache,config}` directories
-- Builds and installs `rho`, `rho-fmt`, `rho-test`, `rho-deps`, `rho-doc`
+- Builds and installs `rho` and `rho-deps`; the formatter, the test runner, the
+  logger and the documentation generator are components, installed as modules
 - Initializes local registry and package cache
 - Adds `~/.rho/bin` to your shell PATH (bash, zsh, fish, or generic)
 
@@ -357,14 +358,21 @@ project root with `go build`.
 
 ### Documentation
 
-`rho-doc` generates Markdown documentation for a Rho module, including its
-structs, fields, functions, parameters, and return types:
+`rho doc` builds a documentation site from the tree: the doc-as-code sources each
+module ships, an API reference generated from the Rho sources, and whatever the
+installed plugins add. The output is static HTML.
 
 ```sh
-go build -o ./rho-doc ./cmd/rho-doc
-./rho-doc examples/hello-rho/main.rho
-./rho-doc examples/hello-rho/main.rho > docs/hello.md
+cd modules/components/rho-doc && go build -o rho-doc ./src   # the component
+./bin/rho module publish modules/components/rho-doc            # install it
+./bin/rho doc . -out build/docs                                # build the site
 ```
+
+The sources are MyST-style Markdown: headings with explicit targets, admonitions,
+directives and cross-references. A module documents itself with a `docs:` section
+in its `module.yml`, or by shipping a `docs/` directory; a repository documents
+itself with `docs/`. See `docs/handbook/documentation.md` for the format and the
+plugin protocol.
 
 ### Formatting
 

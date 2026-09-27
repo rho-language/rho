@@ -15,3 +15,12 @@ features:
 # component name rather than an unlabelled line.
 deps:
   rho-log: ">=0.1.0"
+
+# The runner documents itself: what it discovers, and what it reports.
+docs:
+  title: Test runner
+  section: components
+  order: "30"
+  index: docs/index.md
+  sources:
+    - docs/index.md

@@ -113,19 +113,30 @@ main: src/plugin.rho
 		t.Fatalf("cannot write plugin.rho: %v", err)
 	}
 
-	// Create plugin/hooks.yml
-	err = os.MkdirAll(filepath.Join(tmp, "plugin"), 0755)
-	if err != nil {
-		t.Fatalf("cannot create plugin/: %v", err)
-	}
-	hooksYAML := `hooks:
+	// The plugin says what it plugs into and which hooks of that component it
+	// answers, which is what an information report has to carry.
+	attached := `module:
+  name: testplugin
+  type: plugin
+  version: 0.1.0
+
+main: testplugin
+
+extends: rho-host
+
+hooks:
   - init
   - configure
   - shutdown
+
+commands:
+  - name: configure
+    run: testplugin
+    hook: configure
 `
-	err = os.WriteFile(filepath.Join(tmp, "plugin", "hooks.yml"), []byte(hooksYAML), 0644)
+	err = os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(attached), 0644)
 	if err != nil {
-		t.Fatalf("cannot write hooks.yml: %v", err)
+		t.Fatalf("cannot write module.yml: %v", err)
 	}
 
 	info, err := ReadModuleInfo(tmp)
@@ -141,6 +152,12 @@ main: src/plugin.rho
 	}
 	if len(info.Hooks) != 3 {
 		t.Fatalf("expected 3 hooks, got %d: %v", len(info.Hooks), info.Hooks)
+	}
+	if info.Extends != "rho-host" {
+		t.Fatalf("expected the component it extends, got %q", info.Extends)
+	}
+	if len(info.Commands) != 1 {
+		t.Fatalf("expected one command, got %v", info.Commands)
 	}
 	if info.Hooks[0] != "init" || info.Hooks[1] != "configure" || info.Hooks[2] != "shutdown" {
 		t.Fatalf("unexpected hooks: %v", info.Hooks)

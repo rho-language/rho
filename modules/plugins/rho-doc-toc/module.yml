@@ -1,0 +1,50 @@
+module:
+  name: rho-doc-toc
+  type: plugin
+  version: 0.1.0
+  description: Adds a table of contents and a generation notice to a documentation site
+
+main: rho-doc-toc
+
+features:
+  - documentation
+  - table-of-contents
+
+# The component this plugin plugs into, and the hooks of that component it
+# answers. A run of that component is the only thing that ever calls it: the
+# generator loads the plugins that name it, and refuses a hook it does not
+# offer, so a plugin cannot attach to a tool that does not run its stages.
+#
+# Both hook names must be among the hooks rho-doc offers, and each command below
+# has to answer one the plugin declares. `rho module validate` checks all three,
+# and so does publishing.
+extends: rho-doc
+
+hooks:
+  # Once, over the finished set of pages.
+  - index
+  # Once per page, with that page in the request.
+  - page
+
+# The executables that answer those hooks. Each is a path, or a name found on
+# PATH; the request arrives as JSON on standard input and the answer is read as
+# JSON from standard output.
+commands:
+  - name: table-of-contents
+    run: rho-doc-toc
+    hook: index
+  - name: generation-notice
+    run: rho-doc-toc
+    hook: page
+
+package:
+  kind: plugin
+  interface: []
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src

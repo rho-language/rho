@@ -503,3 +503,137 @@ func TestValidateModuleYAMLFileInvalidYAML(t *testing.T) {
 		t.Fatal("expected error for invalid YAML")
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: Doc-as-code sections                                                 */
+/* -------------------------------------------------------------------------- */
+
+func TestValidateModuleManifestDocsSection(t *testing.T) {
+	src := `module:
+  name: registry
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+docs:
+  title: Module registry
+  section: applications
+  order: "20"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := ValidateModuleManifest(data, "rho"); errs.HasErrors() {
+		t.Fatalf("expected the docs section to validate, got %v", errs.ErrorString())
+	}
+}
+
+func TestValidateModuleManifestRejectsDocsSourcesThatAreNotAList(t *testing.T) {
+	src := `module:
+  name: registry
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+docs:
+  sources: docs/index.md
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "rho").HasErrors() {
+		t.Fatal("expected doc sources that are not a list to be rejected")
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: The plugin relation                                                  */
+/* -------------------------------------------------------------------------- */
+
+func TestValidateModuleManifestPluginRelation(t *testing.T) {
+	src := `module:
+  name: rho-doc-toc
+  type: plugin
+  version: 0.1.0
+main: rho-doc-toc
+extends: rho-doc
+hooks:
+  - index
+  - page
+commands:
+  - name: table-of-contents
+    run: rho-doc-toc
+    hook: index
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := ValidateModuleManifest(data, "plugin"); errs.HasErrors() {
+		t.Fatalf("expected the relation to validate, got %v", errs.ErrorString())
+	}
+}
+
+func TestValidateModuleManifestWhatAComponentOffers(t *testing.T) {
+	src := `module:
+  name: rho-doc
+  type: component
+  version: 0.1.0
+  command: doc
+main: rho-doc
+provides:
+  hooks:
+    - index
+    - page
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := ValidateModuleManifest(data, "component"); errs.HasErrors() {
+		t.Fatalf("expected the offered hooks to validate, got %v", errs.ErrorString())
+	}
+}
+
+func TestValidateModuleManifestCommandNeedsARunner(t *testing.T) {
+	src := `module:
+  name: rho-doc-toc
+  type: plugin
+  version: 0.1.0
+main: rho-doc-toc
+extends: rho-doc
+hooks:
+  - index
+commands:
+  - name: table-of-contents
+    hook: index
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "plugin").HasErrors() {
+		t.Fatal("expected a command without a runner to be rejected")
+	}
+}
+
+func TestValidateModuleManifestRejectsHooksThatAreNotAList(t *testing.T) {
+	src := `module:
+  name: rho-doc-toc
+  type: plugin
+  version: 0.1.0
+main: rho-doc-toc
+extends: rho-doc
+hooks: index
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "plugin").HasErrors() {
+		t.Fatal("expected hooks that are not a list to be rejected")
+	}
+}

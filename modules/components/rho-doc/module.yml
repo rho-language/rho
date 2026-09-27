@@ -1,0 +1,52 @@
+module:
+  name: rho-doc
+  type: component
+  version: 0.1.0
+  description: Documentation generator
+  command: doc
+  import_path: rho.doc
+
+main: rho-doc
+
+features:
+  - documentation
+  - doc-as-code
+  - html
+
+# It logs through the shared logger, so a doc build is identifiable in a shared
+# log. A page prints the source it was given rather than reformatting it, so the
+# formatter is not a dependency of the component — it appears in go.mod only
+# because the logger's record format is written by it. The manifest says what
+# this component is built on; go.mod says what its build needs.
+deps:
+  rho-log: ">=0.1.0"
+
+# The hooks a run of this generator goes through. A plugin declares the hooks of
+# this component it answers, and is measured against this list, so it cannot
+# claim a stage the generator never runs. A component that offers no hooks
+# offers no place for a plugin to stand.
+provides:
+  hooks:
+    # Once, over the finished set of pages: a table of contents, an index.
+    - index
+    # Once per page, with that page in the request: a rewritten body.
+    - page
+
+# The component ships in two forms, the way a C project either has a main and
+# becomes an executable or has none and becomes a library. The command form
+# carries the whole component; the library form is the Rho interface alone, the
+# way a header is, because the implementation is a port the backend supplies.
+package:
+  kind: component
+  binary: true
+  import_path: rho.doc
+  interface:
+    - src/doc.rho
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
