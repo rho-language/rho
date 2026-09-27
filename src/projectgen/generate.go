@@ -38,6 +38,18 @@ type Artifacts struct {
 	Entrypoint     string
 	Server         string
 	Build          string
+	// Extra are files the backend decided a project needs, named by their path
+	// relative to the generated project: the configuration glue is one. They are
+	// written beside the role artifacts, and a project that already has a file
+	// of that name keeps it, because a generated file the project wrote is not
+	// one to overwrite.
+	Extra map[string]string
+}
+
+// ExtraFile is a generated file the backend added, named by its path.
+type ExtraFile struct {
+	Name    string
+	Content string
 }
 
 // RoleContent returns the artifact registered for a role.
@@ -76,7 +88,39 @@ type Context struct {
 	// IncludePaths and SourceFiles carry C dependency inputs.
 	IncludePaths []string
 	SourceFiles  []string
+	// Config is the Kconfig bridge a project declared, or nil when it declared
+	// none. A backend that generates a build file runs the merge and includes
+	// what it wrote, so the configuration a project declares is resolved by the
+	// build rather than assumed by the generator.
+	Config *Config
 }
+
+// Config is the Kconfig bridge a project declared: the fragments that define
+// its symbols, the values it sets, and the dialect the headers are written in.
+//
+// The generator carries it and does not interpret it. Merging fragments and
+// writing a dialect is the rho-kconfig component's work, and a build that wants
+// another dialect asks that component for it rather than growing a case in the
+// backend.
+type Config struct {
+	// Dialect is which headers the merge writes: linux, espidf or freertos.
+	Dialect string
+	// Fragments are the Kconfig files, already copied into the generated
+	// project's kconfig directory, as paths relative to that directory.
+	Fragments []string
+	// Values is a defconfig the merge starts from: the symbols a project commits
+	// as its baseline.
+	Defconfig string
+	// ValuesFile is where the resolved configuration is written.
+	ValuesFile string
+	// OutputDir is the generated directory the configuration is written into.
+	OutputDir string
+	// ExtraArgs are anything else a project asked the merge to be given.
+	ExtraArgs []string
+}
+
+// Configured reports whether a project declared a Kconfig bridge.
+func (c *Config) Configured() bool { return c != nil }
 
 // Backend renders the artifacts for one emitter id.
 type Backend func(Context) (Artifacts, error)
@@ -250,6 +294,22 @@ func Generate(ctx Context, target Target) (string, error) {
 	}
 	if err := generatePorts(ctx, target); err != nil {
 		return "", err
+	}
+
+	// The files a backend added that no role names, such as the glue that
+	// resolves a project's Kconfig bridge. A project that already has one keeps
+	// it: a generated file the project wrote is not one to overwrite.
+	for name, content := range artifacts.Extra {
+		dest := filepath.Join(ctx.OutputDir, filepath.FromSlash(name))
+		if _, err := os.Stat(dest); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			return "", fmt.Errorf("create %s: %w", filepath.Dir(dest), err)
+		}
+		if err := os.WriteFile(dest, []byte(content), 0644); err != nil {
+			return "", fmt.Errorf("write %s: %w", name, err)
+		}
 	}
 
 	// Hand-written files the project optionally supplies.

@@ -5,6 +5,7 @@ use (
 	./modules/components/rho-auth
 	./modules/components/rho-doc
 	./modules/components/rho-fmt
+	./modules/components/rho-kconfig
 	./modules/components/rho-log
 	./modules/components/rho-lsp
 	./modules/components/rho-test

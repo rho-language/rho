@@ -637,3 +637,69 @@ hooks: index
 		t.Fatal("expected hooks that are not a list to be rejected")
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: The configuration bridge                                            */
+/* -------------------------------------------------------------------------- */
+
+func TestValidateModuleManifestConfigBridge(t *testing.T) {
+	src := `module:
+  name: sensorhub
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+config:
+  dialect: espidf
+  kconfig_fragments:
+    - kconfig/board.Kconfig
+  values:
+    CONFIG_UART_BAUD: "57600"
+  module: config.rho
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := ValidateModuleManifest(data, "rho"); errs.HasErrors() {
+		t.Fatalf("expected the bridge to validate, got %v", errs.ErrorString())
+	}
+}
+
+func TestValidateModuleManifestRejectsADialectItDoesNotWrite(t *testing.T) {
+	// A dialect is a header a toolchain reads, so naming one this bridge does not
+	// write is refused rather than silently treated as the default.
+	src := `module:
+  name: sensorhub
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+config:
+  dialect: zephyr
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "rho").HasErrors() {
+		t.Fatal("expected an unknown dialect to be rejected")
+	}
+}
+
+func TestValidateModuleManifestRejectsValuesThatAreNotAMap(t *testing.T) {
+	src := `module:
+  name: sensorhub
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+config:
+  values:
+    - CONFIG_UART_BAUD
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "rho").HasErrors() {
+		t.Fatal("expected values that are not a map to be rejected")
+	}
+}
