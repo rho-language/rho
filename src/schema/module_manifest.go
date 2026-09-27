@@ -8,7 +8,8 @@
 //   - rho/app:     main is required (source file path)
 //   - module:      main is required (source file path), command not allowed
 //   - component:   main is required (binary name), command optional
-//   - plugin:      main is required (source file), hooks.yml validated separately
+//   - plugin:      main is required (a source file or a command); a plugin plugs
+//                  into a component, which it names in extends:
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -97,6 +98,77 @@ func ModuleSchema() Schema {
 				Kind:     KindList,
 				ItemSchema: &ListItemSchema{
 					Kind: KindString,
+				},
+			},
+			{
+				// The docs section is doc-as-code: the module names the sources
+				// its documentation is written in, and where the pages belong in
+				// a site. The generator is the rho-doc component, so a module
+				// does not have to know how a page is rendered.
+				Name:     "docs",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					// title overrides the page title derived from the file.
+					{Name: "title", Required: false, Kind: KindString},
+					// section is the sidebar group the pages appear under.
+					{Name: "section", Required: false, Kind: KindString},
+					// order sorts a module against its peers in a section.
+					{Name: "order", Required: false, Kind: KindString},
+					// sources are the doc-as-code files, relative to the module
+					// root. A glob is allowed, so a module can name a whole
+					// tree without listing it.
+					{Name: "sources", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// index is the page a section links to first.
+					{Name: "index", Required: false, Kind: KindString},
+				},
+			},
+			{
+				// What a component offers a plugin: the hooks a run of the tool
+				// goes through. A tool that offers no hooks offers no place for
+				// a plugin to stand, and a plugin is checked against this list
+				// rather than against whatever it happens to name.
+				Name:     "provides",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "hooks", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
+				// How a plugin says what it plugs into. A plugin is not
+				// free-floating: it names the component it extends, and the
+				// hooks of that component it answers, so the relation is
+				// declared rather than assumed.
+				Name:     "extends",
+				Required: false,
+				Kind:     KindString,
+			},
+			{
+				// The hooks of the component this plugin answers. Each has to
+				// be one the component offers, which is what keeps a plugin
+				// from claiming a stage the tool never runs.
+				Name:     "hooks",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindString,
+				},
+			},
+			{
+				// The executables a plugin answers a hook with. Each names the
+				// hook it answers and the program that answers it, which is a
+				// path or a name found on PATH.
+				Name:     "commands",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindMap,
+					Fields: []FieldSchema{
+						{Name: "name", Required: true, RejectNull: true, Kind: KindString},
+						{Name: "run", Required: true, RejectNull: true, Kind: KindString},
+						{Name: "hook", Required: false, Kind: KindString},
+					},
 				},
 			},
 			{
@@ -210,7 +282,8 @@ func ModuleSchema() Schema {
 // ValidateModuleManifest performs type-aware validation of a module.yml.
 // It validates the base schema and adds type-specific rules:
 //   - component: 'command' is recommended for dynamic dispatch
-//   - plugin: 'hooks.yml' should exist with at least one hook
+//   - plugin: 'extends:' should name a component, and 'hooks:' the stages of it
+//              the plugin answers
 //   - rho/module: 'main' should point to a .rho source file
 //   - depends: each entry must specify 'git' or 'path'
 func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors {
@@ -237,7 +310,7 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 			if cmd, exists := modMap.Map["command"]; exists && cmd.Str != "" {
 				errs = append(errs, ValidationError{
 					Path:     "module.command",
-					Message:  "plugin modules should not specify 'command' (use hooks.yml instead)",
+					Message:  "a plugin plugs into a component rather than publishing a command; it names the component in 'extends:'",
 					Severity: SeverityError,
 				})
 			}

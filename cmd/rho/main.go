@@ -204,7 +204,6 @@ func buildRhoExecutables() error {
 		// defeat the point of late binding.
 		{"rho", "./cmd/rho"},
 		{"rho-deps", "./cmd/rho-deps"},
-		{"rho-doc", "./cmd/rho-doc"},
 	}
 
 	if err := os.MkdirAll("./bin", 0o755); err != nil {

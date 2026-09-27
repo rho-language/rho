@@ -17,3 +17,14 @@ build:
 # own records, so these are the ones worth keeping in an application log.
 deps:
   rho-log: ">=0.1.0"
+
+# The registry documents itself: the sources below ship with the application, so
+# the deployment notes a reader needs travel with the code that is deployed.
+docs:
+  title: Remote module registry for Rho
+  section: applications
+  order: "10"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+    - docs/deployment.md

@@ -66,6 +66,9 @@ depends:
 	if err != nil {
 		t.Fatalf("LoadManifest YAML error: %v", err)
 	}
+	if m.Command != "" {
+		t.Fatalf("expected no published command, got %q", m.Command)
+	}
 	if m.ModuleName != "yaml-app" || m.Version != "1.0.0" || m.Main != "src/main.rho" {
 		t.Fatalf("unexpected YAML manifest: %+v", m)
 	}
@@ -77,8 +80,12 @@ depends:
 func TestLoadYAMLManifestRejectsTagAndBranch(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "module.yml")
 	content := "module:\n  name: app\n  version: 1.0.0\ndepends:\n  - name: dep\n    git: https://example.com/dep.git\n    tag: v1.0.0\n    branch: main\n"
-	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil { t.Fatal(err) }
-	if _, err := LoadManifest(tmp); err == nil { t.Fatal("expected tag/branch conflict") }
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadManifest(tmp); err == nil {
+		t.Fatal("expected tag/branch conflict")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -165,5 +172,125 @@ func TestLoadYAMLManifestRejectsBuildWithoutLanguage(t *testing.T) {
 
 	if _, err := LoadManifest(path); err == nil {
 		t.Fatal("expected error for build section without language")
+	}
+}
+
+func TestLoadYAMLManifestReadsDocAsCode(t *testing.T) {
+	path := writeManifest(t, `module:
+  name: registry
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+docs:
+  title: Module registry
+  section: applications
+  order: "20"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+    - docs/deployment.md
+`)
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Docs == nil {
+		t.Fatal("expected the doc-as-code section to be read")
+	}
+	if m.Docs.Title != "Module registry" || m.Docs.Section != "applications" || m.Docs.Order != "20" || m.Docs.Index != "docs/index.md" {
+		t.Fatalf("unexpected docs section: %+v", m.Docs)
+	}
+	if len(m.Docs.Sources) != 2 || m.Docs.Sources[0] != "docs/index.md" || m.Docs.Sources[1] != "docs/deployment.md" {
+		t.Fatalf("unexpected doc sources: %+v", m.Docs.Sources)
+	}
+}
+
+func TestLoadYAMLManifestWithoutDocsHasNoSection(t *testing.T) {
+	path := writeManifest(t, "module:\n  name: app\n  type: rho\n  version: 1.0.0\nmain: src/main.rho\n")
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Docs != nil {
+		t.Fatalf("expected no docs section, got %+v", m.Docs)
+	}
+	if m.Extends != nil {
+		t.Fatalf("expected nothing extended, got %+v", m.Extends)
+	}
+	if m.Provides != nil {
+		t.Fatalf("expected nothing offered, got %+v", m.Provides)
+	}
+}
+
+func TestLoadYAMLManifestReadsThePluginRelation(t *testing.T) {
+	path := writeManifest(t, `module:
+  name: rho-doc-toc
+  type: plugin
+  version: 0.1.0
+main: rho-doc-toc
+extends: rho-doc
+hooks:
+  - index
+  - page
+commands:
+  - name: table-of-contents
+    run: rho-doc-toc
+    hook: index
+`)
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Extends == nil {
+		t.Fatal("expected the relation a plugin plugs into to be read")
+	}
+	if m.Extends.Component != "rho-doc" {
+		t.Fatalf("expected the component it extends, got %q", m.Extends.Component)
+	}
+	if len(m.Extends.Hooks) != 2 || m.Extends.Hooks[0] != "index" || m.Extends.Hooks[1] != "page" {
+		t.Fatalf("expected the hooks it answers, got %+v", m.Extends.Hooks)
+	}
+	if !m.Extends.Answers("index") || m.Extends.Answers("shutdown") {
+		t.Fatalf("expected only the declared hooks to be answered, got %+v", m.Extends.Hooks)
+	}
+	if len(m.Extends.Commands) != 1 {
+		t.Fatalf("expected one command, got %+v", m.Extends.Commands)
+	}
+	command := m.Extends.Commands[0]
+	if command.Name != "table-of-contents" || command.Run != "rho-doc-toc" || command.Stage() != "index" {
+		t.Fatalf("unexpected command: %+v", command)
+	}
+}
+
+func TestLoadYAMLManifestReadsWhatAComponentOffers(t *testing.T) {
+	path := writeManifest(t, "module:\n  name: rho-doc\n  type: component\n  version: 0.1.0\n  command: doc\n\nmain: rho-doc\n\nprovides:\n  hooks:\n    - index\n    - page\n")
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Command != "doc" {
+		t.Fatalf("expected the published command, got %q", m.Command)
+	}
+	if m.Provides == nil || len(m.Provides.Hooks) != 2 {
+		t.Fatalf("expected the hooks it offers, got %+v", m.Provides)
+	}
+	if m.Extends != nil {
+		t.Fatalf("a component extends nothing, got %+v", m.Extends)
+	}
+}
+
+func TestLoadYAMLManifestWithoutAProvidesSectionOffersNothing(t *testing.T) {
+	path := writeManifest(t, "module:\n  name: app\n  type: rho\n  version: 1.0.0\n\nmain: src/main.rho\n")
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Provides != nil {
+		t.Fatalf("expected nothing offered, got %+v", m.Provides)
 	}
 }

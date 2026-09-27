@@ -25,7 +25,7 @@ import (
 // The ports a descriptor may name have to exist, so a manifest cannot ask for
 // something the backend would not generate.
 func TestBuiltInPortsAreRegistered(t *testing.T) {
-	for _, name := range []string{"fsstore", "logemit"} {
+	for _, name := range []string{"docemit", "fsstore", "logemit"} {
 		if !HasPort(name) {
 			t.Errorf("expected %q to be a built-in port", name)
 		}
@@ -85,5 +85,33 @@ func TestLogPortImportsWhatItUses(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("expected the %q import, got %s", want, joined)
 		}
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Documentation port                                                        */
+/* -------------------------------------------------------------------------- */
+
+// A project that imports the documentation library has to reach the generator,
+// so the port has to carry the entry points the library declares.
+func TestDocPortCarriesTheLibraryInterface(t *testing.T) {
+	body := EmitGoPorts(ir.ModuleIR{Name: "app", Version: "0.1.0"}, []string{"docemit"})
+	// The port supplies the names the Go backend calls: a library's externs are
+	// wrapped as <library><name>, and the wrapper around them is generated.
+	for _, want := range []string{
+		"func rhoDocRender(source string, path string) string",
+		"func rhoDocBuildSite(root string, title string) string",
+		"func rhoDocGenerateApi(root string) string",
+		"func rhoDocCheck(root string) string",
+		"func rhoDocWriteSite(root string, out string, title string) uint32",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected the port to carry %s", want)
+		}
+	}
+	// The generator is a component, so the port reaches it as a process rather
+	// than carrying a copy of it.
+	if !strings.Contains(body, `"--fragment"`) && !strings.Contains(body, `doc", "--fragment"`) {
+		t.Errorf("expected the port to reach the component as a process")
 	}
 }

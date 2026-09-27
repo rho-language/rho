@@ -270,12 +270,33 @@ func inlineSequence(val string) (Value, bool) {
 /* -------------------------------------------------------------------------- */
 
 // unquote strips one layer of matching surrounding quotes.
+// Unquote removes the quotes of a quoted scalar, and only those. A reader that
+// takes a value out of a document uses this, so every reader agrees on what a
+// quoted value is.
+func Unquote(val string) string { return unquote(val) }
+
+// unquote removes the quotes of a quoted scalar, and only those.
+//
+// A value whose first and last characters happen to be quotes is not a quoted
+// scalar: a command that runs a program with arguments is written
+// `run: "prog" --flag "arg"`, and the quotes belong to the arguments, not to
+// the value. A quoted scalar carries no unescaped quote of its own between the
+// pair, which is what tells the two apart.
 func unquote(val string) string {
-	if len(val) >= 2 {
-		first, last := val[0], val[len(val)-1]
-		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-			return val[1 : len(val)-1]
+	if len(val) < 2 {
+		return val
+	}
+	first, last := val[0], val[len(val)-1]
+	if first != last || (first != '"' && first != '\'') {
+		return val
+	}
+	for index := 1; index < len(val)-1; index++ {
+		switch {
+		case val[index] == '\\' && index+1 < len(val):
+			index++
+		case val[index] == first:
+			return val
 		}
 	}
-	return val
+	return val[1 : len(val)-1]
 }
