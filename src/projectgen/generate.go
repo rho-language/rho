@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"rho/src/codegen"
+	"rho/src/deps"
 	"rho/src/ir"
 )
 
@@ -93,6 +94,13 @@ type Context struct {
 	// what it wrote, so the configuration a project declares is resolved by the
 	// build rather than assumed by the generator.
 	Config *Config
+	// Connection is the native library this build links, or nil when the project
+	// declared none. A variant is one build target of a connected project: the
+	// vendor library that implements it, and the macros that select it.
+	Connection *deps.CConnection
+	// Variant is the build target a person named, when it is a variant of the
+	// connection rather than an emitter of its own.
+	Variant string
 }
 
 // Config is the Kconfig bridge a project declared: the fragments that define

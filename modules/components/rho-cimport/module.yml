@@ -1,0 +1,55 @@
+module:
+  name: rho-cimport
+  type: component
+  version: 0.1.0
+  description: Generates a Rho foreign interface from C headers, and the C that Rho cannot express
+  command: cimport
+  import_path: rho.cimport
+
+main: rho-cimport
+
+features:
+  - ffi
+  - c
+  - codegen
+
+# It reads a project's manifest, and it logs through the shared logger so a
+# generation is identifiable in a shared log.
+deps:
+  rho-log: ">=0.1.0"
+
+package:
+  kind: component
+  binary: true
+  import_path: rho.cimport
+  interface:
+    - src/cimport.rho
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+# The hooks a generation goes through. A generator is the one place a project
+# is most likely to want its own rules, so what may be changed is declared: a
+# type mapping, an include that is followed, and a shim function.
+provides:
+  hooks:
+    # Once, per header read, before its declarations are mapped.
+    - parse
+    # Once, before anything is written, with the declarations that were read.
+    - map
+    # Once, after the interface is written, with the files that were written.
+    - write
+
+docs:
+  title: C import bridge
+  section: components
+  order: "60"
+  index: docs/index.md
+  sources:
+    - docs/index.md

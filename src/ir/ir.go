@@ -36,6 +36,11 @@ const (
 	TypeF64
 	TypeString
 	TypeStruct
+	// TypePtr is a pointer to another type. It is a type of its own rather than
+	// a name, because a pointer is how a value crosses a foreign boundary: C
+	// takes `const char*` where Rho takes `Ptr[u8]`, and a backend that spelled a
+	// pointer as a name would generate something that does not compile.
+	TypePtr
 )
 
 // Type represents a concrete type in the IR.

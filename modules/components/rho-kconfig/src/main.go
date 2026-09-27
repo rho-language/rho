@@ -27,6 +27,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rho/rho-kconfig/src/rhokconfig"
@@ -59,6 +60,31 @@ func run(args []string) int {
 	return 2
 }
 
+// splitArgs separates the flags from the path a command was given.
+//
+// A flag that takes a value may be written `-name value` or `-name=value`, so the
+// value is consumed with it: without that, `--force` after a path would be read
+// as a second path.
+func splitArgs(args []string, takesValue map[string]bool) (flags []string, rest []string) {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if !strings.HasPrefix(argument, "-") || argument == "-" {
+			rest = append(rest, argument)
+			continue
+		}
+		flags = append(flags, argument)
+		name := strings.TrimLeft(argument, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+		if takesValue[name] && index+1 < len(args) {
+			index++
+			flags = append(flags, args[index])
+		}
+	}
+	return flags, rest
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: rho kconfig <command> [flags] [fragment...]
 
@@ -74,24 +100,73 @@ func usage() {
 
 func merge(args []string) int {
 	fs := flag.NewFlagSet("rho kconfig merge", flag.ExitOnError)
-	root := fs.String("root", ".", "the project the configuration is for")
+	root := fs.String("root", "", "the project the configuration is for (default: the path, or the working directory)")
 	out := fs.String("out", "", "where the files are written (default: the project)")
 	dialect := fs.String("dialect", "", "linux, espidf or freertos (default: what the project declared)")
 	defconfig := fs.String("defconfig", "", "a file of values to start from")
 	module := fs.String("module", "", "a Rho module of constants to apply")
 	force := fs.Bool("force", false, "write over a file that is already there")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
-	if err := fs.Parse(args); err != nil {
+	// Flags are read wherever they appear, because `rho kconfig merge <path>
+	// --force` is what a person types first and a parser that stops at the path
+	// would read the flag as a fragment to open.
+	flagArgs, rest := splitArgs(args, map[string]bool{"root": true, "out": true, "dialect": true, "library": true, "section": true, "title": true})
+	if err := fs.Parse(flagArgs); err != nil {
 		return 2
+	}
+	// A path is the first thing that is not a flag, and only when the caller did
+	// not name one: a run that passes --root and then a fragment names a fragment,
+	// and reading it as the path would resolve the wrong project and lose it.
+	fragments := rest
+	if *root == "" {
+		if len(fragments) > 0 {
+			*root = fragments[0]
+			fragments = fragments[1:]
+		} else {
+			*root = "."
+		}
 	}
 
 	options := rhokconfig.Options{
 		Root:      *root,
-		Fragments: fs.Args(),
+		Fragments: fragments,
 		Dialect:   *dialect,
 		Defconfig: *defconfig,
 		Module:    *module,
 		Overwrite: *force,
+	}
+
+	// A run that names a path and no fragment reads what the project declared: a
+	// project's configuration is what its manifest says it is, and making the
+	// caller repeat it would let the two disagree.
+	if len(options.Fragments) == 0 {
+		absolute, absErr := filepath.Abs(*root)
+		if absErr != nil {
+			fmt.Fprintln(os.Stderr, "rho kconfig:", absErr)
+			return 1
+		}
+		declared, err := rhokconfig.ReadProjectConfig(absolute)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "rho kconfig:", err)
+			return 1
+		}
+		if !declared.Configured {
+			fmt.Fprintf(os.Stderr, "rho kconfig: %s declares no configuration; add a config section to module.yml\n", *root)
+			return 1
+		}
+		options.Fragments = declared.Fragments
+		if options.Dialect == "" {
+			options.Dialect = declared.Dialect
+		}
+		if options.Defconfig == "" {
+			options.Defconfig = declared.Defconfig
+		}
+		if options.Module == "" {
+			options.Module = declared.Module
+		}
+		if len(options.Values) == 0 {
+			options.Values = declared.Values
+		}
 	}
 	if *out != "" {
 		options.Root = *out
@@ -168,17 +243,27 @@ func report(result rhokconfig.Result) {
 
 func list(args []string) int {
 	fs := flag.NewFlagSet("rho kconfig list", flag.ExitOnError)
-	root := fs.String("root", ".", "the project the configuration is for")
+	root := fs.String("root", "", "the project the configuration is for (default: the path, or the working directory)")
 	dialect := fs.String("dialect", "", "which dialect the project declared")
 	defconfig := fs.String("defconfig", "", "a file of values to start from")
 	module := fs.String("module", "", "a Rho module of constants to apply")
-	if err := fs.Parse(args); err != nil {
+	flagArgs, rest := splitArgs(args, map[string]bool{"root": true, "dialect": true, "defconfig": true, "module": true})
+	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
 
+	fragments := rest
+	if *root == "" {
+		if len(fragments) > 0 {
+			*root = fragments[0]
+			fragments = fragments[1:]
+		} else {
+			*root = "."
+		}
+	}
 	options := rhokconfig.Options{
 		Root:      *root,
-		Fragments: fs.Args(),
+		Fragments: fragments,
 		Dialect:   *dialect,
 		Defconfig: *defconfig,
 		Module:    *module,

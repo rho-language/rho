@@ -926,7 +926,17 @@ func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type 
 		}
 	}
 	typ := tc.typeFor(expr.Name)
-	typ.Name = expr.String()
+	// A pointer is a kind and not a name. The parser writes `Ptr[u8]` as the
+	// name Ptr with u8 as an argument, so the kind is decided from the name
+	// before the written spelling replaces it: a backend handed a struct named
+	// `Ptr[u8]` mangles it into a name no C compiler knows, and every foreign
+	// call that passes a pointer goes through here.
+	if expr.Name == "Ptr" {
+		typ.Kind = ir.TypePtr
+	}
+	if typ.Kind != ir.TypePtr {
+		typ.Name = expr.String()
+	}
 	typ.ArrayLen = 0
 	if expr.ArrayLen != nil {
 		typ.ArrayLen = *expr.ArrayLen
@@ -942,8 +952,19 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 		return typ, true
 	}
 	base := name
+	element := ""
 	if i := strings.IndexByte(base, '['); i >= 0 {
+		element = strings.TrimSuffix(base[i+1:], "]")
 		base = base[:i]
+	}
+	// A pointer keeps the type it points at. Losing it would make every backend
+	// spell `Ptr[u8]` as a name, which is what a C compiler rejects.
+	if base == "Ptr" {
+		pointer := ir.Type{Kind: ir.TypePtr, Name: name}
+		if element != "" {
+			pointer.Args = []ir.Type{tc.typeFor(element)}
+		}
+		return pointer, true
 	}
 	if typ, ok := tc.types[base]; ok {
 		typ.Name = name
@@ -1026,7 +1047,11 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 	case ast.IdentifierExpr:
 		return expr.Name
 	case ast.NumberExpr:
-		return expr.Value
+		// A Rho number may be written with separators — 1_000_000 — and the
+		// backends are handed the digits, not the way the author spaced them.
+		// Carrying the underscores through would write `1_000_000` into C or Go,
+		// which is not a number either language knows.
+		return strings.ReplaceAll(expr.Value, "_", "")
 	case ast.StringExpr:
 		return strconv.Quote(expr.Value)
 	case ast.BoolExpr:
@@ -1259,8 +1284,20 @@ func cTypeForName(name string) string {
 		return "bool"
 	case "string":
 		return "const char*"
-	case "void":
+	case "void", "Unit":
 		return "void"
+	case "Ptr":
+		// A pointer is spelled as a C pointer. Mangling the name would write
+		// `Ptr_u8`, which is not a type a C compiler knows: every foreign call
+		// that passes a pointer crosses this path, so a binding generated for
+		// robohub-common would not compile at all.
+		element := strings.TrimSuffix(strings.TrimPrefix(name[len(base):], "["), "]")
+		// A pointer to nothing is a pointer to nothing: `Ptr[Unit]` is how a
+		// foreign handle is declared, and C spells that void*.
+		if element == "" || element == "Unit" || element == "void" {
+			return "void*"
+		}
+		return cTypeForName(element) + "*"
 	}
 	return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(name)
 }

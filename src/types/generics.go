@@ -920,6 +920,7 @@ func (tc *TypeChecker) expectedHint(written string, resolved ir.Type) ir.Type {
 // `Result<T, E = ()>`.
 const defaultTypeName = "Unit"
 
+
 // synthesizeDefaultTypes emits a zero-sized struct for any name used as a
 // type parameter default that the module does not define itself, so a default
 // always has a definition the backends can emit.

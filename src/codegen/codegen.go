@@ -452,6 +452,15 @@ func (cg *Codegen) emitNested(instructions []ir.Instr) {
 /*  Internal: Type Mapping                                                    */
 /* -------------------------------------------------------------------------- */
 
+// isUnitType reports whether a type is the synthesised empty struct that means
+// "no value". A pointer to it is a pointer to nothing.
+func isUnitType(t ir.Type) bool {
+	if t.Kind == ir.TypeVoid {
+		return true
+	}
+	return t.Kind == ir.TypeStruct && (t.Name == "Unit" || t.Name == "RhoUnit")
+}
+
 // cTypeFor maps IR types to C types.
 func cTypeFor(t ir.Type) string {
 	switch t.Kind {
@@ -478,6 +487,14 @@ func cTypeFor(t ir.Type) string {
 			return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(t.Name)
 		}
 		return "struct /* anonymous */"
+	case ir.TypePtr:
+		// A pointer is a pointer. A pointer to nothing — `Ptr[Unit]`, which is
+		// how a foreign handle is declared — is what C calls void*, and spelling
+		// it as a mangled name would make every handle undeclareable.
+		if len(t.Args) == 0 || isUnitType(t.Args[0]) {
+			return "void*"
+		}
+		return cTypeFor(t.Args[0]) + "*"
 	default:
 		return "void /* invalid */"
 	}

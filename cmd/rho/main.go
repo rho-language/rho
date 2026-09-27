@@ -359,7 +359,11 @@ func runCLI(args []string) {
 	}
 	var dependencyRoots []string
 	var includePaths, sourceFiles []string
-	if manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot)); err == nil {
+	if manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot)); err == nil && manifest != nil {
+		// The C a project compiles is named in its manifest: the shim a
+		// generated binding needs, and the host C a Rho program writes for the
+		// things the language has no type for.
+		sourceFiles = append(sourceFiles, manifest.BuildSources...)
 		locator := &deps.DefaultLocator{
 			ProjectRoot: projectRoot,
 			GlobalCache: filepath.Join(os.Getenv("HOME"), ".rho", "pkg", "mod"),
@@ -576,6 +580,14 @@ func buildCLI(args []string) int {
 	var includePaths []string
 	var sourceFiles []string
 	var rhoDependencyRoots []string
+
+	// The C a project compiles is named in its manifest: the shim a generated
+	// binding needs, and the host C a Rho program writes for what the language
+	// has no type for. The manifest already declared it and the C backend already
+	// emitted it into the target; what was missing was passing it on.
+	if manifest, manifestErr := deps.LoadManifest(deps.ManifestPath(projectRoot)); manifestErr == nil && manifest != nil {
+		sourceFiles = append(sourceFiles, manifest.BuildSources...)
+	}
 
 	for _, node := range graph.Nodes {
 		if node.Type == deps.DepTypeRho {
