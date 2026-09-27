@@ -1,0 +1,59 @@
+module rho.doc
+
+// The documentation library, as a caller sees it.
+//
+// The generator is a component, so what a project needs from it arrives
+// through the docemit port. The externs below are what the host supplies; the
+// functions under them are what a caller reads, and they are the same ones the
+// `rho doc` command reaches. A page a service renders and a page a build writes
+// therefore come from one implementation.
+//
+// A listing is line-based, one record per line, with fields separated by tabs.
+// Rho cannot walk a nested document, so a caller reads a listing rather than a
+// structure: a site index, a reference index and a set of diagnostics are each
+// text a handler can page through.
+
+// A doc-as-code source: MyST-style Markdown, the format a module ships.
+extern fn render(source: string, path: string) string
+
+// The documentation of a tree, as a site index: the header line, then one line
+// per page holding the target, the title, the section and the module.
+extern fn build_site(root: string, title: string) string
+
+// The API reference of a tree, as an index: the header line, then one line per
+// module holding its name, its target, and what it declares.
+extern fn generate_api(root: string) string
+
+// The problems a documentation build found, one per line: the path, the line
+// number and the message. An empty answer means the build was clean.
+extern fn check(root: string) string
+
+// Write a site into a directory, answering the number of pages written or 0
+// when the build failed. The problems say why.
+extern fn write_site(root: string, out: string, title: string) u32
+
+// Render one source into the page it becomes. It is the same page the
+// generator writes to disk, so a served page and a built page are one page.
+fn page(source: string) string {
+    return render(source, "inline.md");
+}
+
+// The documentation of a tree, as a site index.
+fn site(root: string, title: string) string {
+    return build_site(root, title);
+}
+
+// The API reference of a tree, as an index.
+fn api(root: string) string {
+    return generate_api(root);
+}
+
+// The problems a documentation build found, one per line.
+fn diagnostics(root: string) string {
+    return check(root);
+}
+
+// Build a site into a directory, answering the number of pages written.
+fn build(root: string, out: string, title: string) u32 {
+    return write_site(root, out, title);
+}

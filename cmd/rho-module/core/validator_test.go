@@ -3,6 +3,7 @@ package core
 import (
     "os"
     "path/filepath"
+    "strings"
     "testing"
 )
 
@@ -74,15 +75,68 @@ main: src/plugin.rho
     os.Mkdir(filepath.Join(tmp, "src"), 0755)
     os.WriteFile(filepath.Join(tmp, "src", "plugin.rho"), []byte("module plug"), 0644)
 
-    os.Mkdir(filepath.Join(tmp, "plugin"), 0755)
-    os.WriteFile(filepath.Join(tmp, "plugin", "hooks.yml"), []byte(`
-hooks:
-  - init
-`), 0644)
+    writeComponent(t, filepath.Dir(tmp), "host", []string{"init"})
+    writeAttachedPlugin(t, tmp, "testplugin", "host", []string{"init"}, [][2]string{{"init", "init"}})
 
     if err := ValidateModule(tmp); err != nil {
         t.Fatalf("plugin validation failed: %v", err)
     }
+}
+
+// writeComponent writes a component that offers a set of hooks, in the
+// component tree of a repository, which is where a resolver looks for one.
+func writeComponent(t *testing.T, root, name string, hooks []string) {
+	t.Helper()
+	dir := filepath.Join(root, "modules", "components", name)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n" +
+		"  name: " + name + "\n" +
+		"  type: component\n" +
+		"  version: 0.1.0\n" +
+		"  command: " + name + "\n" +
+		"\n" +
+		"main: " + name + "\n" +
+		"\n" +
+		"provides:\n" +
+		"  hooks:\n"
+	for _, hook := range hooks {
+		manifest += "    - " + hook + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeAttachedPlugin writes a plugin that declares the component it plugs into
+// and the hooks of that component it answers.
+func writeAttachedPlugin(t *testing.T, dir, name, component string, hooks []string, commands [][2]string) {
+	t.Helper()
+	manifest := "module:\n" +
+		"  name: " + name + "\n" +
+		"  type: plugin\n" +
+		"  version: 0.1.0\n" +
+		"\n" +
+		"main: " + name + "\n" +
+		"\n" +
+		"extends: " + component + "\n" +
+		"\n" +
+		"hooks:\n"
+	for _, hook := range hooks {
+		manifest += "  - " + hook + "\n"
+	}
+	if len(commands) > 0 {
+		manifest += "\ncommands:\n"
+		for _, command := range commands {
+			manifest += "  - name: " + command[0] + "\n" +
+				"    run: " + name + "\n" +
+				"    hook: " + command[1] + "\n"
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -151,16 +205,55 @@ func TestValidateRejectsMalformedHooks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "src", "plugin.rho"), []byte("module plug"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(tmp, "plugin"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	// hooks is present but declares no value.
-	if err := os.WriteFile(filepath.Join(tmp, "plugin", "hooks.yml"), []byte("hooks:\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// The plugin names a component but claims no hook of it, so nothing it
+	// writes would ever be called.
+	writeComponent(t, tmp, "host", []string{"init"})
+	writeAttachedPlugin(t, tmp, "testplugin", "host", nil, nil)
 
 	if err := ValidateModule(tmp); err == nil {
-		t.Fatal("expected error for hooks.yml with no hooks")
+		t.Fatal("expected error for a plugin that declares no hooks")
+	}
+}
+
+func TestValidateRejectsAPluginThatExtendsNothing(t *testing.T) {
+	tmp := t.TempDir()
+	writeModule(t, tmp, "module:\n  name: orphan\n  type: plugin\n  version: 0.1.0\n\nmain: src/main.rho\n")
+
+	if err := ValidateModule(tmp); err == nil {
+		t.Fatal("expected error for a plugin that names no component")
+	}
+}
+
+func TestValidateRejectsAPluginWhoseHookIsNotOffered(t *testing.T) {
+	tmp := t.TempDir()
+	writeComponent(t, tmp, "host", []string{"init"})
+	writeAttachedPlugin(t, tmp, "testplugin", "host", []string{"shutdown"}, [][2]string{{"shutdown", "shutdown"}})
+
+	err := ValidateModule(tmp)
+	if err == nil {
+		t.Fatal("expected error for a hook the component does not offer")
+	}
+	if !strings.Contains(err.Error(), "not offered") {
+		t.Fatalf("expected the reason to be named, got %v", err)
+	}
+}
+
+func TestValidateRejectsAPluginWhoseComponentIsMissing(t *testing.T) {
+	tmp := t.TempDir()
+	writeAttachedPlugin(t, tmp, "testplugin", "absent", []string{"init"}, [][2]string{{"init", "init"}})
+
+	if err := ValidateModule(tmp); err == nil {
+		t.Fatal("expected error for a component that cannot be resolved")
+	}
+}
+
+func TestValidateRejectsACommandForAnUndeclaredHook(t *testing.T) {
+	tmp := t.TempDir()
+	writeComponent(t, tmp, "host", []string{"init"})
+	writeAttachedPlugin(t, tmp, "testplugin", "host", []string{"init"}, [][2]string{{"shutdown", "shutdown"}})
+
+	if err := ValidateModule(tmp); err == nil {
+		t.Fatal("expected error for a command answering a hook the plugin does not declare")
 	}
 }
 

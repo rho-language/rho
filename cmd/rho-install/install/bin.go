@@ -67,13 +67,14 @@ func InstallBinary(src string) error {
 // InstallAllBinaries installs all Rho executables.
 func InstallAllBinaries(srcDir string) error {
 	// The same set the installation check verifies. cmd/rho-pkg is a library
-	// with no main package, so there is no binary to install for it.
+	// with no main package, so there is no binary to install for it. The
+	// formatter, the test runner and the documentation generator are
+	// components rather than core tools: they are installed from a registry
+	// and dispatched to, so building them here would put them back in the core
+	// and defeat the point of late binding.
 	binaries := []string{
 		"rho",
-		"rho-fmt",
-		"rho-test",
 		"rho-deps",
-		"rho-doc",
 	}
 
 	for _, b := range binaries {

@@ -19,11 +19,12 @@
 package core
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"rho/src/deps"
 	"rho/src/schema"
 	"rho/src/yaml"
 )
@@ -76,9 +77,20 @@ func ValidateModule(dir string) error {
 		}
 	}
 
-	// Step 5: Validate plugin structure
-	if manifest.Module.Type == "plugin" {
-		if err := validatePlugin(dir); err != nil {
+	// Step 5: Validate what a component offers, and what a plugin plugs into.
+	//
+	// The relation is read through the manifest loader rather than from the
+	// identity metadata, so what is validated here and what a tool resolves
+	// when it loads a plugin are the same declaration.
+	relation, err := deps.LoadManifest(modPath)
+	if err != nil {
+		return err
+	}
+	if err := validateProvides(relation); err != nil {
+		return err
+	}
+	if relation.ModuleType == "plugin" {
+		if err := validatePlugin(dir, relation); err != nil {
 			return err
 		}
 	}
@@ -90,49 +102,93 @@ func ValidateModule(dir string) error {
 /*  Plugin Validation                                                           */
 /* -------------------------------------------------------------------------- */
 
-func validatePlugin(dir string) error {
-	pluginDir := filepath.Join(dir, "plugin")
-	hooksPath := filepath.Join(pluginDir, "hooks.yml")
+/* -------------------------------------------------------------------------- */
+/*  Plugin Validation                                                           */
+/* -------------------------------------------------------------------------- */
 
-	if _, err := os.Stat(pluginDir); err != nil {
-		return errors.New("plugin directory missing")
+// validatePlugin checks that a plugin is attached to something.
+//
+// A plugin is not a thing in itself: it answers hooks of a component, and a run
+// of that component is the only thing that ever calls it. So the declaration is
+// checked here, against the component it names: the component has to exist, it
+// has to offer the hooks the plugin claims, and every command has to answer a
+// hook the plugin declared. A plugin that passes is attached; one that does not
+// is a module that nothing will ever call, and saying so at validation is
+// cheaper than discovering it from a build log.
+func validatePlugin(dir string, manifest *deps.Manifest) error {
+	extension := manifest.Extends
+	if extension == nil {
+		return fmt.Errorf("plugin must declare `extends:` naming the component it plugs into")
+	}
+	if len(extension.Hooks) == 0 {
+		return fmt.Errorf("plugin must declare the hooks of %s it answers", extension.Component)
+	}
+	if len(extension.Commands) == 0 {
+		return fmt.Errorf("plugin must declare at least one command")
 	}
 
-	if _, err := os.Stat(hooksPath); err != nil {
-		return errors.New("plugin/hooks.yml missing")
-	}
-
-	// Schema-validate hooks.yml
-	result, err := schema.ValidateHooksFile(hooksPath)
+	// The named component has to be something that can run the hooks. It is
+	// located the way a dependency is, so an installed component and a
+	// component in the same tree are both found.
+	component, err := findComponent(dir, extension.Component)
 	if err != nil {
-		return fmt.Errorf("cannot validate hooks.yml: %w", err)
+		return err
 	}
-		if result.HasErrors() {
-		return fmt.Errorf("hooks.yml schema validation failed:\n%s", result.ErrorString())
+	if component.Provides == nil || len(component.Provides.Hooks) == 0 {
+		return fmt.Errorf("%s offers no hooks; a plugin has nothing to answer", extension.Component)
 	}
-
-	// Load hooks.yml
-	data, err := os.ReadFile(hooksPath)
-	if err != nil {
-		return fmt.Errorf("cannot read hooks.yml: %w", err)
+	offered := map[string]bool{}
+	for _, hook := range component.Provides.Hooks {
+		offered[hook] = true
 	}
-
-	root, err := yaml.Load(string(data))
-	if err != nil {
-		return fmt.Errorf("invalid hooks.yml: %w", err)
-	}
-
-	hooks := root.Map["hooks"].List
-	if len(hooks) == 0 {
-		return errors.New("plugin has no hooks defined")
-	}
-
-	// Validate hook names
-	for _, h := range hooks {
-		if h.Str == "" {
-			return errors.New("empty hook name in hooks.yml")
+	for _, hook := range extension.Hooks {
+		if !offered[hook] {
+			return fmt.Errorf("hook %q is not offered by %s; it offers %s",
+				hook, extension.Component, strings.Join(component.Provides.Hooks, ", "))
 		}
 	}
+	for _, command := range extension.Commands {
+		stage := command.Stage()
+		if !extension.Answers(stage) {
+			return fmt.Errorf("command %q answers hook %q, which the plugin does not declare", command.Name, stage)
+		}
+	}
+	return nil
+}
 
+// findComponent loads the manifest of a named component, from the installation
+// or from the tree the caller is in.
+func findComponent(from, name string) (*deps.Manifest, error) {
+	locator := &deps.DefaultLocator{ProjectRoot: from}
+	root, err := locator.Locate(deps.DepSpec{Name: name})
+	if err != nil {
+		return nil, fmt.Errorf("plugin extends %q, which cannot be resolved: %w", name, err)
+	}
+	manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
+	if err != nil || manifest == nil {
+		return nil, fmt.Errorf("plugin extends %q, whose manifest cannot be read", name)
+	}
+	if manifest.ModuleType != "component" && manifest.ModuleType != "plugin" {
+		return nil, fmt.Errorf("plugin extends %q, which is a %s; a plugin plugs into a component", name, manifest.ModuleType)
+	}
+	return manifest, nil
+}
+
+// validateProvides checks what a component offers, which is the list every
+// plugin is measured against.
+func validateProvides(manifest *deps.Manifest) error {
+	if manifest.Provides == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, hook := range manifest.Provides.Hooks {
+		if hook == "" {
+			return fmt.Errorf("provides an empty hook name")
+		}
+		if seen[hook] {
+			return fmt.Errorf("provides hook %q more than once", hook)
+		}
+		seen[hook] = true
+	}
 	return nil
 }

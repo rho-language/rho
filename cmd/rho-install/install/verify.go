@@ -100,12 +100,12 @@ func binariesExist() bool {
 		return false
 	}
 
+	// The core toolchain only. A component is installed as a module, and is
+	// reached through the command its manifest publishes rather than through a
+	// binary sitting in the bin directory.
 	binaries := []string{
 		"rho",
-		"rho-fmt",
-		"rho-test",
 		"rho-deps",
-		"rho-doc",
 	}
 
 	for _, b := range binaries {

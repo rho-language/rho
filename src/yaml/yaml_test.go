@@ -80,3 +80,29 @@ invalid line without colon
         t.Fatalf("expected error for invalid YAML")
     }
 }
+
+func TestLoadKeepsQuotesThatDoNotEncloseTheValue(t *testing.T) {
+	// A value that starts and ends with a quote is not a quoted scalar when a
+	// quote of its own sits between them: the quotes belong to the value, the
+	// way they do in a command that runs a program with arguments.
+	src := `run: "prog" --flag "arg"`
+	root, err := Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := root.Map["run"].Str
+	if got != `"prog" --flag "arg"` {
+		t.Fatalf("expected the value kept as written, got %s", got)
+	}
+}
+
+func TestLoadUnquotesAScalar(t *testing.T) {
+	src := `title: "A quoted title"`
+	root, err := Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := root.Map["title"].Str; got != "A quoted title" {
+		t.Fatalf("expected the quotes removed, got %s", got)
+	}
+}

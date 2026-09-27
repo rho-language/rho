@@ -36,11 +36,91 @@ type DepSpec struct {
 	Src       string
 }
 
+// DocManifest is the doc-as-code a module carries: where its documentation is
+// written, and where the pages belong in a site.
+//
+// The generator is the rho-doc component, so nothing here knows how a page is
+// rendered. A module says what it has; the generator says what to do with it.
+type DocManifest struct {
+	// Title overrides the page title taken from the source.
+	Title string
+	// Section is the sidebar group the pages are listed under.
+	Section string
+	// Order sorts this module against its peers in a section.
+	Order string
+	// Sources are the doc-as-code files, relative to the module root. A glob
+	// names a whole tree without listing it.
+	Sources []string
+	// Index is the page a section leads with.
+	Index string
+}
+
+// Provides is what a component offers a plugin: the hooks a run of the tool
+// goes through. A plugin is checked against this list, so a plugin cannot claim
+// a stage the tool never runs.
+type Provides struct {
+	// Hooks are the names a plugin may answer, in the order a run goes through
+	// them.
+	Hooks []string
+}
+
+// Extends is how a plugin says which component it plugs into.
+//
+// The relation is declared rather than assumed: a tool loads only the plugins
+// that name it, and a plugin that names a tool nothing offers is a plugin no
+// run ever calls.
+type Extends struct {
+	// Component is the name of the component this plugin extends.
+	Component string
+	// Hooks are the hooks of that component this plugin answers. Every one of
+	// them has to be offered by the component.
+	Hooks []string
+	// Commands are the executables that answer a hook.
+	Commands []Command
+}
+
+// Answers reports whether the plugin answers a hook.
+func (e *Extends) Answers(hook string) bool {
+	for _, offered := range e.Hooks {
+		if offered == hook {
+			return true
+		}
+	}
+	return false
+}
+
+// Command is one executable a plugin answers a hook with.
+type Command struct {
+	// Name identifies the command in a build log and in a protocol request.
+	Name string
+	// Run is the executable: a path, or a name found on PATH.
+	Run string
+	// Hook is the stage this command answers. An empty hook means the command
+	// is named for it, which is what a one-hook plugin can rely on.
+	Hook string
+}
+
+// Stage is the hook a command answers.
+func (c Command) Stage() string {
+	if c.Hook != "" {
+		return c.Hook
+	}
+	return c.Name
+}
+
 type Manifest struct {
 	ModuleName string
 	ModuleType string
 	Version    string
-	Main       string
+	// Description is the one-line summary a module states about itself. A
+	// page generated from the manifest shows it, so a module documents itself
+	// in the place it already describes itself.
+	Description string
+	Main        string
+	// Command is the name a module publishes to be dispatched to. Empty means
+	// the module is not something a person types, which is what a library and a
+	// plugin are.
+	Command string
 	// ImportPath is the dotted name Rho code uses to import this component's
 	// Rho sources. Empty means the component exports no Rho library.
 	ImportPath       string
@@ -51,6 +131,14 @@ type Manifest struct {
 	BuildIncludeDirs []string
 	BuildSourceDirs  []string
 	BuildSources     []string
+	// Docs is the doc-as-code this module carries. Nil means the module says
+	// nothing about its documentation.
+	Docs *DocManifest
+	// Provides is what this module offers a plugin. Only a component has
+	// something to offer.
+	Provides *Provides
+	// Extends is what this module plugs into. Only a plugin extends something.
+	Extends *Extends
 }
 
 func ManifestPath(projectRoot string) string {
@@ -212,7 +300,9 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		m.ModuleName = yamlString(module, "name")
 		m.ModuleType = yamlString(module, "type")
 		m.Version = yamlString(module, "version")
+		m.Command = yamlString(module, "command")
 		m.ImportPath = yamlString(module, "import_path")
+		m.Description = yamlString(module, "description")
 	}
 	build := doc.Map["build"]
 	if build.Kind == yaml.KindMap {
@@ -261,21 +351,84 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		dep.Version.Constraints = cs
 		m.Deps = append(m.Deps, dep)
 	}
+	m.Docs = parseDocManifest(doc.Map["docs"])
+	m.Provides = parseProvides(doc.Map["provides"])
+	m.Extends = parseExtends(doc)
 	return m, nil
+}
+
+// parseProvides reads what a component offers a plugin.
+func parseProvides(node yaml.Value) *Provides {
+	if node.Kind != yaml.KindMap {
+		return nil
+	}
+	provides := &Provides{Hooks: yamlStrings(node.Map["hooks"])}
+	if len(provides.Hooks) == 0 {
+		// A section with no hooks says nothing, which is how a module says it
+		// offers no place for a plugin to stand.
+		return nil
+	}
+	return provides
+}
+
+// parseExtends reads what a plugin plugs into.
+func parseExtends(doc yaml.Value) *Extends {
+	component := yamlUnquote(doc.Map["extends"].Str)
+	if component == "" {
+		return nil
+	}
+	extension := &Extends{
+		Component: component,
+		Hooks:     yamlStrings(doc.Map["hooks"]),
+	}
+	for _, item := range doc.Map["commands"].List {
+		if item.Kind != yaml.KindMap {
+			continue
+		}
+		extension.Commands = append(extension.Commands, Command{
+			Name: yamlString(item, "name"),
+			Run:  yamlString(item, "run"),
+			Hook: yamlString(item, "hook"),
+		})
+	}
+	return extension
+}
+
+// parseDocManifest reads the doc-as-code a module carries. A missing or empty
+// section yields nil, which is how a module says it carries no documentation.
+func parseDocManifest(node yaml.Value) *DocManifest {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	return &DocManifest{
+		Title:   yamlString(node, "title"),
+		Section: yamlString(node, "section"),
+		Order:   yamlString(node, "order"),
+		Sources: yamlStrings(node.Map["sources"]),
+		Index:   yamlString(node, "index"),
+	}
 }
 
 func yamlString(value yaml.Value, key string) string {
 	if item, ok := value.Map[key]; ok {
-		return strings.Trim(item.Str, "\"")
+		return yamlUnquote(item.Str)
 	}
 	return ""
+}
+
+// yamlUnquote removes the quotes of a quoted value, using the one rule the
+// loader uses: a value whose first and last characters are quotes is quoted
+// only when no quote of its own sits between them, which is what keeps
+// `"prog" --flag "arg"` a command rather than one word.
+func yamlUnquote(value string) string {
+	return yaml.Unquote(value)
 }
 
 func yamlStrings(value yaml.Value) []string {
 	values := []string{}
 	for _, item := range value.List {
 		if item.Kind == yaml.KindString {
-			values = append(values, strings.Trim(item.Str, "\""))
+			values = append(values, yamlUnquote(item.Str))
 		}
 	}
 	return values

@@ -25,6 +25,21 @@ jobs:
     - name: Build Go tools
       run: go build ./...
 
+    # A component and a plugin is its own Go module, so the root module's
+    # `go build ./...` and `go test ./...` do not reach it. Every module in the
+    # repository is built and tested here, so a component cannot pass CI
+    # untested: the toolchain, the formatter, the logger, the test runner and
+    # the documentation generator all live in one of these trees.
+    - name: Build and test the modules
+      run: |
+        for module in modules/components/*/ modules/plugins/*/; do
+          if [ -f "$module/go.mod" ]; then
+            echo "::group::$module"
+            (cd "$module" && go build ./... && go test ./...)
+            echo "::endgroup::"
+          fi
+        done
+
     - name: Configure CMake
       run: cmake -S . -B build -DBUILD_TESTING=ON
 

@@ -39,3 +39,13 @@ features:
 # component rather than being copied in here.
 deps:
   rho-fmt: ">=0.1.0"
+
+# The logger documents itself: the sources below are what a component that
+# depends on it is pointed at.
+docs:
+  title: Structured logging
+  section: components
+  order: "20"
+  index: docs/index.md
+  sources:
+    - docs/index.md
