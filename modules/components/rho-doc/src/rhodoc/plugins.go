@@ -132,7 +132,6 @@ func (site *Site) merge(result PluginResult) {
 		}
 	}
 	site.Diagnostics = append(site.Diagnostics, result.Diagnostics...)
-	site.Formats = append(site.Formats, result.Formats...)
 	relink(site)
 }
 
@@ -149,12 +148,14 @@ func (site *Site) find(target string) *SitePage {
 // relink sorts the pages, regroups the sidebar and rewires the neighbours,
 // because a plugin can add pages at any point.
 func relink(site *Site) {
-	order := map[string]int{}
-	for index, group := range site.Sections {
+	// Within a section the reading order is the order the pages were already
+	// in, so each page is ranked by its position and the sort only moves pages
+	// between sections. Returning true for every pair in a section is not an
+	// ordering at all, and would shuffle a section's pages arbitrarily.
+	rank := map[*SitePage]int{}
+	for _, group := range site.Sections {
 		for position, page := range group.Pages {
-			if _, seen := order[page.Section]; !seen {
-				order[page.Section] = index*1000 + position
-			}
+			rank[page] = position
 		}
 	}
 	sort.SliceStable(site.Pages, func(i, j int) bool {
@@ -162,7 +163,7 @@ func relink(site *Site) {
 		if left.Section != right.Section {
 			return left.Section < right.Section
 		}
-		return order[left.Section] <= order[right.Section]
+		return rank[left] < rank[right]
 	})
 	site.Sections = nil
 	site.groupSections(nil)

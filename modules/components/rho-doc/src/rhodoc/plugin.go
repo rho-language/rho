@@ -2,28 +2,39 @@
 // @file plugin.go
 // @brief Extending the documentation generator with plugins.
 //
-// A plugin is an ordinary module of type plugin that adds to a documentation
-// build. It declares what it adds in its manifest, under doc:
+// A plugin is an ordinary module of type plugin that is attached to a
+// component. It names the component it plugs into and the hooks of that
+// component it answers, in its manifest:
 //
-//	doc:
-//	  section: extensions
-//	  pages: [docs/index.md]
-//	  commands:
-//	    - name: table-of-contents
-//	      run: rho-doc-toc
-//	      hook: index
+//	extends: rho-doc
 //
-// Each command is an executable. The generator writes a request to its standard
+//	hooks:
+//	  - index
+//	  - page
+//
+//	commands:
+//	  - name: table-of-contents
+//	    run: rho-doc-toc
+//	    hook: index
+//
+// The generator loads the plugins that name it, and a plugin that names another
+// component belongs to that tool. `rho module validate` checks the relation
+// against the component before a plugin is published: the component has to
+// exist, every hook the plugin declares has to be one the component offers, and
+// every command has to answer a hook the plugin declared.
+//
+// A command is an executable. The generator writes a request to its standard
 // input as JSON and reads a response as JSON:
 //
-//	{"hook": "index", "site": "Rho", "out": "build/docs",
+//	{"version": 1, "hook": "index", "site": "Rho", "out": "build/docs",
 //	 "pages": [{"target": "index", "title": "Registry", "href": "registry.html"}],
 //	 "page": {"target": "index", "title": "Registry", "html": "..."}}
 //
 // The response adds to the site rather than replacing it, so a plugin extends
 // the documentation instead of taking it over:
 //
-//	{"pages": [{"target": "toc", "title": "Contents", "section": "extensions",
+//	{"version": 1,
+//	 "pages": [{"target": "toc", "title": "Contents", "section": "extensions",
 //	            "html": "<nav>...</nav>", "plain": "..."}],
 //	 "diagnostics": [{"level": "warning", "message": "..."}]}
 //
@@ -50,6 +61,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"rho/src/deps"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -104,9 +117,6 @@ type PluginResponse struct {
 	Replacements map[string]string `json:"replacements,omitempty"`
 	// Diagnostics are what the plugin wants the build to report.
 	Diagnostics []PluginDiagnostic `json:"diagnostics,omitempty"`
-	// Formats are the output formats the plugin can render, which a build
-	// lists so a reader knows a plugin is installed.
-	Formats []string `json:"formats,omitempty"`
 }
 
 // PluginDiagnostic is a problem a plugin reports about the documentation it was
@@ -174,19 +184,33 @@ func (p Plugin) Answers(hook string) bool {
 	return false
 }
 
-// DiscoverPlugins reads the plugins that extend one component: the installed
-// ones, and the ones the tree itself carries, so a checkout is documented with
-// the extensions it ships with.
+// Plugins is where a build looks for the plugins it runs.
+type Plugins struct {
+	// Tree is the tree being documented, which may also carry plugins.
+	Tree string
+	// RhoHome is the installation whose plugins are trusted, or "" for none.
+	RhoHome string
+	// TrustTree runs the plugins the tree itself carries.
+	//
+	// A plugin is a program, and running one is running code the tree supplied.
+	// An installed plugin was published by someone the user chose to install;
+	// a plugin found in the tree being documented was supplied by whoever wrote
+	// that tree, which for a repository that was just cloned is a stranger. So
+	// the tree's own plugins run only when the caller asks for them.
+	TrustTree bool
+}
+
+// DiscoverPlugins reads the plugins that extend one component.
 //
 // A plugin that names another component is left out. It is not a fault, it is
 // the relation working: that plugin belongs to another tool, and this one has no
 // business calling it.
 //
-// An installed plugin is read first, so a published version is the one a build
-// uses even when a checkout of a different version is present.
-func DiscoverPlugins(root, rhoHome, component string) []Plugin {
+// An installed plugin is preferred over one in the working tree of the same
+// name, so a published version is the one a build uses.
+func (p Plugins) DiscoverPlugins(component string) []Plugin {
 	plugins := []Plugin{}
-	for _, plugin := range DiscoverAllPlugins(root, rhoHome) {
+	for _, plugin := range p.All() {
 		if plugin.Extends == component {
 			plugins = append(plugins, plugin)
 		}
@@ -194,39 +218,35 @@ func DiscoverPlugins(root, rhoHome, component string) []Plugin {
 	return plugins
 }
 
-// DiscoverAllPlugins reads every plugin in a tree and the installation, whatever
-// component each one extends. It is how a tool reports the plugins that belong
-// to someone else, which a reader otherwise cannot account for.
-func DiscoverAllPlugins(root, rhoHome string) []Plugin {
+// All reads every plugin that may be run, whatever component each one extends.
+// It is how a tool reports the plugins that belong to someone else, which a
+// reader otherwise cannot account for.
+func (p Plugins) All() []Plugin {
 	plugins := []Plugin{}
 	seen := map[string]bool{}
-	if rhoHome != "" {
-		installed := filepath.Join(rhoHome, "modules", "installed", "plugin")
-		entries, err := os.ReadDir(installed)
-		if err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() {
-					collectPlugin(filepath.Join(installed, entry.Name()), seen, &plugins)
-				}
-			}
+	if p.RhoHome != "" {
+		for _, root := range installedPluginRoots(p.RhoHome) {
+			collectPlugin(root, seen, &plugins)
 		}
 	}
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			switch info.Name() {
-			case ".git", ".kilo", "node_modules", "build", "vendor":
-				return filepath.SkipDir
+	if p.TrustTree && p.Tree != "" {
+		filepath.Walk(p.Tree, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() {
+				switch info.Name() {
+				case ".git", ".kilo", "node_modules", "build", "vendor":
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if info.Name() == "module.yml" {
+				collectPlugin(filepath.Dir(path), seen, &plugins)
 			}
 			return nil
-		}
-		if info.Name() == "module.yml" {
-			collectPlugin(filepath.Dir(path), seen, &plugins)
-		}
-		return nil
-	})
+		})
+	}
 	sort.Slice(plugins, func(i, j int) bool { return plugins[i].Name < plugins[j].Name })
 	return plugins
 }
@@ -235,7 +255,7 @@ func DiscoverAllPlugins(root, rhoHome string) []Plugin {
 // an installed plugin wins over the one in the working tree, and keeping only
 // the plugins attached to the component being built.
 func collectPlugin(root string, seen map[string]bool, out *[]Plugin) {
-	module, ok := readModule(root)
+	module, ok := readModule(root, SourceOptions{})
 	if !ok || module.Type != "plugin" {
 		return
 	}
@@ -266,6 +286,20 @@ func collectPlugin(root string, seen map[string]bool, out *[]Plugin) {
 // when it says nothing else.
 const DefaultExtensionSection = "extensions"
 
+// installedPluginRoots is every installed plugin, one directory per name: the
+// newest version of each, resolved the way a dependency resolves a module, so
+// two installed versions of a plugin are one plugin and not two.
+func installedPluginRoots(rhoHome string) []string {
+	names := deps.InstalledPluginNames()
+	roots := make([]string, 0, len(names))
+	for _, name := range names {
+		if root := deps.InstalledPluginRoot(name); root != "" {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Running                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -278,10 +312,6 @@ type PluginResult struct {
 	Replacements map[string]string
 	// Diagnostics is what the plugins reported.
 	Diagnostics []Diagnostic
-	// Formats is every output format a plugin can render.
-	Formats []string
-	// Failed names the plugins that failed, with the reason.
-	Failed map[string]string
 }
 
 // RunHooks runs every command a plugin declares for a hook.
@@ -291,15 +321,12 @@ type PluginResult struct {
 // run continues: the documentation of everything else still matters more than
 // one extension.
 func RunHooks(plugins []Plugin, hook string, request PluginRequest) PluginResult {
-	result := PluginResult{Replacements: map[string]string{}, Failed: map[string]string{}}
+	result := PluginResult{Replacements: map[string]string{}}
 	if !offers(hook) {
 		return result
 	}
 
 	for _, plugin := range plugins {
-		for _, format := range plugin.Formats {
-			result.Formats = append(result.Formats, format)
-		}
 		// A plugin answers only the hooks it declared, and only the ones the
 		// component offers: the two lists were checked against each other when
 		// the module was validated, and are checked again here because a build
@@ -313,7 +340,6 @@ func RunHooks(plugins []Plugin, hook string, request PluginRequest) PluginResult
 			}
 			response, err := runCommand(plugin, command, request)
 			if err != nil {
-				result.Failed[plugin.Name+"/"+command.Name] = err.Error()
 				result.Diagnostics = append(result.Diagnostics, Diagnostic{
 					Path:    filepath.Join(plugin.Root, "module.yml"),
 					Message: fmt.Sprintf("plugin %s command %s failed: %v", plugin.Name, command.Name, err),
@@ -333,15 +359,9 @@ func runCommand(plugin Plugin, command PluginCommand, request PluginRequest) (Pl
 	if len(argv) == 0 {
 		return response, fmt.Errorf("command %q names nothing to run", command.Name)
 	}
-	executable := argv[0]
-	if !strings.ContainsRune(executable, filepath.Separator) && !strings.ContainsRune(executable, '/') {
-		resolved, err := exec.LookPath(executable)
-		if err != nil {
-			return response, fmt.Errorf("cannot find %q on PATH: %w", executable, err)
-		}
-		executable = resolved
-	} else if !filepath.IsAbs(executable) {
-		executable = filepath.Join(plugin.Root, executable)
+	executable, err := pluginExecutable(plugin, argv[0])
+	if err != nil {
+		return response, err
 	}
 	argv[0] = executable
 
@@ -415,6 +435,44 @@ func mergeResponse(result *PluginResult, plugin Plugin, command PluginCommand, r
 		})
 	}
 }
+
+// pluginExecutable resolves the program a command runs.
+//
+// A plugin runs a program it carries, which is the binary its manifest publishes
+// and which the package installs beside it, or one found on PATH. A path that
+// climbs out of the plugin with `..`, and an absolute path, are refused: a
+// plugin is a module with a directory of its own, and a program named outside it
+// is either a mistake or an attempt to run something the plugin does not carry.
+func pluginExecutable(plugin Plugin, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("plugin %s runs a command with no program", plugin.Name)
+	}
+	if filepath.IsAbs(name) {
+		return "", fmt.Errorf("plugin %s runs %s, which is an absolute path; a plugin runs a program it carries or one on PATH", plugin.Name, name)
+	}
+	if strings.Contains(filepath.ToSlash(name), "..") {
+		return "", fmt.Errorf("plugin %s runs %s, which leaves the plugin directory", plugin.Name, name)
+	}
+	// A program the plugin carries is preferred: an installed plugin holds the
+	// command it publishes, and a build should not depend on it also being on
+	// PATH.
+	if !strings.ContainsRune(name, filepath.Separator) && !strings.ContainsRune(name, '/') {
+		if carried := filepath.Join(plugin.Root, name); exists(carried) {
+			return carried, nil
+		}
+		resolved, err := exec.LookPath(name)
+		if err != nil {
+			return "", fmt.Errorf("plugin %s runs %s, which it does not carry and which is not on PATH: %w", plugin.Name, name, err)
+		}
+		return resolved, nil
+	}
+	resolved := filepath.Join(plugin.Root, name)
+	if _, err := os.Stat(resolved); err != nil {
+		return "", fmt.Errorf("plugin %s runs %s, which it does not carry: %w", plugin.Name, name, err)
+	}
+	return resolved, nil
+}
+
 
 // splitCommand reads the run field of a command into an argument vector.
 //

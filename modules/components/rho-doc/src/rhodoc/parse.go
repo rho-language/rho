@@ -28,6 +28,7 @@ package rhodoc
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Parse reads a doc-as-code source into a document.
@@ -95,7 +96,10 @@ func (p *parser) parseBlocks(indent int) []*Node {
 			blocks = append(blocks, p.parseHeading(indent))
 		case isFence(trimmed):
 			blocks = append(blocks, p.parseCode(indent))
-		case isTableDelimiter(trimmed) && p.line > 1 && isTableRow(p.lines[p.line-2]):
+		case isTableRow(trimmed) && p.nextLineIsTableDelimiter():
+			// Read as a table rather than as prose: the row is the header, and
+			// the delimiter below it says so. Deciding here keeps the header
+			// from being emitted twice, once as a paragraph and once as a row.
 			blocks = append(blocks, p.parseTable(indent))
 		case isQuote(trimmed):
 			blocks = append(blocks, p.parseQuote(indent))
@@ -242,16 +246,23 @@ func (p *parser) parseDirective(indent int) *Node {
 	p.line++
 
 	bodyIndent := indent + colons
+	// A directive that holds code holds it verbatim: parsing its body as prose
+	// would act on what the author wrote as an example, which is exactly what a
+	// code block is for showing.
+	if isCodeDirective(name) {
+		return p.parseCodeDirective(name, arguments, line)
+	}
 	node := &Node{Kind: BlockDirective, Anchor: name, Text: arguments, Line: line, ID: headingSlug(name)}
 	if isAdmonition(name) {
 		node.Kind = BlockAdmonition
 	}
-	// The body ends at the closing fence, at a line indented no further than
-	// the opening one, or at the end of the source.
+	// The body ends at the closing fence: a run of colons at least as long as
+	// the opening one that opens nothing, so a nested directive's own fence
+	// does not close its parent.
 	body := []string{}
 	for p.line <= len(p.lines) {
 		current := strings.TrimSpace(p.lines[p.line-1])
-		if isDirectiveClose(current) {
+		if isDirectiveClose(current, colons) {
 			p.line++
 			break
 		}
@@ -272,12 +283,49 @@ func (p *parser) parseDirective(indent int) *Node {
 	return node
 }
 
-func isDirectiveClose(line string) bool {
+func isDirectiveClose(line string, opening int) bool {
 	colons := 0
 	for colons < len(line) && line[colons] == ':' {
 		colons++
 	}
-	return colons >= 3
+	if colons < opening {
+		return false
+	}
+	// A fence followed by a name opens a nested directive rather than closing
+	// this one.
+	return colons >= len(line) || line[colons] != '{'
+}
+
+// isCodeDirective reports whether a directive's body is code.
+func isCodeDirective(name string) bool {
+	switch strings.ToLower(name) {
+	case "code", "code-block", "sourcecode", "eval-rst", "literalinclude", "raw":
+		return true
+	}
+	return false
+}
+
+// parseCodeDirective reads a directive whose body is code, and answers a code
+// block holding it as it was written. The opener has already been consumed.
+func (p *parser) parseCodeDirective(name, language string, line int) *Node {
+	body := []string{}
+	for p.line <= len(p.lines) {
+		current := strings.TrimSpace(p.lines[p.line-1])
+		if isDirectiveClose(current, 3) {
+			p.line++
+			break
+		}
+		body = append(body, p.lines[p.line-1])
+		p.line++
+	}
+	trimmed := dedent(body, leadingIndent(body))
+	return &Node{
+		Kind:     BlockCode,
+		Lang:     strings.TrimSpace(language),
+		Line:     line,
+		Anchor:   name,
+		Children: []*Node{{Kind: BlockHTML, Text: strings.Join(trimmed, "\n")}},
+	}
 }
 
 // isAdmonition reports whether a directive is one of the framed notes a
@@ -372,11 +420,13 @@ func listMarker(line string) string {
 	if digits == 0 || digits+1 >= len(trimmed) {
 		return ""
 	}
+	// The marker carries its separator, because the item body is everything
+	// after it: a marker of "1" would leave the "." in the item.
 	if trimmed[digits] == '.' && (trimmed[digits+1] == ' ' || digits+1 == len(trimmed)) {
-		return strings.TrimSuffix(trimmed[:digits+1], ".")
+		return trimmed[:digits+1]
 	}
 	if trimmed[digits] == ')' && (trimmed[digits+1] == ' ' || digits+1 == len(trimmed)) {
-		return strings.TrimSuffix(trimmed[:digits+1], ")")
+		return trimmed[:digits+1]
 	}
 	return ""
 }
@@ -483,12 +533,18 @@ func isTableDelimiter(line string) bool {
 	return strings.Contains(trimmed, "-")
 }
 
-// parseTable reads a table. The caller is on the delimiter line, so the header
-// is the line above it, and every following row is read until the rows stop.
+// nextLineIsTableDelimiter reports whether the line after the current one is a
+// table's delimiter, which is what makes the current row a header.
+func (p *parser) nextLineIsTableDelimiter() bool {
+	return p.line < len(p.lines) && isTableDelimiter(strings.TrimSpace(p.lines[p.line]))
+}
+
+// parseTable reads a table. The caller is on the header row: the delimiter
+// below it is skipped, and every following row is read until the rows stop.
 func (p *parser) parseTable(indent int) *Node {
-	header := p.lines[p.line-2]
-	line := p.line - 1
-	p.line++
+	header := p.lines[p.line-1]
+	line := p.line
+	p.line += 2
 
 	table := &Node{Kind: BlockTable, Line: line}
 	table.Children = append(table.Children, p.tableRow(header, true))
@@ -555,9 +611,9 @@ func (p *parser) parseParagraph(indent int) *Node {
 			isDirectiveOpen(trimmed) || listMarker(trimmed) != "" {
 			break
 		}
-		// A delimiter line after a row is a table, not more prose: the cursor
-		// stays on the delimiter so the block reader sees the table.
-		if isTableDelimiter(trimmed) && len(body) > 0 && isTableRow(body[len(body)-1]) {
+		// A row whose next line is a delimiter is a table's header, so the
+		// paragraph stops there and the block reader reads the table.
+		if isTableRow(trimmed) && p.nextLineIsTableDelimiter() {
 			break
 		}
 		body = append(body, trimmed)
@@ -622,12 +678,24 @@ func parseInline(text string) []*Node {
 		}
 		// One run of ordinary text, up to the next construct.
 		next := nextConstruct(rest)
-		if next <= 0 {
+		if next < 0 {
 			nodes = append(nodes, &Node{Kind: InlineText, Text: rest})
 			break
 		}
-		nodes = append(nodes, &Node{Kind: InlineText, Text: rest[:next]})
-		rest = rest[next:]
+		if next > 0 {
+			nodes = append(nodes, &Node{Kind: InlineText, Text: rest[:next]})
+			rest = rest[next:]
+			continue
+		}
+		// A marker character that no construct claimed. It is kept as text and
+		// the scan moves past it: one stray character must not stop the rest of
+		// the paragraph from being read.
+		_, size := utf8.DecodeRuneInString(rest)
+		if size <= 0 {
+			break
+		}
+		nodes = append(nodes, &Node{Kind: InlineText, Text: rest[:size]})
+		rest = rest[size:]
 	}
 	return nodes
 }

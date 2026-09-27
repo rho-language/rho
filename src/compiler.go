@@ -247,6 +247,12 @@ func BuildGoProject(generatedDir, outputDir, outputName string) (string, error) 
 	binary := filepath.Join(outputDir, outputName)
 	cmd := exec.Command("go", "build", "-o", binary, ".")
 	cmd.Dir = generatedDir
+	// A generated project stands on its own: it has no requirements beyond the
+	// standard library, and it is built where it was generated, which may be
+	// inside a repository that has a Go workspace. A workspace claims every
+	// module under its root, so a generated project is taken out of it rather
+	// than resolved against whatever that repository happens to be working on.
+	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build failed: %w\n%s", err, out)
 	}

@@ -43,6 +43,7 @@ package:
   include:
     - module.yml
     - README.md
+    - docs
     - src
   require:
     - module.yml

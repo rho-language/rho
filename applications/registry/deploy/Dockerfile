@@ -30,13 +30,28 @@ RUN apt-get update \
 WORKDIR /src
 COPY . .
 
-# Build the tools, then install them.
-RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho      ./cmd/rho \
- && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-fmt   ./cmd/rho-fmt \
- && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-test  ./cmd/rho-test \
- && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-deps  ./cmd/rho-deps \
- && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-doc   ./cmd/rho-doc \
+# Build the core toolchain, then install it. The formatter, the test runner and
+# the documentation generator are components rather than core tools, so they are
+# built and published below instead of being compiled into the CLI.
+RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho     ./cmd/rho \
+ && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-deps ./cmd/rho-deps \
  && HOME=/home/rho ./bin/rho install --force
+
+# Build the components this service depends on and publish them into the tool
+# home. The logger is imported by the service, and the documentation generator is
+# the component the registry uses to document a published module, so both have
+# to be present in the image: a registry that could not reach a generator would
+# hold modules it cannot document.
+# -buildvcs=false because the image carries sources without the history, which
+# is what a copied tree is; the go.work file is what lets a component resolve
+# the toolchain it is built against from the tree rather than from a network.
+RUN cd /src/modules/components/rho-fmt && go build -buildvcs=false -o rho-fmt ./src \
+ && cd /src/modules/components/rho-log && go build -buildvcs=false -o rho-log ./src \
+ && cd /src/modules/components/rho-doc && go build -buildvcs=false -o rho-doc ./src \
+ && cd /src \
+ && HOME=/home/rho ./bin/rho module publish modules/components/rho-fmt \
+ && HOME=/home/rho ./bin/rho module publish modules/components/rho-log \
+ && HOME=/home/rho ./bin/rho module publish modules/components/rho-doc
 
 # The runtime tree: an installed toolchain plus the sources rho compiles at
 # start-up, being the standard library and the service.
@@ -52,10 +67,13 @@ WORKDIR /app
 # rho install puts the binaries in the tool home and adds that to PATH
 # through the shell profile, which a container never sources, so PATH is set
 # here as well.
+# The address the service is published under, which is what the documentation it
+# generates leads back to. Override it when the service is behind a name.
 ENV HOME=/home/rho \
     PATH=/home/rho/.rho/bin:$PATH \
     RHO_HTTP_ADDR=:8080 \
     RHO_REGISTRY_DATA=/app/applications/registry/data \
+    RHO_REGISTRY_URL=http://localhost:8080 \
     GOFLAGS=-buildvcs=false \
     GOCACHE=/tmp/go-build
 

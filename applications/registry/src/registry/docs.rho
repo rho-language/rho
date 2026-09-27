@@ -1,0 +1,167 @@
+module registry.docs
+
+// The documentation a registry serves for the modules it holds.
+//
+// A registry receives packages, and documents them: the package is unpacked
+// into a source tree, the documentation generator is given that tree, and the
+// pages it wrote are served back. Nothing is published as documentation, so a
+// registry's pages describe exactly what the registry received — which is the
+// point: the interface a reader finds here is the interface the compiler will
+// read out of the package.
+//
+// The generator is a component, so the registry depends on it and asks for the
+// docemit port, the same way it asks the store for the filesystem. Generation
+// happens once, at publish: a version's documentation does not change while the
+// version does, and a page that is generated on every request would make
+// reading a page a build.
+
+import rho.doc
+import registry.storage
+import registry.web
+
+/* -------------------------------------------------------------------------- */
+/*  Where documentation lives                                                  */
+/* -------------------------------------------------------------------------- */
+
+// doc_root is the directory the generated pages of one version live in, beside
+// the modules rather than inside them: a page is derived from a package rather
+// than part of it, so re-publishing a version replaces the pages with it.
+fn doc_root(name: string, version: string) string {
+    return store_data_dir() + "/docs/" + name + "/" + version
+}
+
+// doc_site is the address a version's documentation is served under. It is the
+// one address the module page links to, and the index of a version's pages.
+fn doc_site(name: string, version: string) string {
+    return "/modules/" + name + "/" + version + "/docs/"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Generating                                                                 */
+/* -------------------------------------------------------------------------- */
+
+// doc_generate documents a published version, answering whether it wrote
+// anything.
+//
+// A module that cannot be documented is not a failed publish: the package is
+// stored, the version is listed, and its page simply carries no documentation
+// link. What went wrong is reported, because a registry that silently
+// documented nothing would look like a registry whose modules document nothing.
+fn doc_generate(name: string, version: string) bool {
+    let sources: string = store_unpack(name, version)
+    if sources == "" {
+        warn("registry", "documentation skipped for " + name + "@" + version + ", the package could not be unpacked")
+        return false
+    }
+    let pages: u32 = build(sources, doc_root(name, version), name + " " + version)
+    if pages == 0 {
+        warn("registry", "documentation produced no pages for " + name + "@" + version)
+        return false
+    }
+    info("registry", "documented " + name + "@" + version)
+    return true
+}
+
+// The generator is reached through the rho.doc library and the docemit port,
+// which calls the rho-doc component: the code that builds a site from a working
+// tree is the code that builds the one a registry serves, rather than a second
+// implementation of a page.
+
+/* -------------------------------------------------------------------------- */
+/*  Serving                                                                    */
+/*                                                                             */
+/*  The documentation is a generated site, and it is served as it is: the      */
+/*  generator's pages carry their own navigation, because the same generator    */
+/*  produces the language reference, where there is no service around them to   */
+/*  supply one. The registry keeps its own pages and links here.               */
+/* -------------------------------------------------------------------------- */
+
+// doc_page returns one page of a version's documentation as an HTTP response,
+// or a page of the registry's own when there is none to serve.
+fn doc_page(name: string, version: string, page: string) Response {
+    if !valid_name(name) || !valid_version(version) {
+        return doc_missing(name, version)
+    }
+    let wanted: string = page
+    if strlen(wanted) == 0 {
+        // A reader arrives at the directory, which answers the site's index:
+        // for one module that is the module's own page of its documentation.
+        wanted = "index.html"
+    }
+    let body: string = store_doc_page(name, version, wanted)
+    if strlen(body) == 0 {
+        return doc_missing(name, version)
+    }
+    return Response{ status_ok(), body, doc_content_type(wanted) }
+}
+
+// doc_missing is what a reader sees when a version has no documentation: a page
+// of the registry's own, not a bare answer. The shell is the one the other pages
+// use, so a missing page still looks like the registry.
+fn doc_missing(name: string, version: string) Response {
+    return html(404, page_shell(
+        "No documentation",
+        "",
+        fill(template_get("notfound"),
+            vars("message", "No documentation was generated for " + name + " " + version + ".")
+        )
+    ))
+}
+
+// doc_content_type is the type a page is served with, decided by its extension.
+// A documentation site is HTML with a stylesheet and a script, and a browser
+// renders only what it is told it is.
+fn doc_content_type(page: string) string {
+    if ends_with(page, ".css") {
+        return "text/css; charset=utf-8"
+    }
+    if ends_with(page, ".js") {
+        return "text/javascript; charset=utf-8"
+    }
+    if ends_with(page, ".json") {
+        return "application/json"
+    }
+    return "text/html; charset=utf-8"
+}
+
+fn ends_with(value: string, suffix: string) bool {
+    if strlen(value) < strlen(suffix) {
+        return false
+    }
+    return str_slice(value, strlen(value) - strlen(suffix), strlen(value)) == suffix
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Linking                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// doc_home tells the generator where the documentation this service publishes is
+// served under, so every page it produces leads back here.
+//
+// It is set once, at start-up, because it is a property of the service rather
+// than of a request: the answer is the same whichever module is being documented.
+fn doc_home() void {
+    store_doc_home(registry_url(), registry_title())
+}
+
+// doc_link is the anchor a module or version page carries, or "" when the
+// version has no documentation.
+//
+// A page offers the link only when the documentation is there: a link to a page
+// that would answer not-found is worse than no link.
+fn doc_link(name: string, version: string) string {
+    if !store_has_docs(name, version) {
+        return ""
+    }
+    return "<a class=\"doc-link\" href=\"" + doc_site(name, version) + "\">docs</a>"
+}
+
+// doc_badge is the documentation marker in a listing: a link, because a reader
+// looking at a list of modules wants to open the documentation from there, and a
+// marker that is not a link makes them walk into the version page first.
+fn doc_badge(name: string, version: string) string {
+    if !store_has_docs(name, version) {
+        return ""
+    }
+    return "<a class=\"doc-badge\" href=\"" + doc_site(name, version) + "\" title=\"documentation of " + name + "\">docs</a>"
+}

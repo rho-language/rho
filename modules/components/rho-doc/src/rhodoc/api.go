@@ -22,7 +22,6 @@
 package rhodoc
 
 import (
-	"html"
 	"os"
 	"path/filepath"
 	"sort"
@@ -54,7 +53,10 @@ type ApiModule struct {
 
 // ApiFunction is one declared function.
 type ApiFunction struct {
-	Name       string
+	Name string
+	// TypeParams are the type parameters the function declares, so a generic
+	// declaration is named the way it is written.
+	TypeParams []string
 	Parameters []ApiParameter
 	Result     string
 }
@@ -71,14 +73,28 @@ func (f ApiFunction) Signature() string {
 	for _, parameter := range f.Parameters {
 		parts = append(parts, parameter.Name+": "+parameter.Type)
 	}
-	return "fn " + f.Name + "(" + strings.Join(parts, ", ") + ") " + f.Result
+	return "fn " + f.Name + typeParams(f.TypeParams) + "(" + strings.Join(parts, ", ") + ") " + f.Result
+}
+
+// typeParams names a declaration's type parameters: empty when it has none, and
+// `[T, U]` when it has them.
+func typeParams(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(names, ", ") + "]"
 }
 
 // ApiStruct is one declared struct and its fields.
 type ApiStruct struct {
-	Name   string
-	Fields []ApiParameter
+	Name string
+	// TypeParams are the type parameters the struct declares.
+	TypeParams []string
+	Fields     []ApiParameter
 }
+
+// Name is the struct as it is written, with its type parameters.
+func (s ApiStruct) NameWithParams() string { return s.Name + typeParams(s.TypeParams) }
 
 // ApiExtern is one function the host supplies for a module.
 type ApiExtern struct {
@@ -180,11 +196,16 @@ func readApiModule(path string) (ApiModule, Diagnostic, bool) {
 			}
 			entry.Functions = append(entry.Functions, ApiFunction{
 				Name:       decl.Name,
+				TypeParams: decl.TypeParams,
 				Parameters: parameters(decl.Params),
 				Result:     decl.ReturnType,
 			})
 		case ast.StructDecl:
-			entry.Structs = append(entry.Structs, ApiStruct{Name: decl.Name, Fields: fields(decl.Fields)})
+			entry.Structs = append(entry.Structs, ApiStruct{
+				Name:       decl.Name,
+				TypeParams: decl.TypeParams,
+				Fields:     fields(decl.Fields),
+			})
 		}
 	}
 	sort.Slice(entry.Functions, func(i, j int) bool { return entry.Functions[i].Name < entry.Functions[j].Name })
@@ -258,7 +279,7 @@ func RenderApiModule(module ApiModule) *Document {
 		for _, structure := range module.Structs {
 			row := &Node{Kind: BlockRow}
 			row.Children = []*Node{
-				cell(structure.Name),
+				cell(structure.NameWithParams()),
 				cell(fieldList(structure.Fields)),
 			}
 			table.Children = append(table.Children, row)
@@ -330,8 +351,11 @@ func RenderApiIndex(modules []ApiModule, section string) *Document {
 	return document
 }
 
+// cell is one table cell. The text is read as inline markup, so a cell holding
+// a cross-reference reaches the page it names and a cell holding code span is
+// drawn as code, the same as anywhere else in a document.
 func cell(text string) *Node {
-	return &Node{Kind: BlockCell, Children: []*Node{{Kind: InlineText, Text: text}}}
+	return &Node{Kind: BlockCell, Children: parseInline(text)}
 }
 
 func fieldList(fields []ApiParameter) string {
@@ -393,10 +417,6 @@ func ApiSearchText(module ApiModule) string {
 	return strings.Join(parts, " ")
 }
 
-// EscapeTarget is exported for the command, which reports a target in a log
-// line where markup would be noise.
-func EscapeTarget(target string) string { return html.EscapeString(target) }
-
 /* -------------------------------------------------------------------------- */
 /*  A reference as a set of pages                                             */
 /* -------------------------------------------------------------------------- */
@@ -452,10 +472,20 @@ func (a ApiSet) documents() []Document {
 	if a.Empty() {
 		return documents
 	}
-	index := RenderApiIndex(a.Modules, a.Section)
-	documents = append(documents, *index)
+	documents = append(documents, *RenderApiIndex(a.Modules, a.Section))
 	for _, module := range a.Modules {
 		documents = append(documents, *RenderApiModule(module))
 	}
 	return documents
+}
+
+// SearchText is what a reference page contributes to the search index: the names
+// it declares, which the page draws as markup rather than as prose.
+func (a ApiSet) SearchText(target string) string {
+	for _, module := range a.Modules {
+		if ApiTarget(module.Name) == target {
+			return ApiSearchText(module)
+		}
+	}
+	return ""
 }

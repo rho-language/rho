@@ -340,7 +340,8 @@ func (rt *router) serve(w http.ResponseWriter, r *http.Request) {
 // segment, which is matched on the decoded path.
 func goRouterType() string {
 	return `// router matches request paths against the declared patterns. A {name}
-// segment captures one path element under that name.
+// segment captures one path element under that name, and a {name...} segment
+// captures every remaining element as one slash-separated path.
 type router struct {
 	routes []routeEntry
 }
@@ -378,11 +379,25 @@ func (rt *router) match(method, path string) (http.HandlerFunc, map[string]strin
 
 // match compares the request segments against the pattern.
 func (e *routeEntry) match(parts []string) (map[string]string, bool) {
-	if len(e.segments) != len(parts) {
+	// A pattern may end in a {name...} segment, which takes every remaining
+	// element as one path rather than as one element per name. A path is
+	// several elements deep: a documentation page, its stylesheet and the
+	// directory of a version's pages are all several.
+	catchAll := ""
+	prefix := e.segments
+	if last := len(prefix) - 1; last >= 0 && strings.HasSuffix(prefix[last], "...}") {
+		catchAll = strings.TrimSuffix(strings.Trim(prefix[last], "{}"), "...")
+		prefix = prefix[:last]
+	}
+	if catchAll == "" {
+		if len(e.segments) != len(parts) {
+			return nil, false
+		}
+	} else if len(parts) < len(prefix) {
 		return nil, false
 	}
 	var params map[string]string
-	for i, segment := range e.segments {
+	for i, segment := range prefix {
 		if len(segment) > 2 && segment[0] == '{' && segment[len(segment)-1] == '}' {
 			if params == nil {
 				params = map[string]string{}
@@ -393,6 +408,12 @@ func (e *routeEntry) match(parts []string) (map[string]string, bool) {
 		if segment != parts[i] {
 			return nil, false
 		}
+	}
+	if catchAll != "" {
+		if params == nil {
+			params = map[string]string{}
+		}
+		params[catchAll] = strings.Join(parts[len(prefix):], "/")
 	}
 	return params, true
 }
