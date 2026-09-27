@@ -40,6 +40,9 @@ func writePlugin(t *testing.T, root, name, component, hooks, commands string) st
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(commands, helperName) {
+		carryHelper(t, path)
+	}
 	manifest := "module:\n" +
 		"  name: " + name + "\n" +
 		"  type: plugin\n" +
@@ -57,27 +60,43 @@ func writePlugin(t *testing.T, root, name, component, hooks, commands string) st
 	return path
 }
 
+// discover reads the plugins a tree carries, which is what a build does when it
+// is told to trust the tree it documents.
+func discover(root string) Plugins {
+	return Plugins{Tree: root, TrustTree: true}
+}
+
 // aCommand is one command declaration, written the way a manifest spells it:
 // the hook it answers, and the program that answers it. The program is the test
 // binary asked to behave in the named way, which is how a real process is
 // exercised without shipping a shell script.
 func aCommand(t *testing.T, name, hook, behaviour string) string {
-	return "  - name: " + name + "\n    run: " + helperCommand(t, behaviour) + "\n    hook: " + hook + "\n"
+	return "  - name: " + name + "\n    run: " + helperCommand(behaviour) + "\n    hook: " + hook + "\n"
 }
 
-// helperCommand is the command a test plugin runs: this test binary, in the
-// helper mode the test below defines.
-func helperCommand(t *testing.T, name string) string {
+// carryHelper puts the test binary inside a plugin as the program the plugin
+// runs, which is the shape a real plugin has: it carries the command it runs and
+// names it relatively. A plugin may not name a program outside itself, so a test
+// that ran the binary by its absolute path would be testing a plugin that is
+// refused.
+func carryHelper(t *testing.T, pluginDir string) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return quoteArg(executable) + " -test.run TestPluginHelperProcess -- " + quoteArg(name)
+	if err := os.Symlink(executable, filepath.Join(pluginDir, helperName)); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
 }
 
-func quoteArg(value string) string {
-	return "\"" + strings.ReplaceAll(value, "\"", "\\\"") + "\""
+// helperName is the program a test plugin carries.
+const helperName = "plugin-helper"
+
+// helperCommand is the command line a test plugin runs: the helper it carries,
+// in the mode the test below defines.
+func helperCommand(behaviour string) string {
+	return helperName + " -test.run TestPluginHelperProcess -- " + behaviour
 }
 
 /* -------------------------------------------------------------------------- */
@@ -92,7 +111,7 @@ func TestPluginRequestCarriesTheWholeSite(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := DiscoverPlugins(root, "", ComponentName)
+	plugins := discover(root).DiscoverPlugins(ComponentName)
 	if len(plugins) != 1 || plugins[0].Name != "toc" {
 		t.Fatalf("expected the plugin to be discovered, got %+v", plugins)
 	}
@@ -128,11 +147,11 @@ func TestPluginCanRewriteAPage(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := DiscoverPlugins(root, "", ComponentName)
+	plugins := discover(root).DiscoverPlugins(ComponentName)
 	site := BuildSite(modules, ApiSet{}, SiteOptions{})
 	site.RunPlugins(plugins, filepath.Join(root, "out"))
 
-	page := findPage(site, "index")
+	page := findPage(site, "app/index")
 	if page == nil {
 		t.Fatal("expected the page")
 	}
@@ -149,7 +168,7 @@ func TestAFailingPluginIsReportedAndSkipped(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := DiscoverPlugins(root, "", ComponentName)
+	plugins := discover(root).DiscoverPlugins(ComponentName)
 	site := BuildSite(modules, ApiSet{}, SiteOptions{})
 	site.RunPlugins(plugins, filepath.Join(root, "out"))
 
@@ -174,7 +193,7 @@ func TestAPluginAnsweringNonsenseIsReported(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := DiscoverPlugins(root, "", ComponentName)
+	plugins := discover(root).DiscoverPlugins(ComponentName)
 	site := BuildSite(modules, ApiSet{}, SiteOptions{})
 	site.RunPlugins(plugins, filepath.Join(root, "out"))
 
@@ -191,12 +210,12 @@ func TestAPluginThatIsNotThereIsReported(t *testing.T) {
 	writeFile(t, root, "app/docs/index.md", "# Index\n")
 
 	modules, _ := DiscoverModules(root)
-	plugins := DiscoverPlugins(root, "", ComponentName)
+	plugins := discover(root).DiscoverPlugins(ComponentName)
 	site := BuildSite(modules, ApiSet{}, SiteOptions{})
 	site.RunPlugins(plugins, filepath.Join(root, "out"))
 
-	if len(site.Diagnostics) == 0 || !strings.Contains(site.Diagnostics[0].Message, "cannot find") {
-		t.Fatalf("expected a missing executable to be reported, got %+v", site.Diagnostics)
+	if len(site.Diagnostics) == 0 || !strings.Contains(site.Diagnostics[0].Message, "not on PATH") {
+		t.Fatalf("expected a missing program to be reported, got %+v", site.Diagnostics)
 	}
 }
 
@@ -205,7 +224,7 @@ func TestADiscoveredPluginCarriesItsRelation(t *testing.T) {
 	writePlugin(t, root, "guide", ComponentName, "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "banner"))
 
-	plugins := DiscoverPlugins(root, "", ComponentName)
+	plugins := discover(root).DiscoverPlugins(ComponentName)
 	if len(plugins) != 1 {
 		t.Fatalf("expected one plugin, got %+v", plugins)
 	}
@@ -228,10 +247,10 @@ func TestAPluginForAnotherComponentIsNotLoaded(t *testing.T) {
 	writePlugin(t, root, "other", "rho-fmt", "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "banner"))
 
-	if plugins := DiscoverPlugins(root, "", ComponentName); len(plugins) != 0 {
+	if plugins := discover(root).DiscoverPlugins(ComponentName); len(plugins) != 0 {
 		t.Fatalf("expected a plugin for another component to be left out, got %+v", plugins)
 	}
-	all := DiscoverAllPlugins(root, "")
+	all := discover(root).All()
 	if len(all) != 1 || all[0].Extends != "rho-fmt" {
 		t.Fatalf("expected it to be readable as somebody else's plugin, got %+v", all)
 	}
@@ -245,7 +264,7 @@ func TestAHookThisGeneratorDoesNotRunIsNeverCalled(t *testing.T) {
 	writePlugin(t, root, "eager", ComponentName, "  - shutdown\n",
 		"\ncommands:\n"+aCommand(t, "shutdown", "shutdown", "contents"))
 
-	plugins := DiscoverPlugins(root, "", ComponentName)
+	plugins := discover(root).DiscoverPlugins(ComponentName)
 	result := RunHooks(plugins, "shutdown", PluginRequest{Version: ProtocolVersion})
 	if len(result.Pages) != 0 {
 		t.Fatalf("expected no answer from a hook the generator does not run, got %+v", result.Pages)
@@ -256,7 +275,7 @@ func TestAModuleThatIsNotAPluginIsNotAnExtension(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
 
-	if plugins := DiscoverPlugins(root, "", ComponentName); len(plugins) != 0 {
+	if plugins := discover(root).DiscoverPlugins(ComponentName); len(plugins) != 0 {
 		t.Fatalf("expected no plugins, got %+v", plugins)
 	}
 }
@@ -305,7 +324,6 @@ func TestPluginHelperProcess(t *testing.T) {
 				HTML:   "<nav><ul>" + strings.Join(items, "") + "</ul></nav>",
 				Plain:  "contents",
 			}},
-			Formats: []string{"latex"},
 		}
 		encoded, _ := json.Marshal(response)
 		os.Stdout.Write(encoded)
@@ -330,4 +348,39 @@ func helperMode() string {
 		}
 	}
 	return ""
+}
+
+func TestTheTreePluginsRunOnlyWhenTheyAreTrusted(t *testing.T) {
+	// A plugin is a program, and the tree being documented may have been
+	// written by someone the caller does not know. A build runs the installed
+	// plugins by default and the tree's own only when asked.
+	root := t.TempDir()
+	writePlugin(t, root, "toc", ComponentName, "  - "+HookIndex+"\n",
+		"\ncommands:\n"+aCommand(t, "contents", HookIndex, "contents"))
+
+	if plugins := (Plugins{Tree: root}).DiscoverPlugins(ComponentName); len(plugins) != 0 {
+		t.Fatalf("expected the tree's plugins to be left alone by default, got %+v", plugins)
+	}
+	if plugins := discover(root).DiscoverPlugins(ComponentName); len(plugins) != 1 {
+		t.Fatalf("expected the tree's plugins to be read when trusted, got %+v", plugins)
+	}
+}
+
+func TestACommandCannotLeaveThePluginDirectory(t *testing.T) {
+	// A plugin runs a program it carries, or one on PATH. A path that climbs out
+	// of the plugin, or an absolute one, is refused: a plugin is a module with a
+	// directory of its own, and a program named outside it is not its business.
+	root := t.TempDir()
+	writePlugin(t, root, "climber", ComponentName, "  - "+HookIndex+"\n",
+		"\ncommands:\n  - name: contents\n    run: ../../../bin/sh\n    hook: "+HookIndex+"\n")
+	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
+
+	discovered := discover(root).DiscoverPlugins(ComponentName)
+	if len(discovered) != 1 {
+		t.Fatalf("expected the plugin to be discovered, got %+v", discovered)
+	}
+	result := RunHooks(discovered, HookIndex, PluginRequest{Version: ProtocolVersion})
+	if len(result.Diagnostics) == 0 || !strings.Contains(result.Diagnostics[0].Message, "leaves the plugin directory") {
+		t.Fatalf("expected the escape to be refused, got %+v", result.Diagnostics)
+	}
 }

@@ -71,6 +71,10 @@ func startRegistryWithSettings(t *testing.T, token, settings string) *registrySe
 	binary := filepath.Join(serverDir, "registry-test")
 	build := exec.Command("go", "build", "-o", binary, ".")
 	build.Dir = serverDir
+	// The generated project is built on its own: it is a program of its own,
+	// and the repository it was generated inside may have a Go workspace that
+	// would otherwise claim it.
+	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("the generated registry did not build: %v\n%s", err, out)
 	}
@@ -489,6 +493,10 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	binary := filepath.Join(serverDir, "registry-addr-test")
 	build := exec.Command("go", "build", "-o", binary, ".")
 	build.Dir = serverDir
+	// The generated project is built on its own: it is a program of its own,
+	// and the repository it was generated inside may have a Go workspace that
+	// would otherwise claim it.
+	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, out)
 	}

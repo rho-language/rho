@@ -168,7 +168,7 @@ func findComponent(from, name string) (*deps.Manifest, error) {
 	if err != nil || manifest == nil {
 		return nil, fmt.Errorf("plugin extends %q, whose manifest cannot be read", name)
 	}
-	if manifest.ModuleType != "component" && manifest.ModuleType != "plugin" {
+	if manifest.ModuleType != "component" {
 		return nil, fmt.Errorf("plugin extends %q, which is a %s; a plugin plugs into a component", name, manifest.ModuleType)
 	}
 	return manifest, nil
@@ -179,6 +179,11 @@ func findComponent(from, name string) (*deps.Manifest, error) {
 func validateProvides(manifest *deps.Manifest) error {
 	if manifest.Provides == nil {
 		return nil
+	}
+	// Only a component runs a tool a plugin can attach to, so a module of any
+	// other type offering hooks is offering a place that nothing will ask for.
+	if manifest.ModuleType != "component" {
+		return fmt.Errorf("a %s module cannot offer hooks; only a component runs a tool a plugin can extend", manifest.ModuleType)
 	}
 	seen := map[string]bool{}
 	for _, hook := range manifest.Provides.Hooks {

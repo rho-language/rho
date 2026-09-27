@@ -200,4 +200,4 @@ targets:
 
 The port supplies the same implementation the command uses, so a page rendered by
 a service and a page written by a build are produced by one generator. See
-{ref}`ports` for what a port is.
+{ref}`handbook/ports` for what a port is.

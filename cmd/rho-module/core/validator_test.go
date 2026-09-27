@@ -274,3 +274,40 @@ func TestValidateRejectsBadSemver(t *testing.T) {
 		t.Fatal("expected error for invalid semver")
 	}
 }
+
+func TestValidateRejectsAPluginThatExtendsAPlugin(t *testing.T) {
+	// A plugin plugs into a component, which is the thing that runs a tool. A
+	// plugin that extended another plugin would be a module nothing calls,
+	// which is exactly what validation is for.
+	// The other plugin has to be installed for it to resolve at all, which is
+	// the case this check is for: a plugin that another plugin names.
+	home := t.TempDir()
+	t.Setenv("RHO_HOME", home)
+	installed := filepath.Join(home, "modules", "installed", "plugin", "host@0.1.0")
+	if err := os.MkdirAll(installed, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n  name: host\n  type: plugin\n  version: 0.1.0\n\nmain: host\n\nextends: rho-doc\n\nhooks:\n  - index\n\ncommands:\n  - name: index\n    run: host\n    hook: index\n"
+	if err := os.WriteFile(filepath.Join(installed, "module.yml"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	writeAttachedPlugin(t, tmp, "testplugin", "host", []string{"index"}, [][2]string{{"index", "index"}})
+
+	err := ValidateModule(tmp)
+	if err == nil || !strings.Contains(err.Error(), "a plugin plugs into a component") {
+		t.Fatalf("expected a plugin extending a plugin to be rejected, got %v", err)
+	}
+}
+
+func TestValidateRejectsWhatANonComponentOffers(t *testing.T) {
+	// Only a component runs a tool, so only a component has something to offer
+	// a plugin.
+	tmp := t.TempDir()
+	writeModule(t, tmp, "module:\n  name: app\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n\nprovides:\n  hooks:\n    - index\n")
+
+	err := ValidateModule(tmp)
+	if err == nil || !strings.Contains(err.Error(), "cannot offer hooks") {
+		t.Fatalf("expected a non-component offering hooks to be rejected, got %v", err)
+	}
+}

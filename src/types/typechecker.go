@@ -1366,7 +1366,7 @@ func init() {
 		"auth_required", "auth_open_tokens", "auth_issue", "int_from_str", "emit",
 		"store_list", "store_meta", "store_detail", "store_latest", "store_data_dir",
 		"registry_data_dir", "registry_access", "config_get", "clock_year",
-		"registry_title", "registry_version", "registry_site_url", "registry_token_days",
+		"registry_title", "registry_version", "registry_site_url", "registry_url", "registry_token_days",
 		"registry_token_max_days", "registry_open_tokens", "registry_max_upload_mb", "escape_html",
 	} {
 		isExternalBuiltinNames[name] = true

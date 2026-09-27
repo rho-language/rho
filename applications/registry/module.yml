@@ -16,6 +16,10 @@ build:
 # download served or missed. The service manager already collects the process's
 # own records, so these are the ones worth keeping in an application log.
 deps:
+  # The logger for the service's own records, and the documentation generator
+  # for the modules it holds: a registry documents what it receives, so its
+  # pages describe the interface the compiler will read out of a package.
+  rho-doc: ">=0.1.0"
   rho-log: ">=0.1.0"
 
 # The registry documents itself: the sources below ship with the application, so

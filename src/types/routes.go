@@ -204,6 +204,11 @@ var protocolFuncs = map[string]functionType{
 	"registry_site_url": {
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// registry_url is the address the service is published under, which is what
+	// the documentation it generates leads back to.
+	"registry_url": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
 	"registry_token_days": {
 		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
 	},

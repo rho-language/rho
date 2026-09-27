@@ -27,3 +27,27 @@ extern fn store_versions(name: string) string
 
 // The directory the service stores modules in.
 extern fn store_data_dir() string
+
+// Documentation, generated from a published module rather than sent with it.
+//
+// A registry receives a package and documents it: the package is unpacked into
+// a source tree, the documentation generator is given that tree, and the pages
+// it wrote are served back from here.
+
+// Unpack a published package into a source tree and return the directory, or ""
+// when the package cannot be read. The tree is what a generator is given.
+extern fn store_unpack(name: string, version: string) string
+
+// A generated documentation page, or "" when it is absent. An empty page name
+// answers the index.
+extern fn store_doc_page(name: string, version: string, page: string) string
+
+// Whether a version has documentation, which is what a page checks before it
+// offers a link to it.
+extern fn store_has_docs(name: string, version: string) bool
+
+// The address the documentation this service publishes is served under, and what
+// the service is called there. The generator writes it into every page it
+// produces, so a reader who followed a link out of the service and into a
+// module's documentation has a way back.
+extern fn store_doc_home(home: string, title: string) void

@@ -1,7 +1,7 @@
 module:
   name: rho-log
   type: component
-  version: 0.1.0
+  version: 0.1.1
   description: Structured logging
   command: log
   import_path: rho.log
@@ -24,6 +24,7 @@ package:
   include:
     - module.yml
     - README.md
+    - docs
     - src
   require:
     - module.yml

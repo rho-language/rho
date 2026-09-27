@@ -23,11 +23,13 @@ import registry.validate
 import registry.respond
 import registry.web
 import registry.auth
+import registry.docs
 
-route POST "/modules/{name}/{version}/rho-pkg" => publish_module
-route GET  "/modules/{name}/{version}/rho-pkg" => download_module
-route GET  "/api/search"                         => search_modules
-route GET  "/api/modules/{name}"                 => module_versions
+route POST "/modules/{name}/{version}/rho-pkg"     => publish_module
+route GET  "/modules/{name}/{version}/rho-pkg"     => download_module
+route GET  "/modules/{name}/{version}/docs/{path...}" => docs_page
+route GET  "/api/search"                           => search_modules
+route GET  "/api/modules/{name}"                   => module_versions
 
 /* -------------------------------------------------------------------------- */
 /*  Handlers                                                                   */
@@ -80,8 +82,24 @@ fn publish_module(req: Request) Response {
         error("registry", "publish failed, the store refused the write")
         return error_json(status_bad_request(), "invalid module name")
     }
+    // The package is stored, so the publish has succeeded. Documentation is
+    // generated from what was stored, and a module that cannot be documented is
+    // still published: a reader sees a version with no docs link rather than a
+    // publish that failed for a page nobody asked to read.
+    doc_generate(name, version)
     info("registry", "published " + name + "@" + version)
     return published_json(name, version)
+}
+
+// docs_page serves one page of a published version's documentation.
+//
+// The path is a remainder rather than one segment, because a documentation site
+// is a directory of pages: the index, a page per module and a stylesheet. The
+// store reads the page, so a path that climbs out of the documentation
+// directory is refused by the same check that refuses a name that climbs out of
+// the data directory.
+fn docs_page(req: Request) Response {
+    return doc_page(param(req, "name"), param(req, "version"), param(req, "path"))
 }
 
 fn download_module(req: Request) Response {
@@ -117,6 +135,9 @@ fn module_versions(req: Request) Response {
 // calls it, and so does the native entry point. Startup belongs here rather
 // than in main, which a server target does not use.
 fn init() void {
+    // The documentation generator is told where this service is published, so
+    // every page it writes carries a way back here.
+    doc_home()
     print("rho registry listening; data dir: " + store_data_dir())
     info("registry", "starting, data_dir=" + store_data_dir() + " access=" + registry_access())
 }

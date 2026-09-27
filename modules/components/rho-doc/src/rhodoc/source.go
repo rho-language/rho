@@ -49,6 +49,9 @@ type ModuleDoc struct {
 	Type string
 	// Description is the manifest's own one-line description.
 	Description string
+	// DocsTitle is the title the module declares for its documentation, which
+	// the page it leads a section with carries.
+	DocsTitle string
 	// Root is the module root, which every source path is relative to.
 	Root string
 	// Section is where the pages appear in the sidebar.
@@ -69,6 +72,25 @@ type ModuleDoc struct {
 // The walk stops at a nested module root, because a component that carries its
 // own go.mod is a module in its own right and is visited on its own account.
 func DiscoverModules(root string) ([]ModuleDoc, []string) {
+	return DiscoverModulesWith(root, SourceOptions{})
+}
+
+// SourceOptions says how a tree's documentation is gathered, because what a
+// tree is decides what it can be documented from.
+type SourceOptions struct {
+	// Readme reads a module's root README.md as the page its section leads
+	// with, when the module carries neither a docs: section nor a docs
+	// directory.
+	//
+	// A published package is what a registry documents a module from, and the
+	// README is the one piece of prose such a package always carries: the
+	// prose a module wrote about itself travels with it, and anything else
+	// would have to be sent separately.
+	Readme bool
+}
+
+// DiscoverModulesWith reads every module in a tree with the given options.
+func DiscoverModulesWith(root string, options SourceOptions) ([]ModuleDoc, []string) {
 	modules := []ModuleDoc{}
 	missing := []string{}
 	seen := map[string]bool{}
@@ -92,7 +114,7 @@ func DiscoverModules(root string) ([]ModuleDoc, []string) {
 			return nil
 		}
 		seen[moduleRoot] = true
-		module, ok := readModule(moduleRoot)
+		module, ok := readModule(moduleRoot, options)
 		if !ok {
 			missing = append(missing, moduleRoot)
 			return nil
@@ -103,8 +125,13 @@ func DiscoverModules(root string) ([]ModuleDoc, []string) {
 
 	sortModules(modules)
 	// A repository documents itself apart from its modules: the language and the
-	// handbook are properties of the repository, not of any one module.
-	modules = append(modules, discoverRepositoryDocs(root)...)
+	// handbook are properties of the repository, not of any one module. A tree
+	// that is itself a module is not a repository, so the convention does not
+	// apply to it: a published package carries one module's docs/ directory, and
+	// that is the module's own documentation rather than the repository's.
+	if !isModuleRoot(root) {
+		modules = append(modules, discoverRepositoryDocs(root)...)
+	}
 	return modules, missing
 }
 
@@ -155,7 +182,7 @@ func firstSegment(relative string) string {
 }
 
 // readModule reads one module and the documentation it carries.
-func readModule(root string) (ModuleDoc, bool) {
+func readModule(root string, options SourceOptions) (ModuleDoc, bool) {
 	manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
 	if err != nil || manifest == nil {
 		return ModuleDoc{}, false
@@ -176,6 +203,7 @@ func readModule(root string) (ModuleDoc, bool) {
 		if manifest.Docs.Section != "" {
 			module.Section = manifest.Docs.Section
 		}
+		module.DocsTitle = manifest.Docs.Title
 		if manifest.Docs.Index != "" {
 			module.Index = manifest.Docs.Index
 		}
@@ -193,7 +221,21 @@ func readModule(root string) (ModuleDoc, bool) {
 	if len(module.Sources) == 0 {
 		module.Sources = expandSources(root, []string{"docs"})
 	}
+	// A module whose prose did not travel still has the README it published.
+	if len(module.Sources) == 0 && options.Readme {
+		if readme := filepath.Join(root, "README.md"); isDocSource(readme) && exists(readme) {
+			module.Sources = []string{readme}
+			module.Index = "README.md"
+		}
+	}
 	return module, true
+}
+
+// isModuleRoot reports whether a directory is itself a module, which is what
+// separates a working tree of modules from a single published package.
+func isModuleRoot(root string) bool {
+	manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
+	return err == nil && manifest != nil && manifest.ModuleName != ""
 }
 
 // expandSources turns the source patterns of a manifest into files.
@@ -287,6 +329,12 @@ func expandGlob(root, pattern string) []string {
 	})
 	sort.Strings(found)
 	return found
+}
+
+// exists reports whether a path is there.
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // isDocSource reports whether a file is a doc-as-code source.

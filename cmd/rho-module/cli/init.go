@@ -106,22 +106,24 @@ pub fn init() void {
 }
 `
 		// A plugin is not free-floating: it names the component it plugs into
-		// and the hooks of that component it answers. The scaffold writes that
-		// declaration, because a plugin without it is a module nothing calls.
-		// The component and the hook names are the two things to replace.
+		// and the hooks of that component it answers. The scaffold names the
+		// documentation generator, whose manifest offers the hooks below, so
+		// what it writes validates; the component, the hooks and the command
+		// are what a plugin author replaces.
 		pluginRelation = `
 
 # The component this plugin plugs into, and the hooks of it this plugin
-# answers. A run of that component is the only thing that ever calls it.
-extends: rho-fmt
+# answers. A run of that component is the only thing that ever calls it, and
+# every hook here has to be one the component offers.
+extends: rho-doc
 
 hooks:
-  - init
+  - index
 
 commands:
-  - name: init
+  - name: index
     run: ` + name + `
-    hook: init
+    hook: index
 `
 	}
 

@@ -23,7 +23,6 @@
 package rhodoc
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -33,12 +32,14 @@ import (
 
 // SiteListing renders a site as one line per page: the target, the title, the
 // section and the module, separated by tabs.
+//
+// A caller reads a field by position, so the delimiters are the structure and
+// are never folded: each value is made safe on its own, and the values are then
+// joined by a tab.
 func SiteListing(site *Site) string {
-	lines := []string{}
-	header := strings.Join([]string{site.Title, site.Project, site.Version, itoa(len(site.Pages))}, "\t")
-	lines = append(lines, field(header)...)
+	lines := []string{record(site.Title, site.Project, site.Version, itoa(len(site.Pages)))}
 	for _, page := range site.Pages {
-		lines = append(lines, field(strings.Join([]string{page.Target, page.Title, page.Section, page.Module}, "\t"))...)
+		lines = append(lines, record(page.Target, page.Title, page.Section, page.Module))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -51,18 +52,16 @@ func SiteListing(site *Site) string {
 // and how much it declares, separated by tabs. The header says the same, so a
 // handler can show the shape of the library without counting.
 func ApiListing(set ApiSet) string {
-	lines := []string{
-		strings.Join([]string{"name", "target", "functions", "structs", "externs", "source"}, "\t"),
-	}
+	lines := []string{record("name", "target", "functions", "structs", "externs", "source")}
 	for _, module := range set.Modules {
-		lines = append(lines, field(strings.Join([]string{
+		lines = append(lines, record(
 			module.Name,
 			ApiTarget(module.Name),
 			itoa(len(module.Functions)),
 			itoa(len(module.Structs)),
 			itoa(len(module.Externs)),
 			module.Path,
-		}, "\t"))...)
+		))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -77,13 +76,13 @@ func ApiListing(set ApiSet) string {
 func DiagnosticListing(site *Site, unreadable []string) string {
 	lines := []string{}
 	for _, path := range unreadable {
-		lines = append(lines, field(strings.Join([]string{path, "0", "no readable module manifest"}, "\t"))...)
+		lines = append(lines, record(path, "0", "no readable module manifest"))
 	}
 	for _, diagnostic := range site.Diagnostics {
-		lines = append(lines, field(strings.Join([]string{diagnostic.Path, itoa(diagnostic.Line), diagnostic.Message}, "\t"))...)
+		lines = append(lines, record(diagnostic.Path, itoa(diagnostic.Line), diagnostic.Message))
 	}
 	for _, request := range site.Requests {
-		lines = append(lines, field(strings.Join([]string{request.Page, itoa(request.Line), "reference names no target: " + request.Label}, "\t"))...)
+		lines = append(lines, record(request.Page, itoa(request.Line), "reference names no target: "+request.Label))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -92,15 +91,22 @@ func DiagnosticListing(site *Site, unreadable []string) string {
 /*  Fields                                                                    */
 /* -------------------------------------------------------------------------- */
 
-// field folds a value so it cannot break the line format: a tab becomes a
-// space, a newline becomes a space, and two become one.
-func field(value string) []string {
+// record is one line of a listing: values made safe on their own, then joined
+// by the delimiter. Folding the finished line would fold the delimiters with it,
+// which is what makes a listing unreadable by position.
+func record(values ...string) string {
+	safe := make([]string, 0, len(values))
+	for _, value := range values {
+		safe = append(safe, field(value))
+	}
+	return strings.Join(safe, "\t")
+}
+
+// field makes one value safe to carry: a tab, a carriage return and a newline
+// would each break the line format, so each becomes a space.
+func field(value string) string {
 	replaced := strings.ReplaceAll(value, "\t", " ")
 	replaced = strings.ReplaceAll(replaced, "\r", " ")
 	replaced = strings.ReplaceAll(replaced, "\n", " ")
-	return []string{strings.TrimSpace(replaced)}
+	return strings.TrimSpace(replaced)
 }
-
-// count renders a number for a header line, which is how a listing reports what
-// it holds without the caller counting lines.
-func count(value int) string { return fmt.Sprint(value) }

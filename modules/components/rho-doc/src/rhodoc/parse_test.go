@@ -220,11 +220,32 @@ func TestParseDirectiveKeepsItsNameAndArguments(t *testing.T) {
 }
 
 func TestParseDirectiveWithArguments(t *testing.T) {
-	document := Parse("docs/index.md", "# Index\n\n:::{code-block} rho\nlet x = 1\n:::\n")
+	document := Parse("docs/index.md", "# Index\n\n:::{toctree} extra\nindex\n:::\n")
 
 	directive := document.Blocks[1]
-	if directive.Text != "rho" {
+	if directive.Text != "extra" {
 		t.Fatalf("expected the directive arguments, got %q", directive.Text)
+	}
+}
+
+func TestParseCodeDirectiveKeepsItsBodyVerbatim(t *testing.T) {
+	// A code block shows what an author wrote, so what is inside it is not read
+	// as documentation: a role written there is an example, not a reference.
+	document := Parse("docs/index.md", "# Index\n\n:::{code-block} markdown\nSee {ref}`nowhere` here.\n:::\n")
+
+	page := RenderPage(document)
+	if strings.Contains(page.Body, "class=\"xref\"") {
+		t.Fatalf("expected the example to stay text, got:\n%s", page.Body)
+	}
+	if !strings.Contains(page.Body, "class=\"language-markdown\"") {
+		t.Fatalf("expected a code block with its language, got:\n%s", page.Body)
+	}
+	if len(document.Diagnostics) != 0 {
+		t.Fatalf("expected no diagnostic from an example, got %+v", document.Diagnostics)
+	}
+	roles := collectRoles(document)
+	if len(roles) != 0 {
+		t.Fatalf("expected the code block to hold no cross-references, got %+v", roles)
 	}
 }
 
@@ -298,4 +319,72 @@ func renderInlineTextSlice(nodes []*Node) string {
 		b.WriteString(renderInlineText(node))
 	}
 	return b.String()
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Regressions                                                               */
+/* -------------------------------------------------------------------------- */
+
+func TestParseOrderedListKeepsTheBodyAndNotTheMarker(t *testing.T) {
+	document := Parse("docs/index.md", "# Index\n\n1. first\n2. second\n")
+
+	page := RenderPage(document)
+	if strings.Contains(page.Body, "<li>.") || strings.Contains(page.Body, "<li>)") {
+		t.Fatalf("expected the marker to be dropped, got:\n%s", page.Body)
+	}
+	if !strings.Contains(page.Body, "<li>first</li>") {
+		t.Fatalf("expected the item body, got:\n%s", page.Body)
+	}
+}
+
+func TestParseTableRendersTheHeaderOnce(t *testing.T) {
+	document := Parse("docs/index.md", "# Index\n\n| Field | Type |\n|-------|------|\n| x | u8 |\n")
+
+	page := RenderPage(document)
+	if strings.Contains(page.Body, "<p>| Field | Type |</p>") {
+		t.Fatalf("expected the header only inside the table, got:\n%s", page.Body)
+	}
+	if strings.Count(page.Body, "<tbody>") != 1 || strings.Count(page.Body, "</tbody>") != 1 {
+		t.Fatalf("expected one table body, got:\n%s", page.Body)
+	}
+	if strings.Count(page.Body, "<thead>") != 1 {
+		t.Fatalf("expected one table head, got:\n%s", page.Body)
+	}
+}
+
+func TestParseDirectivesNest(t *testing.T) {
+	document := Parse("docs/index.md", "# Index\n\n:::{note}\nouter\n\n:::{tip}\ninner\n:::\n:::\n")
+
+	page := RenderPage(document)
+	if !strings.Contains(page.Body, "class=\"admonition note\"") || !strings.Contains(page.Body, "class=\"admonition tip\"") {
+		t.Fatalf("expected both directives, got:\n%s", page.Body)
+	}
+	if strings.Contains(page.Body, "<p>inner<br />") {
+		t.Fatalf("expected the inner directive to keep its body, got:\n%s", page.Body)
+	}
+}
+
+func TestParseKeepsFormattingAfterAStrayMarker(t *testing.T) {
+	// One character that starts no construct must not stop the scan: the rest of
+	// the paragraph is still read.
+	document := Parse("docs/index.md", "# Index\n\nA } b *c* and `d`.\n")
+
+	page := RenderPage(document)
+	if !strings.Contains(page.Body, "<em>c</em>") || !strings.Contains(page.Body, "<code>d</code>") {
+		t.Fatalf("expected the formatting after the stray character, got:\n%s", page.Body)
+	}
+}
+
+func TestDiagnosticNamesAnUnlocatedProblem(t *testing.T) {
+	// A diagnostic with no file still says something: printing a blank line
+	// would report a problem by showing nothing at all.
+	if got := (Diagnostic{Line: 3, Message: "boom"}).String(); got != "line 3: boom" {
+		t.Fatalf("expected the line and the message, got %q", got)
+	}
+	if got := (Diagnostic{Message: "boom"}).String(); got != "boom" {
+		t.Fatalf("expected the message, got %q", got)
+	}
+	if got := (Diagnostic{Path: "p.md", Line: 3, Message: "boom"}).String(); got != "p.md:3: boom" {
+		t.Fatalf("expected the located form, got %q", got)
+	}
 }

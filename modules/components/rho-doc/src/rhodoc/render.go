@@ -56,17 +56,6 @@ func RenderPage(document *Document) Page {
 	}
 }
 
-// RenderInline turns a run of inline spans into HTML, which is what a table
-// cell and a heading both need.
-func RenderInline(nodes []*Node) string {
-	r := &renderer{}
-	var b strings.Builder
-	for _, node := range nodes {
-		r.render(&b, node)
-	}
-	return b.String()
-}
-
 type renderer struct{}
 
 // render writes one node. An unknown kind writes its own text, so a construct
@@ -148,11 +137,16 @@ func (r *renderer) render(b *strings.Builder, node *Node) {
 		b.WriteString("</li>\n")
 
 	case BlockTable:
-		b.WriteString("<table>\n<tbody>\n")
+		b.WriteString("<table>\n")
 		for _, row := range node.Children {
 			r.renderRow(b, row)
 		}
-		b.WriteString("</tbody>\n</table>\n")
+		// The header row opens the body, so a table that has one has a body to
+		// close.
+		if len(node.Children) > 0 && node.Children[0].Text == "header" {
+			b.WriteString("</tbody>\n")
+		}
+		b.WriteString("</table>\n")
 
 	case BlockRow:
 		r.renderRow(b, node)
@@ -177,7 +171,7 @@ func (r *renderer) render(b *strings.Builder, node *Node) {
 		b.WriteString("</em>")
 
 	case InlineLink:
-		href := html.EscapeString(node.Href)
+		href := safeHref(node.Href)
 		// An image carries its own text rather than children.
 		if node.Text != "" && len(node.Children) == 0 {
 			b.WriteString("<a href=\"" + href + "\">" + html.EscapeString(node.Text) + "</a>")
@@ -233,6 +227,8 @@ func (r *renderer) renderItem(b *strings.Builder, item *Node) {
 	r.renderChildren(b, item)
 }
 
+// renderRow writes a row. The header row opens the head and then the body, so
+// the table has one of each and the body starts where the head ends.
 func (r *renderer) renderRow(b *strings.Builder, row *Node) {
 	if row.Text == "header" {
 		b.WriteString("<thead>\n<tr>")
@@ -259,6 +255,34 @@ func renderText(text string) string {
 	escaped := html.EscapeString(text)
 	escaped = strings.ReplaceAll(escaped, "\n", "<br />\n")
 	return escaped
+}
+
+// safeHref is a link destination a page may carry.
+//
+// A source is text an author wrote, but a generated site is served to readers:
+// a `javascript:` or `data:` destination in a link would run in the reader's
+// browser, so only the schemes a documentation page has any business carrying
+// are written, and anything else becomes plain text. A relative path, a
+// fragment and an absolute http(s) or mailto destination are all allowed.
+func safeHref(href string) string {
+	trimmed := strings.TrimSpace(href)
+	if trimmed == "" {
+		return ""
+	}
+	lowered := strings.ToLower(trimmed)
+	// A relative destination, an absolute path and a fragment are what a page
+	// links to inside a site.
+	if !strings.Contains(lowered, ":") || strings.HasPrefix(lowered, "./") || strings.HasPrefix(lowered, "../") || strings.HasPrefix(lowered, "/") || strings.HasPrefix(lowered, "#") {
+		return html.EscapeString(trimmed)
+	}
+	for _, allowed := range []string{"http:", "https:", "mailto:"} {
+		if strings.HasPrefix(lowered, allowed) {
+			return html.EscapeString(trimmed)
+		}
+	}
+	// Anything else — javascript:, data:, vbscript: — is not a destination, so
+	// it stays as the text it was written as.
+	return ""
 }
 
 // xrefAnchor is the fragment a cross-reference points at. A role names a

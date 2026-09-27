@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -51,6 +52,43 @@ func installedModuleRoot(name string) string {
 // linked come from different versions.
 func InstalledComponentRoot(name string) string {
 	return highestInstalledRoot(name, "component")
+}
+
+// InstalledPluginRoot returns the directory of the highest installed version of
+// a plugin, or "" when no plugin of that name is installed.
+//
+// A tool that runs plugins picks the newest one for the same reason a
+// dependency resolver does: two versions of a plugin are not two plugins, and
+// whichever answered last would otherwise decide which one a build runs.
+func InstalledPluginRoot(name string) string {
+	return highestInstalledRoot(name, "plugin")
+}
+
+// InstalledPluginNames are the plugins installed, one entry per name.
+func InstalledPluginNames() []string {
+	home := RhoHome()
+	if home == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join(home, "modules", "installed", "plugin"))
+	if err != nil {
+		return nil
+	}
+	names := []string{}
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name, _, cut := strings.Cut(entry.Name(), "@")
+		if !cut || name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // highestInstalledRoot returns the newest installed directory named `name`
