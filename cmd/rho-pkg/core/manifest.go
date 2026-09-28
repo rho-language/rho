@@ -146,8 +146,13 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 	if err != nil {
 		return ModuleYAML{}, fmt.Errorf("cannot read module.yml: %w", err)
 	}
+	return ParseModuleYAML(string(data))
+}
 
-	root, err := yaml.Load(string(data))
+// ParseModuleYAML reads a manifest that is already in memory, which is what a
+// package carries and what a caller reading one has rather than a file.
+func ParseModuleYAML(text string) (ModuleYAML, error) {
+	root, err := yaml.Load(text)
 	if err != nil {
 		return ModuleYAML{}, fmt.Errorf("invalid YAML: %w", err)
 	}

@@ -4,7 +4,10 @@ How the Rho toolchain is put together, and how a project uses it.
 
 ## Pages
 
+- {ref}`handbook/installing` — what is needed, and how the toolchain is installed.
 - {ref}`handbook/modules` — the three kinds of module, and what each is for.
+- {ref}`handbook/registries` — the local and remote registries, and who may
+  change what is in each.
 - {ref}`handbook/ports` — how a project asks for what only a host can do.
 - {ref}`handbook/documentation` — how a module documents itself, and how this
   site is built.
@@ -32,6 +35,12 @@ says what the module is:
 | `component` | A tool: it publishes a command and is dispatched to | `rho-fmt`, `rho-log` |
 | `plugin` | An extension: it adds to a tool rather than adding a command | `rho-doc-toc` |
 | `module` | A library: it exports declarations and nothing else | a shared package |
+
+## Installing
+
+`rho install` builds the toolchain and creates the local registry, which is
+where installed modules live. What it needs, and what a fresh installation can
+and cannot do, is {ref}`handbook/installing`.
 
 ## Building
 

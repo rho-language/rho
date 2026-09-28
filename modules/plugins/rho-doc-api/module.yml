@@ -2,6 +2,7 @@ module:
   name: rho-doc-api
   type: plugin
   version: 0.1.0
+  author: Aurel Miron
   description: Adds a service's HTTP API reference to its documentation site
 
 main: rho-doc-api

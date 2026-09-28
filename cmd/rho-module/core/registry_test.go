@@ -161,25 +161,24 @@ func TestUnpublishOnlyActiveVersion(t *testing.T) {
 	defer cleanup()
 
 	// First unpublish math@1.0.0 (non-active)
-	if err := UnpublishModule("math", "1.0.0"); err != nil {
-		t.Fatalf("failed to unpublish non-active version: %v", err)
+	if err := UninstallLocal("math", "1.0.0"); err != nil {
+		t.Fatalf("failed to uninstall non-selected version: %v", err)
 	}
 
-	// Now math@1.2.0 is the only version and it's active
-	// Should succeed and clear from active list
-	err := UnpublishModule("math", "1.2.0")
-	if err != nil {
-		t.Fatalf("UnpublishModule should succeed for only active version: %v", err)
+	// Now math@1.2.0 is the only version and it is selected. Removing the last
+	// version is allowed even when it is selected: there is nothing left to be
+	// resolved against, so removing it is the point rather than a change a build
+	// would notice. The refusal is for the case where another version is there
+	// for the selection to fall back to.
+	if err := UninstallLocal("math", "1.2.0"); err != nil {
+		t.Fatalf("uninstalling the last version: %v", err)
 	}
-
-	// Verify math is completely removed
 	results, err := SearchRegistry("math")
 	if err != nil {
 		t.Fatalf("SearchRegistry failed: %v", err)
 	}
-
 	if len(results) != 0 {
-		t.Fatalf("expected no results for math after unpublish")
+		t.Fatalf("expected no results for math after uninstall, got %+v", results)
 	}
 }
 

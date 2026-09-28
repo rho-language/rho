@@ -2,6 +2,7 @@ module:
   name: rho-doc-toc
   type: plugin
   version: 0.1.0
+  author: Aurel Miron
   description: Adds a table of contents and a generation notice to a documentation site
 
 main: rho-doc-toc

@@ -12,6 +12,7 @@ module registry.web
 import std.web.http
 import std.web.template
 import registry.docs
+import registry.auth
 
 /* -------------------------------------------------------------------------- */
 /*  Routes                                                                    */
@@ -29,7 +30,11 @@ route GET "/modules/{name}/{version}" => version_page
 // index_page lists the published modules, each with its newest version.
 fn index_page(req: Request) Response {
     let query: string = request_query_param(req, "q")
-    let listing: string = store_meta(query)
+    // The listing is what the caller may see, so a private module is absent for
+    // anybody but its owner. The pages and the API therefore agree about what
+    // exists, which a reader browsing one and searching the other would notice
+    // if they did not.
+    let listing: string = store_meta(query, caller_identity(req), false)
     return html(200, page(req, fill(template_get("index"),
         vars("crumb", crumb("")) +
         vars("listing", module_rows(listing)) +
@@ -42,7 +47,7 @@ fn index_page(req: Request) Response {
 // search_page lists every module matching a query, with all of its versions.
 fn search_page(req: Request) Response {
     let query: string = request_query_param(req, "q")
-    let listing: string = store_meta(query)
+    let listing: string = store_meta(query, caller_identity(req), false)
     return html(200, page(req, fill(template_get("index"),
         vars("crumb", crumb(search_trail(query))) +
         vars("listing", version_rows(listing, "Nothing matches that.")) +

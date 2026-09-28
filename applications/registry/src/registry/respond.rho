@@ -21,9 +21,19 @@ fn published_json(name: string, version: string) Response {
 //
 // The values are passed in rather than read from a request, so this stays pure
 // and can be tested without a server.
-fn meta_json(name: string, version: string, kind: string, description: string, main: string, command: string) string {
+//
+// Author and Maintainer are the module's own claim about who wrote and looks
+// after it, taken from its manifest. Owner is the identity the registry
+// recorded from the credential that published the module, which is the one it
+// can actually verify and the one a withdrawal is checked against. They are
+// separate because a module may be written by one person and published by
+// another, and a registry that confused the two would let anyone who wrote a
+// name into a file claim a module.
+fn meta_json(name: string, version: string, kind: string, description: string, main: string, command: string, author: string, maintainer: string, owner: string, visibility: string) string {
     return "{\"name\":\"" + name + "\",\"version\":\"" + version +
         "\",\"type\":\"" + kind + "\",\"description\":\"" + description +
         "\",\"main\":\"" + main + "\",\"command\":\"" + command +
+        "\",\"author\":\"" + author + "\",\"maintainer\":\"" + maintainer +
+        "\",\"owner\":\"" + owner + "\",\"visibility\":\"" + visibility +
         "\",\"features\":[],\"deps\":{}}"
 }

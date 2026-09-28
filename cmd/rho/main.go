@@ -72,9 +72,15 @@ func main() {
 			cmd = "help"
 		}
 	} else {
-		// All other commands require Rho to be installed
+		// Every other command needs an installation, because every other command
+		// reads or writes the local registry: it is where an installed module
+		// lives, and it is the only place the toolchain dispatches to or resolves
+		// a Rho import against. Without it there is nothing to dispatch to, so the
+		// command is refused with the one thing that fixes it rather than with a
+		// failure from deeper in.
 		if !install.IsInstalled() {
-			fmt.Println("Rho is not installed.")
+			fmt.Println("The local registry is not installed.")
+			fmt.Printf("It is where installed modules live, and every command but help needs it.\n")
 			fmt.Println("Run: rho install")
 			os.Exit(1)
 		}

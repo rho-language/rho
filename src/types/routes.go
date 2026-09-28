@@ -237,12 +237,24 @@ var protocolFuncs = map[string]functionType{
 	},
 	// Listings the fsstore port provides, rendered as tab-separated lines
 	// because a Rho handler cannot walk a nested document.
+	//
+	// Each takes the identity of the caller and whether to narrow to that
+	// caller's own modules, because what a listing may contain depends on who is
+	// asking: a private module is only in it for its owner.
 	"store_list": {
-		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeBool, Name: "bool"},
+		},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
 	"store_meta": {
-		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeBool, Name: "bool"},
+		},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
 	"store_detail": {

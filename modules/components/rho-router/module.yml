@@ -2,6 +2,7 @@ module:
   name: rho-router
   type: component
   version: 0.1.0
+  author: Aurel Miron
   description: HTTP routing, parameter binding and API metadata
   command: route
   import_path: rho.router

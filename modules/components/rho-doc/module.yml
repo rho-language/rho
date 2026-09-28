@@ -2,6 +2,7 @@ module:
   name: rho-doc
   type: component
   version: 0.1.0
+  author: Aurel Miron
   description: Documentation generator
   command: doc
   import_path: rho.doc

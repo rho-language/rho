@@ -3,6 +3,9 @@
 Rho has three kinds of module. The distinction is what a module *is for*, and it
 decides how the toolchain treats it.
 
+Where a module *goes* — installed here, or published to a registry, and who may
+change it there — is {ref}`handbook/registries`.
+
 ## A module is an application
 
 An application has a `main` and generates a program:

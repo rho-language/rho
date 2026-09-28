@@ -35,6 +35,14 @@ fn status_unauthorized() u32 {
     return 401
 }
 
+// status_forbidden is a request the caller may not make, as distinct from one
+// they may not be identified for: 401 says who are you, 403 says you are known
+// and the answer is still no. A registry uses the second when a credential is
+// valid and its holder is not the module's owner.
+fn status_forbidden() u32 {
+    return 403
+}
+
 fn status_not_found() u32 {
     return 404
 }

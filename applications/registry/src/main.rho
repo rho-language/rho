@@ -25,12 +25,14 @@ import registry.web
 import registry.auth
 import registry.docs
 
-route POST "/modules/{name}/{version}/rho-pkg"     => publish_module
-route GET  "/modules/{name}/{version}/rho-pkg"     => download_module
-route GET  "/modules/{name}/{version}/docs/{path...}" => docs_page
-route GET  "/api/search"                           => search_modules
-route GET  "/api/modules/{name}"                   => module_versions
-route GET  "/openapi.json"                         => openapi_docs
+route POST   "/modules/{name}/{version}/rho-pkg"     => publish_module
+route GET    "/modules/{name}/{version}/rho-pkg"     => download_module
+route DELETE "/modules/{name}/{version}"             => unpublish_module
+route PUT    "/modules/{name}/visibility"            => set_visibility
+route GET    "/modules/{name}/{version}/docs/{path...}" => docs_page
+route GET    "/api/search"                           => search_modules
+route GET    "/api/modules/{name}"                   => module_versions
+route GET    "/openapi.json"                         => openapi_docs
 
 /* -------------------------------------------------------------------------- */
 /*  Handlers                                                                   */
@@ -47,12 +49,21 @@ fn openapi_docs(req: Request) Response {
 }
 
 fn publish_module(req: Request) Response {
-    // Reading is public, so publishing is what a credential is for. A registry
-    // configured access = public lets anyone publish, which suits a trusted
-    // network; access = secured requires a valid token.
-    if is_secured() && !auth_is_authenticated(request_auth(req)) {
+    // Publishing needs a credential on any registry, because the registry
+    // records who owns the module from the caller's token. An open registry
+    // serves its modules to anyone; it does not accept a module from anyone,
+    // because an unowned module is one nobody can ever add to or withdraw.
+    if !auth_is_authenticated(request_auth(req)) {
         warn("registry", "publish refused, no valid token")
         return error_json(status_unauthorized(), "a token is required to publish")
+    }
+    let owner: string = auth_subject(request_auth(req))
+    if owner == "" {
+        // A valid token that names nobody cannot own anything. This is a
+        // registry-side fault rather than the caller's, so it is reported as
+        // one instead of being answered with a misleading refusal.
+        error("registry", "publish refused, the token names no subject")
+        return error_json(status_internal(), "the token names no subject")
     }
 
     let name: string = param(req, "name")
@@ -66,6 +77,18 @@ fn publish_module(req: Request) Response {
         warn("registry", "publish refused, invalid version")
         return error_json(status_bad_request(), "invalid version")
     }
+
+    // The manifest has to name an author. It is the author's own words for
+    // themselves — a username, a full name, whatever they want a reader to see
+    // — and it is not what the registry checks, because a name in a file is not
+    // a credential. What the registry checks is the token, and what it records
+    // against the module is the identity that token names.
+    let author: string = request_query_param(req, "author")
+    if author == "" {
+        warn("registry", "publish refused, the module names no author")
+        return error_json(status_bad_request(), "the module must name an author in module.yml")
+    }
+    let visibility: string = request_query_param(req, "visibility")
 
     let payload: string = request_body(req)
     if strlen(payload) == 0 {
@@ -87,18 +110,24 @@ fn publish_module(req: Request) Response {
         request_query_param(req, "type"),
         request_query_param(req, "description"),
         request_query_param(req, "main"),
-        request_query_param(req, "command")
+        request_query_param(req, "command"),
+        author, request_query_param(req, "maintainer"),
+        owner, visibility
     )
-    if store_put(name, version, payload, meta) != 0 {
-        error("registry", "publish failed, the store refused the write")
-        return error_json(status_bad_request(), "invalid module name")
+    if store_put(name, version, owner, payload, meta) != 0 {
+        // The store refuses a module that is held by another identity, and a
+        // version that already exists. Both are conflicts rather than bad
+        // requests: the request is well formed and the name is not this
+        // caller's, or it is already there.
+        warn("registry", "publish refused, " + name + " is held by another publisher")
+        return error_json(status_conflict(), "the module is published by another publisher")
     }
     // The package is stored, so the publish has succeeded. Documentation is
     // generated from what was stored, and a module that cannot be documented is
     // still published: a reader sees a version with no docs link rather than a
     // publish that failed for a page nobody asked to read.
     doc_generate(name, version)
-    info("registry", "published " + name + "@" + version)
+    info("registry", "published " + name + "@" + version + " by " + owner)
     return published_json(name, version)
 }
 
@@ -109,6 +138,94 @@ fn publish_module(req: Request) Response {
 // store reads the page, so a path that climbs out of the documentation
 // directory is refused by the same check that refuses a name that climbs out of
 // the data directory.
+// unpublish_module withdraws a published version.
+//
+// Only the identity that published the module may withdraw it, and that identity
+// is read from the caller's token. A maintainer may add a version but not take
+// the module away, because taking it away is the destructive one: a module that
+// is withdrawn cannot be resolved against, and every project depending on it
+// stops building.
+fn unpublish_module(req: Request) Response {
+    if !auth_is_authenticated(request_auth(req)) {
+        warn("registry", "unpublish refused, no valid token")
+        return error_json(status_unauthorized(), "a token is required to unpublish")
+    }
+    let identity: string = auth_subject(request_auth(req))
+
+    let name: string = param(req, "name")
+    let version: string = param(req, "version")
+    if !valid_name(name) || !valid_version(version) {
+        return error_json(status_bad_request(), "invalid module name or version")
+    }
+    if !store_has(name, version) {
+        warn("registry", "unpublish missed " + name + "@" + version)
+        return error_json(status_not_found(), "not found")
+    }
+
+    if !owner_of(name, identity) {
+        warn("registry", "unpublish refused, " + identity + " does not own " + name)
+        return error_json(status_forbidden(), "only the module's owner may unpublish it")
+    }
+
+    if store_delete(name, version) != 0 {
+        error("registry", "unpublish failed, the store refused the delete")
+        return error_json(status_bad_request(), "the module could not be withdrawn")
+    }
+    info("registry", "unpublished " + name + "@" + version + " by " + identity)
+    return json(status_ok(), "{\"unpublished\":\"" + name + "@" + version + "\"}")
+}
+
+// set_visibility changes whether a module is anybody's to install or its owner's
+// alone.
+//
+// It is a separate operation from publishing because visibility is a statement
+// about the name rather than about a version: a module that is made private is
+// private whatever versions it gains afterwards, and making it public again is
+// the same change in the other direction. Only the owner may make it.
+fn set_visibility(req: Request) Response {
+    if !auth_is_authenticated(request_auth(req)) {
+        warn("registry", "visibility refused, no valid token")
+        return error_json(status_unauthorized(), "a token is required to change visibility")
+    }
+    let identity: string = auth_subject(request_auth(req))
+
+    let name: string = param(req, "name")
+    if !valid_name(name) {
+        return error_json(status_bad_request(), "invalid module name")
+    }
+    let visibility: string = request_query_param(req, "visibility")
+    if visibility != "public" && visibility != "private" {
+        return error_json(status_bad_request(), "visibility must be public or private")
+    }
+    if strlen(store_publisher(name)) == 0 {
+        warn("registry", "visibility missed " + name)
+        return error_json(status_not_found(), "not found")
+    }
+    if !owner_of(name, identity) {
+        warn("registry", "visibility refused, " + identity + " does not own " + name)
+        return error_json(status_forbidden(), "only the module's owner may change its visibility")
+    }
+    if store_set_visibility(name, visibility) != 0 {
+        error("registry", "visibility failed, the store refused the change")
+        return error_json(status_bad_request(), "the visibility could not be changed")
+    }
+    info("registry", name + " is now " + visibility)
+    return json(status_ok(), "{\"name\":\"" + name + "\",\"visibility\":\"" + visibility + "\"}")
+}
+
+// owner_of reports whether an identity owns a module, read from the record the
+// store holds for the name.
+fn owner_of(name: string, identity: string) bool {
+    if identity == "" {
+        return false
+    }
+    let held: string = store_publisher(name)
+    if strlen(held) == 0 {
+        return false
+    }
+    return publisher_may_unpublish(held, identity)
+}
+
 fn docs_page(req: Request) Response {
     return doc_page(param(req, "name"), param(req, "version"), param(req, "path"))
 }
@@ -125,6 +242,15 @@ fn download_module(req: Request) Response {
         return error_json(status_not_found(), "not found")
     }
 
+    // A private module is its owner's to install. The answer is the same one a
+    // module that is not here gets, so that a stranger cannot map the registry
+    // by watching which names answer differently.
+    let held: string = store_publisher(name)
+    if strlen(held) > 0 && !publisher_may_install(held, caller_identity(req)) {
+        warn("registry", "download refused, " + name + " is private")
+        return error_json(status_not_found(), "not found")
+    }
+
     let payload: string = store_get(name, version)
     if strlen(payload) == 0 {
         error("registry", "download failed, stored package is empty")
@@ -134,9 +260,26 @@ fn download_module(req: Request) Response {
     return Response{ status_ok(), payload, "application/gzip" }
 }
 
+// search_modules lists the modules a caller may see.
+//
+// What is listed depends on who is asking: a private module is only in the
+// answer for its owner, because a module nobody else can install is a module
+// nobody else should be told exists. `mine=1` narrows the answer to the caller's
+// own modules, whatever their visibility, which is how an owner finds what they
+// published and checks whether it is public.
 fn search_modules(req: Request) Response {
-    return json(status_ok(), store_search(request_query_param(req, "q")))
+    let mineOnly: bool = request_query_param(req, "mine") == "1"
+    let viewer: string = caller_identity(req)
+    if mineOnly && viewer == "" {
+        // Asking for your own modules without a credential is a question with no
+        // answer; saying so is more useful than an empty list that reads as
+        // "you have published nothing".
+        return error_json(status_unauthorized(),
+            "a token is required to list the modules you published")
+    }
+    return json(status_ok(), store_search(request_query_param(req, "q"), viewer, mineOnly))
 }
+
 
 fn module_versions(req: Request) Response {
     return json(status_ok(), store_versions(param(req, "name")))
