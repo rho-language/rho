@@ -157,19 +157,21 @@ func contentTypeOf(call ast.CallExpr) string {
 }
 
 // literalResponse reads a response written directly, as in
-// `return Response{ 404, "no such module", "text/plain" }`. A struct literal
+// `return Response{ status_ok(), body, "text/plain" }`. A struct literal
 // carries its status in its first field and its content type in its third.
+//
+// The status is read through the same reader a helper's argument goes through,
+// because the idiomatic form is a helper: `Response{ status_ok(), ... }` names
+// the status rather than spelling it, and a reading that only understood the
+// number would miss every response a person wrote the way the standard library
+// invites them to.
 func literalResponse(expression ast.Expr) (int, string, bool) {
 	literal, ok := expression.(ast.StructLiteralExpr)
 	if !ok || len(literal.Values) == 0 {
 		return 0, "", false
 	}
-	number, ok := literal.Values[0].(ast.NumberExpr)
+	status, ok := statusOf(literal.Values[0])
 	if !ok {
-		return 0, "", false
-	}
-	status, err := strconv.Atoi(strings.TrimSpace(number.Value))
-	if err != nil {
 		return 0, "", false
 	}
 	contentType := ""
@@ -179,4 +181,20 @@ func literalResponse(expression ast.Expr) (int, string, bool) {
 		}
 	}
 	return status, contentType, true
+}
+
+// statusOf reads the first field of a response as a status: a named status, a
+// call that yields one, or a number written out.
+func statusOf(expression ast.Expr) (int, bool) {
+	switch value := expression.(type) {
+	case ast.NumberExpr:
+		status, err := strconv.Atoi(strings.TrimSpace(value.Value))
+		if err != nil {
+			return 0, false
+		}
+		return status, true
+	case ast.CallExpr:
+		return responseAt(value)
+	}
+	return 0, false
 }

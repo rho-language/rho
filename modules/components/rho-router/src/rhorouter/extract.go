@@ -65,6 +65,13 @@ type ReadOptions struct {
 	// Root is the project directory. Sources are read from it, and the paths
 	// written into the spec are relative to it.
 	Root string
+	// Target names the target a document describes, when a project serves more
+	// than one HTTP API. Empty takes the first target of kind server.
+	Target string
+	// NoSecurity reads the sources without asking the descriptor how a caller
+	// proves who it is, which is what a caller wants when the descriptor is
+	// not the thing being described.
+	NoSecurity bool
 }
 
 // ReadResult is a spec and whatever could not be read.
@@ -103,10 +110,45 @@ func Read(options ReadOptions) (ReadResult, error) {
 		Operations:    []Operation{},
 	}
 
+	// Every source is parsed before any route is described, because describing
+	// one needs the whole project: a handler that delegates to a function in
+	// another file is served by the same function either way, and its statuses
+	// are as much part of the operation as the ones its own body names.
+	project := newProject()
+	sources := []parsedSource{}
 	for _, file := range files {
-		operations, diagnostics := readFile(options.Root, file)
-		result.Operations(operations)
+		source, diagnostics := readFile(options.Root, file)
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		if source == nil {
+			continue
+		}
+		sources = append(sources, *source)
+		project.add(*source)
+	}
+
+	for _, source := range sources {
+		for _, decl := range source.module.Decls {
+			route, ok := decl.(ast.RouteDecl)
+			if !ok {
+				continue
+			}
+			result.Operations(project.operations(source, route))
+		}
+	}
+
+	if !options.NoSecurity {
+		section, fromPipeline, found, err := readTargetAPI(options.Root, options.Target)
+		if err != nil {
+			// A descriptor that does not parse is worth saying so about, but
+			// it is not a reason to refuse to describe the routes.
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{
+				Level: "warning", File: DescriptorFileName,
+				Message: fmt.Sprintf("the descriptor does not parse: %v", err)})
+			return result, nil
+		}
+		if found {
+			result.Spec.Security = resolveSecurity(section, fromPipeline)
+		}
 	}
 	return result, nil
 }
@@ -164,15 +206,28 @@ func sourceFiles(root string, manifest manifestInfo) ([]string, error) {
 	return out, nil
 }
 
-// readFile reads the routes and handler metadata out of one source.
-func readFile(root, path string) ([]Operation, []Diagnostic) {
-	diagnostics := []Diagnostic{}
-	source, err := os.ReadFile(path)
+// parsedSource is one source that was read, kept with what reading it produced
+// so that a route can be described with the rest of the project in hand.
+type parsedSource struct {
+	// path is the path as a spec writes it.
+	path string
+	// module is what the compiler's parser produced.
+	module *ast.Module
+	// comments are the source's comments, by position.
+	comments *commentIndex
+}
+
+// readFile reads one source into what the parser said about it.
+//
+// A source that cannot be read is a diagnostic rather than a failure: one file
+// that does not parse is not a reason to refuse to describe the others.
+func readFile(root, path string) (*parsedSource, []Diagnostic) {
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, []Diagnostic{{Level: "warning", File: relative(root, path),
 			Message: fmt.Sprintf("cannot read the source: %v", err)}}
 	}
-	tokens, lexErr := lexer.Lex(string(source))
+	tokens, lexErr := lexer.Lex(string(content))
 	if lexErr != nil {
 		return nil, []Diagnostic{{Level: "warning", File: relative(root, path),
 			Message: fmt.Sprintf("the source does not lex: %v", lexErr)}}
@@ -182,36 +237,117 @@ func readFile(root, path string) ([]Operation, []Diagnostic) {
 		return nil, []Diagnostic{{Level: "warning", File: relative(root, path),
 			Message: fmt.Sprintf("the source does not parse: %v", err)}}
 	}
-	relativePath := relative(root, path)
-	comments := newCommentIndex(string(source))
+	return &parsedSource{
+		path:     relative(root, path),
+		module:   module,
+		comments: newCommentIndex(string(content)),
+	}, nil
+}
 
-	// The handlers first: a route names one, and a route whose handler is in
-	// another file is served by the same function either way.
-	handlers := map[string]handlerInfo{}
-	for _, decl := range module.Decls {
+// project is a whole project's functions, so that a route can be described with
+// more than the body its handler happens to have.
+//
+// A handler that delegates is the common shape rather than the exception: a
+// route renders a page, and the page is built by a function beside it. Reading
+// only the handler's own body would describe such a service as answering
+// nothing, which is a description that is worse than useless — it is a
+// description a client would act on.
+type project struct {
+	// handlers are the functions that take a request and answer with a
+	// response, by the name a route names them.
+	handlers map[string]handlerInfo
+	// calls is the local functions each function calls, by name.
+	calls map[string][]string
+	// answers is what every function that answers with a response names, by
+	// name. It is not only the handlers: a route commonly delegates to a
+	// function that builds the response from arguments rather than from the
+	// request, and that function's statuses are the operation's statuses.
+	answers map[string][]Response
+	// byName is every function, by name, for resolving what a handler
+	// delegates to.
+	byName map[string]ast.FuncDecl
+	// owners is the file each function was declared in, so a route can be
+	// tagged by the module it belongs to.
+	owners map[string]string
+}
+
+// newProject returns an empty project.
+func newProject() *project {
+	return &project{
+		handlers: map[string]handlerInfo{},
+		calls:    map[string][]string{},
+		answers:  map[string][]Response{},
+		byName:   map[string]ast.FuncDecl{},
+		owners:   map[string]string{},
+	}
+}
+
+// add reads one source's functions into the project.
+func (p *project) add(source parsedSource) {
+	for _, decl := range source.module.Decls {
 		fn, ok := decl.(ast.FuncDecl)
 		if !ok || fn.Extern {
-			continue
-		}
-		if !servesRequest(fn) {
 			continue
 		}
 		name := fn.Name
 		if fn.Owner != "" {
 			name = fn.Owner + "." + fn.Name
 		}
-		handlers[name] = readHandler(comments, fn)
+		p.byName[name] = fn
+		p.owners[name] = source.path
+		p.calls[name] = calledNames(fn.Body)
+		if fn.ReturnType == "Response" {
+			p.answers[name] = collectResponses(fn.Body)
+		}
+		if servesRequest(fn) {
+			p.handlers[name] = readHandler(source.comments, fn)
+		}
 	}
+}
 
-	operations := []Operation{}
-	for _, decl := range module.Decls {
-		route, ok := decl.(ast.RouteDecl)
-		if !ok {
+// operations describes the routes one source declares.
+func (p *project) operations(source parsedSource, route ast.RouteDecl) []Operation {
+	return []Operation{p.operation(source, route)}
+}
+
+// responses is what an operation answers with.
+//
+// A handler that names its own statuses answers with those. A handler that
+// delegates answers with what the functions it calls answer with, which is the
+// one level of indirection a service written the way this toolchain invites has
+// and the level beyond which a reading stops being a reading: a status chosen
+// three calls down is a status no static reading can promise, and inventing one
+// would be worse than saying nothing.
+func (p *project) responses(name string, handler handlerInfo) []Response {
+	if len(handler.Responses) > 0 {
+		return handler.Responses
+	}
+	out := []Response{}
+	seen := map[string]bool{}
+	for _, called := range p.calls[name] {
+		if seen[called] {
 			continue
 		}
-		operations = append(operations, readRoute(relativePath, comments, route, handlers))
+		seen[called] = true
+		out = append(out, p.answers[called]...)
 	}
-	return operations, diagnostics
+	return mergeResponses(out)
+}
+
+// calledNames returns the distinct function names a body calls, in the order it
+// calls them.
+func calledNames(body []ast.Stmt) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	walkStatements(body, func(call ast.CallExpr) {
+		callee, ok := call.Callee.(ast.IdentifierExpr)
+		if !ok || seen[callee.Name] {
+			return
+		}
+		seen[callee.Name] = true
+		out = append(out, callee.Name)
+	})
+	return out
 }
 
 // servesRequest reports whether a function is a handler: one that takes the
@@ -233,11 +369,11 @@ type handlerInfo struct {
 	Tag string
 	// Parameters are the values the handler reads, in the order it reads them.
 	Parameters []Parameter
-	// Guarded are the values the handler refused before proceeding, which are
-	// the ones it cannot do without.
-	Guarded []string
 	// Responses are the statuses the handler answers with.
 	Responses []Response
+	// NeedsAuth is true when the handler checks a credential, so the operation
+	// is one a caller may need a token for.
+	NeedsAuth bool
 }
 
 // readHandler reads what a handler reads out of a request, and what it answers.
@@ -246,18 +382,15 @@ func readHandler(comments *commentIndex, fn ast.FuncDecl) handlerInfo {
 		Summary: comments.above(comments.lineOfFunction(fn.Name)),
 		Tag:     moduleTag(fn),
 	}
-	// A guard is the only place a handler states that a value is required: it
-	// reads the value and then refuses the request when the value will not
-	// convert. A value it reads and does not guard is one it can do without.
-	guarded := map[string]bool{}
+	// A handler that checks a credential may need one. It is "may" rather than
+	// "does" because the check can be conditional — token issuance is open
+	// until a deployment closes it — and a document has a way to say exactly
+	// that: a security entry with an empty alternative means a caller may
+	// present a credential or may not.
+	needsAuth := false
 	walkStatements(fn.Body, func(call ast.CallExpr) {
-		if callee, ok := call.Callee.(ast.IdentifierExpr); ok &&
-			(callee.Name == "bind_ok" || callee.Name == "bind_error") {
-			for _, argument := range call.Args {
-				for _, parameter := range boundNames(argument) {
-					guarded[parameter.In+":"+parameter.Name] = true
-				}
-			}
+		if callee, ok := call.Callee.(ast.IdentifierExpr); ok && readsCredential(callee.Name) {
+			needsAuth = true
 		}
 		parameter, isParameter := parameterOf(call)
 		if !isParameter {
@@ -270,32 +403,32 @@ func readHandler(comments *commentIndex, fn ast.FuncDecl) handlerInfo {
 		info.Parameters = append(info.Parameters, parameter)
 	})
 
-	for _, parameter := range info.Parameters {
-		if guarded[parameter.In+":"+parameter.Name] {
-			parameter.Required = true
-		}
-	}
 	info.Responses = mergeResponses(collectResponses(fn.Body))
-	// A path wildcard is always required: the router will not have matched the
-	// route without it.
+	// A path wildcard is required and nothing else can be decided here. The
+	// language has no way to say which value a guard was for: `bind_ok(req)`
+	// takes the request and nothing else, so a guard cannot be attributed to the
+	// read it guards. A value that a handler reads is therefore reported as
+	// optional unless the router guarantees it, which is the one requirement the
+	// route itself states.
 	for i := range info.Parameters {
 		if info.Parameters[i].In == InPath {
 			info.Parameters[i].Required = true
 		}
 	}
+	info.NeedsAuth = needsAuth
 	return info
 }
 
-// boundNames returns the parameters named by an expression, which is how a
-// guard's own reads are found without following every shape a guard can take.
-func boundNames(expression ast.Expr) []Parameter {
-	out := []Parameter{}
-	walkExpression(expression, func(call ast.CallExpr) {
-		if parameter, ok := parameterOf(call); ok {
-			out = append(out, parameter)
+// readsCredential reports whether a helper is one a handler checks a credential
+// with. Whether it reads one, checks one or parses one, the operation is one
+// where a credential may be needed, which is what a document says.
+func readsCredential(name string) bool {
+	for _, known := range credentialReads {
+		if known == name {
+			return true
 		}
-	})
-	return out
+	}
+	return false
 }
 
 // containsParameter reports whether a list already carries a value, compared on
@@ -371,17 +504,16 @@ func moduleTag(fn ast.FuncDecl) string {
 
 // readRoute builds the operation a route declaration describes, taking what it
 // can from the handler and filling in what only the declaration says.
-func readRoute(source string, comments *commentIndex, route ast.RouteDecl,
-	handlers map[string]handlerInfo) Operation {
+func (p *project) operation(source parsedSource, route ast.RouteDecl) Operation {
 
-	declared := comments.above(comments.lineOfRoute(route.Method, route.Path))
+	declared := source.comments.above(source.comments.lineOfRoute(route.Method, route.Path))
 	operation := Operation{
 		ID:      route.Handler,
 		Method:  strings.ToUpper(route.Method),
 		Path:    route.Path,
 		Handler: route.Handler,
-		Source:  source,
-		Tag:     moduleOf(source),
+		Source:  source.path,
+		Tag:     moduleOf(source.path),
 	}
 	operation.Summary, operation.Description = splitSummary(declared)
 
@@ -394,7 +526,7 @@ func readRoute(source string, comments *commentIndex, route ast.RouteDecl,
 		})
 	}
 
-	handler, found := handlers[route.Handler]
+	handler, found := p.handlers[route.Handler]
 	if !found {
 		return operation
 	}
@@ -428,13 +560,20 @@ func readRoute(source string, comments *commentIndex, route ast.RouteDecl,
 		}
 	}
 	for _, parameter := range handler.Parameters {
+		// A body value belongs to the body, not to the parameter list: a
+		// consumer that had to know to filter one out would be a consumer that
+		// reads the same thing twice, and the document says the same.
+		if parameter.In == InBody {
+			continue
+		}
 		if parameter.In == InPath && hasParameter(operation.Parameters, InPath, parameter.Name) {
 			continue
 		}
 		operation.Parameters = append(operation.Parameters, parameter)
 	}
 	operation.RequestBody = bodyOf(handler.Parameters)
-	operation.Responses = handler.Responses
+	operation.Responses = p.responses(route.Handler, handler)
+	operation.NeedsAuth = handler.NeedsAuth
 	return operation
 }
 

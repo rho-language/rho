@@ -16,11 +16,19 @@ build:
 # download served or missed. The service manager already collects the process's
 # own records, so these are the ones worth keeping in an application log.
 deps:
-  # The logger for the service's own records, and the documentation generator
-  # for the modules it holds: a registry documents what it receives, so its
-  # pages describe the interface the compiler will read out of a package.
-  rho-doc: ">=0.1.0"
+  # The logger for the service's own records.
   rho-log: ">=0.1.0"
+  # The reading of a Rho service's routes, and the description written from it.
+  # The registry serves its own API, so it describes the API it serves: the
+  # openapiemit port writes the document when this project is generated and
+  # embeds it, and the doc plugin adds a reference for a held module to the
+  # documentation the registry already generates.
+  rho-router: ">=0.1.0"
+  rho-openapi: ">=0.1.0"
+  # The documentation generator for the modules it holds: a registry documents
+  # what it receives, so its pages describe the interface the compiler will read
+  # out of a package.
+  rho-doc: ">=0.1.0"
 
 # The registry documents itself: the sources below ship with the application, so
 # the deployment notes a reader needs travel with the code that is deployed.

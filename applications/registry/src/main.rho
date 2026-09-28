@@ -30,10 +30,21 @@ route GET  "/modules/{name}/{version}/rho-pkg"     => download_module
 route GET  "/modules/{name}/{version}/docs/{path...}" => docs_page
 route GET  "/api/search"                           => search_modules
 route GET  "/api/modules/{name}"                   => module_versions
+route GET  "/openapi.json"                         => openapi_docs
 
 /* -------------------------------------------------------------------------- */
 /*  Handlers                                                                   */
 /* -------------------------------------------------------------------------- */
+
+// openapi_docs serves the registry's own API description.
+//
+// A description nobody can fetch is a description only the people who read the
+// repository have, and the point of publishing one is that a stranger can. It
+// is written when the registry is built, from these routes, so what it says
+// about the service is what the service does.
+fn openapi_docs(req: Request) Response {
+    return json(status_ok(), openapi_document())
+}
 
 fn publish_module(req: Request) Response {
     // Reading is public, so publishing is what a credential is for. A registry

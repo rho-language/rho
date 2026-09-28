@@ -9,19 +9,21 @@
 //	rho route list <project>            what the service answers
 //	rho route show <project> <op>       one operation in full
 //	rho route spec <project>            the metadata, as JSON
-//	rho route openapi <project> -out f  the metadata as an OpenAPI 3.1 document
 //	rho route accessors                 the typed accessors a handler calls
 //	rho route -list-plugins             the plugins that extend the reading
 //
 // The reading is the same one a build would use, because it is the compiler's
-// own parser: a route is read here exactly as it is compiled. The OpenAPI
-// document and the metadata are two renderings of one reading, so they cannot
-// disagree with each other or with the service.
+// own parser: a route is read here exactly as it is compiled. What is written
+// from that reading — an OpenAPI document, an API reference page — belongs to
+// the component that writes it, so this command publishes the contract and
+// nothing else. One reading, many renderings, none of them derived from
+// another.
 //
-// A build writes the document rather than shelling out to this command for it.
-// The port supplies the router, the binding and the middleware as generated Go,
-// so a generated project builds with the Go toolchain alone; this command is
-// what a person reaches for, and what `rho build`'s OpenAPI step runs.
+// A build does not shell out to this command for the routing: the port supplies
+// the router, the binding and the middleware as generated Go, so a generated
+// project builds with the Go toolchain alone. This command is what a person
+// reaches for, and what a component that wants the reading without reading the
+// sources itself reaches for.
 //
 // @project Rho
 // @version 0.1
@@ -42,7 +44,6 @@ import (
 	"strings"
 
 	rholog "github.com/rho/rho-log/src/logger"
-	"github.com/rho/rho-router/src/rhooas"
 	"github.com/rho/rho-router/src/rhorouter"
 )
 
@@ -61,15 +62,12 @@ usage:
   rho route list <project>              what the service answers
   rho route show <project> <operation>  one operation in full
   rho route spec <project>              the route metadata, as JSON
-  rho route openapi <project>           the metadata as an OpenAPI 3.1 document
   rho route accessors                   the typed accessors a handler calls
   rho route -list-plugins               the plugins that extend the reading
 
 flags:
   -out <path>       write to a file rather than to standard output
-  -server <url>     the address the service answers at, for the document
-  -base <prefix>    the prefix every path is served under
-  -tag <name>       the group a plugin filters by, for -list-plugins
+  -target <id>      the descriptor target to describe, when a project has several
   -list-plugins     list the plugins that extend this component
   -plain            report in a form a script can read
 `
@@ -79,9 +77,7 @@ func run(args []string) int {
 	flags := flag.NewFlagSet("route", flag.ContinueOnError)
 	flags.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	out := flags.String("out", "", "write to a file rather than to standard output")
-	server := flags.String("server", "", "the address the service answers at")
-	base := flags.String("base", "", "the prefix every path is served under")
-	title := flags.String("title", "", "the name the document calls the service")
+	target := flags.String("target", "", "the descriptor target to describe")
 	listPlugins := flags.Bool("list-plugins", false, "list the plugins that extend this component")
 	plain := flags.Bool("plain", false, "report in a form a script can read")
 	if err := flags.Parse(args); err != nil {
@@ -101,15 +97,11 @@ func run(args []string) int {
 	command, arguments := rest[0], rest[1:]
 	switch command {
 	case "list":
-		return reportList(arguments, *out, *plain)
+		return reportList(arguments, *target, *out, *plain)
 	case "show":
-		return reportShow(arguments, *out, *plain)
+		return reportShow(arguments, *target, *out, *plain)
 	case "spec":
-		return reportSpec(arguments, *out, *plain)
-	case "openapi":
-		return reportOpenAPI(arguments, rhooas.OpenAPIOptions{
-			Server: *server, BasePath: *base, Title: *title,
-		}, *out, *plain)
+		return reportSpec(arguments, *target, *out, *plain)
 	case "accessors":
 		return reportAccessors(*out, *plain)
 	case "help", "-h", "--help":
@@ -127,11 +119,11 @@ func run(args []string) int {
 /* -------------------------------------------------------------------------- */
 
 // read reads a project's routes, running the plugins that extend the reading.
-func read(root string, usePlugins bool) (rhorouter.ReadResult, error) {
+func read(root, target string, usePlugins bool) (rhorouter.ReadResult, error) {
 	if root == "" {
 		root = "."
 	}
-	result, err := rhorouter.Read(rhorouter.ReadOptions{Root: root})
+	result, err := rhorouter.Read(rhorouter.ReadOptions{Root: root, Target: target})
 	if err != nil {
 		return result, err
 	}
@@ -193,12 +185,12 @@ func reportDiagnostics(diagnostics []rhorouter.Diagnostic) {
 /* -------------------------------------------------------------------------- */
 
 // reportList prints what the service answers, one route per line.
-func reportList(args []string, out string, plain bool) int {
+func reportList(args []string, target, out string, plain bool) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "rho route: list needs a project directory")
 		return 2
 	}
-	result, err := read(args[0], true)
+	result, err := read(args[0], target, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rho route: %v\n", err)
 		return 1
@@ -234,12 +226,12 @@ func reportList(args []string, out string, plain bool) int {
 
 // reportShow prints one operation in full, which is what a person reads when a
 // route is not behaving the way the sheet says.
-func reportShow(args []string, out string, plain bool) int {
+func reportShow(args []string, target, out string, plain bool) int {
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "rho route: show needs a project directory and an operation")
 		return 2
 	}
-	result, err := read(args[0], true)
+	result, err := read(args[0], target, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rho route: %v\n", err)
 		return 1
@@ -263,12 +255,12 @@ func reportShow(args []string, out string, plain bool) int {
 
 // reportSpec prints the metadata as it was read, which is the contract other
 // tools consume.
-func reportSpec(args []string, out string, plain bool) int {
+func reportSpec(args []string, target, out string, plain bool) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "rho route: spec needs a project directory")
 		return 2
 	}
-	result, err := read(args[0], true)
+	result, err := read(args[0], target, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rho route: %v\n", err)
 		return 1
@@ -281,32 +273,6 @@ func reportSpec(args []string, out string, plain bool) int {
 		return 1
 	}
 	return emit(out, string(encoded)+"\n")
-}
-
-// reportOpenAPI prints the metadata as an OpenAPI 3.1 document, which is what
-// a client generator, a contract test or a portal consumes.
-func reportOpenAPI(args []string, options rhooas.OpenAPIOptions, out string, plain bool) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "rho route: openapi needs a project directory")
-		return 2
-	}
-	result, err := read(args[0], true)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "rho route: %v\n", err)
-		return 1
-	}
-	reportDiagnostics(result.Diagnostics)
-
-	document := rhooas.OpenAPI(result.Spec, options).String()
-	// The finished-document hook runs last, so a plugin sees exactly the text
-	// that would otherwise be written.
-	found := rhorouter.DiscoverPlugins(pluginSource(args[0]))
-	if len(found) > 0 {
-		var diagnostics []rhorouter.Diagnostic
-		document, diagnostics = rhorouter.RunOpenAPI(found, result.Spec, document)
-		reportDiagnostics(diagnostics)
-	}
-	return emit(out, document)
 }
 
 // reportAccessors prints the typed accessors a handler calls, which is the

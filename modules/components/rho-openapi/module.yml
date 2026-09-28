@@ -1,0 +1,51 @@
+module:
+  name: rho-openapi
+  type: component
+  version: 0.1.0
+  description: OpenAPI 3.1 descriptions and API references
+  command: openapi
+  import_path: rho.openapi
+
+main: rho-openapi
+
+features:
+  - openapi
+  - api-docs
+  - swagger
+
+# The reading is rho-router's, so an API description and the service it
+# describes cannot disagree: there is one reading of the sources and this is
+# what is written from it. The pages are rho-doc's, so an API reference is a
+# page of the same documentation as everything else — one site, one sidebar,
+# one search — rather than a second site beside it.
+deps:
+  rho-router: ">=0.1.0"
+  rho-doc: ">=0.1.0"
+  rho-log: ">=0.1.0"
+
+# The component publishes no Rho interface, and deliberately: a description is
+# derived from a service rather than called by one. There is no function a
+# handler reaches for, so there is nothing for a Rho library to declare, and a
+# library that declared externs nothing implements would be a header to
+# nothing. A project uses this component by running its command, and by
+# publishing the plugin that puts the reference into a documentation build.
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+docs:
+  title: OpenAPI descriptions and API references
+  section: components
+  order: "46"
+  index: docs/index.md
+  sources:
+    - docs/index.md

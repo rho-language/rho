@@ -44,6 +44,10 @@ type SiteOptions struct {
 	// Project is the project name a page reports, which the build reads from
 	// the root manifest.
 	Project string
+	// Root is the project directory the sources were read from, so a plugin
+	// that generates pages from those sources can read them too. A build that
+	// documents a tree it was not given a root for leaves it empty.
+	Root string
 	// Version is the project version a page reports.
 	Version string
 	// Home is the address of the site this documentation was published into,
@@ -59,6 +63,9 @@ type SiteOptions struct {
 type Site struct {
 	Title   string
 	Project string
+	// Root is the project directory this site documents, which a plugin that
+	// generates pages from the sources is given along with the pages.
+	Root    string
 	Version string
 	// Home is the address of the site this documentation was published into,
 	// and HomeTitle what it is called there. A site built on its own has
@@ -168,6 +175,7 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 		plugins:   found,
 		Title:     options.Title,
 		Project:   options.Project,
+		Root:      options.Root,
 		Version:   options.Version,
 		Home:      options.Home,
 		HomeTitle: options.HomeTitle,
@@ -190,11 +198,11 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 	for index := range apiPages {
 		document := apiPages[index]
 		documents = append(documents, &parsedPage{
-			document:  &document,
-			section:   api.Section,
-			module:    "",
-			generated: true,
-			landing:   document.Target == "api",
+			document:   &document,
+			section:    api.Section,
+			module:     "",
+			generated:  true,
+			landing:    document.Target == "api",
 			searchText: api.SearchText(document.Target),
 		})
 	}

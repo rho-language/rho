@@ -40,16 +40,45 @@ func answer(t *testing.T, request Request) Response {
 	return response
 }
 
+// indexRequest wraps a site in the envelope a whole-site hook is answered with.
+func indexRequest(site Site) Request {
+	payload, err := json.Marshal(site)
+	if err != nil {
+		panic(err)
+	}
+	return Request{Version: ProtocolVersion, Hook: HookIndex, Component: "rho-doc", Payload: payload}
+}
+
+// pageRequest wraps one page in the envelope a per-page hook is answered with.
+func pageRequest(site string, page Page) Request {
+	payload, err := json.Marshal(Site{Site: site, Page: &page})
+	if err != nil {
+		panic(err)
+	}
+	return Request{Version: ProtocolVersion, Hook: HookPage, Component: "rho-doc", Payload: payload}
+}
+
+// testRequest is what a build sends: the envelope, with the site in its
+// payload. Building the envelope rather than the payload alone is the point of
+// the test — a plugin that read the site off the envelope's top level would
+// find nothing here, which is exactly the bug this shape exists to catch.
 func testRequest() Request {
-	return Request{
-		Version: ProtocolVersion,
-		Hook:    HookIndex,
-		Site:    "Rho",
+	payload, err := json.Marshal(Site{
+		Site: "Rho",
 		Pages: []Page{
 			{Target: "index", Title: "Index", Href: "index.html", Section: "guides"},
 			{Target: "guide", Title: "Guide", Href: "guides/app/guide.html", Section: "guides"},
 			{Target: "api", Title: "API reference", Href: "api.html", Section: "api"},
 		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return Request{
+		Version:   ProtocolVersion,
+		Hook:      HookIndex,
+		Component: "rho-doc",
+		Payload:   payload,
 	}
 }
 
@@ -79,10 +108,8 @@ func TestTheContentsPageSitsWithTheMostPages(t *testing.T) {
 }
 
 func TestThePageHookAddsAGenerationNotice(t *testing.T) {
-	request := testRequest()
-	request.Hook = HookPage
 	page := Page{Target: "api-std-core-option", Title: "std.core.option", HTML: "<h1>std.core.option</h1>"}
-	request.Page = &page
+	request := pageRequest("Rho", page)
 
 	response := answer(t, request)
 	if len(response.Replacements) != 1 {
@@ -117,7 +144,7 @@ func TestARequestInAnotherProtocolVersionIsReported(t *testing.T) {
 func TestAnEmptyRequestIsAnswered(t *testing.T) {
 	// A build that found nothing still asks its plugins, and a plugin that
 	// cannot build a contents page has to say so rather than fail.
-	response := answer(t, Request{Version: ProtocolVersion, Hook: HookIndex, Site: "Rho"})
+	response := answer(t, indexRequest(Site{Site: "Rho"}))
 	if len(response.Pages) != 1 {
 		t.Fatalf("expected a contents page even with nothing in it, got %+v", response.Pages)
 	}
@@ -130,7 +157,16 @@ func TestMarkupInATitleIsEscaped(t *testing.T) {
 	// Titles come from sources, and a source is text: it is escaped rather
 	// than trusted, or a title could carry markup into every page that lists it.
 	request := testRequest()
-	request.Pages[0].Title = `<script>alert(1)</script>`
+	site := Site{}
+	if err := json.Unmarshal(request.Payload, &site); err != nil {
+		t.Fatal(err)
+	}
+	site.Pages[0].Title = `<script>alert(1)</script>`
+	payload, err := json.Marshal(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Payload = payload
 
 	response := answer(t, request)
 	if strings.Contains(response.Pages[0].HTML, "<script>") {

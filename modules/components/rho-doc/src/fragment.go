@@ -23,7 +23,47 @@ import (
 	"strings"
 
 	"github.com/rho/rho-doc/src/rhodoc"
+	"rho/src/deps"
 )
+
+// fragmentSite builds a site the way a build does, plugins included.
+//
+// A fragment is how a generated project reaches this component, and a project
+// that documents a published module is documenting a tree it did not write. A
+// plugin that adds pages to a site therefore has to work here as well as it
+// does from the command line, or a page a build would write would be missing
+// from the site a service serves.
+//
+// Only the plugins the toolchain installed are run, never the ones the tree
+// carries. The tree here is an unpacked package that arrived from a registry,
+// so it came from someone else: running code out of a freshly downloaded
+// package is running a stranger's program, and a documentation build is not a
+// reason to do that.
+func fragmentSite(root, title, home, homeTitle string) (*rhodoc.Site, []rhodoc.Plugin) {
+	modules, _ := rhodoc.DiscoverModules(root)
+	found := []rhodoc.Plugin{}
+	if rhodocHome := deps.RhoHome(); rhodocHome != "" {
+		found = rhodoc.Source{RhoHome: rhodocHome}.Discover(rhodoc.ComponentName)
+	}
+	site := rhodoc.BuildSiteWithPlugins(modules, rhodoc.ReadApiSet(root, "api"), rhodoc.SiteOptions{
+		Title:     title,
+		Root:      root,
+		Home:      home,
+		HomeTitle: homeTitle,
+	}, found)
+	if len(found) > 0 {
+		// A build that writes a site runs the plugin pass before it writes, so
+		// a page a plugin added is a page on disk like any other.
+		site.RunPlugins(root)
+		// A plugin that failed is reported rather than swallowed: a page
+		// missing from a served site needs a reason in the log, or an absence
+		// is all anyone sees.
+		for _, diagnostic := range site.Diagnostics {
+			fmt.Fprintf(os.Stderr, "rho doc: %s\n", diagnostic)
+		}
+	}
+	return site, found
+}
 
 // homeAddress reads the address a site is published under from a fragment's
 // arguments, so a caller that serves the site can say where it is and the
@@ -89,8 +129,7 @@ func runFragment(args []string) int {
 		if len(args) > 2 {
 			title = args[2]
 		}
-		modules, _ := rhodoc.DiscoverModules(args[1])
-		site := rhodoc.BuildSite(modules, rhodoc.ReadApiSet(args[1], "api"), rhodoc.SiteOptions{Title: title})
+		site, _ := fragmentSite(args[1], title, "", "")
 		fmt.Print(rhodoc.SiteListing(site))
 		return 0
 	case "api":
@@ -176,12 +215,7 @@ func runFragment(args []string) int {
 			fmt.Fprintln(os.Stderr, "rho doc:", err)
 			return 2
 		}
-		modules, _ := rhodoc.DiscoverModules(args[1])
-		site := rhodoc.BuildSite(modules, rhodoc.ReadApiSet(args[1], "api"), rhodoc.SiteOptions{
-			Title:     title,
-			Home:      home,
-			HomeTitle: homeTitle,
-		})
+		site, _ := fragmentSite(args[1], title, home, homeTitle)
 		if err := site.Write(args[2]); err != nil {
 			fmt.Fprintln(os.Stderr, "rho doc:", err)
 			return 1

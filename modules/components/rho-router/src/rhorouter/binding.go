@@ -75,12 +75,46 @@ var kinds = []struct {
 	{"bool", "bool", "boolean", ""},
 }
 
+// aliases are the accessors that predate the typed ones.
+//
+// A project written before the typed accessors existed reads a value as text
+// and converts it itself, and it is still a service with an HTTP surface. So
+// the names it reads through are in the vocabulary too, and a route that uses
+// them is described with the same sources and the same confidence as one that
+// does not. What is not known is the type: these read text, so the value is
+// documented as a string, which is what the handler received.
+var aliases = []accessor{
+	// param(req, "name") reads a captured path wildcard as text.
+	{name: "param", in: InPath, kind: "string"},
+	// request_query_param(req, "q") reads one query parameter as text.
+	{name: "request_query_param", in: InQuery, kind: "string"},
+	// request_body(req) reads the whole body, which is what an upload is.
+	{name: "request_body", in: InBody, kind: "string", whole: true},
+}
+
 // accessors is every typed accessor, built from the two tables so that a new
-// type is one line rather than thirty.
-var accessors = buildAccessors()
+// type is one line rather than thirty, plus the aliases.
+var accessors = append(buildAccessors(), aliases...)
 
 // accessorsByName indexes the accessors by the name a handler calls.
 var accessorsByName = indexAccessors(accessors)
+
+// credentialReads are the helpers a handler calls when it reads a credential.
+//
+// They are recognised so that a test can assert the set, and so that a reader
+// of this file knows why they are not in the vocabulary above: a credential is
+// not a parameter, and whether an operation needs one is a statement about the
+// service rather than about one value a handler read.
+var credentialReads = []string{
+	"request_auth", "auth_bearer", "auth_subject", "auth_is_authenticated", "auth_required",
+}
+
+// CredentialReads lists the helpers a handler reads a credential with.
+func CredentialReads() []string {
+	out := make([]string, len(credentialReads))
+	copy(out, credentialReads)
+	return out
+}
 
 // buildAccessors returns every source-and-type combination, plus the two
 // whole-body reads. The latter are spelled apart from the table because neither

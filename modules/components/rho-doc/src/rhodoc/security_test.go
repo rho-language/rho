@@ -32,6 +32,7 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestAPageAddressCannotLeaveTheOutputDirectory(t *testing.T) {
+	isolate(t)
 	// A page's address comes from what the tree declares, and the tree may have
 	// been written by someone the reader does not know, so an address that
 	// climbs out of the output directory is refused rather than followed.
@@ -56,6 +57,7 @@ func TestAPageAddressCannotLeaveTheOutputDirectory(t *testing.T) {
 }
 
 func TestAPageAddressThatIsANestedNameIsFine(t *testing.T) {
+	isolate(t)
 	// The check refuses an escape, not a nested address: a module's pages live
 	// in a directory of the module's name, inside the output directory.
 	root := t.TempDir()
@@ -78,6 +80,7 @@ func TestAPageAddressThatIsANestedNameIsFine(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestALinkSchemeThatWouldRunIsNotWritten(t *testing.T) {
+	isolate(t)
 	// A generated site is served to readers, so a source cannot decide that a
 	// link runs a script in the browser of whoever clicks it.
 	document := Parse("p.md", "# T\n\n[click](javascript:alert(1))\n\n![img](data:text/html;base64,PHNjcmlwdD4=)\n\n[ok](https://example.com)\n\n[rel](./other.md)\n\n[anchor](#a-heading)\n")
@@ -101,6 +104,7 @@ func TestALinkSchemeThatWouldRunIsNotWritten(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestTheTreesOwnPluginsAreNotRunByDefault(t *testing.T) {
+	isolate(t)
 	// A plugin is a program. An installed plugin was published by someone the
 	// user chose to install; a plugin in the tree being documented was supplied
 	// by whoever wrote that tree.

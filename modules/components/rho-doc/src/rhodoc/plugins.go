@@ -33,24 +33,17 @@ import (
 /*  Describing the site                                                       */
 /* -------------------------------------------------------------------------- */
 
-// sitePayload is what a plugin is asked about a whole build: the site, where it
-// is written, and the pages it has.
-type sitePayload struct {
-	Site  string       `json:"site"`
-	Out   string       `json:"out,omitempty"`
-	Pages []PluginPage `json:"pages"`
-}
-
-// pagePayload is what a plugin is asked about one page: the page itself, and
-// the site it belongs to.
-type pagePayload struct {
-	Site string     `json:"site"`
-	Page PluginPage `json:"page"`
-}
+// The payload shapes are the published ones: a plugin decodes the envelope and
+// then the payload, and the two sides of that have to be one definition or a
+// field renamed on one side is a field a plugin silently stops seeing.
+type (
+	sitePayload = SitePayload
+	pagePayload = PagePayload
+)
 
 // describe renders the site as a plugin would see it.
 func (site *Site) describe(out string) sitePayload {
-	payload := sitePayload{Site: site.Title, Out: out}
+	payload := sitePayload{Site: site.Title, Out: out, Root: site.Root}
 	for _, page := range site.Pages {
 		payload.Pages = append(payload.Pages, PluginPage{
 			Target:  page.Target,

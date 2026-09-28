@@ -1,0 +1,52 @@
+module:
+  name: rho-doc-api
+  type: plugin
+  version: 0.1.0
+  description: Adds a service's HTTP API reference to its documentation site
+
+main: rho-doc-api
+
+features:
+  - documentation
+  - openapi
+  - api-reference
+
+# The component this plugin plugs into, and the hook of that component it
+# answers. A documentation build is the only thing that calls it: the generator
+# loads the plugins that name it, and refuses a hook it does not offer.
+#
+# The whole-site hook rather than the per-page one, because an API reference is
+# a page that did not exist: it is read from the project's routes, and the
+# per-page hook only rewrites pages that are already there. Adding it whole also
+# means the sidebar lists it beside the module reference, which is what makes it
+# one documentation site rather than two.
+extends: rho-doc
+
+hooks:
+  - index
+
+commands:
+  - name: api-reference
+    run: rho-doc-api
+    hook: index
+
+package:
+  kind: plugin
+  interface: []
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+docs:
+  title: HTTP API reference for documentation sites
+  section: plugins
+  order: "11"
+  index: docs/index.md
+  sources:
+    - docs/index.md

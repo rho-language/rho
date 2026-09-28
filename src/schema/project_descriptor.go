@@ -121,6 +121,19 @@ const (
 	MiddlewareJWT = "jwt"
 )
 
+// Security schemes a service may declare. The list is deliberately short: a
+// scheme this toolchain cannot describe is one a document would state wrongly,
+// and saying nothing is better than stating the wrong thing.
+var ValidSecuritySchemes = []string{SecurityNone, SecurityBearer}
+
+// The ways a caller proves who it is.
+const (
+	// SecurityNone is a service that asks a caller for nothing.
+	SecurityNone = "none"
+	// SecurityBearer is an HTTP bearer token in the Authorization header.
+	SecurityBearer = "bearer"
+)
+
 // ValidMiddlewares lists every middleware a target may compose.
 var ValidMiddlewares = []string{
 	MiddlewareRequestID,
@@ -170,6 +183,21 @@ func ProjectDescriptorSchema() Schema {
 						// dispatches through. It is what a target declares to
 						// ask for the routing port.
 						{Name: "router", Required: false, Kind: KindString, AllowedValues: ValidRouters},
+						// api says what the service says about itself, over
+						// and above what its routes say. It is read by the
+						// component that writes an API description, which is
+						// why it is a section rather than a port: what a
+						// description needs is facts, not generated code.
+						{Name: "api", Required: false, Kind: KindMap, Fields: []FieldSchema{
+							// security names how a caller proves who it is.
+							{Name: "security", Required: false, Kind: KindString, AllowedValues: ValidSecuritySchemes},
+							// security_description says where a credential comes
+							// from, which is the one thing a document cannot
+							// derive from anything.
+							{Name: "security_description", Required: false, Kind: KindString},
+							// public_paths lists what is served without one.
+							{Name: "public_paths", Required: false, Kind: KindString},
+						}},
 						// middleware lists the func(http.Handler) http.Handler
 						// wrappers composed around the router, outermost first.
 						// Every option a middleware understands has a default,
