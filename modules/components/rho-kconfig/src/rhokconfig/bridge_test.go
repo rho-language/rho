@@ -18,10 +18,14 @@
 package rhokconfig
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rho/src/plugins"
 )
 
 // project is a project that declares a bridge: a fragment, a defconfig, a
@@ -271,4 +275,145 @@ func TestAWrittenFileIsNotAProblem(t *testing.T) {
 	if !problem(".config", 0, "a value is wrong").Problem() {
 		t.Fatal("expected a problem to be a problem")
 	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The hook a plugin renders through                                          */
+/* -------------------------------------------------------------------------- */
+
+// answeringPlugin is a plugin that answers the render hook with one file, run as
+// a helper process: a plugin is a program, so a test that faked one would test
+// the fake.
+func answeringPlugin(t *testing.T, root string) plugins.Plugin {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "extra-dialect"
+	pluginRoot := filepath.Join(root, name)
+	if err := os.MkdirAll(pluginRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(executable, filepath.Join(pluginRoot, "helper")); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	manifest := "module:\n" +
+		"  name: " + name + "\n" +
+		"  type: plugin\n" +
+		"  version: 0.1.0\n" +
+		"\n" +
+		"main: " + name + "\n" +
+		"\n" +
+		"extends: " + ComponentName + "\n" +
+		"\n" +
+		"hooks:\n  - " + HookRender + "\n" +
+		"\n" +
+		"commands:\n  - name: render\n" +
+		"    run: helper -test.run TestRenderHelperProcess\n" +
+		"    hook: " + HookRender + "\n"
+	if err := os.WriteFile(filepath.Join(pluginRoot, "module.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	found := plugins.Source{Tree: root, TrustTree: true}.Discover(ComponentName)
+	if len(found) != 1 {
+		t.Fatalf("expected the plugin to be discovered, got %+v", found)
+	}
+	return found[0]
+}
+
+func TestAPluginCanRenderOneMoreDialect(t *testing.T) {
+	// The hook exists so a project can target a tool this component has never
+	// heard of: the plugin renders it and the run writes what it answered.
+	p := newProject(t, "linux")
+	plugin := answeringPlugin(t, t.TempDir())
+
+	options := p.options()
+	options.Plugins = []plugins.Plugin{plugin}
+	result, err := Merge(options)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if len(result.Problems()) != 0 {
+		t.Fatalf("expected a clean run, got %+v", result.Problems())
+	}
+	written := ""
+	for _, name := range result.Written {
+		if name == "plugin-extra.conf" {
+			written = name
+		}
+	}
+	if written == "" {
+		t.Fatalf("expected the plugin's file to be written, got %+v", result.Written)
+	}
+	content, err := os.ReadFile(filepath.Join(p.root, "plugin-extra.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "from a plugin") {
+		t.Fatalf("expected the plugin's content, got %q", content)
+	}
+}
+
+func TestARunWithNoPluginsWritesWhatItHas(t *testing.T) {
+	// Most runs have no plugins, and a run with none writes the dialect it was
+	// asked for and nothing else.
+	p := newProject(t, "linux")
+	result, err := Merge(p.options())
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	for _, name := range result.Written {
+		if strings.Contains(name, "plugin") {
+			t.Fatalf("expected no plugin files, got %+v", result.Written)
+		}
+	}
+}
+
+// TestRenderHelperProcess is not a test: it is the program a test plugin runs.
+// It answers the render hook with one file, and does nothing otherwise.
+func TestRenderHelperProcess(t *testing.T) {
+	if os.Getenv("RHO_PLUGIN") == "" {
+		t.Skip("not running as a plugin helper")
+	}
+	payload, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(3)
+	}
+	// The protocol is an envelope with the component's own payload inside it, so
+	// a plugin reads the envelope first and its payload after: decoding the whole
+	// thing as the payload would find every field empty and no error.
+	envelope := struct {
+		Hook    string          `json:"hook"`
+		Payload json.RawMessage `json:"payload"`
+	}{}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		os.Exit(4)
+	}
+	request := RenderRequest{}
+	if err := json.Unmarshal(envelope.Payload, &request); err != nil {
+		os.Exit(4)
+	}
+	if envelope.Hook != HookRender {
+		os.Exit(7)
+	}
+	// The request carries the resolved symbols, which is what a plugin renders
+	// from: a plugin that saw nothing could not render anything.
+	if request.Dialect == "" || len(request.Values) == 0 {
+		os.Exit(5)
+	}
+	body, err := json.Marshal(RenderResponse{Files: []RenderFile{{Path: "plugin-extra.conf", Content: "# from a plugin\n"}}})
+	if err != nil {
+		os.Exit(6)
+	}
+	answer := struct {
+		Version int             `json:"version"`
+		Payload json.RawMessage `json:"payload"`
+	}{Version: 1, Payload: body}
+	encoded, err := json.Marshal(answer)
+	if err != nil {
+		os.Exit(6)
+	}
+	os.Stdout.Write(encoded)
+	os.Exit(0)
 }

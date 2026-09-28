@@ -96,13 +96,43 @@ written by hand, because what reads well is a judgement and not a translation.
 
 ## Extending it
 
-The component takes plugins, over the same mechanism every component does:
+The component takes plugins, over the same mechanism every component does. It
+offers one hook: `map`, which runs once with the declarations that were read, and
+answers with the C types a plugin knows and what they are in Rho. A vendor type
+the header names and the language has no primitive for is the one thing a
+generator cannot work out on its own.
 
-| Hook | When it runs | What a plugin answers with |
-|------|--------------|---------------------------|
-| `parse` | Per header read, before its declarations are mapped | Declarations to add |
-| `map` | Once, with everything that was read | Type mappings |
-| `write` | Once, with the files that were written | Nothing yet; a step that observes |
+```yaml
+# the plugin's module.yml
+extends: rho-cimport
+hooks: [map]
+commands:
+  - name: vendor-types
+    run: my-vendor-types
+    hook: map
+```
+
+The request and the answer are JSON envelopes, and the component's payload is
+inside the envelope:
+
+```json
+{ "version": 1, "hook": "map", "component": "rho-cimport",
+  "payload": { "headers": ["robot.h"],
+               "declarations": [{ "kind": "alias", "name": "vendor_handle_t", "type": "int" }] } }
+```
+
+```json
+{ "version": 1, "payload": { "types": { "vendor_handle_t": "i64" } } }
+```
+
+:::{note}
+The payload is *inside* the envelope, not the whole document: a plugin that
+decodes the whole request as its own payload finds every field empty and no
+error to tell it so.
+:::
+
+A mapping a plugin supplies is used for the type it names and nothing else, and a
+plugin that fails is reported and its mappings are left out.
 
 ## Building it
 

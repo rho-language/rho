@@ -30,6 +30,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"rho/src/deps"
+	"rho/src/plugins"
+
 	"github.com/rho/rho-kconfig/src/rhokconfig"
 )
 
@@ -107,6 +110,8 @@ func merge(args []string) int {
 	module := fs.String("module", "", "a Rho module of constants to apply")
 	force := fs.Bool("force", false, "write over a file that is already there")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
+	usePlugins := fs.Bool("plugins", true, "run the plugins that extend this run")
+	noPlugins := fs.Bool("no-plugins", false, "do not run the plugins that extend this run")
 	// Flags are read wherever they appear, because `rho kconfig merge <path>
 	// --force` is what a person types first and a parser that stops at the path
 	// would read the flag as a fragment to open.
@@ -127,6 +132,9 @@ func merge(args []string) int {
 		}
 	}
 
+	if *noPlugins {
+		*usePlugins = false
+	}
 	options := rhokconfig.Options{
 		Root:      *root,
 		Fragments: fragments,
@@ -134,6 +142,12 @@ func merge(args []string) int {
 		Defconfig: *defconfig,
 		Module:    *module,
 		Overwrite: *force,
+	}
+	if *usePlugins {
+		// Only the installed plugins: a run resolves a project's configuration,
+		// and a plugin found in the tree the project happens to sit in is code
+		// from whoever wrote that tree.
+		options.Plugins = plugins.Source{RhoHome: deps.RhoHome()}.Discover(rhokconfig.ComponentName)
 	}
 
 	// A run that names a path and no fragment reads what the project declared: a

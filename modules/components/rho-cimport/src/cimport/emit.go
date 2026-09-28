@@ -219,7 +219,7 @@ func (i *Interface) writeFunction(b *strings.Builder, decl Decl) {
 	if result == "Unit" {
 		result = "void"
 	}
-	fmt.Fprintf(b, "extern fn %s(%s) %s\n\n", RhoName(decl.Name), i.params(decl.Params), result)
+	fmt.Fprintf(b, "extern fn %s(%s) %s\n\n", decl.Name, i.params(decl.Params), result)
 }
 
 // writeShimDecl renders the declaration of a shim: a plain foreign function, so

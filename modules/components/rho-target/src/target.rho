@@ -1,0 +1,71 @@
+module rho.target
+
+// The target a program was built for.
+//
+// A program that runs on a board needs facts about that board: which chip it is,
+// where its flash is, how much RAM it has, and which pin the LED is on. The facts
+// are in the target spec the build was generated from, so the same generator that
+// wrote the build writes them here, and a program reads what it was built for
+// rather than what it was told.
+//
+// The externs below are supplied by the target port, the way logging is supplied
+// by logemit: a generated project asks its backend for this port and gets the
+// spec's facts without carrying them.
+
+// The name of the target, such as pico or stm32f4.
+extern fn target_name() string
+
+// The system on the chip: cortex-m4, cortex-m0plus, riscv32imc.
+extern fn target_core() string
+
+// Where the program is stored, which is where it is linked and where a linker
+// script's FLASH region begins.
+extern fn target_flash_origin() u32
+
+// How much room the flash has, in bytes.
+extern fn target_flash_length() u32
+
+// How much RAM the program has, in bytes.
+extern fn target_ram_length() u32
+
+// The pin a role is wired to, as the number the platform's interfaces use, or
+// 0 when the board does not wire that role. The roles are the ones a spec names:
+// led, uart0_tx, i2c0_sda.
+extern fn target_pin(role: string) u32
+
+// Whether the board wires a role at all, which is how a program tells a pin that
+// is not wired from one that is pin 0.
+extern fn target_has_pin(role: string) bool
+
+/* -------------------------------------------------------------------------- */
+/*  Reading it as a program does                                              */
+/* -------------------------------------------------------------------------- */
+
+// name is the target the program was built for.
+fn name() string {
+    return target_name();
+}
+
+// core is the processor core.
+fn core() string {
+    return target_core();
+}
+
+// flash is how much room the program has to be stored in, in bytes.
+fn flash() u32 {
+    return target_flash_length();
+}
+
+// ram is how much room the program has for data, in bytes.
+fn ram() u32 {
+    return target_ram_length();
+}
+
+// pin is the pin a role is wired to, and 0 when the board does not wire it. A
+// caller that needs to tell those apart asks `has_pin` first.
+fn pin(role: string) u32 {
+    if !target_has_pin(role) {
+        return 0;
+    }
+    return target_pin(role);
+}

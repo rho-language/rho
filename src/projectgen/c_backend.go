@@ -211,8 +211,24 @@ func cmakeString(value string) string {
 func emitCMakeLists(ctx Context) string {
 	name := cmakeProjectName(ctx.ModuleName)
 	var b strings.Builder
-	b.WriteString("cmake_minimum_required(VERSION 3.16)\n")
+	b.WriteString("cmake_minimum_required(VERSION 3.16)\n\n")
+
+	// A target a project generated for writes the files a cross-compile needs:
+	// which compiler, which memory the program is laid out in, and how it is
+	// written to the board. They are included when they are there, so a project
+	// that targets the host builds as it did.
+	//
+	// The toolchain file comes before project(), because that is when CMake reads
+	// it to learn which compiler it is configuring for; the target file comes
+	// after, because its flags are added to a target that has to exist.
+	b.WriteString("# The target this project builds for, when one was generated.\n")
+	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/toolchain.cmake)\n")
+	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/toolchain.cmake)\n")
+	b.WriteString("endif()\n\n")
 	fmt.Fprintf(&b, "project(%s C)\n\n", name)
+	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/target.cmake)\n")
+	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/target.cmake)\n")
+	b.WriteString("endif()\n\n")
 	b.WriteString("set(CMAKE_C_STANDARD 11)\nset(CMAKE_C_STANDARD_REQUIRED ON)\n\n")
 
 	// A project with a Kconfig bridge resolves it before anything is compiled,

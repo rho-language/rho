@@ -1,0 +1,48 @@
+{
+  "kind": "mcu",
+  "name": "rp2040",
+  "comment": "The RP2040: two Cortex-M0+ cores, 264 KB of SRAM and no on-chip flash. Executable code is read from an external flash chip through the XIP cache, so a program is linked at its XIP address and copied there by the bootrom.",
+  "arch": "arm-cortex-m",
+  "core": "cortex-m0plus",
+  "toolchain": {
+    "flags": [
+      "-mcpu=cortex-m0plus",
+      "-mthumb",
+      "-mfloat-abi=soft",
+      "-ffunction-sections",
+      "-fdata-sections"
+    ]
+  },
+  "flags": [
+    "-nostartfiles",
+    "-Wl,--gc-sections"
+  ],
+  "defines": [
+    "PICO_RP2040=1"
+  ],
+  "memory": {
+    "flash": {
+      "origin": "0x10000000",
+      "length": "0x200000",
+      "comment": "2 MB of external flash, seen through the XIP cache at its linked address"
+    },
+    "ram": {
+      "origin": "0x20000000",
+      "length": "0x42000",
+      "comment": "264 KB of SRAM in six banks, of which this is the main one a program uses"
+    },
+    "extra": {
+      "xip_cache": {
+        "origin": "0x14000000",
+        "length": "0x1000",
+        "link": false,
+        "comment": "the cache's own window onto the flash, not somewhere a section goes"
+      }
+    }
+  },
+  "flash": {
+    "tool": "picotool",
+    "command": "picotool load -f -x {binary}",
+    "comment": "the bootrom's own protocol over USB; hold BOOTSEL while powering the board"
+  }
+}

@@ -31,16 +31,12 @@ package:
     - README.md
     - src
 
-# The hooks a build goes through. A dialect is the part that differs between the
+# The hook a build goes through. A dialect is the part that differs between the
 # tools that read a configuration, so it is the part worth extending: a plugin
-# answers `render` and writes one more kind of header.
+# answers `render` with files, and they are written beside the dialect's own.
 provides:
   hooks:
-    # Once, after the fragments are merged and before anything is written: a
-    # plugin renders the resolved configuration in its own dialect.
     - render
-    # Once, after every dialect has been written.
-    - write
 
 docs:
   title: Configuration bridge
