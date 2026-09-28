@@ -86,10 +86,11 @@ type PortContext struct {
 
 // portGenerators are the built-in ports a descriptor may request.
 var portGenerators = map[string]portGenerator{
-	"docemit":   emitDocPort,
-	"fsstore":   emitFSStorePort,
-	"logemit":   emitLogPort,
-	"httproute": emitHTTPRoutePort,
+	"docemit":     emitDocPort,
+	"fsstore":     emitFSStorePort,
+	"logemit":     emitLogPort,
+	"httproute":   emitHTTPRoutePort,
+	"openapiemit": emitOpenAPIPort,
 }
 
 // RegisteredPorts lists the available port names.

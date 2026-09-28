@@ -31,6 +31,18 @@ import (
 /*  Fixtures                                                                  */
 /* -------------------------------------------------------------------------- */
 
+// isolate points the toolchain's home at an empty directory, so a test sees
+// the plugins it wrote and not the ones a developer has installed.
+//
+// This matters more than it looks: discovery reads the installed plugins from
+// the home regardless of the tree it was given, so a test that does not pin the
+// home passes on a machine with no plugins installed and fails on one with any.
+// The home is what makes a test hermetic, not a convenience.
+func isolate(t *testing.T) {
+	t.Helper()
+	t.Setenv("RHO_HOME", t.TempDir())
+}
+
 // writePlugin writes a plugin whose command runs a helper program.
 //
 // The helper is a Go test binary of this package run as a subprocess, which is
@@ -106,6 +118,7 @@ func helperCommand(behaviour string) string {
 /* -------------------------------------------------------------------------- */
 
 func TestPluginRequestCarriesTheWholeSite(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writePlugin(t, root, "toc", ComponentName, "  - "+HookIndex+"\n",
 		"\ncommands:\n"+aCommand(t, "contents", HookIndex, "contents"))
@@ -142,6 +155,7 @@ func TestPluginRequestCarriesTheWholeSite(t *testing.T) {
 }
 
 func TestPluginCanRewriteAPage(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writePlugin(t, root, "banner", ComponentName, "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "banner"))
@@ -163,6 +177,7 @@ func TestPluginCanRewriteAPage(t *testing.T) {
 }
 
 func TestAFailingPluginIsReportedAndSkipped(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writePlugin(t, root, "broken", ComponentName, "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "fail"))
@@ -188,6 +203,7 @@ func TestAFailingPluginIsReportedAndSkipped(t *testing.T) {
 }
 
 func TestAPluginAnsweringNonsenseIsReported(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writePlugin(t, root, "chatty", ComponentName, "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "garbage"))
@@ -205,6 +221,7 @@ func TestAPluginAnsweringNonsenseIsReported(t *testing.T) {
 }
 
 func TestAPluginThatIsNotThereIsReported(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writePlugin(t, root, "absent", ComponentName, "  - "+HookPage+"\n",
 		"\ncommands:\n  - name: page\n    run: rho-doc-plugin-that-does-not-exist\n    hook: page\n")
@@ -222,6 +239,7 @@ func TestAPluginThatIsNotThereIsReported(t *testing.T) {
 }
 
 func TestADiscoveredPluginCarriesItsRelation(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writePlugin(t, root, "guide", ComponentName, "  - "+HookPage+"\n",
 		"\ncommands:\n"+aCommand(t, "page", HookPage, "banner"))
@@ -243,6 +261,7 @@ func TestADiscoveredPluginCarriesItsRelation(t *testing.T) {
 }
 
 func TestAPluginForAnotherComponentIsNotLoaded(t *testing.T) {
+	isolate(t)
 	// The relation is the filter: a plugin written for a different tool is
 	// inert here rather than being called with a request it cannot answer.
 	root := t.TempDir()
@@ -259,6 +278,7 @@ func TestAPluginForAnotherComponentIsNotLoaded(t *testing.T) {
 }
 
 func TestAHookThisGeneratorDoesNotRunIsNeverCalled(t *testing.T) {
+	isolate(t)
 	// A plugin may declare a hook the component does not offer, if it was
 	// written against another version of the manifest. The build asks for
 	// nothing it does not run, whatever a plugin claims.
@@ -276,6 +296,7 @@ func TestAHookThisGeneratorDoesNotRunIsNeverCalled(t *testing.T) {
 }
 
 func TestAModuleThatIsNotAPluginIsNotAnExtension(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
 
@@ -365,6 +386,7 @@ func helperMode() string {
 }
 
 func TestTheTreePluginsRunOnlyWhenTheyAreTrusted(t *testing.T) {
+	isolate(t)
 	// A plugin is a program, and the tree being documented may have been
 	// written by someone the caller does not know. A build runs the installed
 	// plugins by default and the tree's own only when asked.
@@ -381,6 +403,7 @@ func TestTheTreePluginsRunOnlyWhenTheyAreTrusted(t *testing.T) {
 }
 
 func TestACommandCannotLeaveThePluginDirectory(t *testing.T) {
+	isolate(t)
 	// A plugin runs a program it carries, or one on PATH. A path that climbs out
 	// of the plugin, or an absolute one, is refused: a plugin is a module with a
 	// directory of its own, and a program named outside it is not its business.

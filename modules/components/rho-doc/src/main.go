@@ -128,6 +128,7 @@ func runCommand(args []string) int {
 		Title:   *title,
 		Out:     *out,
 		Project: projectName(absolute),
+		Root:    absolute,
 		Version: projectVersion(absolute),
 	}
 	if options.Out == "" {

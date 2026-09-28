@@ -56,7 +56,11 @@
 
 package rhodoc
 
-import "rho/src/plugins"
+import (
+	"encoding/json"
+
+	"rho/src/plugins"
+)
 
 /* -------------------------------------------------------------------------- */
 /*  What this component offers                                                */
@@ -77,17 +81,39 @@ type Plugin = plugins.Plugin
 // for another component sees the same shapes and reads a different payload.
 const ProtocolVersion = plugins.ProtocolVersion
 
-// SiteRequest is what a plugin is asked about a whole build: the site, and the
-// pages it has.
-type SiteRequest struct {
-	Site  string       `json:"site"`
-	Out   string       `json:"out,omitempty"`
+// Request is what a documentation build sends a plugin.
+//
+// It is the shared envelope, and the component's own part of it is the payload.
+// A plugin decodes the envelope and then the payload, which is what every
+// plugin for every component does: the envelope is the toolchain's and says
+// which hook is being answered, and the payload is the component's and says
+// what it is being answered about.
+//
+//	{"version":1,"hook":"index","command":"api-reference","component":"rho-doc",
+//	 "payload":{"site":"Registry","out":"build/docs","root":"/src/registry",...}}
+type Request struct {
+	Version   int             `json:"version"`
+	Hook      string          `json:"hook"`
+	Command   string          `json:"command"`
+	Component string          `json:"component"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+}
+
+// SitePayload is this component's part of a whole-site request: the site, the
+// project it documents, and the pages it has.
+type SitePayload struct {
+	Site string `json:"site"`
+	Out  string `json:"out,omitempty"`
+	// Root is the project directory, so a plugin that generates pages from the
+	// project's own sources can read them. It is empty for a build of pages
+	// that came from somewhere other than a project directory.
+	Root  string       `json:"root,omitempty"`
 	Pages []PluginPage `json:"pages"`
 }
 
-// PageRequest is what a plugin is asked about one page: the page itself, and
-// the site it belongs to.
-type PageRequest struct {
+// PagePayload is this component's part of a per-page request: the page itself,
+// and the site it belongs to.
+type PagePayload struct {
 	Site string     `json:"site"`
 	Page PluginPage `json:"page"`
 }

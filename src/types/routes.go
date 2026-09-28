@@ -188,6 +188,13 @@ var protocolFuncs = map[string]functionType{
 		},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// openapi_document returns the service's own API description, which the
+	// openapiemit port wrote when the project was generated. It is a string
+	// because a description is a document: what a service does with it is send
+	// it.
+	"openapi_document": {
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
 	"request_body": {
 		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},

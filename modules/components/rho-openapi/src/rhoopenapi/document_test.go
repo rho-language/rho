@@ -18,7 +18,7 @@
 // SPDX-License-Identifier: MIT
 //
 
-package rhooas
+package rhoopenapi
 
 import (
 	"encoding/json"
@@ -552,4 +552,184 @@ func keysOf(values map[string]interface{}) []string {
 		out = append(out, key)
 	}
 	return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Security                                                                   */
+/* -------------------------------------------------------------------------- */
+
+// secured is a spec whose service asks for a bearer token, as a target that
+// declares one or wraps its router in the jwt middleware does.
+func secured() Spec {
+	spec := catalog()
+	spec.Security = &rhorouter.Security{
+		Scheme: rhorouter.SecurityBearer,
+		// The pipeline refuses a request without a credential, so every
+		// operation that is not exempt requires one.
+		Required: true,
+	}
+	return spec
+}
+
+func TestADeclaredSchemeBecomesAComponent(t *testing.T) {
+	document := read(t, render(t, secured(), OpenAPIOptions{}))
+	schemes := dig(t, document, "components", "securitySchemes")
+	entry := schemes.(map[string]interface{})["bearerAuth"]
+	if entry == nil {
+		t.Fatalf("no bearerAuth scheme: %v", schemes)
+	}
+	scheme := entry.(map[string]interface{})
+	if scheme["type"] != "http" || scheme["scheme"] != "bearer" {
+		t.Errorf("the scheme is described as %v", scheme)
+	}
+	// A client holding a token wants to know what it is holding, not only how
+	// to send it.
+	if scheme["bearerFormat"] != "JWT" {
+		t.Errorf("the scheme does not say what the token is: %v", scheme)
+	}
+}
+
+func TestAnEnforcedCredentialIsRequiredOnEveryOperation(t *testing.T) {
+	document := read(t, render(t, secured(), OpenAPIOptions{}))
+	// The service-wide entry is what a wrapper enforces, so it is written once
+	// rather than repeated on every operation.
+	security, ok := document["security"].([]interface{})
+	if !ok || len(security) != 1 {
+		t.Fatalf("the service-level security is %v", document["security"])
+	}
+	required := security[0].(map[string]interface{})["bearerAuth"]
+	if required == nil {
+		t.Errorf("the service-level security does not name the scheme: %v", security[0])
+	}
+}
+
+func TestAnExemptPathIsNotRequired(t *testing.T) {
+	spec := secured()
+	spec.Security.PublicPaths = []string{"/items"}
+
+	document := read(t, render(t, spec, OpenAPIOptions{}))
+	// The service requires it, and the exempt path overrides that by naming no
+	// requirement of its own — which is what an inherited entry means.
+	entry := operation(t, document, "/items", "post")
+	if _, present := entry["security"]; present {
+		t.Errorf("an exempt operation carries its own security: %v", entry["security"])
+	}
+	other := operation(t, document, "/items/{id}", "get")
+	if _, present := other["security"]; present {
+		t.Errorf("a non-exempt operation does not say it inherits the requirement: %v", other["security"])
+	}
+}
+
+func TestAConditionalCheckIsWrittenAsAnAlternative(t *testing.T) {
+	// A handler that checks a credential may or may not be given one, and a
+	// document has a way to say exactly that: a security entry with an empty
+	// alternative. Requiring it would claim the service does not make; not
+	// mentioning it would hide a credential the service reads. So the
+	// credential is declared (a scheme the client can present) but not required
+	// on the operations that only read one.
+	spec := catalog()
+	spec.Security = &rhorouter.Security{Scheme: rhorouter.SecurityBearer}
+	spec.Operations[1].NeedsAuth = true // the write operation checks a token
+
+	document := read(t, render(t, spec, OpenAPIOptions{}))
+	entry := operation(t, document, "/items", "post")
+	security, ok := entry["security"].([]interface{})
+	if !ok || len(security) != 2 {
+		t.Fatalf("an operation that may need a credential has no alternative: %v", entry["security"])
+	}
+	// The first names the scheme a caller may present; the second is empty,
+	// which is the "or nothing" half.
+	if _, named := security[0].(map[string]interface{})["bearerAuth"]; !named {
+		t.Errorf("the requirement does not name the scheme: %v", security[0])
+	}
+	if _, empty := security[1].(map[string]interface{}); !empty {
+		t.Errorf("the alternative is not empty: %v", security[1])
+	}
+
+	// An operation that reads no credential offers no alternative: it is simply
+	// public under this reading.
+	other := operation(t, document, "/items/{id}", "get")
+	if _, present := other["security"]; present {
+		t.Errorf("an operation that reads no credential carries a requirement: %v", other["security"])
+	}
+}
+
+func TestAServiceThatAsksForNothingDeclaresNothing(t *testing.T) {
+	// A document that demanded a credential nobody enforces would teach a
+	// client to send one it has no reason to hold.
+	document := read(t, render(t, catalog(), OpenAPIOptions{}))
+	if _, present := document["security"]; present {
+		t.Errorf("a service that asks for nothing declares a requirement: %v", document["security"])
+	}
+	components, present := document["components"].(map[string]interface{})
+	if !present {
+		return
+	}
+	if _, present := components["securitySchemes"]; present {
+		t.Errorf("a service that asks for nothing declares a scheme: %v", components)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Checking                                                                   */
+/* -------------------------------------------------------------------------- */
+
+func TestCheckFindsWhatADocumentCannotExpress(t *testing.T) {
+	cases := map[string]struct {
+		spec  Spec
+		wants string
+	}{
+		"an operation with no identifier": {
+			spec:  Spec{Operations: []rhorouter.Operation{{Method: "GET", Path: "/a"}}},
+			wants: "no identifier",
+		},
+		"two operations claiming one identifier": {
+			spec: Spec{Operations: []rhorouter.Operation{
+				{ID: "a", Method: "GET", Path: "/a"},
+				{ID: "a", Method: "POST", Path: "/a"},
+			}},
+			wants: "already claimed",
+		},
+		"a wildcard nothing declares": {
+			spec:  Spec{Operations: []rhorouter.Operation{{ID: "a", Method: "GET", Path: "/a/{id}"}}},
+			wants: "no parameter declares it",
+		},
+		"a path parameter the route has nowhere to put": {
+			spec: Spec{Operations: []rhorouter.Operation{{ID: "a", Method: "GET", Path: "/a",
+				Parameters: []rhorouter.Parameter{{Name: "id", In: rhorouter.InPath}}}}},
+			wants: "captures nothing called that",
+		},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			problems := Check(test.spec)
+			if len(problems) != 1 {
+				t.Fatalf("expected one problem, got %+v", problems)
+			}
+			if !strings.Contains(problems[0].Message, test.wants) {
+				t.Errorf("the problem is %q, which does not say %q", problems[0].Message, test.wants)
+			}
+		})
+	}
+}
+
+func TestCheckAcceptsWhatADocumentCanExpress(t *testing.T) {
+	if problems := Check(catalog()); len(problems) != 0 {
+		t.Errorf("a sound description was reported as unsound: %+v", problems)
+	}
+}
+
+func TestCheckSaysNothingAboutAMissingStatus(t *testing.T) {
+	// A handler can delegate past the level a reading follows, and a document
+	// says that with the catch-all response. Flagging it would make a build
+	// fail over an absence the document already expresses.
+	spec := Spec{Operations: []rhorouter.Operation{{ID: "a", Method: "GET", Path: "/a"}}}
+	if problems := Check(spec); len(problems) != 0 {
+		t.Errorf("an operation with no status was reported: %+v", problems)
+	}
+	document := read(t, render(t, spec, OpenAPIOptions{}))
+	responses := dig(t, document, "paths", "/a", "get", "responses").(map[string]interface{})
+	if _, present := responses["default"]; !present {
+		t.Errorf("the catch-all is not there: %v", responses)
+	}
 }

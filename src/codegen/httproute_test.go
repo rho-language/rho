@@ -673,6 +673,15 @@ func between(t *testing.T, source, start, end string) string {
 
 func indexOf(source, needle string) int { return strings.Index(source, needle) }
 
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 // writeGenerated writes one file of the generated project under test.
 func writeGenerated(t *testing.T, path, content string) {
 	t.Helper()
@@ -855,3 +864,66 @@ func TestNumbersAndBooleansBind(t *testing.T) {
 	}
 }
 `
+
+/* -------------------------------------------------------------------------- */
+/*  The description port                                                        */
+/* -------------------------------------------------------------------------- */
+
+func TestTheDescriptionPortIsAvailable(t *testing.T) {
+	if !HasPort("openapiemit") {
+		t.Error("the description port is not available")
+	}
+	if !containsString(RegisteredPorts(), "openapiemit") {
+		t.Error("the description port is not listed")
+	}
+}
+
+func TestTheDescriptionPortAnswersWithSomethingServable(t *testing.T) {
+	// The port is reached as a process, so a host without the component is the
+	// ordinary case rather than the broken one: the service still starts, and
+	// what it answers with is the reason.
+	body := EmitGoPorts(PortContext{IR: routedIR()}, []string{"openapiemit"})
+	if !strings.Contains(body, "func openapiDocument() string") {
+		t.Errorf("the port did not supply a reader:\n%s", body)
+	}
+	if !strings.Contains(body, "openapiDescriptionUnavailable") || !strings.Contains(body, "no OpenAPI description was generated") {
+		t.Errorf("a port that could not render says nothing about why:\n%s", body)
+	}
+}
+
+func TestTheDescriptionIsWrittenWhenTheProjectIsGenerated(t *testing.T) {
+	// A running service does not read Rho sources to describe itself: the
+	// document is written when the project is generated, so a start-up cannot
+	// fail because a source moved. Whichever form the port takes — the document
+	// or the reason there is none — it is a constant, and no command is run
+	// from the generated project.
+	body := EmitGoPorts(PortContext{IR: routedIR()}, []string{"openapiemit"})
+	hasDocument := strings.Contains(body, "const openapiDescription = ")
+	hasReason := strings.Contains(body, "const openapiDescriptionUnavailable = ")
+	if !hasDocument && !hasReason {
+		t.Errorf("the port supplies neither the document nor a reason:\n%s", body)
+	}
+	if strings.Contains(body, "exec.Command") || strings.Contains(body, "os/exec") {
+		t.Error("the port runs a command at run time rather than when the project is generated")
+	}
+}
+
+func TestAQuotedDocumentSurvivesTheRoundTrip(t *testing.T) {
+	// The document is a document: JSON, with quotes and newlines and possibly
+	// a backslash in a description a person wrote. A quoting that got one of
+	// them wrong would produce a project that does not compile, and the error
+	// would point at generated code.
+	document := `{
+  "info": {"title": "A \"quoted\" title", "description": "a backslash \\ and a newline\n"},
+  "paths": {}
+}`
+	quoted := quotedGoString(document)
+	if quoted == document {
+		t.Fatal("the document was not quoted at all")
+	}
+	fileSet := token.NewFileSet()
+	if _, err := parser.ParseFile(fileSet, "const.go",
+		"package main\n\nconst document = "+quoted+"\n", 0); err != nil {
+		t.Fatalf("the quoted document is not a Go literal: %v", err)
+	}
+}

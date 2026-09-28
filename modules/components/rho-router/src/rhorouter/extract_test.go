@@ -356,11 +356,29 @@ func TestACatchAllWildcardIsNamedWithoutItsDots(t *testing.T) {
 func TestEverySourceIsRead(t *testing.T) {
 	_, spec := catalog(t)
 	make := operation(t, spec, "make_item")
-	if got := parameter(t, make, InBody, "name").Type; got != "string" {
-		t.Errorf("a body field reads as a %q", got)
+	// A body value belongs to the body rather than to the parameter list, so
+	// it is read from the request body the operation carries.
+	if make.RequestBody == nil {
+		t.Fatal("an operation that reads body fields has no body")
 	}
-	if got := parameter(t, make, InBody, "count").Type; got != "u32" {
-		t.Errorf("a numeric body field reads as a %q", got)
+	for _, field := range make.RequestBody.Fields {
+		switch field.Name {
+		case "name":
+			if field.Type != "string" {
+				t.Errorf("a body field reads as a %q", field.Type)
+			}
+		case "count":
+			if field.Type != "u32" {
+				t.Errorf("a numeric body field reads as a %q", field.Type)
+			}
+		}
+	}
+	// And it is not listed as a parameter as well: a consumer that had to
+	// filter one out would be reading the same thing twice.
+	for _, entry := range make.Parameters {
+		if entry.In == InBody {
+			t.Errorf("a body value is listed as a parameter: %+v", entry)
+		}
 	}
 	filtered := operation(t, spec, "filtered")
 	if got := parameter(t, filtered, InHeader, "X-Tenant").Type; got != "string" {
@@ -371,17 +389,26 @@ func TestEverySourceIsRead(t *testing.T) {
 	}
 }
 
-func TestAValueReadInAGuardIsRequired(t *testing.T) {
+func TestOnlyAPathWildcardIsRequired(t *testing.T) {
 	_, spec := catalog(t)
-	// A handler that refuses the request when a value will not convert cannot
-	// proceed without it, which is the only place a handler says so.
+	// The router will not have matched a route without its wildcards, so those
+	// are the requirements the route itself states.
 	if !parameter(t, operation(t, spec, "show_item"), InPath, "id").Required {
-		t.Error("a guarded value is not required")
+		t.Error("a path wildcard is not required")
 	}
-	// A value a handler reads without guarding is one it can do without: a
-	// client that left a filter out has asked a valid question.
+	// Nothing else can be decided from the sources. A guard is not a statement
+	// about a value: `bind_ok(req)` takes the request and nothing else, so which
+	// read a guard was for is not something a reading can recover. Claiming a
+	// query parameter was required because its handler reads it would make a
+	// generated client insist on a value the service accepts without.
 	if parameter(t, operation(t, spec, "filtered"), InQuery, "limit").Required {
-		t.Error("an unguarded query parameter is required")
+		t.Error("a query parameter is required because its handler reads it")
+	}
+	// A header a handler reads is no more required for being read, and a
+	// presence read is a filter rather than a value: neither is a requirement
+	// the sources state.
+	if got := parameter(t, operation(t, spec, "filtered"), InHeader, "X-Tenant"); got.Required {
+		t.Error("a header is required because its handler reads it")
 	}
 }
 
