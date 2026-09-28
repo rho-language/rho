@@ -13,7 +13,7 @@ does not carry.
 ## Start here
 
 - {ref}`handbook/index` — the handbook: how a project is built, published and
-  used.
+  used, and how the toolchain is installed.
 - {ref}`language/index` — the language: syntax, types, and the standard
   library.
 - The **API reference** in the sidebar is generated from the Rho sources in this

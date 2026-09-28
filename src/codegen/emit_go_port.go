@@ -168,6 +168,10 @@ func emitFSStorePort(ctx PortContext) ([]string, string) {
 		`"io"`,
 		`jsonenc "encoding/json"`,
 		`"fmt"`,
+		// The store logs what it refuses, so a registry whose publish or
+		// withdrawal failed has a reason in its log rather than only the status
+		// the caller was given.
+		`"log"`,
 		`"os"`,
 		`"path/filepath"`,
 		`"sort"`,
@@ -196,8 +200,119 @@ type moduleMeta struct {
 	Description string            ` + "`json:\"description\"`" + `
 	Main        string            ` + "`json:\"main\"`" + `
 	Command     string            ` + "`json:\"command\"`" + `
-	Features    []string          ` + "`json:\"features\"`" + `
-	Deps        map[string]string ` + "`json:\"deps\"`" + `
+	// Author and Maintainer are the module's own claim about who wrote and
+	// looks after it, taken from its manifest. They are what a listing shows;
+	// they are not what a registry checks, because a claim in a file is not a
+	// credential.
+	Author     string ` + "`json:\"author,omitempty\"`" + `
+	Maintainer string ` + "`json:\"maintainer,omitempty\"`" + `
+	// Ownership, Visibility and Mine are what the registry knows about who holds
+	// the module, filled in when a listing is written and not stored with the
+	// package: they belong to the name rather than to a version, and an owner
+	// who renames themselves must not leave a stale copy behind on each version.
+	Ownership  string ` + "`json:\"owner,omitempty\"`" + `
+	Visibility string ` + "`json:\"visibility,omitempty\"`" + `
+	Mine       bool   ` + "`json:\"mine,omitempty\"`" + `
+	Features   []string          ` + "`json:\"features\"`" + `
+	Deps       map[string]string ` + "`json:\"deps\"`" + `
+}
+
+// modulePublisher is who holds a module in this registry, and who may see it.
+//
+// It is recorded against the module's name rather than a version, because the
+// right to publish and the right to withdraw belong to the name. A module that
+// changed hands on every release could be taken over by whoever published it
+// most recently.
+//
+// The owner is the identity whose credential published the name first. For now
+// the owner is also the only maintainer, because they are the same identity;
+// the maintainer list exists so that letting a second identity in later is a
+// change to what is stored rather than a change to what is read.
+//
+//	{"name": "rho-router", "owner": "miraur", "maintainers": ["miraur"],
+//	 "visibility": "public", "first_published": "2026-09-28T10:07:00Z"}
+type modulePublisher struct {
+	Name string ` + "`json:\"name\"`" + `
+	// Owner is the identity that published the name first, and the only one
+	// that may withdraw the module.
+	Owner string ` + "`json:\"owner\"`" + `
+	// Maintainers may publish further versions of the module but may not
+	// withdraw it. Withdrawing is the destructive operation, so it is kept with
+	// the owner rather than with everyone who can add to the module.
+	Maintainers []string ` + "`json:\"maintainers,omitempty\"`" + `
+	// Visibility is whether anyone may install the module, or only its owner.
+	Visibility string ` + "`json:\"visibility\"`" + `
+	// FirstPublished is when the name was claimed, which is what a reader
+	// comparing two claims for the same name needs to see.
+	FirstPublished time.Time ` + "`json:\"firstPublished\"`" + `
+}
+
+// The visibilities a module may be published under.
+const (
+	// VisibilityPublic is a module anybody may install.
+	VisibilityPublic = "public"
+	// VisibilityPrivate is a module only its owner may install.
+	VisibilityPrivate = "private"
+)
+
+// MayPublish reports whether an identity may publish a further version of the
+// module: the owner or one of the maintainers.
+func (p *modulePublisher) MayPublish(identity string) bool {
+	if identity == "" {
+		return false
+	}
+	if p.Owner == identity {
+		return true
+	}
+	for _, maintainer := range p.Maintainers {
+		if maintainer == identity {
+			return true
+		}
+	}
+	return false
+}
+
+// MayUnpublish reports whether an identity may withdraw the module: only the
+// owner.
+func (p *modulePublisher) MayUnpublish(identity string) bool {
+	return identity != "" && p.Owner == identity
+}
+
+// MayInstall reports whether an identity may install the module. A public module
+// is anybody's; a private one is its owner's.
+func (p *modulePublisher) MayInstall(identity string) bool {
+	if p.Visibility != VisibilityPrivate {
+		return true
+	}
+	return identity != "" && p.Owner == identity
+}
+
+// IsPrivate reports whether a module is published for its owner alone.
+func (p *modulePublisher) IsPrivate() bool { return p.Visibility == VisibilityPrivate }
+
+// holders names who may publish a further version, for a message that says so.
+func (p *modulePublisher) holders() string {
+	if len(p.Maintainers) == 0 {
+		return p.Owner
+	}
+	names := append([]string{p.Owner}, p.Maintainers...)
+	names = uniqueStrings(names)
+	return strings.Join(names, ", ")
+}
+
+// uniqueStrings drops a repeat, so a list that carries the owner twice because
+// they are also the only maintainer reads once.
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 // fsStore is a filesystem-backed module store rooted at a data directory.
@@ -394,15 +509,51 @@ func safeSegment(value string) error {
 }
 
 // put stores an uploaded package and its metadata.
-func (s *fsStore) put(name, version string, payload []byte, meta moduleMeta) (int, error) {
+//
+// The author is checked against what the registry already holds for the name
+// before anything is written, because a module that is written and then refused
+// is a module that exists and cannot be withdrawn.
+// put stores an uploaded package and its metadata.
+//
+// The owner is the identity the store acts on behalf of, which the handler has
+// taken from the caller's credential. A name that is already held is not a
+// first publish, and the identities recorded against it are the only ones that
+// may add a version, so a re-publish cannot take a module over.
+func (s *fsStore) put(name, version, owner string, payload []byte, meta moduleMeta) (int, error) {
 	if err := safeSegment(name); err != nil {
 		return 0, err
 	}
 	if err := safeSegment(version); err != nil {
 		return 0, err
 	}
+	if owner == "" {
+		// A name needs an owner, or nobody can ever add a version to it or
+		// withdraw it. On an open registry the owner is the author the manifest
+		// names, which is at least a claim a reader can see.
+		owner = meta.Author
+	}
+	if owner == "" {
+		return 0, fmt.Errorf("a module must name its author to be published")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	held, err := s.publisherLocked(name)
+	if err != nil {
+		return 0, err
+	}
+	if held != nil {
+		if !held.MayPublish(owner) {
+			return 0, fmt.Errorf("%s is published by %s; only %s may publish it",
+				name, held.Owner, held.holders())
+		}
+		if s.hasLocked(name, version) {
+			// Same name, same version, is the same artifact. Two identities
+			// claiming one version is either a mistake or a takeover, and
+			// either way it is refused here rather than discovered later.
+			return 0, fmt.Errorf("%s@%s is already published", name, version)
+		}
+	}
 
 	dir := s.versionDir(name, version)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -418,10 +569,117 @@ func (s *fsStore) put(name, version string, payload []byte, meta moduleMeta) (in
 	if err := os.WriteFile(filepath.Join(dir, "meta.json"), encoded, 0o644); err != nil {
 		return 0, err
 	}
+	if held == nil {
+		if err := s.claimName(name, owner, meta.Maintainer, meta.Visibility); err != nil {
+			return 0, err
+		}
+	}
 	if err := s.writeIndex(name); err != nil {
 		return 0, err
 	}
 	return len(payload), nil
+}
+
+// publisherFile is where a module's publisher is recorded.
+func (s *fsStore) publisherFile(name string) string {
+	return filepath.Join(s.root, "index", name+".publisher.json")
+}
+
+// publisher returns who may withdraw a module, or nil when the module is not
+// held.
+func (s *fsStore) publisher(name string) (*modulePublisher, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.publisherLocked(name)
+}
+
+// publisherLocked is the reading half, for a caller that already holds the lock.
+func (s *fsStore) publisherLocked(name string) (*modulePublisher, error) {
+	if err := safeSegment(name); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(s.publisherFile(name))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	held := &modulePublisher{}
+	if err := jsonenc.Unmarshal(data, held); err != nil {
+		return nil, fmt.Errorf("the publisher record for %s cannot be read: %w", name, err)
+	}
+	return held, nil
+}
+
+// claimName records who published a module name, once, and how visible it is.
+// It is written before the version is, so a name is never held by nobody.
+//
+// The owner is the only maintainer for now, because they are the same identity.
+// The list is kept anyway so that letting a second identity in later is a change
+// to what is stored rather than a change to what is read.
+func (s *fsStore) claimName(name, owner, maintainer, visibility string) error {
+	visibility = strings.ToLower(strings.TrimSpace(visibility))
+	if visibility != VisibilityPrivate {
+		visibility = VisibilityPublic
+	}
+	held := &modulePublisher{
+		Name:           name,
+		Owner:          owner,
+		Maintainers:    uniqueStrings([]string{owner, maintainer}),
+		Visibility:     visibility,
+		FirstPublished: time.Now().UTC(),
+	}
+	encoded, err := jsonenc.MarshalIndent(held, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(s.root, "index"), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(s.publisherFile(name), encoded, 0o644)
+}
+
+// remove deletes a published version: its package, the documentation generated
+// from it, the unpacked sources, and its entry in the index.
+//
+// All of it goes, because a version that is half removed is a version that
+// still answers a search, still serves its documentation, and no longer holds
+// the package those were made from. A registry that cannot withdraw a version is
+// a registry a mistaken publish is permanent in.
+func (s *fsStore) remove(name, version string) error {
+	if err := safeSegment(name); err != nil {
+		return err
+	}
+	if err := safeSegment(version); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// The version itself, which is where the package, the metadata, the
+	// unpacked sources and the generated documentation all live.
+	if err := os.RemoveAll(s.versionDir(name, version)); err != nil {
+		return err
+	}
+	// The module's index, which lists every version it holds. It is rewritten
+	// rather than removed so that the last version of a module leaving takes
+	// the module's own entry with it, and a module that still has versions keeps
+	// the ones it has.
+	versions := s.versions(name)
+	if len(versions) == 0 {
+		if err := os.Remove(filepath.Join(s.root, "index", name+".json")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		// The name goes with its last version: a name nobody has published
+		// again is free to be claimed by someone else, which is the behaviour a
+		// name that has been fully withdrawn should have.
+		if err := os.Remove(s.publisherFile(name)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return os.RemoveAll(filepath.Join(s.root, "modules", name))
+	}
+	return s.writeIndex(name)
 }
 
 // get returns the stored package for a module version.
@@ -444,6 +702,19 @@ func (s *fsStore) has(name, version string) bool {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.hasLocked(name, version)
+}
+
+// hasLocked is has() for a caller that already holds the lock.
+//
+// It is separate because a sync.RWMutex is not reentrant: a writer that holds
+// the lock and then calls has would block on its own read lock, forever. put is
+// exactly that caller — it holds the write lock across the check, the write and
+// the index update so that a concurrent publish cannot interleave.
+func (s *fsStore) hasLocked(name, version string) bool {
+	if safeSegment(name) != nil || safeSegment(version) != nil {
+		return false
+	}
 	_, err := os.Stat(filepath.Join(s.versionDir(name, version), "package.rho-pkg"))
 	return err == nil
 }
@@ -493,7 +764,15 @@ func (s *fsStore) writeIndex(name string) error {
 
 // search returns the metadata of every stored module matching the query, case
 // insensitively. An empty query lists everything.
-func (s *fsStore) search(query string) []moduleMeta {
+// searchFor returns the modules matching a query, as seen by one identity.
+//
+// A private module is only visible to its owner. That is what private means: a
+// module nobody else can install is a module nobody else should be told exists,
+// because the name and the description leak whether the contents do not.
+//
+// mineOnly asks for the viewer's own modules, whatever their visibility, which
+// is how an owner finds what they published and sees whether it is public.
+func (s *fsStore) searchFor(query, viewer string, mineOnly bool) []moduleMeta {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	entries, err := os.ReadDir(filepath.Join(s.root, "modules"))
@@ -504,6 +783,23 @@ func (s *fsStore) search(query string) []moduleMeta {
 	out := []moduleMeta{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		held, err := s.publisherLocked(entry.Name())
+		if err != nil {
+			continue
+		}
+		if held == nil {
+			// A module with no record of who published it predates the record or
+			// was written by hand. It is served, and it belongs to nobody, so no
+			// one's private view includes it.
+			held = &modulePublisher{Name: entry.Name(), Visibility: VisibilityPublic}
+		}
+		owns := viewer != "" && held.Owner == viewer
+		if mineOnly && !owns {
+			continue
+		}
+		if held.IsPrivate() && !owns {
 			continue
 		}
 		versions, err := os.ReadDir(filepath.Join(s.root, "modules", entry.Name()))
@@ -518,20 +814,52 @@ func (s *fsStore) search(query string) []moduleMeta {
 			if !ok {
 				continue
 			}
-			if needle == "" ||
-				strings.Contains(strings.ToLower(meta.Name), needle) ||
-				strings.Contains(strings.ToLower(meta.Description), needle) {
-				out = append(out, meta)
+			if needle != "" &&
+				!strings.Contains(strings.ToLower(meta.Name), needle) &&
+				!strings.Contains(strings.ToLower(meta.Description), needle) {
+				continue
 			}
+			// What the caller is allowed to know travels with the entry. A public
+			// module names who published it, because that is public information
+			// and is who a reader would ask about it; a private module is not in
+			// the answer at all unless the caller owns it, so its owner is not
+			// disclosed by being asked about.
+			meta.Ownership = held.Owner
+			meta.Visibility = held.Visibility
+			meta.Mine = owns
+			out = append(out, meta)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name == out[j].Name {
-			return compareVersions(out[i].Version, out[j].Version) < 0
-		}
-		return out[i].Name < out[j].Name
-	})
 	return out
+}
+
+// setVisibility changes whether a module is anybody's to install or its owner's
+// alone. The caller has already established that the identity asking is allowed
+// to; the store records the answer.
+func (s *fsStore) setVisibility(name, visibility string) error {
+	if err := safeSegment(name); err != nil {
+		return err
+	}
+	visibility = strings.ToLower(strings.TrimSpace(visibility))
+	if visibility != VisibilityPrivate {
+		visibility = VisibilityPublic
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	held, err := s.publisherLocked(name)
+	if err != nil {
+		return err
+	}
+	if held == nil {
+		return fmt.Errorf("%s is not published here", name)
+	}
+	held.Visibility = visibility
+	encoded, err := jsonenc.MarshalIndent(held, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.publisherFile(name), encoded, 0o644)
 }
 
 // readMeta reads the metadata of one stored version.
@@ -784,7 +1112,11 @@ func storeHasDocs(name, version string) bool {
 }
 
 // storePut stores an uploaded package and its metadata, returning 0 on success.
-func storePut(name, version string, payload string, metaJSON string) uint32 {
+//
+// The owner is the identity the caller presented, which the handler has taken
+// from its credential; the store compares it against what the module already
+// records rather than reading a token itself.
+func storePut(name, version, owner string, payload string, metaJSON string) uint32 {
 	meta := moduleMeta{}
 	if metaJSON != "" {
 		if err := jsonenc.Unmarshal([]byte(metaJSON), &meta); err != nil {
@@ -803,7 +1135,7 @@ func storePut(name, version string, payload string, metaJSON string) uint32 {
 	if meta.Deps == nil {
 		meta.Deps = map[string]string{}
 	}
-	if _, err := newFSStore().put(name, version, []byte(payload), meta); err != nil {
+	if _, err := newFSStore().put(name, version, owner, []byte(payload), meta); err != nil {
 		return 1
 	}
 	return 0
@@ -823,9 +1155,52 @@ func storeHas(name, version string) bool {
 	return newFSStore().has(name, version)
 }
 
-// storeSearch returns a JSON array of matching module metadata.
-func storeSearch(query string) string {
-	results := newFSStore().search(query)
+// storeDelete withdraws a published version, and reports 0 when it is gone.
+//
+// The publisher is not checked here: the store holds what the registry told it
+// to hold, and who is allowed to say so is a question about credentials, which
+// the handler answers before it reaches this.
+func storeDelete(name, version string) uint32 {
+	store := newFSStore()
+	if err := store.remove(name, version); err != nil {
+		log.Printf("store: delete %s@%s: %v", name, version, err)
+		return 1
+	}
+	return 0
+}
+
+// storeSetVisibility records whether a module is anybody's to install or its
+// owner's alone. The caller has already established that the identity asking may
+// change it; the store records the answer.
+func storeSetVisibility(name, visibility string) uint32 {
+	if err := newFSStore().setVisibility(name, visibility); err != nil {
+		log.Printf("store: visibility %s: %v", name, err)
+		return 1
+	}
+	return 0
+}
+
+// storePublisher returns a JSON document naming who may withdraw a module, or ""
+// when the module is not held here. It is the registry's answer to "may this
+// caller unpublish", and it is read rather than kept in a handler so that the
+// answer is the same one the store would act on.
+func storePublisher(name string) string {
+	held, err := newFSStore().publisher(name)
+	if err != nil || held == nil {
+		return ""
+	}
+	encoded, err := jsonenc.Marshal(held)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+// storeSearch returns a JSON array of matching module metadata, as seen by one
+// identity. The viewer is the identity the caller presented, or "" for a caller
+// who presented none; a private module is only in the answer for its owner.
+func storeSearch(query, viewer string, mineOnly bool) string {
+	results := newFSStore().searchFor(query, viewer, mineOnly)
 	if results == nil {
 		// An empty registry is an empty list, not a null, so a Rho handler
 		// walking the response finds nothing rather than a missing value.
@@ -881,8 +1256,13 @@ func storeDetail(name string) string {
 
 // storeMeta lists the published modules, newest version first per module, in
 // the same tab-separated shape. A listing for the index and for search.
-func storeMeta(query string) string {
-	results := newFSStore().search(query)
+//
+// It is the store's own listing rather than a rendering of the JSON, because
+// Rho cannot walk a nested document: a handler that wants to render a list gets
+// text it can read line by line. What it may see is the viewer's, so a private
+// module is absent for anyone but its owner, exactly as it is from a search.
+func storeMeta(query, viewer string, mineOnly bool) string {
+	results := newFSStore().searchFor(query, viewer, mineOnly)
 	// The search returns versions oldest first, so the newest of each module is
 	// the last one seen. It is kept in order of first appearance, which keeps
 	// the listing sorted by name.
@@ -936,8 +1316,8 @@ func detailLine(meta moduleMeta) string {
 // A line-based listing exists so a Rho handler can render it without parsing
 // JSON: Rho has no way to walk a nested document, and the store already holds
 // the fields as strings.
-func storeList(query string) string {
-	results := newFSStore().search(query)
+func storeList(query, viewer string, mineOnly bool) string {
+	results := newFSStore().searchFor(query, viewer, mineOnly)
 	if results == nil {
 		return ""
 	}

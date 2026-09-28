@@ -2,6 +2,7 @@ module:
   name: rho-openapi
   type: component
   version: 0.1.0
+  author: Aurel Miron
   description: OpenAPI 3.1 descriptions and API references
   command: openapi
   import_path: rho.openapi

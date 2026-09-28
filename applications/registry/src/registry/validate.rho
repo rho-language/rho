@@ -70,8 +70,12 @@ fn is_alpha(byte: u8) bool {
     return (byte >= 97 && byte <= 122) || (byte >= 65 && byte <= 90)
 }
 
-// Whether the registry requires a credential to publish. Reading stays public
-// either way; this only decides who may write.
+// Whether reading a public module requires a credential.
+//
+// It governs reading only. Publishing always needs a credential, because a
+// registry that records who owns a module cannot accept a publish it cannot
+// attribute: an unowned module is one nobody can add a version to or withdraw,
+// which is a module that is stuck the moment it is published.
 fn is_secured() bool {
     return registry_access() == "secured"
 }
@@ -80,4 +84,88 @@ fn is_secured() bool {
 // so a deployment can raise it without a rebuild.
 fn max_upload() u32 {
     return registry_max_upload_mb() * 1024 * 1024
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Who holds a module                                                          */
+/* -------------------------------------------------------------------------- */
+
+// publisher_may_unpublish reports whether an identity may withdraw a module,
+// from the publisher record the store holds for the module's name.
+//
+// The record is a small JSON document the store wrote, and the two fields this
+// reads are read out of the text rather than parsed: a publisher record has
+// three fields and a parser for it would be more machinery than the question
+// deserves. The reading refuses rather than guesses — a field it cannot find is
+// a record it does not understand, and an identity it cannot confirm may not
+// withdraw anything.
+//
+// Only the author may withdraw: a maintainer may add a version, and taking the
+// module away is the operation a dependee cannot recover from.
+fn publisher_may_unpublish(record: string, identity: string) bool {
+    if identity == "" || strlen(record) == 0 {
+        return false
+    }
+    return json_string_field(record, "owner") == identity
+}
+
+// publisher_may_publish reports whether an identity may add a version to a
+// module, which is the owner or one of the maintainers.
+fn publisher_may_publish(record: string, identity: string) bool {
+    if identity == "" || strlen(record) == 0 {
+        return false
+    }
+    if json_string_field(record, "owner") == identity {
+        return true
+    }
+    // The maintainers are a list, so the check is that the identity is one of
+    // the quoted entries rather than a substring of one: "miraur" must not match
+    // "miraur-bot", or a maintainer could be invented by suffix.
+    return str_contains(json_array_field(record, "maintainers"), "\"" + identity + "\"")
+}
+
+// publisher_may_install reports whether an identity may install a module. A
+// public module is anybody's, and a private one is its owner's.
+fn publisher_may_install(record: string, identity: string) bool {
+    if strlen(record) == 0 {
+        return true
+    }
+    if json_string_field(record, "visibility") != "private" {
+        return true
+    }
+    return identity != "" && json_string_field(record, "owner") == identity
+}
+
+// json_string_field reads one string field out of a small JSON document, or ""
+// when the field is absent or is not a string.
+fn json_string_field(document: string, field: string) string {
+    let marker: string = "\"" + field + "\":\""
+    let at: i32 = str_index_of(document, marker)
+    if at < 0 {
+        return ""
+    }
+    let start: u32 = (at as u32) + strlen(marker)
+    let rest: string = str_slice(document, start, strlen(document) - start)
+    let end: i32 = str_index_of(rest, "\"")
+    if end < 0 {
+        return ""
+    }
+    return str_slice(rest, 0, end as u32)
+}
+
+// json_array_field reads one array field out of a small JSON document, as its
+// raw text, or "" when the field is absent or is not an array.
+fn json_array_field(document: string, field: string) string {
+    let marker: string = "\"" + field + "\":["
+    let at: i32 = str_index_of(document, marker)
+    if at < 0 {
+        return ""
+    }
+    let start: u32 = (at as u32) + strlen(marker)
+    let rest: string = str_slice(document, start, strlen(document) - start)
+    let end: i32 = str_index_of(rest, "]")
+    if end < 0 {
+        return ""
+    }
+    return str_slice(rest, 0, end as u32)
 }

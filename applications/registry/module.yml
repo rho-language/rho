@@ -2,6 +2,7 @@ module:
   name: registry
   type: rho
   version: 0.1.0
+  author: Aurel Miron
 description: Remote module registry for Rho
 main: src/main.rho
 

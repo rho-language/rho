@@ -29,6 +29,10 @@ import (
 
 const (
 	RhoHomeDirName = ".rho"
+	// RhoHomeEnvVar names the installation somewhere other than the user's home.
+	// It is the same variable internal/paths reads, because an installation and
+	// the checks that look for it have to be answering about one directory.
+	RhoHomeEnvVar = "RHO_HOME"
 )
 
 var (
@@ -48,12 +52,22 @@ func SetTestRhoHome(path string) {
 /*  Public API                                                                 */
 /* -------------------------------------------------------------------------- */
 
-// GetRhoHome returns the absolute path to ~/.rho.
+// GetRhoHome returns the absolute path to the local registry: ~/.rho, or the
+// directory RHO_HOME names when it is set.
+//
+// It honours RHO_HOME for the same reason internal/paths does — a sandbox, a CI
+// runner or a container points the installation somewhere else rather than
+// writing into a real user home — and it is the same variable, so the two
+// answers agree. They disagreed once, and the effect was that an installation
+// under RHO_HOME looked absent to the check that decides whether to run at all.
 func GetRhoHome() (string, error) {
 	testMu.Lock()
 	defer testMu.Unlock()
 	if testRhoHome != "" {
 		return testRhoHome, nil
+	}
+	if named := os.Getenv(RhoHomeEnvVar); named != "" {
+		return named, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

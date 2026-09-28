@@ -69,11 +69,19 @@ func carryHelper(t *testing.T, pluginDir string) {
 
 const helperName = "plugin-helper"
 
+// isolate points the toolchain's home at an empty directory, so a test sees the
+// plugins it wrote and not the ones a developer has installed.
+func isolate(t *testing.T) {
+	t.Helper()
+	t.Setenv("RHO_HOME", t.TempDir())
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Discovery                                                                 */
 /* -------------------------------------------------------------------------- */
 
 func TestAPluginIsFoundBecauseItNamesTheComponent(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	writePlugin(t, root, "toc", "rho-doc", "  - index\n", "")
 	writePlugin(t, root, "other", "rho-test", "  - run\n", "")
@@ -88,6 +96,7 @@ func TestAPluginIsFoundBecauseItNamesTheComponent(t *testing.T) {
 }
 
 func TestTheTreesOwnPluginsAreLeftAloneUnlessTheyAreTrusted(t *testing.T) {
+	isolate(t)
 	// A plugin is a program, and the tree a component works in may have been
 	// written by someone the user does not know.
 	root := t.TempDir()
@@ -102,6 +111,7 @@ func TestTheTreesOwnPluginsAreLeftAloneUnlessTheyAreTrusted(t *testing.T) {
 }
 
 func TestAModuleThatIsNotAPluginIsNotAnExtension(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
 		t.Fatal(err)
@@ -120,6 +130,7 @@ func TestAModuleThatIsNotAPluginIsNotAnExtension(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestAnAnswerIsFoldedIntoTheRun(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	path := writePlugin(t, root, "reporter", "rho-test", "  - run\n", "")
 	carryHelper(t, path)
@@ -136,6 +147,7 @@ func TestAnAnswerIsFoldedIntoTheRun(t *testing.T) {
 }
 
 func TestAHookTheComponentDoesNotRunIsNeverAsked(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	path := writePlugin(t, root, "eager", "rho-test", "  - shutdown\n", "")
 	carryHelper(t, path)
@@ -149,6 +161,7 @@ func TestAHookTheComponentDoesNotRunIsNeverAsked(t *testing.T) {
 }
 
 func TestAPluginThatFailsIsReportedAndTheRunContinues(t *testing.T) {
+	isolate(t)
 	// One broken extension must not cost the work of everything else.
 	root := t.TempDir()
 	path := writePlugin(t, root, "broken", "rho-test", "  - run\n", "")
@@ -163,6 +176,7 @@ func TestAPluginThatFailsIsReportedAndTheRunContinues(t *testing.T) {
 }
 
 func TestAPluginAnsweringNonsenseIsReported(t *testing.T) {
+	isolate(t)
 	root := t.TempDir()
 	path := writePlugin(t, root, "chatty", "rho-test", "  - run\n", "")
 	carryHelper(t, path)
@@ -176,6 +190,7 @@ func TestAPluginAnsweringNonsenseIsReported(t *testing.T) {
 }
 
 func TestACommandCannotLeaveThePluginDirectory(t *testing.T) {
+	isolate(t)
 	// A plugin runs a program it carries, or one on PATH. A path that climbs out
 	// is neither.
 	root := t.TempDir()
@@ -194,6 +209,7 @@ func TestACommandCannotLeaveThePluginDirectory(t *testing.T) {
 }
 
 func TestACommandCarriesItsArguments(t *testing.T) {
+	isolate(t)
 	// A manifest has no way to say "this program, these arguments" otherwise,
 	// so a plugin that needs a path with a space in it has to be able to say it.
 	argv := splitCommand(`tool --flag "two words" value`)
@@ -229,6 +245,7 @@ func writeCommand(t *testing.T, pluginDir, name, hook, behaviour string) {
 // TestHelperProcess is not a test: it is the program a test plugin runs. It
 // answers the protocol in the way it was asked to, and does nothing otherwise.
 func TestHelperProcess(t *testing.T) {
+	isolate(t)
 	mode := helperMode()
 	if mode == "" {
 		t.Skip("not running as a plugin helper")
