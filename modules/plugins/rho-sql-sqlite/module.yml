@@ -1,0 +1,62 @@
+module:
+  name: rho-sql-sqlite
+  type: plugin
+  version: 0.1.0
+  description: Runs a Rho service's SQL against a sqlite database
+  author: Aurel Miron
+  maintainer: Aurel Miron
+
+main: rho-sql-sqlite
+
+features:
+  - sql
+  - sqlite
+
+# The component this plugin plugs into, and the hooks of it this plugin answers.
+# An engine is chosen by name and loaded by the component, which is why it
+# carries the component's name: `rho-sql-sqlite` says it is the sqlite engine
+# for `rho-sql` before anything has read a line of its manifest.
+extends: rho-sql
+
+hooks:
+  - describe
+  - migrate
+  - query
+  - describe_query
+
+# The executable a session runs, and the hook each of its commands answers.
+commands:
+  - name: sqlite
+    run: rho-sql-sqlite
+    hook: describe
+  - name: sqlite
+    run: rho-sql-sqlite
+    hook: migrate
+  - name: sqlite
+    run: rho-sql-sqlite
+    hook: query
+  - name: sqlite
+    run: rho-sql-sqlite
+    hook: describe_query
+
+deps:
+  rho-sql: ">=0.1.0"
+
+package:
+  kind: plugin
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - src
+
+docs:
+  title: The sqlite engine
+  section: plugins
+  order: "12"
+  index: docs/index.md
+  sources:
+    - docs/index.md

@@ -12,8 +12,10 @@ use (
 	./modules/components/rho-lsp
 	./modules/components/rho-openapi
 	./modules/components/rho-router
+	./modules/components/rho-sql
 	./modules/components/rho-test
 	./modules/plugins/rho-doc-api
 	./modules/plugins/rho-doc-toc
+	./modules/plugins/rho-sql-sqlite
 	./modules/plugins/rho-test-junit
 )

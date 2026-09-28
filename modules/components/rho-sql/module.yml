@@ -1,0 +1,63 @@
+module:
+  name: rho-sql
+  type: component
+  version: 0.1.0
+  description: SQL a service declares, and the engine that runs it
+  author: Aurel Miron
+  maintainer: Aurel Miron
+  command: sql
+  import_path: rho.sql
+
+main: rho-sql
+
+features:
+  - sql
+  - database
+
+# A service's SQL is read here and the engine that runs it is chosen here. The
+# component holds the shape and the protocol; the engine holds the dialect. A
+# service depends on this and names an engine, and swapping engines is a change
+# of name rather than of code.
+#
+# The `sql` port is how a generated project gets the statements a service
+# declared: the queries are rendered into the project at generation time and the
+# engine is reached over the same session a `rho sql` run uses, so a service
+# and a tool talk to one database the same way.
+deps:
+  rho-log: ">=0.1.0"
+
+provides:
+  hooks:
+    # describe is asked what an engine is and what it can be asked.
+    - describe
+    # migrate is asked to create the tables a schema declares.
+    - migrate
+    # query is asked to run one statement.
+    - query
+    # describe_query is asked what a statement returns, which is what a
+    # generated result is typed from.
+    - describe_query
+
+package:
+  kind: component
+  binary: true
+  import_path: rho.sql
+  interface:
+    - src/rho.sql.rho
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+docs:
+  title: SQL and databases
+  section: components
+  order: "47"
+  index: docs/index.md
+  sources:
+    - docs/index.md
