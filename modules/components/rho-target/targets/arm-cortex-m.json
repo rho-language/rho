@@ -1,0 +1,11 @@
+{
+  "kind": "arch",
+  "name": "arm-cortex-m",
+  "comment": "The ARM Cortex-M architectures a bare-metal Rho project targets. A chip names this as its arch and inherits the toolchain and the flags below.",
+  "toolchain": {
+    "compiler": "arm-none-eabi-gcc",
+    "linker": "arm-none-eabi-gcc",
+    "objcopy": "arm-none-eabi-objcopy",
+    "size": "arm-none-eabi-size"
+  }
+}

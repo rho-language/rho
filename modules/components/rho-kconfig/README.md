@@ -138,15 +138,13 @@ those are different statements.
 
 ## Extending it
 
-The component takes plugins, over the same mechanism every component does: a
-plugin names the component it extends and the hooks it answers.
-
-| Hook | When it runs | What a plugin answers with |
-|------|--------------|---------------------------|
-| `render` | Once, after the merge and before anything is written | Files in one more dialect |
-| `write` | Once, after every dialect has been written | Nothing yet; for a step that observes the result |
+The component takes plugins, over the same mechanism every component does. It
+offers one hook: `render`, which runs once after the fragments are merged and
+before anything is written, and answers with files to write beside the dialect's
+own. That is how a project targets a tool this component has never heard of.
 
 ```yaml
+# the plugin's module.yml
 extends: rho-kconfig
 hooks: [render]
 commands:
@@ -155,8 +153,32 @@ commands:
     hook: render
 ```
 
-A plugin that fails is reported and skipped: one broken extension must not cost a
-project its configuration.
+The request is a JSON envelope with the configuration in its `payload`:
+
+```json
+{
+  "version": 1, "hook": "render", "command": "my-dialect", "component": "rho-kconfig",
+  "payload": {
+    "dialect": "espidf",
+    "values": [{ "name": "CONFIG_SPI_MASTER", "type": "bool", "value": "y", "from": "defconfig" }]
+  }
+}
+```
+
+and the answer is the same envelope, with the files in its payload:
+
+```json
+{ "version": 1, "payload": { "files": [{ "path": "prj.conf", "content": "…" }] } }
+```
+
+:::{note}
+The payload is *inside* the envelope, not the whole document: a plugin that
+decodes the whole request as its own payload finds every field empty and no
+error to tell it so.
+:::
+
+A plugin that fails is reported and its files are left out: the configuration the
+project declared is still written.
 
 ## Building it
 

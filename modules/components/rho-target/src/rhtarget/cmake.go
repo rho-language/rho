@@ -1,0 +1,281 @@
+//
+// @file cmake.go
+// @brief Writing what a build needs from a target spec.
+//
+// A spec is data, and a build reads files. This is the step between: the files a
+// CMake build needs to cross-compile for a board, laid out the way CMake and the
+// linker expect them.
+//
+//	toolchain.cmake  which compiler, and that the system is not the host's
+//	target.cmake     the defines, the flags, the memory map, and how to flash
+//	linker.ld        the sections and regions the linker lays a program out in
+//
+// The toolchain file is written to be included before `project()`, and the target
+// file after: CMake reads the compiler from the first and the flags from the
+// second, and a file that mixed them would have to be included twice.
+//
+// A linker script is generated from the memory map when the target does not name
+// its own. That is the whole point of writing the boundaries down: the numbers a
+// chip has are in one place, and the script that uses them is derived.
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: MIT
+//
+
+package rhtarget
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// File is one file a target writes.
+type File struct {
+	// Path is where it goes, relative to the project.
+	Path string
+	// Content is the file.
+	Content string
+}
+
+// Files are the files a build needs for a target, in the order they are written.
+func Files(spec Spec, directory string) []File {
+	prefix := strings.TrimSuffix(directory, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	files := []File{
+		{Path: prefix + "toolchain.cmake", Content: ToolchainCMake(spec)},
+		{Path: prefix + "target.cmake", Content: TargetCMake(spec, prefix+"linker.ld")},
+	}
+	if spec.LinkerScript == "" && len(spec.LinkRegions()) > 0 {
+		files = append(files, File{Path: prefix + "linker.ld", Content: LinkerScript(spec)})
+	}
+	return files
+}
+
+/* -------------------------------------------------------------------------- */
+/*  toolchain.cmake                                                            */
+/* -------------------------------------------------------------------------- */
+
+// ToolchainCMake is the file that makes CMake cross-compile.
+//
+// CMake has to be told that the system it builds for is not the system it runs
+// on, or it compiles for the host and the flags for a Cortex-M reach a compiler
+// that cannot use them.
+func ToolchainCMake(spec Spec) string {
+	var b strings.Builder
+	banner(&b, "toolchain.cmake", spec, "What makes CMake cross-compile for this target.")
+	b.WriteString("# The system is not the one CMake runs on, so nothing is looked for in the\n")
+	b.WriteString("# host's libraries and nothing is run to test a feature.\n")
+	b.WriteString("set(CMAKE_SYSTEM_NAME Generic)\n")
+	b.WriteString("set(CMAKE_SYSTEM_PROCESSOR " + cmakeQuote(processor(spec)) + ")\n\n")
+	b.WriteString("set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)\n\n")
+	if spec.Toolchain.Compiler != "" {
+		b.WriteString("set(CMAKE_C_COMPILER " + cmakeQuote(spec.Toolchain.Compiler) + ")\n")
+	}
+	b.WriteString("set(CMAKE_C_STANDARD 11)\n")
+	b.WriteString("set(CMAKE_C_STANDARD_REQUIRED ON)\n")
+	// A freestanding build has no C library to look for, and CMake's default
+	// search finds the host's, which then fails to link.
+	b.WriteString("set(CMAKE_C_FLAGS_INIT \"-ffreestanding\")\n")
+	return b.String()
+}
+
+// processor is what CMake calls the processor: the core, which is the fact that
+// decides which compiler is right.
+func processor(spec Spec) string {
+	if spec.Core != "" {
+		return spec.Core
+	}
+	return "generic"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  target.cmake                                                               */
+/* -------------------------------------------------------------------------- */
+
+// TargetCMake is the file that gives a build this target's definitions, flags,
+// memory and flashing.
+func TargetCMake(spec Spec, linkerScript string) string {
+	var b strings.Builder
+	banner(&b, "target.cmake", spec, "The flags, memory map and flashing of this target.")
+
+	defines := append([]string{}, spec.Defines...)
+	sort.Strings(defines)
+	if len(defines) > 0 {
+		b.WriteString("# The macros a program is compiled with: which chip this is, and how\n")
+		b.WriteString("# fast its clock runs before anything configures it.\n")
+		for _, define := range defines {
+			fmt.Fprintf(&b, "add_compile_definitions(%s)\n", define)
+		}
+		b.WriteString("\n")
+	}
+
+	flags := spec.AllFlags()
+	if len(flags) > 0 {
+		b.WriteString("# The flags the core is built with, after the ones the architecture gives.\n")
+		b.WriteString("add_compile_options(\n")
+		for _, flag := range flags {
+			fmt.Fprintf(&b, "    %s\n", flag)
+		}
+		b.WriteString(")\n\n")
+	}
+
+	regions := spec.Regions()
+	if len(regions) > 0 {
+		b.WriteString("# The memory map, which the linker script is generated from and a program\n")
+		b.WriteString("# may read: where it is stored, and how much room it has.\n")
+		for _, region := range regions {
+			fmt.Fprintf(&b, "set(RHO_%s_ORIGIN %s)\n", region.Name, region.Region.Origin)
+			fmt.Fprintf(&b, "set(RHO_%s_LENGTH %s)\n", region.Name, region.Region.Length)
+		}
+		fmt.Fprintf(&b, "set(RHO_FLASH_ORIGIN %s)\n", spec.Memory.Flash.Origin)
+		fmt.Fprintf(&b, "set(RHO_FLASH_LENGTH %s)\n\n", spec.Memory.Flash.Length)
+	}
+
+	// The script comes from the target's own file when it names one, and from the
+	// memory map when it does not.
+	if spec.LinkerScript != "" {
+		fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", spec.LinkerScript)
+	} else if len(spec.LinkRegions()) > 0 {
+		fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", linkerScript)
+	}
+	b.WriteString("if(DEFINED RHO_LINKER_SCRIPT)\n")
+	b.WriteString("  add_link_options(-T${RHO_LINKER_SCRIPT})\n")
+	b.WriteString("endif()\n\n")
+
+	if spec.VendorLibrary != "" {
+		b.WriteString("# The library that implements this board's interfaces: the platform-agnostic\n")
+		b.WriteString("# calls a program makes resolve to it.\n")
+		fmt.Fprintf(&b, "set(RHO_VENDOR_LIBRARY %s)\n\n", spec.VendorLibrary)
+	}
+	if spec.Flash.Tool != "" {
+		b.WriteString("# How a built program reaches the board. The binary is named as {binary}.\n")
+		fmt.Fprintf(&b, "set(RHO_FLASH_TOOL %s)\n", spec.Flash.Tool)
+		fmt.Fprintf(&b, "set(RHO_FLASH_COMMAND %s)\n", cmakeQuote(spec.Flash.Command))
+		if spec.Flash.Offset != "" {
+			fmt.Fprintf(&b, "set(RHO_FLASH_OFFSET %s)\n", spec.Flash.Offset)
+		}
+		b.WriteString("add_custom_target(flash\n")
+		b.WriteString("  COMMAND ${RHO_FLASH_TOOL} ${RHO_FLASH_COMMAND}\n")
+		b.WriteString("  COMMENT \"Writing the program to the board\"\n")
+		b.WriteString("  VERBATIM\n")
+		b.WriteString(")\n")
+	}
+	return b.String()
+}
+
+/* -------------------------------------------------------------------------- */
+/*  linker.ld                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// LinkerScript renders the memory map and the sections a program is laid out in.
+//
+// It is a script for a freestanding program: the vector table the platform puts
+// at the start of flash, then the code, then the data that is copied out of the
+// flash into RAM before `main` runs, and then the space the stack grows down
+// into. The address the stack starts at is the top of RAM, which is why the
+// RAM region has to be the one the stack lives in.
+func LinkerScript(spec Spec) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "/* Generated by rho-target from the %s target spec. DO NOT EDIT.\n", spec.Name)
+	if spec.Comment != "" {
+		fmt.Fprintf(&b, " *\n * %s\n", firstSentence(spec.Comment))
+	}
+	fmt.Fprintf(&b, " *\n * Regenerate with:\n *\n *     rho target generate <project> --target %s\n */\n\n", spec.Name)
+
+	regions := spec.LinkRegions()
+	b.WriteString("MEMORY\n{\n")
+	for _, region := range regions {
+		suffix := ""
+		if region.Region.Comment != "" {
+			suffix = " /* " + firstSentence(region.Region.Comment) + " */"
+		}
+		fmt.Fprintf(&b, "    %s (r%s): ORIGIN = %s, LENGTH = %s%s\n",
+			region.Name, access(region.Kind), region.Region.Origin, region.Region.Length, suffix)
+	}
+	b.WriteString("}\n\n")
+
+	flash, hasFlash := flashRegion(regions)
+	ram, hasRAM := ramRegion(regions)
+	if hasFlash {
+		fmt.Fprintf(&b, "/* The stack grows down from the end of %s. */\n", ram.Name)
+		fmt.Fprintf(&b, "_estack = ORIGIN(%s) + LENGTH(%s);\n", ram.Name, ram.Name)
+		fmt.Fprintf(&b, "ENTRY(Reset_Handler)\n\n")
+	}
+
+	b.WriteString("SECTIONS\n{\n")
+	if hasFlash {
+		fmt.Fprintf(&b, "    .isr_vector :\n    {\n        KEEP(*(.isr_vector))\n        . = ALIGN(4);\n    } > %s\n\n", flash.Name)
+		fmt.Fprintf(&b, "    .text :\n    {\n        *(.text*)\n        *(.rodata*)\n        . = ALIGN(4);\n        _etext = .;\n    } > %s\n\n", flash.Name)
+	}
+	if hasFlash && hasRAM {
+		// Initialised data lives in RAM and is copied out of the flash before
+		// `main` runs, which is what the load address is for.
+		fmt.Fprintf(&b, "    .data : AT(_etext)\n    {\n        . = ALIGN(4);\n        _sdata = .;\n        *(.data*)\n        . = ALIGN(4);\n        _edata = .;\n    } > %s\n\n", ram.Name)
+		b.WriteString("    .bss :\n    {\n        . = ALIGN(4);\n        _sbss = .;\n        *(.bss*)\n        *(COMMON)\n        . = ALIGN(4);\n        _ebss = .;\n    } > " + ram.Name + "\n\n")
+	}
+	b.WriteString("}\n")
+	return b.String()
+}
+
+// access is the linker's letter for what a region may be used for: a program is
+// read from flash and read and written in RAM.
+func access(kind string) string {
+	if kind == "flash" {
+		return "x"
+	}
+	return "w"
+}
+
+func flashRegion(regions []NamedRegion) (NamedRegion, bool) {
+	for _, region := range regions {
+		if region.Kind == "flash" {
+			return region, true
+		}
+	}
+	return NamedRegion{}, false
+}
+
+func ramRegion(regions []NamedRegion) (NamedRegion, bool) {
+	for _, region := range regions {
+		if region.Kind == "ram" {
+			return region, true
+		}
+	}
+	return NamedRegion{}, false
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Text                                                                       */
+/* -------------------------------------------------------------------------- */
+
+// banner is the top of every file this component writes, so a person who opens
+// one knows what wrote it and what to change instead.
+func banner(b *strings.Builder, name string, spec Spec, what string) {
+	fmt.Fprintf(b, "# Generated by rho-target from the %s target spec. DO NOT EDIT.\n", spec.Name)
+	if spec.Core != "" {
+		fmt.Fprintf(b, "# %s\n", spec.Core)
+	}
+	fmt.Fprintf(b, "# %s\n", what)
+	b.WriteString("#\n")
+	b.WriteString("# Regenerate with:\n#\n#     rho target generate <project> --target " + spec.Name + "\n#\n\n")
+}
+
+// cmakeQuote is a value CMake reads as one argument.
+func cmakeQuote(value string) string {
+	return "\"" + strings.ReplaceAll(strings.ReplaceAll(value, "\\", "\\\\"), "\"", "\\\"") + "\""
+}
+
+// firstSentence is a comment cut to what fits on one line of a generated file.
+func firstSentence(text string) string {
+	trimmed := strings.Join(strings.Fields(text), " ")
+	if index := strings.Index(trimmed, ". "); index >= 0 {
+		return trimmed[:index+1]
+	}
+	return trimmed
+}
