@@ -22,6 +22,19 @@ import (
 	"rho/src/codegen"
 )
 
+// ServerConfigFor reads how a target routes and what it wraps the router in,
+// from the descriptor entry the backend is rendering.
+func ServerConfigFor(target Target) codegen.ServerConfig {
+	config := codegen.ServerConfig{Router: target.Router}
+	for _, item := range target.Middleware {
+		config.Middleware = append(config.Middleware, codegen.MiddlewareSpec{
+			Name:    item.Name,
+			Options: item.Options,
+		})
+	}
+	return config
+}
+
 // EmitGoProject renders the Go artifacts for a generated project.
 func EmitGoProject(ctx Context) (Artifacts, error) {
 	artifacts := Artifacts{}
@@ -40,9 +53,18 @@ func EmitGoProject(ctx Context) (Artifacts, error) {
 	requires := ctx.Target.Requires
 	modulePath := ctx.Target.ModulePath
 
+	// An adapter is a dependency the project asked for by naming a router, so
+	// its requirement is written for it rather than left to be remembered.
+	if requirement := ctx.Target.RouterRequirement(); requirement != "" {
+		requires = append(append([]string{}, requires...), requirement)
+	}
+
 	switch kind {
 	case "server":
-		artifacts.Server = codegen.EmitGoServer(ctx.IR)
+		// How a service routes and what it wraps the router in is the
+		// descriptor's decision, so the backend reads it rather than choosing.
+		server := ServerConfigFor(ctx.Target)
+		artifacts.Server = codegen.EmitGoServer(ctx.IR, server)
 		artifacts.Entrypoint = codegen.EmitGoServerEntrypoint(ctx.IR)
 		// A server target still exposes the application entry point, so
 		// runtime helpers referenced only from main keep their imports.

@@ -102,6 +102,15 @@ var routeMethods = map[string]bool{
 	"GET": true, "POST": true, "PUT": true, "DELETE": true, "PATCH": true, "HEAD": true,
 }
 
+// bindingParams is the signature every typed accessor has: a request and the
+// name of the value being read from it. The name is a string rather than an
+// identifier because the request carries its values as text, and the
+// conversion is what makes them typed.
+var bindingParams = []ir.Type{
+	{Kind: ir.TypeStruct, Name: RequestTypeName},
+	{Kind: ir.TypeString, Name: "string"},
+}
+
 // protocolFuncs are the helper functions the server backend provides, so a
 // handler can read a captured path wildcard.
 //
@@ -110,6 +119,71 @@ var protocolFuncs = map[string]functionType{
 	"param": {
 		params: []ir.Type{
 			{Kind: ir.TypeStruct, Name: RequestTypeName},
+			{Kind: ir.TypeString, Name: "string"},
+		},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	// Typed parameter binding, supplied by the routing port. Each accessor
+	// converts one value from one request source, with a statement the
+	// generator wrote rather than with a runtime decision.
+	//
+	//	path_u32(req, "id")
+	//	if !bind_ok(req) {
+	//	    return error_json(status_bad_request(), bind_error(req))
+	//	}
+	"path_str":    {params: bindingParams, result: ir.Type{Kind: ir.TypeString, Name: "string"}},
+	"path_i32":    {params: bindingParams, result: ir.Type{Kind: ir.TypeI32, Name: "i32"}},
+	"path_u32":    {params: bindingParams, result: ir.Type{Kind: ir.TypeU32, Name: "u32"}},
+	"path_u64":    {params: bindingParams, result: ir.Type{Kind: ir.TypeU64, Name: "u64"}},
+	"path_f64":    {params: bindingParams, result: ir.Type{Kind: ir.TypeF64, Name: "f64"}},
+	"path_bool":   {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"query_str":   {params: bindingParams, result: ir.Type{Kind: ir.TypeString, Name: "string"}},
+	"query_i32":   {params: bindingParams, result: ir.Type{Kind: ir.TypeI32, Name: "i32"}},
+	"query_u32":   {params: bindingParams, result: ir.Type{Kind: ir.TypeU32, Name: "u32"}},
+	"query_u64":   {params: bindingParams, result: ir.Type{Kind: ir.TypeU64, Name: "u64"}},
+	"query_f64":   {params: bindingParams, result: ir.Type{Kind: ir.TypeF64, Name: "f64"}},
+	"query_bool":  {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"header_str":  {params: bindingParams, result: ir.Type{Kind: ir.TypeString, Name: "string"}},
+	"header_i32":  {params: bindingParams, result: ir.Type{Kind: ir.TypeI32, Name: "i32"}},
+	"header_u32":  {params: bindingParams, result: ir.Type{Kind: ir.TypeU32, Name: "u32"}},
+	"header_u64":  {params: bindingParams, result: ir.Type{Kind: ir.TypeU64, Name: "u64"}},
+	"header_f64":  {params: bindingParams, result: ir.Type{Kind: ir.TypeF64, Name: "f64"}},
+	"header_bool": {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"body_str":    {params: bindingParams, result: ir.Type{Kind: ir.TypeString, Name: "string"}},
+	"body_i32":    {params: bindingParams, result: ir.Type{Kind: ir.TypeI32, Name: "i32"}},
+	"body_u32":    {params: bindingParams, result: ir.Type{Kind: ir.TypeU32, Name: "u32"}},
+	"body_u64":    {params: bindingParams, result: ir.Type{Kind: ir.TypeU64, Name: "u64"}},
+	"body_f64":    {params: bindingParams, result: ir.Type{Kind: ir.TypeF64, Name: "f64"}},
+	"body_bool":   {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"field_str":   {params: bindingParams, result: ir.Type{Kind: ir.TypeString, Name: "string"}},
+	"field_i32":   {params: bindingParams, result: ir.Type{Kind: ir.TypeI32, Name: "i32"}},
+	"field_u32":   {params: bindingParams, result: ir.Type{Kind: ir.TypeU32, Name: "u32"}},
+	"field_u64":   {params: bindingParams, result: ir.Type{Kind: ir.TypeU64, Name: "u64"}},
+	"field_f64":   {params: bindingParams, result: ir.Type{Kind: ir.TypeF64, Name: "f64"}},
+	"field_bool":  {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	// bind_ok reports whether every value the handler read converted, and
+	// bind_error says which one did not.
+	"bind_ok": {
+		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
+	"bind_error": {
+		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	// The presence reads and the defaulting read, which ask about a value
+	// without converting it and without recording a failure. An optional
+	// parameter has to be read through one of these: the typed accessor would
+	// record a failure for a request that is perfectly correct, and the failure
+	// would sit on the request for the rest of the handler.
+	"has_path":   {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"has_query":  {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"has_header": {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"has_field":  {params: bindingParams, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
+	"query_default": {
+		params: []ir.Type{
+			{Kind: ir.TypeStruct, Name: RequestTypeName},
+			{Kind: ir.TypeString, Name: "string"},
 			{Kind: ir.TypeString, Name: "string"},
 		},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},

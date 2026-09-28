@@ -4,8 +4,16 @@
 //
 // A Rho application compiled with the Go backend can target a long-running
 // HTTP service instead of a command line program. This file renders the
-// server wiring: configuration from the environment, a health endpoint, JSON
-// helpers, and a route registration seam where Rho handlers are attached.
+// protocol half of that service: the Request and Response a handler works
+// with, the lifecycle around a listener, and the small JSON helpers a handler
+// reaches for.
+//
+// How requests are dispatched is a target's decision, not this file's. A
+// target that names no router gets the matcher below, which builds with any Go
+// toolchain. A target that names one gets the routing port, which supplies the
+// router, the typed parameter binding and the middleware pipeline, and this
+// file keeps to the protocol and the lifecycle. Both leave the same project:
+// handlers that read a request and write a response, and nothing to wire up.
 //
 // The generated server uses only the Go standard library, so a freshly
 // generated project builds and runs with no module downloads.
@@ -51,96 +59,179 @@ func EmitGoServerEntrypoint(m ir.ModuleIR) string {
 	return b.String()
 }
 
-// EmitGoServer returns server.go for a server-kind Go target.
-func EmitGoServer(m ir.ModuleIR) string {
-	var b strings.Builder
-	b.WriteString(goBanner(m, "server.go", "Generated HTTP wiring for a Rho web application."))
-	b.WriteString("package main\n\n")
-	b.WriteString("import (\n")
-	b.WriteString("\t\"context\"\n")
-	b.WriteString("\t\"io\"\n")
+// goServerImports are the imports a generated server.go may need. An import is
+// kept only when the file refers to it, so a project that routes through a port
+// is not handed an import the compiler refuses.
+var goServerImports = []importSpec{
+	{Path: `"context"`},
+	{Path: `"io"`},
+	{Path: `"log"`},
+	{Path: `"net/http"`},
+	{Path: `"net/url"`},
+	{Path: `"os"`},
+	{Path: `"os/signal"`},
+	{Path: `"strings"`},
+	{Path: `"syscall"`},
+	{Path: `"time"`},
 	// Aliased: the Rho-facing json(...) helper takes the plain name.
-	b.WriteString("\tjsonenc \"encoding/json\"\n")
-	b.WriteString("\t\"log\"\n")
-	b.WriteString("\t\"net/http\"\n")
-	b.WriteString("\t\"net/url\"\n")
-	b.WriteString("\t\"os\"\n")
-	b.WriteString("\t\"os/signal\"\n")
-	b.WriteString("\t\"strings\"\n")
-	b.WriteString("\t\"syscall\"\n")
-	b.WriteString("\t\"time\"\n")
-	b.WriteString(")\n\n")
+	{Alias: "jsonenc", Path: `"encoding/json"`},
+}
+
+// importSpec is one import of a generated file: where it comes from, and the
+// name the generated source calls it by.
+type importSpec struct {
+	// Alias is the name the import is bound to, empty for the package's own.
+	Alias string
+	// Path is the quoted module path the import block prints.
+	Path string
+}
+
+// Ident is the name the generated source refers to the import by.
+func (s importSpec) Ident() string {
+	if s.Alias != "" {
+		return s.Alias
+	}
+	path := strings.Trim(s.Path, `"`)
+	if index := strings.LastIndex(path, "/"); index >= 0 {
+		return path[index+1:]
+	}
+	return path
+}
+
+// Line is what the import block prints for this import.
+func (s importSpec) Line() string {
+	if s.Alias == "" {
+		return s.Path
+	}
+	return s.Alias + " " + s.Path
+}
+
+// EmitGoServer returns server.go for a server-kind Go target.
+func EmitGoServer(m ir.ModuleIR, cfg ServerConfig) string {
+	banner := goBanner(m, "server.go", "Generated HTTP wiring for a Rho web application.")
+
+	var b strings.Builder
+	b.WriteString(banner)
+	b.WriteString("package main\n\n")
 
 	// The asset folder the descriptor creates for this target.
 	fmt.Fprintf(&b, "// staticDir is the asset directory served under /static/.\nconst staticDir = %q\n\n", StaticDir)
 
 	// The Request and Response types shared with the Rho handlers.
-	b.WriteString(goRequestType())
+	b.WriteString(goRequestType(cfg))
 	b.WriteString(goResponseType())
-	b.WriteString(goRequestHelpers())
+	b.WriteString(goRequestHelpers(cfg))
+	b.WriteString(goServerLifecycle(cfg))
 
+	// The handlers themselves are the same whatever dispatches them. Only the
+	// binding is a target's decision, so only that is a port's.
+	if cfg.Routed() {
+		b.WriteString(goRouteHandlers(m))
+	} else {
+		b.WriteString(goRegisterRoutes(m))
+		b.WriteString(goRouteHandlers(m))
+	}
+
+	b.WriteString(`// writeJSON sends a JSON response with the given status code.
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := jsonenc.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("write response: %v", err)
+	}
+}
+
+// withLogging records one line per request.
+func withLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		next.ServeHTTP(w, r)
+		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(started))
+	})
+}
+
+`)
+
+	// The banner sits above the package clause, so it is written first and the
+	// import block is spliced in underneath it rather than appended.
+	source := strings.TrimPrefix(strings.TrimPrefix(b.String(), banner), "package main\n\n")
+	used := usedImports(source, goServerImports)
+	if len(used) == 0 {
+		return banner + "package main\n\n" + source
+	}
+	var block strings.Builder
+	block.WriteString("import (\n")
+	for _, spec := range used {
+		fmt.Fprintf(&block, "\t%s\n", spec.Line())
+	}
+	block.WriteString(")\n\n")
+	return banner + "package main\n\n" + block.String() + source
+}
+
+// goServerLifecycle renders the listener: where it listens, how it stops, and
+// which handler it serves.
+func goServerLifecycle(cfg ServerConfig) string {
+	var b strings.Builder
 	b.WriteString("// serverAddr returns the listen address, overridable with RHO_HTTP_ADDR.\n")
 	b.WriteString("func serverAddr() string {\n")
-	fmt.Fprintf(&b, "\tif addr := os.Getenv(\"RHO_HTTP_ADDR\"); addr != \"\" {\n\t\treturn addr\n\t}\n")
+	b.WriteString("\tif addr := os.Getenv(\"RHO_HTTP_ADDR\"); addr != \"\" {\n\t\treturn addr\n\t}\n")
 	fmt.Fprintf(&b, "\treturn %q\n}\n\n", DefaultServerAddr)
 
 	b.WriteString("// StartServer runs the HTTP service until SIGINT or SIGTERM.\n")
 	b.WriteString("func StartServer(addr string) error {\n")
-	b.WriteString("\trouter := &router{}\n")
-	b.WriteString("\tregisterRoutes(router)\n")
-	b.WriteString("\tmux := http.NewServeMux()\n")
-	b.WriteString("\tmux.HandleFunc(\"/\", router.serve)\n\n")
-	b.WriteString("\tserver := &http.Server{\n")
-	fmt.Fprintf(&b, "\t\tAddr:              addr,\n")
-	b.WriteString("\t\tHandler:           withLogging(mux),\n")
-	b.WriteString("\t\tReadHeaderTimeout: 10 * time.Second,\n")
-	b.WriteString("\t}\n\n")
-	b.WriteString("\tstop := make(chan os.Signal, 1)\n")
-	b.WriteString("\tsignal.Notify(stop, os.Interrupt, syscall.SIGTERM)\n")
-	b.WriteString("\tdefer signal.Stop(stop)\n\n")
-	b.WriteString("\terrCh := make(chan error, 1)\n")
-	b.WriteString("\tgo func() {\n")
-	b.WriteString("\t\tif err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {\n")
-	b.WriteString("\t\t\terrCh <- err\n")
-	b.WriteString("\t\t}\n")
-	b.WriteString("\t}()\n\n")
-	b.WriteString("\tselect {\n")
-	b.WriteString("\tcase err := <-errCh:\n")
-	b.WriteString("\t\treturn err\n")
-	b.WriteString("\tcase <-stop:\n")
-	b.WriteString("\t\tctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)\n")
-	b.WriteString("\t\tdefer cancel()\n")
-	b.WriteString("\t\treturn server.Shutdown(ctx)\n")
-	b.WriteString("\t}\n")
-	b.WriteString("}\n\n")
-
-	// Routes, generated from the module's route declarations.
-	b.WriteString(goRegisterRoutes(m))
-	b.WriteString(goRouteHandlers(m))
-
-	b.WriteString("// writeJSON sends a JSON response with the given status code.\n")
-	b.WriteString("func writeJSON(w http.ResponseWriter, status int, payload any) {\n")
-	b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-	b.WriteString("\tw.WriteHeader(status)\n")
-	b.WriteString("\tif err := jsonenc.NewEncoder(w).Encode(payload); err != nil {\n")
-	b.WriteString("\t\tlog.Printf(\"write response: %v\", err)\n")
-	b.WriteString("\t}\n")
-	b.WriteString("}\n\n")
-
-	b.WriteString("// withLogging records one line per request.\n")
-	b.WriteString("func withLogging(next http.Handler) http.Handler {\n")
-	b.WriteString("\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n")
-	b.WriteString("\t\tstarted := time.Now()\n")
-	b.WriteString("\t\tnext.ServeHTTP(w, r)\n")
-	b.WriteString("\t\tlog.Printf(\"%s %s %s\", r.Method, r.URL.Path, time.Since(started))\n")
-	b.WriteString("\t})\n")
-	b.WriteString("}\n\n")
-
+	if cfg.Routed() {
+		b.WriteString("\t// The router, the asset folder and the middleware pipeline are the\n")
+		b.WriteString("\t// port's, assembled in one step.\n")
+		b.WriteString("\thandler, err := newRouter()\n\tif err != nil {\n\t\treturn err\n\t}\n\n")
+		b.WriteString("\tserver := &http.Server{\n")
+		b.WriteString("\t\tAddr:              addr,\n")
+		b.WriteString("\t\tHandler:           withLogging(handler),\n")
+		b.WriteString("\t\tReadHeaderTimeout: 10 * time.Second,\n")
+		b.WriteString("\t}\n\n")
+	} else {
+		b.WriteString("\trouter := &router{}\n")
+		b.WriteString("\tregisterRoutes(router)\n")
+		b.WriteString("\tmux := http.NewServeMux()\n")
+		b.WriteString("\tmux.HandleFunc(\"/\", router.serve)\n\n")
+		b.WriteString("\tserver := &http.Server{\n")
+		b.WriteString("\t\tAddr:              addr,\n")
+		b.WriteString("\t\tHandler:           withLogging(mux),\n")
+		b.WriteString("\t\tReadHeaderTimeout: 10 * time.Second,\n")
+		b.WriteString("\t}\n\n")
+	}
+	b.WriteString(goServerShutdown())
 	return b.String()
 }
 
+// goServerShutdown renders the part that stops the service the same way in both
+// modes: a signal, a grace period, and a close.
+func goServerShutdown() string {
+	return `	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return server.Shutdown(ctx)
+	}
+}
+
+`
+}
+
 // goRequestType returns the Request type a Rho handler receives.
-func goRequestType() string {
+func goRequestType(cfg ServerConfig) string {
 	var b strings.Builder
 	b.WriteString("// Request is what a Rho handler receives for each HTTP request.\n")
 	b.WriteString("type Request struct {\n")
@@ -150,6 +241,18 @@ func goRequestType() string {
 	b.WriteString("\tBody   string\n")
 	b.WriteString("\tAuth   string\n")
 	b.WriteString("\tParams map[string]string\n")
+	if cfg.Routed() {
+		// Both are reached through the request rather than beside it. A Rho
+		// handler receives the request by value, and a value it keeps is a
+		// copy; a map and a pointer are shared by a copy, so a header a header
+		// lookup filled and a failure a conversion recorded both outlive the
+		// accessor that touched them.
+		b.WriteString("\t// head is the request's headers, kept as net/http canonicalised them.\n")
+		b.WriteString("\thead map[string]string\n")
+		b.WriteString("\t// bind carries what a failed conversion left, so a handler asks once\n")
+		b.WriteString("\t// whether the binding held rather than checking every value.\n")
+		b.WriteString("\tbind *bindState\n")
+	}
 	b.WriteString("}\n\n")
 	b.WriteString("// Param returns a path wildcard value, or \"\" when absent.\n")
 	b.WriteString("func (r *Request) Param(name string) string {\n")
@@ -178,7 +281,10 @@ func goResponseType() string {
 }
 
 // goRequestHelpers returns the helpers used to decode an incoming request.
-func goRequestHelpers() string {
+func goRequestHelpers(cfg ServerConfig) string {
+	if cfg.Routed() {
+		return goRoutedRequestHelpers()
+	}
 	return `// newRequest decodes an HTTP request into the Rho-facing Request.
 func newRequest(r *http.Request) *Request {
 	if r == nil {
@@ -244,7 +350,6 @@ func requestQueryParam(req Request, name string) string {
 	return queryParam(req.Query, name)
 }
 
-
 // queryParam returns a decoded value from the raw query string. Values arrive
 // percent-encoded, so a space written as "+" has to be turned back into a
 // space rather than shown literally.
@@ -269,10 +374,82 @@ func queryParam(query, name string) string {
 `
 }
 
+// goRoutedRequestHelpers is the same decoding, reached through the router the
+// target chose. The raw readers live in the routing port; this file keeps only
+// what the protocol needs and the names Rho handlers already call.
+func goRoutedRequestHelpers() string {
+	return `// newRequest decodes an HTTP request into the Rho-facing Request.
+func newRequest(r *http.Request) *Request {
+	if r == nil {
+		return &Request{bind: &bindState{}}
+	}
+	body, err := readAll(r)
+	if err != nil {
+		log.Printf("read body: %v", err)
+	}
+	head := make(map[string]string, len(r.Header))
+	for name, values := range r.Header {
+		if len(values) > 0 {
+			head[name] = values[0]
+		}
+	}
+	return &Request{
+		Method: r.Method,
+		Path:   r.URL.Path,
+		Query:  r.URL.RawQuery,
+		Body:   body,
+		Auth:   r.Header.Get("Authorization"),
+		Params: rhoRouteParams(r),
+		head:   head,
+		bind:   &bindState{},
+	}
+}
+
+// readAll reads a request body, bounded so a large upload cannot exhaust
+// memory.
+func readAll(r *http.Request) (string, error) {
+	if r.Body == nil {
+		return "", nil
+	}
+	defer r.Body.Close()
+	const maxBody = 256 << 20
+	buf, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+// param returns a path wildcard captured by the router, or "" when absent.
+func param(req Request, name string) string {
+	return req.Param(name)
+}
+
+// request_body returns the raw request body, so a binary upload survives.
+func requestBody(req Request) string {
+	return req.Body
+}
+
+// request_auth returns the raw Authorization header.
+func requestAuth(req Request) string {
+	return req.Auth
+}
+
+// request_query_param returns one value from the raw query string.
+func requestQueryParam(req Request, name string) string {
+	value, _ := rhoQueryValue(req.Query, name)
+	return value
+}
+
+`
+}
+
 // goRegisterRoutes emits the mux wiring for a module's routes.
 //
 // The router matches the patterns itself rather than relying on the Go 1.22
-// ServeMux wildcards, so a generated project builds with any Go toolchain.
+// ServeMux wildcards, so a generated project builds with any Go toolchain. A
+// target that names a router asks for the port instead, and gets the standard
+// library's mux.
 func goRegisterRoutes(m ir.ModuleIR) string {
 	var b strings.Builder
 	b.WriteString("// registerRoutes attaches the generated handlers to a router.\n")
@@ -447,7 +624,7 @@ func goRouteHandlers(m ir.ModuleIR) string {
 	var b strings.Builder
 	b.WriteString("// HTTP wrappers bridging net/http and the Rho handlers.\n")
 	// Several routes can share a handler, so the wrappers are emitted once each
-	// and the mux binds every path to the same one.
+	// and the router binds every path to the same one.
 	for _, handler := range types.RouteHandlers(m) {
 		name := goRouteFuncName(ir.RouteIR{Handler: handler})
 
@@ -508,6 +685,6 @@ var protocolTypes = map[string]bool{
 	"Response": true,
 }
 
-// isProtocolType reports whether a struct is an HTTP protocol type owned by the
-// server backend.
+// isProtocolType reports whether a struct is an HTTP protocol type owned by
+// the server backend.
 func isProtocolType(name string) bool { return protocolTypes[name] }
