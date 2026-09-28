@@ -196,18 +196,31 @@ func generateTemplates(ctx Context, target Target) error {
 // generatePorts writes the port implementations a target asked for. A port is
 // supplied by the backend, so a Rho project needs no hand-written host code.
 func generatePorts(ctx Context, target Target) error {
-	if len(target.Ports) == 0 {
+	ports := target.EffectivePorts()
+	if len(ports) == 0 {
 		return nil
 	}
 	available := availablePorts(target.Emitter)
-	for _, name := range target.Ports {
+	for _, name := range ports {
 		if !containsString(available, name) {
 			return fmt.Errorf("target %q: unknown port %q (available: %s)",
 				target.ID, name, strings.Join(available, ", "))
 		}
 	}
+	// The routing port is what a server is, so it is asked for by naming a
+	// router or composing a middleware, not by naming the port as well. The
+	// one rule keeps the descriptor short and the two statements from drifting.
+	if containsString(ports, RoutingPortName) && target.TargetKind() != "server" {
+		return fmt.Errorf("target %q asks for the %q port, which only a server target uses",
+			target.ID, RoutingPortName)
+	}
 
-	content := codegen.EmitGoPorts(ctx.IR, target.Ports)
+	content := codegen.EmitGoPorts(codegen.PortContext{
+		IR:          ctx.IR,
+		ModuleName:  ctx.ModuleName,
+		ProjectRoot: ctx.ProjectRoot,
+		Server:      ServerConfigFor(target),
+	}, ports)
 	if content == "" {
 		return nil
 	}

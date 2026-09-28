@@ -66,13 +66,30 @@ func portAliasFuncs() string {
 
 // portGenerator renders one built-in port, returning the imports it needs and
 // the body to place in the generated file.
-type portGenerator func(ir.ModuleIR) (imports []string, body string)
+type portGenerator func(PortContext) (imports []string, body string)
+
+// PortContext carries what a port needs beyond the compiled module. A port that
+// only implements extern declarations ignores most of it; a port that also
+// shapes the generated service reads the router and the pipeline the project
+// declared, so the code it emits is the code the project asked for.
+type PortContext struct {
+	// IR is the compiled Rho module the port supplies implementations for.
+	IR ir.ModuleIR
+	// ModuleName is the Rho module name, for banners and messages.
+	ModuleName string
+	// ProjectRoot is the Rho project directory, for a port that reads files
+	// the project carries.
+	ProjectRoot string
+	// Server is how the target routes and what it wraps the router in.
+	Server ServerConfig
+}
 
 // portGenerators are the built-in ports a descriptor may request.
 var portGenerators = map[string]portGenerator{
-	"docemit": emitDocPort,
-	"fsstore": emitFSStorePort,
-	"logemit": emitLogPort,
+	"docemit":   emitDocPort,
+	"fsstore":   emitFSStorePort,
+	"logemit":   emitLogPort,
+	"httproute": emitHTTPRoutePort,
 }
 
 // RegisteredPorts lists the available port names.
@@ -92,7 +109,7 @@ func HasPort(name string) bool {
 }
 
 // EmitGoPorts renders the port implementations a target asked for.
-func EmitGoPorts(m ir.ModuleIR, ports []string) string {
+func EmitGoPorts(ctx PortContext, ports []string) string {
 	if len(ports) == 0 {
 		return ""
 	}
@@ -106,7 +123,7 @@ func EmitGoPorts(m ir.ModuleIR, ports []string) string {
 			// available ones; nothing is emitted here.
 			continue
 		}
-		needed, portBody := generator(m)
+		needed, portBody := generator(ctx)
 		for _, name := range needed {
 			imports[name] = true
 		}
@@ -115,7 +132,7 @@ func EmitGoPorts(m ir.ModuleIR, ports []string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(goBanner(m, PortFileName, "Generated Rho port implementations."))
+	b.WriteString(goBanner(ctx.IR, PortFileName, "Generated Rho port implementations."))
 	b.WriteString("package main\n")
 	if len(imports) > 0 {
 		names := make([]string, 0, len(imports))
@@ -137,7 +154,8 @@ func EmitGoPorts(m ir.ModuleIR, ports []string) string {
 // emitFSStorePort renders a filesystem-backed module store, which is what a
 // registry service needs: a place to put uploaded packages, a way to read
 // them back, and a listing to search.
-func emitFSStorePort(m ir.ModuleIR) ([]string, string) {
+func emitFSStorePort(ctx PortContext) ([]string, string) {
+	m := ctx.IR
 	version := m.Version
 	if version == "" {
 		version = "0.0.0"

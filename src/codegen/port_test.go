@@ -42,7 +42,7 @@ func TestBuiltInPortsAreRegistered(t *testing.T) {
 // The logging port supplies the function the library declares, which is the
 // whole point: the project gets it without copying anything.
 func TestLogPortSuppliesEmit(t *testing.T) {
-	imports, body := emitLogPort(ir.ModuleIR{Name: "app"})
+	imports, body := emitLogPort(PortContext{IR: ir.ModuleIR{Name: "app"}})
 	out := strings.Join(imports, " ") + "\n" + body
 	if !strings.Contains(out, "func emit(level uint32, subject string, message string)") {
 		t.Errorf("expected emit with the declared signature, got:\n%s", out)
@@ -52,7 +52,7 @@ func TestLogPortSuppliesEmit(t *testing.T) {
 // Every level the library can pass has to have a name, or a record would read
 // as info when it was not.
 func TestLogPortNamesEveryLevel(t *testing.T) {
-	_, body := emitLogPort(ir.ModuleIR{Name: "app"})
+	_, body := emitLogPort(PortContext{IR: ir.ModuleIR{Name: "app"}})
 	for _, level := range []string{"trace", "debug", "info", "warn", "error", "fatal"} {
 		if !strings.Contains(body, `"`+level+`"`) {
 			t.Errorf("expected a name for the %s level", level)
@@ -63,7 +63,7 @@ func TestLogPortNamesEveryLevel(t *testing.T) {
 // A record goes to standard error, so a program's own standard output stays
 // machine readable.
 func TestLogPortWritesToStandardError(t *testing.T) {
-	_, body := emitLogPort(ir.ModuleIR{Name: "app"})
+	_, body := emitLogPort(PortContext{IR: ir.ModuleIR{Name: "app"}})
 	if !strings.Contains(body, "os.Stderr") {
 		t.Errorf("expected records on standard error, got:\n%s", body)
 	}
@@ -72,14 +72,14 @@ func TestLogPortWritesToStandardError(t *testing.T) {
 // The line has to match the formatter's shape, so a record reads the same
 // whether it came from the command or from a service.
 func TestLogPortMatchesTheFormatterShape(t *testing.T) {
-	_, body := emitLogPort(ir.ModuleIR{Name: "app"})
+	_, body := emitLogPort(PortContext{IR: ir.ModuleIR{Name: "app"}})
 	if !strings.Contains(body, "[%s] [%s] [%s] %s") {
 		t.Errorf("expected the formatter's shape, got:\n%s", body)
 	}
 }
 
 func TestLogPortImportsWhatItUses(t *testing.T) {
-	imports, _ := emitLogPort(ir.ModuleIR{Name: "app"})
+	imports, _ := emitLogPort(PortContext{IR: ir.ModuleIR{Name: "app"}})
 	joined := strings.Join(imports, " ")
 	for _, want := range []string{"fmt", "os", "strings", "time"} {
 		if !strings.Contains(joined, want) {
@@ -95,7 +95,7 @@ func TestLogPortImportsWhatItUses(t *testing.T) {
 // A project that imports the documentation library has to reach the generator,
 // so the port has to carry the entry points the library declares.
 func TestDocPortCarriesTheLibraryInterface(t *testing.T) {
-	body := EmitGoPorts(ir.ModuleIR{Name: "app", Version: "0.1.0"}, []string{"docemit"})
+	body := EmitGoPorts(PortContext{IR: ir.ModuleIR{Name: "app", Version: "0.1.0"}}, []string{"docemit"})
 	// The port supplies the names the Go backend calls: a library's externs are
 	// wrapped as <library><name>, and the wrapper around them is generated.
 	for _, want := range []string{
@@ -123,7 +123,7 @@ func TestDocPortCarriesTheLibraryInterface(t *testing.T) {
 // The registry documents a module from what it received, so the store has to
 // hand the generator a source tree and read the pages back.
 func TestStorePortCarriesTheDocumentationOperations(t *testing.T) {
-	body := EmitGoPorts(ir.ModuleIR{Name: "registry", Version: "0.1.0"}, []string{"fsstore"})
+	body := EmitGoPorts(PortContext{IR: ir.ModuleIR{Name: "registry", Version: "0.1.0"}}, []string{"fsstore"})
 
 	for _, want := range []string{
 		"func storeUnpack(name, version string) string",
@@ -146,7 +146,7 @@ func TestStorePortCarriesTheDocumentationOperations(t *testing.T) {
 func TestStorePortRefusesAPackageEntryThatLeavesTheDirectory(t *testing.T) {
 	// A package is a file list, and a file list that climbs out of the directory
 	// it is unpacked into would write wherever it names.
-	body := EmitGoPorts(ir.ModuleIR{Name: "registry", Version: "0.1.0"}, []string{"fsstore"})
+	body := EmitGoPorts(PortContext{IR: ir.ModuleIR{Name: "registry", Version: "0.1.0"}}, []string{"fsstore"})
 
 	if !strings.Contains(body, "leaves the package directory") {
 		t.Error("expected the unpack to refuse an entry outside the package directory")

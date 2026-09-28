@@ -43,12 +43,29 @@ targets:
     emitter: go
     kind: server
     description: Registry HTTP service
+    # The routing port supplies the router, the typed parameter binding and the
+    # middleware pipeline, all as generated Go. The standard library's ServeMux
+    # carries the method-and-wildcard patterns these routes are declared with,
+    # so the generated project routes its requests with nothing fetched.
+    router: serveMux
     # Supplies the store_put/store_get/store_has/store_search externs the
     # handlers declare.
     ports:
       - docemit
       - fsstore
       - logemit
+    # A registry is read from a browser on another origin, so every request is
+    # named before anything can be correlated with it, and a caller that floods
+    # one route must not cost every other caller a request.
+    middleware:
+      - name: request_id
+      - name: cors
+        options:
+          origin: "*"
+      - name: rate_limit
+        options:
+          requests: "240"
+          window: "1m"
     # Page markup, kept out of the Rho sources and rendered by the generated
     # template engine.
     templates:

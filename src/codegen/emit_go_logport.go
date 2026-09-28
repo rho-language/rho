@@ -26,12 +26,8 @@
 
 package codegen
 
-import (
-	"rho/src/ir"
-)
-
 // emitLogPort renders the implementation of the logging port.
-func emitLogPort(m ir.ModuleIR) ([]string, string) {
+func emitLogPort(ctx PortContext) ([]string, string) {
 	imports := []string{
 		`"fmt"`,
 		`"os"`,

@@ -10,6 +10,7 @@ use (
 	./modules/components/rho-log
 	./modules/components/rho-target
 	./modules/components/rho-lsp
+	./modules/components/rho-router
 	./modules/components/rho-test
 	./modules/plugins/rho-doc-toc
 	./modules/plugins/rho-test-junit

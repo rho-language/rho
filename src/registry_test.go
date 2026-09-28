@@ -49,9 +49,10 @@ func startRegistry(t *testing.T, token string) *registryServer {
 // a deployment configures it.
 func startRegistryWithSettings(t *testing.T, token, settings string) *registryServer {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go toolchain not available")
-	}
+	// The registry routes through the standard library's ServeMux, which
+	// carries the method-and-wildcard patterns its routes are declared with
+	// from Go 1.22.
+	goToolchainAtLeast(t, "1.22")
 
 	root := "../applications/registry"
 	entry := filepath.Join(root, "src", "main.rho")
@@ -467,9 +468,9 @@ func TestRegistryTokenLifetimeHonoursSettings(t *testing.T) {
 }
 
 func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go toolchain not available")
-	}
+	// The registry routes through the standard library's ServeMux, which needs
+	// Go 1.22 for the patterns its routes are declared with.
+	goToolchainAtLeast(t, "1.22")
 	root := "../applications/registry"
 	if _, err := os.Stat(filepath.Join(root, "src", "main.rho")); err != nil {
 		t.Skip("registry sources are not present")
@@ -771,4 +772,69 @@ func TestRegistryFooterOnTheEmptyPage(t *testing.T) {
 	if !strings.Contains(body, "Rho programming language") {
 		t.Errorf("expected the copyright in the footer, got:\n%s", body)
 	}
+}
+
+// goToolchainAtLeast reports whether the go on PATH is new enough for a
+// generated project to build.
+//
+// A project that routes through the standard library's ServeMux needs Go 1.22,
+// which is where that mux learned the method-and-wildcard patterns a Rho route
+// is declared with. Saying so is better than letting a build fail on a symbol
+// the toolchain has never heard of, which reads as a fault in the generator
+// rather than as a toolchain that is behind the project.
+func goToolchainAtLeast(t *testing.T, want string) {
+	t.Helper()
+	out, err := exec.Command("go", "version").Output()
+	if err != nil {
+		t.Skip("go toolchain not available")
+	}
+	// "go version go1.22.4 linux/amd64" — the release is the field after the
+	// program name.
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 {
+		t.Skipf("cannot read the go version from %q", strings.TrimSpace(string(out)))
+	}
+	have := strings.TrimPrefix(fields[2], "go")
+	if compareGoReleases(have, want) < 0 {
+		t.Skipf("the generated project needs go %s or newer; this toolchain is go %s", want, have)
+	}
+}
+
+// compareGoReleases compares two Go release strings, which are dotted numbers
+// with an optional suffix that does not affect the order of the numbers.
+func compareGoReleases(left, right string) int {
+	fields := func(value string) []int {
+		value = strings.TrimSuffix(value, "\n")
+		// A release candidate or a development build sorts before its release.
+		fields := strings.Split(value, ".")
+		out := []int{}
+		for _, field := range fields {
+			number := 0
+			for _, digit := range field {
+				if digit < '0' || digit > '9' {
+					break
+				}
+				number = number*10 + int(digit-'0')
+			}
+			out = append(out, number)
+		}
+		return out
+	}
+	leftFields, rightFields := fields(left), fields(right)
+	for i := 0; i < len(leftFields) || i < len(rightFields); i++ {
+		a, b := 0, 0
+		if i < len(leftFields) {
+			a = leftFields[i]
+		}
+		if i < len(rightFields) {
+			b = rightFields[i]
+		}
+		if a != b {
+			if a < b {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }

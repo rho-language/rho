@@ -36,12 +36,15 @@ func EmitGoAuth() string {
 	b.WriteString("package main\n\n")
 	b.WriteString("import (\n")
 	b.WriteString("\t\"crypto/hmac\"\n")
+	b.WriteString("\t\"crypto/rand\"\n")
 	b.WriteString("\t\"crypto/sha256\"\n")
+	// Aliased. A Rho module that declares its own json(...) would otherwise
+	// collide with the package name in this same package, and the module's
+	// std.web.http json(...) arrives spelled the same way.
+	b.WriteString("\tjsonenc \"encoding/json\"\n")
 	b.WriteString("\t\"encoding/base64\"\n")
 	b.WriteString("\t\"encoding/hex\"\n")
-	b.WriteString("\t\"encoding/json\"\n")
 	b.WriteString("\t\"errors\"\n")
-	b.WriteString("\t\"crypto/rand\"\n")
 	b.WriteString("\t\"os\"\n")
 	b.WriteString("\t\"path/filepath\"\n")
 	b.WriteString("\t\"strings\"\n")
@@ -156,7 +159,7 @@ func (v authTokenVerifier) verify(credential string) (authPrincipal, bool, bool)
 		return authAnonymous, false, false
 	}
 	var head authTokenHeader
-	if err := json.Unmarshal(headerJSON, &head); err != nil {
+	if err := jsonenc.Unmarshal(headerJSON, &head); err != nil {
 		return authAnonymous, false, false
 	}
 	if head.Algorithm != authTokenAlgorithm {
@@ -177,7 +180,7 @@ func (v authTokenVerifier) verify(credential string) (authPrincipal, bool, bool)
 		return authAnonymous, false, false
 	}
 	var claims authClaims
-	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
+	if err := jsonenc.Unmarshal(payloadJSON, &claims); err != nil {
 		return authAnonymous, false, false
 	}
 	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
@@ -301,11 +304,11 @@ func authIssueToken(secret []byte, subject, audience, host string, scopes []stri
 		IssuedAt:  now.Unix(),
 		ExpiresAt: now.Add(lifetime).Unix(),
 	}
-	headerJSON, err := json.Marshal(authTokenHeader{Algorithm: authTokenAlgorithm, Type: "JWT"})
+	headerJSON, err := jsonenc.Marshal(authTokenHeader{Algorithm: authTokenAlgorithm, Type: "JWT"})
 	if err != nil {
 		return "", claims, err
 	}
-	payloadJSON, err := json.Marshal(claims)
+	payloadJSON, err := jsonenc.Marshal(claims)
 	if err != nil {
 		return "", claims, err
 	}
@@ -413,7 +416,7 @@ func auth_issue(user, host string, days uint32, scopes string) string {
 	secret := authLoadSecret()
 	token, claims, err := authIssueToken(secret, user, authAudience(), host, wanted, lifetime)
 	if err != nil {
-		errorBody, _ := json.Marshal(map[string]string{"error": err.Error()})
+		errorBody, _ := jsonenc.Marshal(map[string]string{"error": err.Error()})
 		return string(errorBody)
 	}
 	answer := map[string]any{
@@ -427,7 +430,7 @@ func auth_issue(user, host string, days uint32, scopes string) string {
 		"iat":   claims.IssuedAt,
 		"exp":   claims.ExpiresAt,
 	}
-	body, _ := json.Marshal(answer)
+	body, _ := jsonenc.Marshal(answer)
 	return string(body)
 }
 

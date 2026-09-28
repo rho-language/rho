@@ -1,0 +1,106 @@
+module rho.router
+
+// The routing library, as a handler sees it.
+//
+// A service's router, its typed parameter binding and its middleware are
+// supplied to a generated project by the routing port, so nothing here is
+// hand-written Go and nothing here is downloaded: the generated module builds
+// with the Go toolchain alone. What this module adds is the part the language
+// can express and a port cannot: the reads that ask about a value without
+// taking it.
+//
+// The typed accessors are the compiler's own — path_u32, query_str, field_i32
+// and the rest — and are used directly rather than declared again here. A
+// second declaration of them would be a second thing to keep in step with the
+// first, which is the problem the port exists to solve.
+//
+// What is declared below is the optional-value vocabulary. A required value is
+// read through a typed accessor, which converts it and records whether it
+// converted; a handler then asks once whether the binding held. An optional
+// one cannot be read that way: the accessor would record a failure for a
+// request that is perfectly correct, and the failure would sit on the request
+// for the rest of the handler. So an optional value is asked about first, and
+// read only if it is there.
+
+// has_path reports whether a path wildcard was captured.
+//
+// This is the read a remainder needs. A route like
+//
+//	route GET "/docs/{path...}" => docs_page
+//
+// matches "/docs" and "/docs/a/b/c.html" alike, and the second leaves the
+// wildcard empty. Asking is the only way to tell the two apart, because both
+// are the same request as far as the router is concerned.
+//
+//	let path: string = ""
+//	if has_path(req, "path") {
+//	    path = param(req, "path")
+//	}
+extern fn has_path(req: Request, name: string) bool
+
+// has_query reports whether a query parameter was sent, which distinguishes a
+// client that filtered a listing from one that asked for all of it.
+extern fn has_query(req: Request, name: string) bool
+
+// has_header reports whether a header was sent.
+extern fn has_header(req: Request, name: string) bool
+
+// has_field reports whether a JSON body carries a field. A field that is present
+// and null is present; a field that was not sent is not.
+extern fn has_field(req: Request, name: string) bool
+
+// query_default returns a query parameter, or a default when the client did not
+// send one. Nothing is recorded, because a client that left a filter out has
+// asked a valid question rather than a malformed one.
+//
+//	let limit: u32 = 20
+//	if has_query(req, "limit") {
+//	    limit = query_u32(req, "limit")
+//	}
+//	if !bind_ok(req) {
+//	    return error_json(400, bind_error(req))
+//	}
+//
+// The typed accessor is still what converts the value, and still what records a
+// failure, because a limit that is not a number is a bad request whichever way
+// the handler arrives at it.
+extern fn query_default(req: Request, name: string, fallback: string) string
+
+// The composed reads. A handler that wants the common case in one line reaches
+// for these; the compiler-known accessors stay the primitives underneath.
+
+// A page reads a remainder, falling back to an index when the path is empty.
+// A documentation site is a directory of pages, and its root is the page that
+// lists the others rather than a page of its own.
+fn page_path(req: Request) string {
+    if has_path(req, "path") {
+        return param(req, "path")
+    }
+    return "index"
+}
+
+// A listing reads a limit, capped at a ceiling. A client may ask for fewer
+// items than the page size or as many more as it likes; a limit above the
+// ceiling is not a request the service can serve, and is answered with the
+// ceiling rather than with a refusal.
+fn page_limit(req: Request, ceiling: u32) u32 {
+    if !has_query(req, "limit") {
+        return ceiling
+    }
+    let asked: u32 = query_u32(req, "limit")
+    if asked == 0 || asked > ceiling {
+        return ceiling
+    }
+    return asked
+}
+
+// A search reads a query, refusing an empty one. Unlike a limit, an empty
+// search is not a request for everything: on a registry it would list every
+// module ever published, which is a page nobody wants and a cost nobody should
+// pay for an accidental call.
+fn search_query(req: Request) string {
+    if !has_query(req, "q") {
+        return ""
+    }
+    return query_str(req, "q")
+}
