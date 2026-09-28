@@ -53,6 +53,10 @@ type TypeMapper struct {
 	// stopped at the first name would type every field of every HAL as an opaque
 	// pointer, which is the one answer that is always wrong and never said so.
 	Aliases map[string]string
+	// Provided are mappings a plugin supplied, which win over the ones here: a
+	// plugin is a project saying what its own library's types mean, and it knows
+	// better than a mapping that has never seen that library.
+	Provided map[string]string
 	// Unreadable is a type the mapping does not know, in the order met.
 	Unreadable []string
 }
@@ -123,6 +127,12 @@ func (m *TypeMapper) TryRho(cType string) (string, bool) {
 // resolves to what it stands for, and a pointer decides what it points at before
 // anything else does.
 func (m *TypeMapper) resolve(cType string, depth int) (string, bool) {
+	// A mapping a plugin supplied is consulted first, and only for the type it
+	// names: a plugin adds what the generator does not know, it does not replace
+	// what it does.
+	if mapped, ok := m.Provided[normalise(strings.TrimSpace(cType))]; ok && mapped != "" {
+		return mapped, true
+	}
 	// The chain is bounded because a header can declare `typedef A B;` and
 	// `typedef B A;`, and a mapper that followed one forever would hang a build
 	// over a header a compiler would accept.
@@ -243,17 +253,9 @@ func normalise(cType string) string {
 /*  Naming                                                                     */
 /* -------------------------------------------------------------------------- */
 
-// RhoName is the name a C declaration is given in a generated interface: the C
-// name, with a project-specific prefix kept, so a binding of two libraries does
-// not declare the same name twice.
-func RhoName(cName string) string {
-	return cName
-}
-
-// StructName is the name a C struct is given as a Rho type. A C name is already
-// distinct within a library, and renaming it would make the binding harder to
-// read against the header it came from.
-func StructName(cName string) string { return cName }
+/* -------------------------------------------------------------------------- */
+/*  Enumeration members                                                        */
+/* -------------------------------------------------------------------------- */
 
 // EnumMembers are the names a C enumeration's members are given in Rho.
 //

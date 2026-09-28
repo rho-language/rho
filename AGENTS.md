@@ -36,7 +36,7 @@ go build -o ./bin/rho ./cmd/rho
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-doc`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-test`
+- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-doc`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
 - `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
@@ -106,6 +106,23 @@ cd <project-dir>/build/generated/c && cmake -B out && cmake --build out
 A target may ask for a port, which is how a project gets what only a host can
 supply: `logemit` for logging, `fsstore` for a module store, `docemit` for the
 documentation generator, `kconfig` for a resolved configuration.
+
+## Targets
+
+A build for a dev board needs facts that belong to the board: which compiler,
+where the flash is, and which pin the LED is on. Those live in specs the
+`rho-target` component carries, and it writes the CMake and the linker script a
+build reads from them:
+
+```sh
+rho target list                          # what the component knows
+rho target show pico                     # one resolved target
+rho target generate . --target pico      # write cmake/ into the project
+```
+
+The generated project includes `cmake/toolchain.cmake` before `project()` and
+`cmake/target.cmake` after it, when they are there. A project that targets the
+host has neither and builds as it did.
 
 ## Configuration
 

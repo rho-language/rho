@@ -1,0 +1,51 @@
+{
+  "kind": "board",
+  "name": "esp32c3",
+  "comment": "An ESP32-C3 on its development board: a single-core RISC-V chip with Wi-Fi and Bluetooth. ESP-IDF is the platform here rather than a bare linker script, because the chip's flash is reached through a partition table and its radio needs the IDF's own startup, so the build is a CMake ESP-IDF project and the HAL implementations are robohub-esp32's.",
+  "core": "riscv32imc",
+  "vendor_library": "robohub_esp32",
+  "toolchain": {
+    "compiler": "riscv32-unknown-elf-gcc",
+    "linker": "riscv32-unknown-elf-gcc",
+    "objcopy": "riscv32-unknown-elf-objcopy",
+    "size": "riscv32-unknown-elf-size",
+    "flags": [
+      "-march=rv32imc",
+      "-mabi=ilp32",
+      "-ffunction-sections",
+      "-fdata-sections"
+    ]
+  },
+  "defines": [
+    "ESP_PLATFORM=1",
+    "CONFIG_IDF_TARGET_ESP32C3=1"
+  ],
+  "memory": {
+    "flash": {
+      "link": false,
+      "origin": "0x00010000",
+      "length": "0x100000",
+      "comment": "the app partition of the flash: ESP-IDF writes the program here and reads it back through the cache at 0x42000000, which is the address the linker script uses"
+    },
+    "ram": {
+      "link": false,
+      "origin": "0x3FC80000",
+      "length": "0x64000",
+      "comment": "400 KB of SRAM"
+    },
+    "extra": {
+      "irom": {
+        "origin": "0x42000000",
+        "length": "0x400000",
+        "link": false,
+        "comment": "the flash seen through the instruction cache"
+      }
+    }
+  },
+  "flash": {
+    "tool": "esptool.py",
+    "command": "esptool.py --chip esp32c3 write_flash 0x10000 {binary}",
+    "offset": "0x10000",
+    "comment": "the offset is the app partition's, and an IDF project also writes a bootloader and a partition table"
+  }
+}

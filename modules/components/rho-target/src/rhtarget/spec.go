@@ -1,0 +1,480 @@
+//
+// @file spec.go
+// @brief Board and architecture specifications, and how they compose.
+//
+// A build for a dev board needs facts that belong to the board and not to the
+// project: which compiler, which flags, where the flash is, how much RAM there
+// is, and which pin is the LED. Those facts are the same for every project that
+// targets the board, so they live in a spec rather than in every project.
+//
+// A spec is written once and refers to another: a board names the chip it
+// carries, and a chip names the architecture it is built as.
+//
+//	stm32f4        the chip: core, toolchain, memory map
+//	pico           the board: the chip, the vendor library, the pin map
+//	esp32c3        a chip that is also its own board
+//
+// Resolution walks that chain and folds it into one spec, so a caller reads a
+// single answer: a board with the toolchain of its chip and the flags of its
+// architecture.
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: MIT
+//
+
+package rhtarget
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// Kind is what a spec describes.
+type Kind string
+
+const (
+	// KindArch is an architecture: the flags every core of it is built with.
+	KindArch Kind = "arch"
+	// KindMCU is a chip: a core, a toolchain and a memory map.
+	KindMCU Kind = "mcu"
+	// KindBoard is a board: a chip, the library that implements its interfaces,
+	// and the pins a program names.
+	KindBoard Kind = "board"
+)
+
+// Spec is one target: an architecture, a chip or a board.
+type Spec struct {
+	Kind    Kind   `json:"kind"`
+	Name    string `json:"name"`
+	Comment string `json:"comment,omitempty"`
+	// Arch is the architecture a chip is built as, and the spec it inherits its
+	// flags from.
+	Arch string `json:"arch,omitempty"`
+	// MCU is the chip a board carries.
+	MCU string `json:"mcu,omitempty"`
+	// Core is the processor core, which is a fact about the chip that a program
+	// may want to know.
+	Core string `json:"core,omitempty"`
+	// Toolchain is how the chip is compiled and linked.
+	Toolchain Toolchain `json:"toolchain,omitempty"`
+	// Memory is the address space a program is laid out in.
+	Memory Memory `json:"memory,omitempty"`
+	// Defines are the macros a build of this target always has.
+	Defines []string `json:"defines,omitempty"`
+	// Flags are added to the compiler's, after the architecture's.
+	Flags []string `json:"flags,omitempty"`
+	// LinkerScript names the script a project supplies, when the target needs one
+	// that is not generated from the memory map.
+	LinkerScript string `json:"linker_script,omitempty"`
+	// VendorLibrary is the library that implements this board's interfaces, which
+	// is what a build links.
+	VendorLibrary string `json:"vendor_library,omitempty"`
+	// Pins are the names a program uses for the pins of a board.
+	Pins map[string]Pin `json:"pins,omitempty"`
+	// Peripherals are the interfaces a board brings out, and the pins they are on.
+	Peripherals map[string]Peripheral `json:"peripherals,omitempty"`
+	// Flash is how a built program is written to the board.
+	Flash Flash `json:"flash,omitempty"`
+	// Source is the file the spec was read from, so a report can say where it
+	// came from.
+	Source string `json:"-"`
+}
+
+// Toolchain is the programs and flags a chip is built with.
+type Toolchain struct {
+	// Compiler, Linker, Objcopy and Size are the programs. A program named
+	// without a path is found on PATH.
+	Compiler string `json:"compiler,omitempty"`
+	Linker   string `json:"linker,omitempty"`
+	Objcopy  string `json:"objcopy,omitempty"`
+	Size     string `json:"size,omitempty"`
+	// Flags are the architecture's own: the ones that say what the core is.
+	Flags []string `json:"flags,omitempty"`
+}
+
+// Memory is the address space of a chip.
+type Memory struct {
+	// Flash is where a program is stored and executed from.
+	Flash Region `json:"flash,omitempty"`
+	// RAM is where a program's data lives.
+	RAM Region `json:"ram,omitempty"`
+	// Extra are the further regions a chip has, such as the core-coupled memory
+	// of an STM32 or the second bank of an RP2040, keyed by the name a program
+	// refers to them by.
+	Extra map[string]Region `json:"extra,omitempty"`
+}
+
+// Region is one region of memory: where it starts and how long it is, as the
+// numbers a linker script is written with.
+type Region struct {
+	Origin string `json:"origin"`
+	Length string `json:"length"`
+	// Comment says what the region is for, when its name does not.
+	Comment string `json:"comment,omitempty"`
+	// Link says whether a program may be laid out in this region. A region that
+	// is real memory is, and a window onto another region is not: a cache that
+	// shows the flash at another address is not somewhere to put a section.
+	// Absent means yes, which is what a region of memory is.
+	Link *bool `json:"link,omitempty"`
+}
+
+// Linkable reports whether a program may be laid out in this region.
+func (r Region) Linkable() bool { return r.Link == nil || *r.Link }
+
+// Pin is one pin of a board.
+type Pin struct {
+	// Name is the board's own name for it, such as GP25, which is what a program
+	// writes.
+	Name string `json:"name,omitempty"`
+	// Role is what the board wires it to, such as led or uart_tx. A pin with no
+	// role is one the board brings out and does not use.
+	Role string `json:"role,omitempty"`
+	// Comment says what is on the board at that pin, such as an LED.
+	Comment string `json:"comment,omitempty"`
+}
+
+// Peripheral is an interface a board brings out.
+type Peripheral struct {
+	// Instance is the hardware instance, such as i2c0, which is the name a board
+	// registers with the platform.
+	Instance string `json:"instance,omitempty"`
+	// Pins are the pins it is on, by their role in the interface: sda, scl, tx,
+	// rx, sck, mosi, miso.
+	Pins map[string]string `json:"pins,omitempty"`
+	// Comment says what it is connected to, such as an on-board sensor.
+	Comment string `json:"comment,omitempty"`
+}
+
+// Flash is how a program reaches a board.
+type Flash struct {
+	// Tool is the program that writes a built binary: openocd, picotool,
+	// esptool.py.
+	Tool string `json:"tool,omitempty"`
+	// Command is how the tool is invoked, with the binary named as {binary} and
+	// the spec's own values available as {name} where a caller has one.
+	Command string `json:"command,omitempty"`
+	// Offset is where a program is written, for a tool that writes at an address
+	// rather than into a named region.
+	Offset string `json:"offset,omitempty"`
+	// Comment says what has to be true for flashing to work, such as a boot mode.
+	Comment string `json:"comment,omitempty"`
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Reading                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// Library is where the specs a component ships live.
+type Library struct {
+	// Root is the directory the specs are read from.
+	Root string
+	// specs are the specs that were read, by name.
+	specs map[string]Spec
+	// Diagnostics is what was wrong with them.
+	Diagnostics []Diagnostic
+}
+
+// Diagnostic is a spec that could not be read, or a reference that does not
+// resolve.
+type Diagnostic struct {
+	Path    string
+	Message string
+}
+
+func (d Diagnostic) String() string {
+	if d.Path == "" {
+		return d.Message
+	}
+	return d.Path + ": " + d.Message
+}
+
+// Load reads every spec in a directory tree.
+//
+// A spec that cannot be read is reported and the rest are read: one board with a
+// mistake in it must not cost a project the boards that are right.
+func Load(root string) *Library {
+	library := &Library{Root: root, specs: map[string]Spec{}}
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".json") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			library.Diagnostics = append(library.Diagnostics, Diagnostic{Path: path, Message: readErr.Error()})
+			return nil
+		}
+		spec := Spec{}
+		if unmarshalErr := json.Unmarshal(data, &spec); unmarshalErr != nil {
+			library.Diagnostics = append(library.Diagnostics, Diagnostic{Path: path, Message: "cannot read the spec: " + unmarshalErr.Error()})
+			return nil
+		}
+		if spec.Name == "" {
+			library.Diagnostics = append(library.Diagnostics, Diagnostic{Path: path, Message: "a spec names nothing"})
+			return nil
+		}
+		spec.Source = path
+		if _, seen := library.specs[spec.Name]; seen {
+			library.Diagnostics = append(library.Diagnostics, Diagnostic{
+				Path: path, Message: fmt.Sprintf("a spec named %q is already declared; the first one is used", spec.Name)})
+			return nil
+		}
+		library.specs[spec.Name] = spec
+		return nil
+	})
+	return library
+}
+
+// Effective are every spec, resolved, in name order: what a listing shows is
+// what each target amounts to rather than what its own file happens to say.
+func (l *Library) Effective() []Spec {
+	resolved := make([]Spec, 0, len(l.specs))
+	for _, name := range l.Names() {
+		spec, diagnostics := l.Resolve(name)
+		if len(diagnostics) > 0 {
+			continue
+		}
+		resolved = append(resolved, spec)
+	}
+	return resolved
+}
+
+// Names are the specs that were read, sorted, which is what a listing shows.
+func (l *Library) Names() []string {
+	names := make([]string, 0, len(l.specs))
+	for name := range l.specs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Get returns a spec by name.
+func (l *Library) Get(name string) (Spec, bool) {
+	spec, found := l.specs[name]
+	return spec, found
+}
+
+// Boards are the specs that describe a board.
+func (l *Library) Boards() []Spec {
+	boards := []Spec{}
+	for _, name := range l.Names() {
+		if l.specs[name].Kind == KindBoard {
+			boards = append(boards, l.specs[name])
+		}
+	}
+	return boards
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Resolving                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// Resolve folds a board, the chip it carries and the architecture it is built as
+// into one spec, which is what a generator reads.
+//
+// The chain is followed by name, and a name that does not resolve is reported
+// rather than ignored: a board whose chip is missing is a board whose toolchain
+// is missing, and a build with no compiler named is a build that fails later
+// with a worse error.
+func (l *Library) Resolve(name string) (Spec, []Diagnostic) {
+	diagnostics := []Diagnostic{}
+	spec, found := l.Get(name)
+	if !found {
+		return Spec{}, []Diagnostic{{Message: fmt.Sprintf("no spec named %q; this component knows %s",
+			name, strings.Join(l.Names(), ", "))}}
+	}
+
+	chain := []Spec{}
+	seen := map[string]bool{}
+	for current := spec; ; {
+		if seen[current.Name] {
+			diagnostics = append(diagnostics, Diagnostic{
+				Path: current.Source, Message: fmt.Sprintf("%q refers to itself; the chain is broken here", current.Name)})
+			break
+		}
+		seen[current.Name] = true
+		chain = append(chain, current)
+
+		next := current.MCU
+		if next == "" {
+			next = current.Arch
+		}
+		if next == "" {
+			break
+		}
+		parent, parentFound := l.Get(next)
+		if !parentFound {
+			diagnostics = append(diagnostics, Diagnostic{
+				Path:    current.Source,
+				Message: fmt.Sprintf("%q names %q, which no spec declares", current.Name, next),
+			})
+			break
+		}
+		current = parent
+	}
+
+	// The chain is written child first, and a child's facts win: a board's flags
+	// are added after its chip's, and the board's memory map is the one a program
+	// is laid out in.
+	resolved := chain[0]
+	for _, parent := range chain[1:] {
+		resolved = merge(parent, resolved)
+	}
+	resolved.Kind = spec.Kind
+	resolved.Name = spec.Name
+	resolved.Source = spec.Source
+	return resolved, diagnostics
+}
+
+// merge folds a parent spec into a child, with the child's own facts winning.
+func merge(parent, child Spec) Spec {
+	if child.Core == "" {
+		child.Core = parent.Core
+	}
+	if child.Arch == "" {
+		child.Arch = parent.Arch
+	}
+	if child.MCU == "" {
+		child.MCU = parent.MCU
+	}
+	if child.Toolchain.Compiler == "" {
+		child.Toolchain.Compiler = parent.Toolchain.Compiler
+	}
+	if child.Toolchain.Linker == "" {
+		child.Toolchain.Linker = parent.Toolchain.Linker
+	}
+	if child.Toolchain.Objcopy == "" {
+		child.Toolchain.Objcopy = parent.Toolchain.Objcopy
+	}
+	if child.Toolchain.Size == "" {
+		child.Toolchain.Size = parent.Toolchain.Size
+	}
+	if len(child.Toolchain.Flags) == 0 {
+		child.Toolchain.Flags = parent.Toolchain.Flags
+	} else {
+		child.Toolchain.Flags = append(append([]string{}, parent.Toolchain.Flags...), child.Toolchain.Flags...)
+	}
+	if child.Memory.Flash.Origin == "" {
+		child.Memory.Flash = parent.Memory.Flash
+	}
+	if child.Memory.RAM.Origin == "" {
+		child.Memory.RAM = parent.Memory.RAM
+	}
+	if len(parent.Memory.Extra) > 0 {
+		extra := map[string]Region{}
+		for name, region := range parent.Memory.Extra {
+			extra[name] = region
+		}
+		for name, region := range child.Memory.Extra {
+			extra[name] = region
+		}
+		child.Memory.Extra = extra
+	}
+	child.Defines = append(append([]string{}, parent.Defines...), child.Defines...)
+	child.Flags = append(append([]string{}, parent.Flags...), child.Flags...)
+	if child.Flash.Tool == "" {
+		child.Flash = parent.Flash
+	}
+	return child
+}
+
+// AllFlags are every flag a target is built with, in the order a compiler reads
+// them: the architecture's, then the chip's.
+func (s Spec) AllFlags() []string {
+	return append(append([]string{}, s.Toolchain.Flags...), s.Flags...)
+}
+
+// Regions are every memory region a target has, in the order a linker script
+// declares them: flash, then RAM, then the extra regions, sorted.
+func (s Spec) Regions() []NamedRegion {
+	regions := []NamedRegion{}
+	if s.Memory.Flash.Origin != "" {
+		regions = append(regions, NamedRegion{Name: "FLASH", Region: s.Memory.Flash, Kind: "flash"})
+	}
+	if s.Memory.RAM.Origin != "" {
+		regions = append(regions, NamedRegion{Name: "RAM", Region: s.Memory.RAM, Kind: "ram"})
+	}
+	names := make([]string, 0, len(s.Memory.Extra))
+	for name := range s.Memory.Extra {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		regions = append(regions, NamedRegion{
+			Name: strings.ToUpper(name), Region: s.Memory.Extra[name], Kind: "extra"})
+	}
+	return regions
+}
+
+// NamedRegion is one memory region with the name a linker script gives it.
+type NamedRegion struct {
+	Name   string
+	Region Region
+	Kind   string
+}
+
+// LinkRegions are the regions a linker script may use, in the order a script
+// declares them.
+func (s Spec) LinkRegions() []NamedRegion {
+	regions := []NamedRegion{}
+	for _, region := range s.Regions() {
+		if region.Region.Linkable() {
+			regions = append(regions, region)
+		}
+	}
+	return regions
+}
+
+// PinNames are a board's pins in the order a person reads them: by the number
+// the board gives them, so GP2 comes before GP16.
+func (s Spec) PinNames() []string {
+	names := make([]string, 0, len(s.Pins))
+	for name := range s.Pins {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		_, leftNumber := trailingNumber(names[i])
+		_, rightNumber := trailingNumber(names[j])
+		// Two pins of the same board are read by their numbers: a board names
+		// them GP2 and GP16, and a person reads the second after the first.
+		if leftNumber >= 0 && rightNumber >= 0 && leftNumber != rightNumber {
+			return leftNumber < rightNumber
+		}
+		return names[i] < names[j]
+	})
+	return names
+}
+
+// trailingNumber is the number a pin name ends in, and where the name before it
+// stops, or -1 when it does not end in one.
+func trailingNumber(name string) (prefix string, number int) {
+	index := len(name)
+	for index > 0 && name[index-1] >= '0' && name[index-1] <= '9' {
+		index--
+	}
+	if index == len(name) {
+		return name, -1
+	}
+	value := 0
+	for _, digit := range name[index:] {
+		value = value*10 + int(digit-'0')
+	}
+	return name[:index], value
+}
+
+// Pin is the pin a board wires to a role, such as the one it calls led.
+func (s Spec) Pin(role string) (Pin, bool) {
+	for _, pin := range s.Pins {
+		if pin.Role == role {
+			return pin, true
+		}
+	}
+	return Pin{}, false
+}

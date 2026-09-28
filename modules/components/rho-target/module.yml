@@ -1,0 +1,48 @@
+module:
+  name: rho-target
+  type: component
+  version: 0.1.0
+  description: Board and architecture specifications, and the CMake that builds for them
+  command: target
+  import_path: rho.target
+
+main: rho-target
+
+features:
+  - embedded
+  - toolchain
+  - linker
+
+deps:
+  rho-log: ">=0.1.0"
+
+package:
+  kind: component
+  binary: true
+  import_path: rho.target
+  interface:
+    - src/target.rho
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+    - targets
+  require:
+    - module.yml
+    - README.md
+    - src
+
+# The hook a project extends: a board this component has never heard of is a spec
+# a plugin supplies, and the generator writes the same CMake from it.
+provides:
+  hooks:
+    - spec
+
+docs:
+  title: Board and architecture specs
+  section: components
+  order: "70"
+  index: docs/index.md
+  sources:
+    - docs/index.md

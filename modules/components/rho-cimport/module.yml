@@ -34,17 +34,11 @@ package:
     - README.md
     - src
 
-# The hooks a generation goes through. A generator is the one place a project
-# is most likely to want its own rules, so what may be changed is declared: a
-# type mapping, an include that is followed, and a shim function.
+# The hook a generation goes through. A library's own types are the thing a
+# generator cannot know, so a plugin answers `map` with the mappings for them.
 provides:
   hooks:
-    # Once, per header read, before its declarations are mapped.
-    - parse
-    # Once, before anything is written, with the declarations that were read.
     - map
-    # Once, after the interface is written, with the files that were written.
-    - write
 
 docs:
   title: C import bridge

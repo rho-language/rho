@@ -23,12 +23,14 @@
 package cimport
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"rho/src/deps"
+	"rho/src/plugins"
 )
 
 // Options are what a generation is asked for.
@@ -50,6 +52,40 @@ type Options struct {
 	Force bool
 	// Check reports what would be written without writing it.
 	Check bool
+	// Plugins are the extensions this run hands the declarations to. A run with
+	// none maps the types it knows, which is most runs.
+	Plugins []plugins.Plugin
+}
+
+// ComponentName is this component's own name, which is what a plugin has to say
+// in order to be loaded by it.
+const ComponentName = "rho-cimport"
+
+// HookMap is the hook a plugin answers to add a type mapping: it runs once, with
+// the declarations that were read, and answers with the types it knows.
+const HookMap = "map"
+
+// MapRequest is what a plugin is asked about the declarations a run read.
+type MapRequest struct {
+	// Headers are the files that were read.
+	Headers []string `json:"headers"`
+	// Declarations are what they declared, which is what a plugin needs to see
+	// before it can say what a type means.
+	Declarations []MapDeclaration `json:"declarations"`
+}
+
+// MapDeclaration is one declaration as a plugin sees it.
+type MapDeclaration struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Type   string `json:"type,omitempty"`
+	Result string `json:"result,omitempty"`
+}
+
+// MapResponse is what a plugin answers the map hook with: C types and what they
+// are in Rho.
+type MapResponse struct {
+	Types map[string]string `json:"types"`
 }
 
 // Result is what a generation produced.
@@ -103,6 +139,7 @@ func Generate(options Options) (Result, error) {
 	result.Declarations = len(header.Decls)
 
 	mapper := NewTypeMapper(header)
+	mapper.Provided = runMap(options.Plugins, header)
 	binding := &Interface{Module: options.Module, Header: header, Mapper: mapper}
 	binding.Shims = collectShims(header)
 	result.Shims = len(binding.Shims)
@@ -137,6 +174,36 @@ func Generate(options Options) (Result, error) {
 		result.Files = append(result.Files, name)
 	}
 	return result, nil
+}
+
+// runMap is the hook a plugin adds a type mapping through.
+//
+// The mapping is what a plugin knows about a library the generator has never
+// seen: a vendor type the header names and the language has no primitive for.
+// A plugin that fails is reported and its mappings are left out.
+func runMap(found []plugins.Plugin, header Header) map[string]string {
+	provided := map[string]string{}
+	if len(found) == 0 {
+		return provided
+	}
+	payload := MapRequest{Headers: header.Includes}
+	for _, decl := range header.Decls {
+		payload.Declarations = append(payload.Declarations, MapDeclaration{
+			Kind: string(decl.Kind), Name: decl.Name, Type: decl.Type, Result: decl.Result,
+		})
+	}
+
+	answer := plugins.RunHooks(found, ComponentName, HookMap, payload)
+	for _, raw := range answer.Payload {
+		response := MapResponse{}
+		if err := json.Unmarshal(raw, &response); err != nil {
+			continue
+		}
+		for cType, rhoType := range response.Types {
+			provided[cType] = rhoType
+		}
+	}
+	return provided
 }
 
 // includeSearch is where a header is looked for: the project itself, then the

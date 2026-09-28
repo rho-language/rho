@@ -18,12 +18,15 @@
 package cimport
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"rho/src/deps"
+	"rho/src/plugins"
 )
 
 // write puts a file below a root, creating the directories it needs.
@@ -215,4 +218,119 @@ func TestReadDeclaredNamesWhatAProjectLinks(t *testing.T) {
 			t.Errorf("expected %s among %v", want, names)
 		}
 	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The hook a plugin maps types through                                       */
+/* -------------------------------------------------------------------------- */
+
+// mappingPlugin is a plugin that answers the map hook with one type, run as a
+// helper process: a plugin is a program, and a test that faked one would test
+// the fake.
+func mappingPlugin(t *testing.T) plugins.Plugin {
+	t.Helper()
+	root := t.TempDir()
+	pluginRoot := filepath.Join(root, "vendor-types")
+	if err := os.MkdirAll(pluginRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(executable, filepath.Join(pluginRoot, "helper")); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	manifest := "module:\n" +
+		"  name: vendor-types\n" +
+		"  type: plugin\n" +
+		"  version: 0.1.0\n" +
+		"\n" +
+		"main: vendor-types\n" +
+		"\n" +
+		"extends: " + ComponentName + "\n" +
+		"\n" +
+		"hooks:\n  - " + HookMap + "\n" +
+		"\n" +
+		"commands:\n  - name: map\n" +
+		"    run: helper -test.run TestMapHelperProcess\n" +
+		"    hook: " + HookMap + "\n"
+	if err := os.WriteFile(filepath.Join(pluginRoot, "module.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	found := plugins.Source{Tree: root, TrustTree: true}.Discover(ComponentName)
+	if len(found) != 1 {
+		t.Fatalf("expected the plugin to be discovered, got %+v", found)
+	}
+	return found[0]
+}
+
+func TestAPluginCanSayWhatAVendorTypeIs(t *testing.T) {
+	// A vendor type is the one thing a generator cannot know: the header names it
+	// and the language has no primitive for it, so a plugin that knows the library
+	// says what it means.
+	root := project(t, "")
+	write(t, root, "include/robot.h", `typedef uint32_t rh_u32;
+
+typedef int vendor_handle_t;
+
+int32_t robot_init(vendor_handle_t handle);
+`)
+	options := Options{
+		Root: root, Headers: []string{"robot.h"}, IncludeDirs: []string{"include"},
+		Library: "robot", Force: true, Plugins: []plugins.Plugin{mappingPlugin(t)},
+	}
+	if _, err := Generate(options); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	source, err := os.ReadFile(filepath.Join(root, "src", "ffi.rho"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "extern fn robot_init(handle: i64) i32") {
+		t.Fatalf("expected the plugin's mapping to answer, got:\n%s", source)
+	}
+}
+
+// TestMapHelperProcess is not a test: it is the program a test plugin runs. It
+// answers the map hook with one type mapping, and does nothing otherwise.
+func TestMapHelperProcess(t *testing.T) {
+	if os.Getenv("RHO_PLUGIN") == "" {
+		t.Skip("not running as a plugin helper")
+	}
+	payload, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(3)
+	}
+	// The protocol is an envelope with the payload inside it, so the payload is
+	// read after the envelope: decoding the whole thing finds every field empty.
+	envelope := struct {
+		Hook    string          `json:"hook"`
+		Payload json.RawMessage `json:"payload"`
+	}{}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		os.Exit(4)
+	}
+	request := MapRequest{}
+	if err := json.Unmarshal(envelope.Payload, &request); err != nil {
+		os.Exit(4)
+	}
+	// A plugin is told what was declared, which is what it maps from.
+	if len(request.Declarations) == 0 {
+		os.Exit(5)
+	}
+	body, err := json.Marshal(MapResponse{Types: map[string]string{"vendor_handle_t": "i64"}})
+	if err != nil {
+		os.Exit(6)
+	}
+	answer := struct {
+		Version int             `json:"version"`
+		Payload json.RawMessage `json:"payload"`
+	}{Version: 1, Payload: body}
+	encoded, err := json.Marshal(answer)
+	if err != nil {
+		os.Exit(6)
+	}
+	os.Stdout.Write(encoded)
+	os.Exit(0)
 }

@@ -1,0 +1,25 @@
+{
+  "kind": "board",
+  "name": "pico",
+  "comment": "The Raspberry Pi Pico, an RP2040 on a board. The HAL implementations the platform-agnostic interfaces resolve to are robohub-pico's, which is what a build links.",
+  "mcu": "rp2040",
+  "vendor_library": "robohub_pico",
+  "pins": {
+    "gp0": { "name": "GP0", "role": "uart0_tx" },
+    "gp1": { "name": "GP1", "role": "uart0_rx" },
+    "gp2": { "name": "GP2", "role": "i2c1_sda" },
+    "gp3": { "name": "GP3", "role": "i2c1_scl" },
+    "gp4": { "name": "GP4", "role": "i2c0_sda" },
+    "gp5": { "name": "GP5", "role": "i2c0_scl" },
+    "gp16": { "name": "GP16", "role": "spi0_rx" },
+    "gp17": { "name": "GP17", "role": "spi0_cs" },
+    "gp18": { "name": "GP18", "role": "spi0_sck" },
+    "gp19": { "name": "GP19", "role": "spi0_tx" },
+    "gp25": { "name": "GP25", "role": "led", "comment": "the on-board LED" }
+  },
+  "peripherals": {
+    "uart0": { "instance": "uart0", "pins": { "tx": "GP0", "rx": "GP1" } },
+    "i2c0": { "instance": "i2c0", "pins": { "sda": "GP4", "scl": "GP5" } },
+    "spi0": { "instance": "spi0", "pins": { "rx": "GP16", "cs": "GP17", "sck": "GP18", "tx": "GP19" } }
+  }
+}

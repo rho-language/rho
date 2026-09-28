@@ -17,16 +17,18 @@
 package rhokconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 
 	"rho/src/deps"
 	"rho/src/frontend/ast"
 	"rho/src/frontend/lexer"
 	"rho/src/frontend/parser"
+	"rho/src/plugins"
 )
 
 // Options are what a merge is asked for.
@@ -47,6 +49,48 @@ type Options struct {
 	Dialect string
 	// Overwrite writes over a file that is already there.
 	Overwrite bool
+	// Plugins are the extensions this run hands its resolved configuration to.
+	// A run with none writes the dialects it has, which is most runs.
+	Plugins []plugins.Plugin
+}
+
+// ComponentName is this component's own name, which is what a plugin has to say
+// in order to be loaded by it.
+const ComponentName = "rho-kconfig"
+
+// HookRender is the hook a plugin answers to render one more dialect: it runs
+// once, after the fragments are merged and before anything is written, and it
+// answers with files.
+const HookRender = "render"
+
+// RenderRequest is what a plugin is asked about a resolved configuration.
+type RenderRequest struct {
+	// Dialect is the one the build asked for, so a plugin can tell whether the
+	// project wants what it renders.
+	Dialect string `json:"dialect"`
+	// Values are the resolved symbols: what a symbol is, what it holds, and the
+	// layer that set it.
+	Values []RenderValue `json:"values"`
+}
+
+// RenderValue is one resolved symbol as a plugin sees it.
+type RenderValue struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	From  string `json:"from"`
+}
+
+// RenderResponse is what a plugin answers the render hook with: files to write
+// beside the dialect's own.
+type RenderResponse struct {
+	Files []RenderFile `json:"files"`
+}
+
+// RenderFile is one file a plugin contributes.
+type RenderFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 // Result is what a merge produced.
@@ -126,6 +170,12 @@ func Merge(options Options) (Result, error) {
 		return result, err
 	}
 	files := dialect.Files(configuration)
+	// A plugin renders one more dialect, and what it answers is written with the
+	// dialect's own: the run has one place that writes files, so a plugin cannot
+	// write somewhere a person who reads the manifest would not expect.
+	pluginFiles, diagnostics := runRender(options.Plugins, dialect.Name(), configuration)
+	files = append(files, pluginFiles...)
+	result.Diagnostics = append(result.Diagnostics, diagnostics...)
 
 	// The list of files the merge was asked for is written too, so a build can
 	// depend on a file that is always produced.
@@ -225,6 +275,46 @@ func literalOf(expression ast.Expr) (string, bool) {
 		return "n", true
 	}
 	return "", false
+}
+
+// runRender is the hook a plugin renders one more dialect through.
+//
+// A plugin that fails is reported and its files are left out: the configuration
+// the project declared is still written, which is the run a person asked for.
+func runRender(found []plugins.Plugin, dialect string, configuration Configuration) ([]File, []Diagnostic) {
+	files := []File{}
+	diagnostics := []Diagnostic{}
+	if len(found) == 0 {
+		return files, diagnostics
+	}
+	payload := RenderRequest{Dialect: dialect}
+	for _, name := range configuration.Names() {
+		value, _ := configuration.Get(name)
+		payload.Values = append(payload.Values, RenderValue{
+			Name: name, Type: string(value.Type), Value: value.Value, From: value.From,
+		})
+	}
+
+	answer := plugins.RunHooks(found, ComponentName, HookRender, payload)
+	for _, diagnostic := range answer.Diagnostics {
+		diagnostics = append(diagnostics, problem("", 0, diagnostic.String()))
+	}
+	for _, raw := range answer.Payload {
+		response := RenderResponse{}
+		if err := json.Unmarshal(raw, &response); err != nil {
+			diagnostics = append(diagnostics, problem("", 0,
+				fmt.Sprintf("a plugin answered the render hook with something that is not the protocol: %v", err)))
+			continue
+		}
+		for _, file := range response.Files {
+			if file.Path == "" {
+				diagnostics = append(diagnostics, problem("", 0, "a plugin answered the render hook with a file that has no path"))
+				continue
+			}
+			files = append(files, File{Path: file.Path, Content: file.Content})
+		}
+	}
+	return files, diagnostics
 }
 
 func contains(values []string, want string) bool {
@@ -333,7 +423,7 @@ func Set(root, defconfig, name, value string, configuration Configuration) (stri
 	for key := range values {
 		names = append(names, key)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 
 	var b strings.Builder
 	b.WriteString("# Set by rho kconfig. DO NOT EDIT BY HAND.\n")
@@ -341,21 +431,4 @@ func Set(root, defconfig, name, value string, configuration Configuration) (stri
 		fmt.Fprintf(&b, "%s=%s\n", key, values[key])
 	}
 	return b.String(), diagnostics
-}
-
-func sortStrings(values []string) {
-	for i := 1; i < len(values); i++ {
-		for j := i; j > 0 && values[j] < values[j-1]; j-- {
-			values[j], values[j-1] = values[j-1], values[j]
-		}
-	}
-}
-
-// quoteDefconfig wraps a value that holds a space, so a defconfig file stays
-// readable and a reader of it knows the value is the whole of the rest.
-func quoteDefconfig(value string) string {
-	if strings.ContainsAny(value, " \t") {
-		return strconv.Quote(value)
-	}
-	return value
 }

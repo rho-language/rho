@@ -30,6 +30,8 @@ import (
 
 	"rho/src/deps"
 
+	"rho/src/plugins"
+
 	"github.com/rho/rho-cimport/src/cimport"
 	rholog "github.com/rho/rho-log/src/logger"
 )
@@ -106,6 +108,8 @@ func generate(args []string, check bool) int {
 	sourceDir := fs.String("src", cimport.DefaultSourceDir, "where the generated files are written, relative to the project")
 	force := fs.Bool("force", false, "write over a generated file that is already there")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
+	usePlugins := fs.Bool("plugins", true, "run the plugins that extend this run")
+	noPlugins := fs.Bool("no-plugins", false, "do not run the plugins that extend this run")
 	library := fs.String("library", "", "the C library the project links, when the manifest does not say")
 	// Flags are read wherever they appear, because `rho cimport generate <path>
 	// --force` is what a person types first and a parser that stops at the path
@@ -139,7 +143,10 @@ func generate(args []string, check bool) int {
 		return 1
 	}
 
-	result, err := cimport.Generate(cimport.Options{
+	if *noPlugins {
+		*usePlugins = false
+	}
+	options := cimport.Options{
 		Root:        absolute,
 		Headers:     connection.Headers,
 		IncludeDirs: connection.IncludeDirs,
@@ -148,7 +155,13 @@ func generate(args []string, check bool) int {
 		Module:      *module,
 		Force:       *force,
 		Check:       check,
-	})
+	}
+	if *usePlugins {
+		// Only the installed plugins: a generation reads the tree it was pointed
+		// at, and a plugin from that tree is code from whoever wrote it.
+		options.Plugins = plugins.Source{RhoHome: deps.RhoHome()}.Discover(cimport.ComponentName)
+	}
+	result, err := cimport.Generate(options)
 	report(result, check)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho cimport:", err)
