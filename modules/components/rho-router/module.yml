@@ -1,0 +1,67 @@
+module:
+  name: rho-router
+  type: component
+  version: 0.1.0
+  description: HTTP routing, parameter binding and API metadata
+  command: route
+  import_path: rho.router
+
+main: rho-router
+
+features:
+  - routing
+  - openapi
+  - middleware
+
+# The component is published as a command and, in the same structure, as a Rho
+# library. What an application calls is the typed accessors the routing port
+# supplies; this library is the named, documented surface over them, so a
+# handler reads the same names whether it imports the library or reaches the
+# port directly.
+package:
+  kind: component
+  binary: true
+  import_path: rho.router
+  interface:
+    - src/rho.router.rho
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+# The parser and the AST are the compiler's, so what this component reads out of
+# a Rho source is what the compiler read. Depending on the toolchain rather than
+# re-lexing a second dialect is the whole reason the metadata here can be shared
+# with a build.
+deps:
+  rho-log: ">=0.1.0"
+
+# What a build that asks for routing reaches is the port the toolchain generates,
+# not this component's command: a generated project has to build with the Go
+# toolchain alone, so the router, the binding and the middleware are written into
+# it. The command is what a person reaches for, and what a plugin extends.
+provides:
+  hooks:
+    # Once over the whole service: what the module exposes, before it is
+    # written. A plugin may add operations, group them, or refuse one.
+    - spec
+    # Once per operation: the metadata for one route, before it is written. A
+    # plugin may fill in a description, a tag or a response it would otherwise
+    # have to be guessed at.
+    - operation
+    # Once over the emitted document: the finished OpenAPI, before it is
+    # written. A plugin may reorder, filter or add to it.
+    - openapi
+
+docs:
+  title: HTTP routing and API metadata
+  section: components
+  order: "45"
+  index: docs/index.md
+  sources:
+    - docs/index.md

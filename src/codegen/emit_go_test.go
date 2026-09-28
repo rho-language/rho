@@ -347,7 +347,7 @@ func TestEmitGoModWithRequirements(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestEmitGoServer(t *testing.T) {
-	out := EmitGoServer(greetIR())
+	out := EmitGoServer(greetIR(), ServerConfig{})
 	for _, want := range []string{
 		"package main",
 		"func StartServer(addr string) error",
@@ -407,7 +407,7 @@ func writeGoProject(t *testing.T, m ir.ModuleIR, includeServer bool) string {
 		"go.mod":     EmitGoMod(m),
 	}
 	if includeServer {
-		server := EmitGoServer(m)
+		server := EmitGoServer(m, ServerConfig{})
 		entry := EmitGoServerEntrypoint(m)
 		files["server.go"] = server
 		files["main.go"] = entry

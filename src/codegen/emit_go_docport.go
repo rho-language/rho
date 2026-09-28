@@ -30,12 +30,8 @@
 
 package codegen
 
-import (
-	"rho/src/ir"
-)
-
 // emitDocPort renders the implementation of the documentation port.
-func emitDocPort(m ir.ModuleIR) ([]string, string) {
+func emitDocPort(ctx PortContext) ([]string, string) {
 	imports := []string{
 		`"fmt"`,
 		`"os"`,

@@ -82,6 +82,53 @@ var ValidEntryKinds = []string{EntryKindFile, EntryKindDir}
 // hand-written host code.
 const PortFSStore = "fsstore"
 
+// PortHTTPRoute is the built-in HTTP routing port. It supplies typed parameter
+// binding, the router a server target dispatches through, and the middleware
+// pipeline wrapped around it, so a web project stays pure Rho.
+const PortHTTPRoute = "httproute"
+
+// Routers a server target may dispatch through. The standard library comes
+// first and is the default: http.ServeMux has carried method-and-wildcard
+// patterns since Go 1.22, so a generated service needs no module download to
+// route a request. The rest are adapters, and each costs a dependency the
+// project asked for rather than one it inherited.
+const (
+	// RouterServeMux is the Go 1.22+ http.ServeMux.
+	RouterServeMux = "serveMux"
+	// RouterChi is the go-chi/chi router.
+	RouterChi = "chi"
+	// RouterGin is the gin-gonic/gin router.
+	RouterGin = "gin"
+	// RouterFiber is the gofiber/fiber router.
+	RouterFiber = "fiber"
+)
+
+// ValidRouters lists every router a target may name.
+var ValidRouters = []string{RouterServeMux, RouterChi, RouterGin, RouterFiber}
+
+// Middleware names. Each one is a func(http.Handler) http.Handler the generated
+// server composes around the router, in the order the target lists them.
+const (
+	// MiddlewareRequestID stamps every request with an identifier and echoes
+	// it back, so a log line and a client report name the same request.
+	MiddlewareRequestID = "request_id"
+	// MiddlewareCORS answers preflight and sets the cross-origin headers.
+	MiddlewareCORS = "cors"
+	// MiddlewareRateLimit bounds how often one client may call the service.
+	MiddlewareRateLimit = "rate_limit"
+	// MiddlewareJWT verifies a bearer token and refuses the request without
+	// one that is valid.
+	MiddlewareJWT = "jwt"
+)
+
+// ValidMiddlewares lists every middleware a target may compose.
+var ValidMiddlewares = []string{
+	MiddlewareRequestID,
+	MiddlewareCORS,
+	MiddlewareRateLimit,
+	MiddlewareJWT,
+}
+
 // ProjectDescriptorSchema returns the schema for project.yml.
 func ProjectDescriptorSchema() Schema {
 	return Schema{
@@ -119,6 +166,22 @@ func ProjectDescriptorSchema() Schema {
 						// generates, so a Rho project stays pure Rho while its
 						// extern declarations are supplied by the compiler.
 						{Name: "ports", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+						// router names the HTTP router a server target
+						// dispatches through. It is what a target declares to
+						// ask for the routing port.
+						{Name: "router", Required: false, Kind: KindString, AllowedValues: ValidRouters},
+						// middleware lists the func(http.Handler) http.Handler
+						// wrappers composed around the router, outermost first.
+						// Every option a middleware understands has a default,
+						// so a project names one and overrides what it cares
+						// about.
+						{Name: "middleware", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+							Kind: KindMap,
+							Fields: []FieldSchema{
+								{Name: "name", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidMiddlewares},
+								{Name: "options", Required: false, Kind: KindMap},
+							},
+						}},
 						// templates names template files carried into the
 						// generated project, each resolved from
 						// <project root>/templates/<name>.<ext>.

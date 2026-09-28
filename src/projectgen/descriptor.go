@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"rho/src/codegen"
 	"rho/src/schema"
 	"rho/src/yaml"
 )
@@ -90,6 +91,12 @@ type Target struct {
 	// Ports names built-in port implementations the backend generates, so a
 	// module's extern declarations are supplied without shipping host code.
 	Ports []string
+	// Router names the HTTP router a server target dispatches through. Empty
+	// means the backend's own router, which needs no module download.
+	Router string
+	// Middleware lists the wrappers composed around the router, outermost
+	// first, in the order the target declared them.
+	Middleware []Middleware
 	// Templates are page templates carried into the generated project, which
 	// keeps markup out of the Rho sources.
 	Templates []Template
@@ -99,12 +106,54 @@ type Target struct {
 	Files []DescriptorFile
 }
 
+// Middleware is one entry of a target's middleware pipeline: the wrapper to
+// compose, and the settings it is composed with.
+type Middleware struct {
+	// Name is the wrapper: request_id, cors, rate_limit or jwt.
+	Name string
+	// Options configures the wrapper. Every option a middleware understands
+	// has a default, so a target names one and overrides what it cares about.
+	Options map[string]string
+}
+
 // TargetKind returns the effective kind, defaulting to cli.
 func (t Target) TargetKind() string {
 	if t.Kind == "" {
 		return "cli"
 	}
 	return t.Kind
+}
+
+// RoutingPortName is the port that supplies a router, the typed parameter
+// binding and the middleware pipeline.
+const RoutingPortName = schema.PortHTTPRoute
+
+// EffectivePorts are the ports the generator renders for this target: the ones
+// it declared, plus the routing port when it named a router or composed a
+// middleware. Asking for a router is how a target asks for the routing port, so
+// the two cannot drift apart.
+func (t Target) EffectivePorts() []string {
+	out := make([]string, 0, len(t.Ports)+1)
+	for _, name := range t.Ports {
+		if name == RoutingPortName {
+			continue
+		}
+		out = append(out, name)
+	}
+	if t.Router != "" || len(t.Middleware) > 0 {
+		out = append(out, RoutingPortName)
+	}
+	return out
+}
+
+// RouterRequirement returns the go.mod line the target's router adapter needs,
+// or "" when it routes through the standard library. A project that chooses an
+// adapter gets its dependency written for it.
+func (t Target) RouterRequirement() string {
+	if t.Router == "" {
+		return ""
+	}
+	return codegen.RouterRequirement(t.Router)
 }
 
 // Descriptor is a parsed and validated project descriptor.
@@ -178,6 +227,8 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 			Requires:    []string{},
 			BuildFlags:  []string{},
 			Ports:       []string{},
+			Router:      targetNode.Map["router"].Str,
+			Middleware:  []Middleware{},
 			Templates:   []Template{},
 			Copy:        []CopyEntry{},
 			Files:       []DescriptorFile{},
@@ -239,6 +290,41 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 			if item.Str != "" {
 				target.Ports = append(target.Ports, item.Str)
 			}
+		}
+
+		// The middleware pipeline, in the order it was declared. A wrapper with
+		// no options is composed with that wrapper's defaults, so the common
+		// case stays a single name.
+		seenMiddleware := map[string]bool{}
+		for _, entry := range targetNode.Map["middleware"].List {
+			if entry.Kind != yaml.KindMap {
+				continue
+			}
+			item := Middleware{Name: entry.Map["name"].Str, Options: map[string]string{}}
+			if item.Name == "" {
+				return nil, fmt.Errorf("target %q has a middleware entry without a name", target.ID)
+			}
+			if seenMiddleware[item.Name] {
+				return nil, fmt.Errorf("target %q declares middleware %q more than once", target.ID, item.Name)
+			}
+			seenMiddleware[item.Name] = true
+			for key, value := range entry.Map["options"].Map {
+				if value.Kind != yaml.KindString {
+					return nil, fmt.Errorf("target %q middleware %q option %q must be a string",
+						target.ID, item.Name, key)
+				}
+				item.Options[key] = value.Str
+			}
+			target.Middleware = append(target.Middleware, item)
+		}
+
+		// A pipeline is a property of the router it wraps, so it only means
+		// something on a target that routes at all.
+		if len(target.Middleware) > 0 && target.Router == "" {
+			return nil, fmt.Errorf("target %q composes middleware but names no router", target.ID)
+		}
+		if target.Router != "" && target.TargetKind() != "server" {
+			return nil, fmt.Errorf("target %q names a router but its kind is %q", target.ID, target.TargetKind())
 		}
 
 		// Hand-written files placed in the generated project.
