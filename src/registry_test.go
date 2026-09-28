@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,9 +35,16 @@ import (
 type registryServer struct {
 	base string
 	dir  string
-	// token is the publish token, empty when the registry is open.
+	// token is the secret the registry issues tokens with, and is empty on a
+	// registry that issues them to anyone. It is not a credential a request
+	// presents.
 	token string
-	stop  func()
+	// credential is a token this test holds and presents, which is what a
+	// publish needs. It is separate from `token` because the two are different
+	// things: one is how a caller gets in, the other is what the caller then
+	// holds.
+	credential string
+	stop       func()
 }
 
 // startRegistry generates and builds the registry, then runs it on a loopback
@@ -121,6 +129,11 @@ func startRegistryWithSettings(t *testing.T, token, settings string) *registrySe
 		logged, _ := os.ReadFile(logFile.Name())
 		t.Fatalf("the registry did not become ready\n%s", logged)
 	}
+	// A publish needs a credential on every registry, because the registry
+	// records who owns the module and an anonymous publish has nobody to record.
+	// Minting one here rather than in each test keeps that a property of the
+	// harness instead of something every test has to remember.
+	server.credential = mintTokenAt(t, server.base, "harness")
 	return server
 }
 
@@ -163,6 +176,36 @@ func (s *registryServer) request(t *testing.T, method, path string, body []byte,
 	return resp.StatusCode, string(payload)
 }
 
+// publishModule publishes a package the way the module client does.
+//
+// It goes through the same request the client makes — the manifest fields as
+// query parameters and a credential in the header — rather than a shortened
+// form, so what the tests exercise is the contract a user meets. A publish with
+// no author is refused by the registry, and a publish with no credential is
+// refused on any registry, so a helper that left either out would test a path
+// nobody can take.
+func (s *registryServer) publishModule(t *testing.T, name, version, kind, author string, payload []byte, token string) (int, string) {
+	t.Helper()
+	// The manifest fields are encoded the way the client encodes them, because
+	// an author's name is as likely to contain a space as a username is to
+	// contain a dot, and an unencoded space truncates the value the registry
+	// reads rather than failing visibly.
+	fields := url.Values{}
+	fields.Set("version", version)
+	fields.Set("type", kind)
+	fields.Set("main", "src/main.rho")
+	fields.Set("author", author)
+	path := fmt.Sprintf("/modules/%s/%s/rho-pkg?%s", name, version, fields.Encode())
+	return s.request(t, "POST", path, payload, token)
+}
+
+// publish publishes as the registry's own author with the given token, which is
+// what most of these tests need: they are testing storage, not ownership.
+func (s *registryServer) publish(t *testing.T, name, version string, payload []byte) (int, string) {
+	t.Helper()
+	return s.publishModule(t, name, version, "module", "Aurel Miron", payload, s.credential)
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Test: Publish and Download                                                 */
 /* -------------------------------------------------------------------------- */
@@ -175,7 +218,7 @@ func TestRegistryPublishesAndDownloads(t *testing.T) {
 	// A gzip-like payload, including bytes that are not printable text.
 	payload := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 'r', 'h', 'o', 0xff, 0xfe, 0x00}
 
-	status, body := server.request(t, "POST", "/modules/math/0.1.0/rho-pkg", payload, "")
+	status, body := server.publishModule(t, "math", "0.1.0", "module", "Aurel Miron", payload, server.credential)
 	if status != 201 {
 		t.Fatalf("publish: got %d %s, want 201", status, body)
 	}
@@ -196,10 +239,10 @@ func TestRegistryPublishesAndDownloads(t *testing.T) {
 func TestRegistryKeepsVersionsApart(t *testing.T) {
 	server := startRegistry(t, "")
 
-	if status, body := server.request(t, "POST", "/modules/math/0.1.0/rho-pkg", []byte("a"), ""); status != 201 {
+	if status, body := server.publishModule(t, "math", "0.1.0", "module", "Aurel Miron", []byte("a"), server.credential); status != 201 {
 		t.Fatalf("publish 0.1.0: %d %s", status, body)
 	}
-	if status, body := server.request(t, "POST", "/modules/math/0.2.0/rho-pkg", []byte("b"), ""); status != 201 {
+	if status, body := server.publishModule(t, "math", "0.2.0", "module", "Aurel Miron", []byte("b"), server.credential); status != 201 {
 		t.Fatalf("publish 0.2.0: %d %s", status, body)
 	}
 
@@ -225,7 +268,8 @@ func TestRegistryKeepsVersionsApart(t *testing.T) {
 func TestRegistrySearch(t *testing.T) {
 	server := startRegistry(t, "")
 	for _, module := range []string{"math", "math-linalg", "core"} {
-		if status, body := server.request(t, "POST", "/modules/"+module+"/1.0.0/rho-pkg", []byte(module), ""); status != 201 {
+		if status, body := server.publishModule(t, module, "1.0.0", "module",
+			"Aurel Miron", []byte(module), server.credential); status != 201 {
 			t.Fatalf("publish %s: %d %s", module, status, body)
 		}
 	}
@@ -251,7 +295,7 @@ func TestRegistrySearch(t *testing.T) {
 // The search result has to satisfy the client's ModuleInfo shape.
 func TestRegistrySearchResponseShape(t *testing.T) {
 	server := startRegistry(t, "")
-	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), ""); status != 201 {
+	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), server.credential); status != 201 {
 		t.Fatalf("publish failed with %d", status)
 	}
 	_, body := server.request(t, "GET", "/api/search?q=math", nil, "")
@@ -270,7 +314,7 @@ func TestRegistryRequiresTokenToPublish(t *testing.T) {
 	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
 	issued := server.mintToken(t, "miraur")
 
-	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), "")
+	status, body := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), "")
 	if status != 401 {
 		t.Fatalf("publishing without a token: got %d %s, want 401", status, body)
 	}
@@ -278,7 +322,7 @@ func TestRegistryRequiresTokenToPublish(t *testing.T) {
 		t.Errorf("expected the error to mention a token, got %q", body)
 	}
 
-	status, body = server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), issued)
+	status, body = server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), issued)
 	if status != 201 {
 		t.Fatalf("publishing with a token: got %d %s, want 201", status, body)
 	}
@@ -288,7 +332,7 @@ func TestRegistryRequiresTokenToPublish(t *testing.T) {
 func TestRegistryReadsWithoutToken(t *testing.T) {
 	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
 	issued := server.mintToken(t, "miraur")
-	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), issued); status != 201 {
+	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), issued); status != 201 {
 		t.Fatalf("seed publish failed")
 	}
 	if status, _ := server.request(t, "GET", "/modules/math/1.0.0/rho-pkg", nil, ""); status != 200 {
@@ -302,10 +346,10 @@ func TestRegistryReadsWithoutToken(t *testing.T) {
 
 func TestRegistryRejectsDuplicateVersion(t *testing.T) {
 	server := startRegistry(t, "")
-	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("a"), ""); status != 201 {
+	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("a"), server.credential); status != 201 {
 		t.Fatalf("first publish failed")
 	}
-	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("b"), "")
+	status, body := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("b"), server.credential)
 	if status != 409 {
 		t.Fatalf("duplicate publish: got %d %s, want 409", status, body)
 	}
@@ -313,7 +357,11 @@ func TestRegistryRejectsDuplicateVersion(t *testing.T) {
 
 func TestRegistryRejectsEmptyPackage(t *testing.T) {
 	server := startRegistry(t, "")
-	status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte{}, "")
+	issued := server.mintToken(t, "miraur")
+	// An empty package is refused on its own terms, so the publish carries
+	// everything else a real one would and only the body is missing.
+	status, body := server.publishModule(t, "math", "1.0.0", "module",
+		"Aurel Miron", []byte{}, issued)
 	if status != 400 {
 		t.Fatalf("empty publish: got %d %s, want 400", status, body)
 	}
@@ -413,12 +461,56 @@ func TestRegistryHealth(t *testing.T) {
 
 // The service listens on the address it is given and honours its data
 // directory, which is what the systemd and container units depend on.
-// A public registry lets anyone publish, which suits a trusted network.
-func TestRegistryPublicAccessAllowsPublish(t *testing.T) {
+// A public registry serves its modules to anyone, and a publish still needs a
+// credential, because a module published without one belongs to nobody and is
+// then a module nobody can add a version to or withdraw.
+//
+// The two halves are separate on purpose: `access` decides who may *read*,
+// and a credential decides who may *write*. A public registry is a registry
+// anyone can install from; it is not a registry anyone can fill.
+func TestRegistryPublicAccessAllowsReadingAndPublishingWithACredential(t *testing.T) {
 	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = public\n")
-	_ = server
-	if status, body := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), ""); status != 201 {
-		t.Errorf("a public registry should allow publishing, got %d %s", status, body)
+	issued := server.mintToken(t, "miraur")
+
+	// A publish with no credential is refused: the registry has to record who
+	// owns the module, and an anonymous publish has nobody to record.
+	status, body := server.request(t, "POST",
+		"/modules/math/1.0.0/rho-pkg?version=1.0.0&type=module&main=src/main.rho&author=Aurel",
+		[]byte("x"), "")
+	if status != 401 {
+		t.Errorf("publishing with no credential: got %d %s, want 401", status, body)
+	}
+
+	// With one it is accepted, and the owner is the identity in the token.
+	status, body = server.publishModule(t, "math", "1.0.0", "module",
+		"Aurel Miron", []byte("x"), issued)
+	if status != 201 {
+		t.Errorf("publishing with a credential: got %d %s, want 201", status, body)
+	}
+
+	// Reading stays public, which is what `access = public` means.
+	status, body = server.request(t, "GET", "/modules/math/1.0.0/rho-pkg", nil, "")
+	if status != 200 {
+		t.Errorf("downloading with no credential: got %d %s, want 200", status, body)
+	}
+	if !strings.Contains(body, "x") {
+		t.Errorf("the download should carry the package, got %q", body)
+	}
+}
+
+// A publish that names no author is refused, because a registry that records an
+// owner has to be able to show who wrote the module as well as who published it.
+func TestRegistryRefusesAPublishWithNoAuthor(t *testing.T) {
+	server := startRegistry(t, "")
+	issued := server.mintToken(t, "miraur")
+	status, body := server.request(t, "POST",
+		"/modules/math/1.0.0/rho-pkg?version=1.0.0&type=module&main=src/main.rho",
+		[]byte("x"), issued)
+	if status != 400 {
+		t.Fatalf("publish with no author: got %d %s, want 400", status, body)
+	}
+	if !strings.Contains(body, "author") {
+		t.Errorf("the error should say what is missing, got %q", body)
 	}
 }
 
@@ -426,7 +518,8 @@ func TestRegistryPublicAccessAllowsPublish(t *testing.T) {
 func TestRegistryHonoursDataDirSetting(t *testing.T) {
 	data := filepath.Join(t.TempDir(), "elsewhere")
 	server := startRegistryWithSettings(t, "", "data_dir = "+data+"\n")
-	if status, _ := server.request(t, "POST", "/modules/math/1.0.0/rho-pkg", []byte("x"), ""); status != 201 {
+	issued := server.mintToken(t, "miraur")
+	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), issued); status != 201 {
 		t.Fatalf("publish failed with %d", status)
 	}
 	if _, err := os.Stat(filepath.Join(data, "modules", "math", "1.0.0")); err != nil {
@@ -516,7 +609,17 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	if !waitForRegistry("http://"+addr, client) {
 		t.Fatalf("the registry did not listen on %s", addr)
 	}
-	if status, body := clientPost(fmt.Sprintf("http://%s/modules/probe/1.0.0/rho-pkg", addr), "x"); status != 201 {
+	// The harness below builds its own server, so it presents a credential of
+	// its own rather than borrowing the one the shared helper would mint: what
+	// this test is about is the address and the data directory, not who may
+	// publish.
+	fields := url.Values{}
+	fields.Set("version", "1.0.0")
+	fields.Set("type", "module")
+	fields.Set("author", "Aurel Miron")
+	probe := fmt.Sprintf("http://%s/modules/probe/1.0.0/rho-pkg?%s", addr, fields.Encode())
+	issued := mintTokenAt(t, "http://"+addr, "miraur")
+	if status, body := clientPost(probe, "x", issued); status != 201 {
 		t.Fatalf("publish: %d %s", status, body)
 	}
 	if _, err := os.Stat(filepath.Join(data, "modules", "probe", "1.0.0", "package.rho-pkg")); err != nil {
@@ -524,8 +627,17 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	}
 }
 
-func clientPost(url, body string) (int, string) {
-	resp, err := http.Post(url, "application/gzip", strings.NewReader(body))
+// clientPost posts a package, presenting a credential when one is given.
+func clientPost(url, body, token string) (int, string) {
+	request, err := http.NewRequest("POST", url, strings.NewReader(body))
+	if err != nil {
+		return 0, err.Error()
+	}
+	request.Header.Set("Content-Type", "application/gzip")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return 0, err.Error()
 	}
@@ -539,23 +651,6 @@ func clientPost(url, body string) (int, string) {
 /* -------------------------------------------------------------------------- */
 
 // registryPost publishes a package, optionally with a credential.
-func registryPost(t *testing.T, base, path, body, token string) (int, string) {
-	t.Helper()
-	req, err := http.NewRequest("POST", base+path, strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	payload, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(payload)
-}
 
 // seedRegistry publishes a few versions so the pages have something to show.
 // It mints a token first, so it works whatever the access mode is.
@@ -568,8 +663,8 @@ func seedRegistry(t *testing.T, server *registryServer) {
 		{"rho-lsp", "0.1.0"},
 	} {
 		body := "package-" + module.name + "-" + module.version
-		path := "/modules/" + module.name + "/" + module.version + "/rho-pkg"
-		if status, text := registryPost(t, server.base, path, body, token); status != 201 {
+		if status, text := server.publishModule(t, module.name, module.version, "module",
+			"Aurel Miron", []byte(body), token); status != 201 {
 			t.Fatalf("publish %s@%s: %d %s", module.name, module.version, status, text)
 		}
 	}
@@ -578,8 +673,16 @@ func seedRegistry(t *testing.T, server *registryServer) {
 // mintToken asks the registry for a token, the way a client would.
 func (s *registryServer) mintToken(t *testing.T, user string) string {
 	t.Helper()
+	return mintTokenAt(t, s.base, user)
+}
+
+// mintTokenAt is mintToken for a server this test started itself, which is why
+// it takes the address rather than a registry: a test with its own harness
+// should not have to build a registryServer just to be given a credential.
+func mintTokenAt(t *testing.T, base, user string) string {
+	t.Helper()
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(
-		s.base+"/auth/token?user="+user+"&host=test&days=1&scopes=pull%20push",
+		base+"/auth/token?user="+user+"&host=test&days=1&scopes=pull%20push",
 		"application/octet-stream", nil)
 	if err != nil {
 		t.Fatal(err)

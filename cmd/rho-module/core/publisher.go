@@ -105,7 +105,7 @@ func PublishModule(dir string) error {
 
 	// Step 6: Upload to remote registry (both binary pkg and source archive)
 	if err := uploadModule(meta, pkgPath, sourceArchive); err != nil {
-		return fmt.Errorf("upload failed: %w", err)
+		return err
 	}
 
 	// Step 7: Install locally
@@ -195,6 +195,21 @@ func collectModuleFiles(dir string) ([]string, error) {
 	return pkgcore.CollectLayoutFiles(dir, manifest.Layout())
 }
 
+// moduleVisibility is whether a published module is anybody's to install or its
+// owner's alone.
+//
+// A module that says nothing is public: publishing to a registry is the act of
+// offering a module to whoever wants it, and a module that wants to be offered
+// to fewer people has to say so. A value this version does not know is public
+// rather than an error, because refusing to publish over a word added to a
+// later schema would be a worse outcome than ignoring it.
+func moduleVisibility(meta ModuleInfo) string {
+	if strings.EqualFold(strings.TrimSpace(meta.Module.Visibility), "private") {
+		return "private"
+	}
+	return "public"
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Upload Module                                                              */
 /* -------------------------------------------------------------------------- */
@@ -206,10 +221,16 @@ func uploadModule(meta ModuleInfo, pkgPath, sourceArchive string) error {
 		return fmt.Errorf("cannot load registry config: %w", err)
 	}
 
-	// If remote registry is configured, upload there
-	if cfg.Remote.URL != "" && cfg.Remote.Token != "" {
-		client := remote.NewClient(cfg)
-
+	// If a remote registry is configured, upload there.
+	//
+	// The gate is the client, not the config's token: `rho auth login` stores a
+	// credential for a registry and the client presents it in preference to the
+	// configured token, so a user who logged in never had to write a token into
+	// the config at all. Gating on the config would publish locally for every
+	// user who did what the auth component told them to do, and name them as
+	// nobody on the registry that keeps their ownership of the module.
+	client := remote.NewClient(cfg)
+	if cfg.Remote.URL != "" && client.HasCredential() {
 		pkgData, err := os.ReadFile(pkgPath)
 		if err != nil {
 			return fmt.Errorf("cannot read package: %w", err)
@@ -221,15 +242,20 @@ func uploadModule(meta ModuleInfo, pkgPath, sourceArchive string) error {
 		}
 
 		// The manifest travels with the upload so a registry can record what
-		// was published rather than storing blanks.
+		// was published rather than storing blanks. Author and maintainer are
+		// the module's own claim about who wrote it; the registry keeps its own
+		// record of who owns it, taken from the credential that published it.
 		manifest := map[string]string{
 			"type":        meta.Module.Type,
 			"description": meta.Module.Description,
 			"main":        meta.Module.Main,
 			"command":     meta.Module.Command,
+			"author":      meta.Module.Author,
+			"maintainer":  meta.Module.Maintainer,
+			"visibility":  moduleVisibility(meta),
 		}
 		if err := remote.UploadModule(client, meta.Module.Name, meta.Module.Version, pkgData, sourceData, manifest); err != nil {
-			return fmt.Errorf("remote upload failed: %w", err)
+			return err
 		}
 	}
 
@@ -293,12 +319,13 @@ func updateRegistryForPublish(manifest pkgcore.ModuleYAML) error {
 		return err
 	}
 
-	entry := struct {
-		Name    string `yaml:"name"`
-		Version string `yaml:"version"`
-	}{
+	// A publish is from this machine, and the index says so: an origin of
+	// "local" is what a listing uses to tell a published module from one
+	// fetched from a registry.
+	entry := VersionEntry{
 		Name:    manifest.Module.Name,
 		Version: manifest.Module.Version,
+		Origin:  originLocal,
 	}
 
 	// Add to version list (avoid duplicates)
@@ -317,8 +344,12 @@ func readRegistry(registryPath string) (*Registry, error) {
 	registry := &Registry{
 		Components:       []VersionEntry{},
 		Plugins:          []VersionEntry{},
+		Modules:          []VersionEntry{},
+		Libraries:        []VersionEntry{},
 		ActiveComponents: []ActiveEntry{},
 		ActivePlugins:    []ActiveEntry{},
+		ActiveModules:    []ActiveEntry{},
+		ActiveLibraries:  []ActiveEntry{},
 	}
 
 	if _, err := os.Stat(registryPath); err == nil {
@@ -343,81 +374,17 @@ func readRegistry(registryPath string) (*Registry, error) {
 	return registry, nil
 }
 
+// writeRegistry writes the index. The index itself is written and read by
+// writeIndex and parseIndex, so that a list which is written and read by two
+// sets of code cannot drift.
 func writeRegistry(registryPath string, registry *Registry) error {
-	var out string
-	out += "components:\n"
-	for _, c := range registry.Components {
-		out += fmt.Sprintf("  - name: %s\n    version: %s\n", c.Name, c.Version)
-	}
-	out += "plugins:\n"
-	for _, p := range registry.Plugins {
-		out += fmt.Sprintf("  - name: %s\n    version: %s\n", p.Name, p.Version)
-	}
-	out += "active_components:\n"
-	for _, c := range registry.ActiveComponents {
-		out += fmt.Sprintf("  - name: %s\n    version: %s\n", c.Name, c.Version)
-	}
-	out += "active_plugins:\n"
-	for _, p := range registry.ActivePlugins {
-		out += fmt.Sprintf("  - name: %s\n    version: %s\n", p.Name, p.Version)
-	}
-
-	registryDir := filepath.Dir(registryPath)
-	if err := os.MkdirAll(registryDir, 0755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(registryPath, []byte(out), 0644)
+	return writeIndex(registryPath, registry)
 }
 
+// parseRegistryYAML reads the index. See writeRegistry for why the reading and
+// the writing share one pair of functions.
 func parseRegistryYAML(data string, registry *Registry) {
-	lines := strings.Split(data, "\n")
-	var currentSection string
-	var currentName string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		if strings.HasPrefix(trimmed, "components:") {
-			currentSection = "components"
-			continue
-		}
-		if strings.HasPrefix(trimmed, "plugins:") {
-			currentSection = "plugins"
-			continue
-		}
-		if strings.HasPrefix(trimmed, "active_components:") {
-			currentSection = "active_components"
-			continue
-		}
-		if strings.HasPrefix(trimmed, "active_plugins:") {
-			currentSection = "active_plugins"
-			continue
-		}
-
-		if strings.HasPrefix(trimmed, "- name:") {
-			currentName = strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:"))
-			continue
-		}
-		if strings.HasPrefix(trimmed, "version:") {
-			version := strings.TrimSpace(strings.TrimPrefix(trimmed, "version:"))
-			entry := VersionEntry{Name: currentName, Version: version}
-			switch currentSection {
-			case "components":
-				registry.Components = append(registry.Components, entry)
-			case "plugins":
-				registry.Plugins = append(registry.Plugins, entry)
-			case "active_components":
-				registry.ActiveComponents = append(registry.ActiveComponents, ActiveEntry{Name: currentName, Version: version})
-			case "active_plugins":
-				registry.ActivePlugins = append(registry.ActivePlugins, ActiveEntry{Name: currentName, Version: version})
-			}
-			currentName = ""
-		}
-	}
+	parseIndex(data, registry)
 }
 
 func addVersionEntry(registry *Registry, moduleType string, entry VersionEntry) {
@@ -450,30 +417,72 @@ func hasActiveVersion(registry *Registry, moduleType, name string) bool {
 	return false
 }
 
-// versionBucket returns the registry list a module type is recorded in, or nil
-// when the registry has no bucket for it.
-func versionBucket(registry *Registry, moduleType string) *[]VersionEntry {
-	switch moduleType {
-	case "component":
+// versionBucketOf is the list a kind records its versions in.
+//
+// Every kind the toolchain installs under has one, because a kind without a
+// bucket is a module that is installed and invisible: it sits in the tree, the
+// resolver finds it, and no command can list, activate or unpublish it.
+func versionBucketOf(registry *Registry, kind string) *[]VersionEntry {
+	switch kind {
+	case KindComponent:
 		return &registry.Components
-	case "plugin":
+	case KindPlugin:
 		return &registry.Plugins
+	case KindModule:
+		return &registry.Modules
+	case KindLibrary:
+		return &registry.Libraries
 	default:
 		return nil
 	}
 }
 
-// activeBucket returns the active list a module type is recorded in, or nil
-// when the registry has no bucket for it.
-func activeBucket(registry *Registry, moduleType string) *[]ActiveEntry {
-	switch moduleType {
-	case "component":
+// activeBucketOf is the list a kind records its selection in.
+func activeBucketOf(registry *Registry, kind string) *[]ActiveEntry {
+	switch kind {
+	case KindComponent:
 		return &registry.ActiveComponents
-	case "plugin":
+	case KindPlugin:
 		return &registry.ActivePlugins
+	case KindModule:
+		return &registry.ActiveModules
+	case KindLibrary:
+		return &registry.ActiveLibraries
 	default:
 		return nil
 	}
+}
+
+// versionBucket is the name the publisher used, pointing at the same list.
+func versionBucket(registry *Registry, moduleType string) *[]VersionEntry {
+	return versionBucketOf(registry, moduleType)
+}
+
+// activeBucket is the name the index used, pointing at the same list.
+func activeBucket(registry *Registry, moduleType string) *[]ActiveEntry {
+	return activeBucketOf(registry, moduleType)
+}
+
+// hasActiveName reports whether any version of a module is selected.
+func hasActiveName(registry *Registry, kind, name string) bool {
+	for _, entry := range *activeBucketOf(registry, kind) {
+		if entry.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// setActiveName selects a version of a module.
+func setActiveName(registry *Registry, kind, name, version string) {
+	active := activeBucketOf(registry, kind)
+	kept := []ActiveEntry{}
+	for _, entry := range *active {
+		if entry.Name != name {
+			kept = append(kept, entry)
+		}
+	}
+	*active = append(kept, ActiveEntry{Name: name, Version: version})
 }
 
 func setActiveVersion(registry *Registry, moduleType, name, version string) {
@@ -494,16 +503,31 @@ func setActiveVersion(registry *Registry, moduleType, name, version string) {
 	*active = newActive
 }
 
+// Registry is what the local registry knows about the modules installed in it.
+//
+// It records one list of versions per kind and one selection per module, and
+// nothing else. What is installed is read from the tree
+// (modules/installed/<kind>/<name>@<version>), and the origin of each entry is
+// carried here because a directory cannot say whether a module was published
+// from this machine or fetched from a registry.
 type Registry struct {
 	Components       []VersionEntry
 	Plugins          []VersionEntry
+	Modules          []VersionEntry
+	Libraries        []VersionEntry
 	ActiveComponents []ActiveEntry
 	ActivePlugins    []ActiveEntry
+	ActiveModules    []ActiveEntry
+	ActiveLibraries  []ActiveEntry
 }
 
 type VersionEntry struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
+	// Origin is where the module came from: local for one published from a
+	// directory, remote for one fetched from a registry. It is what lets a
+	// listing say which of the two a name in it is.
+	Origin string `yaml:"origin,omitempty"`
 }
 
 type ActiveEntry struct {

@@ -57,6 +57,16 @@ type ModuleSection struct {
 	Description string
 	Main        string
 	License     string
+	// Author is who wrote the module, and Maintainer who looks after it. Both
+	// are the module's own claim about itself: a remote registry records the
+	// owner of a name from the credential that published it first, which is the
+	// one identity it can actually verify, and keeps this for a reader.
+	Author     string
+	Maintainer string
+	// Visibility is whether the module is published for anybody or for its
+	// owner alone. An empty value means public, which is what a module that says
+	// nothing is taken to be.
+	Visibility string
 }
 
 type ModuleYAML struct {
@@ -88,6 +98,9 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 			Version:     root.Map["module"].Map["version"].Str,
 			Command:     root.Map["module"].Map["command"].Str,
 			Description: root.Map["module"].Map["description"].Str,
+			Author:      root.Map["module"].Map["author"].Str,
+			Maintainer:  root.Map["module"].Map["maintainer"].Str,
+			Visibility:  root.Map["module"].Map["visibility"].Str,
 			// main sits at the top level of the manifest, beside the module
 			// section, so it is read from there.
 			Main:    root.Map["main"].Str,

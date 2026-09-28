@@ -11,7 +11,12 @@ module registry.storage
 // A zero return means success.
 
 // Store an uploaded package and its metadata. Returns 0 on success.
-extern fn store_put(name: string, version: string, payload: string, meta: string) u32
+//
+// The publisher is the identity the caller presented, which the handler has
+// taken from its credential. The store compares it against what the module
+// already records, so a module that is already published can only be added to
+// by the identities that hold it.
+extern fn store_put(name: string, version: string, publisher: string, payload: string, meta: string) u32
 
 // The stored package for a version, or "" when it is absent.
 extern fn store_get(name: string, version: string) string
@@ -19,8 +24,34 @@ extern fn store_get(name: string, version: string) string
 // Whether a version is already published.
 extern fn store_has(name: string, version: string) bool
 
-// A JSON array of module metadata matching a query.
-extern fn store_search(query: string) string
+// Withdraw a published version, and everything made from it.
+//
+// The package, the documentation generated from it, the unpacked sources and
+// the index entry all go: a version that is half removed still answers a
+// search and still serves documentation, and no longer holds what those were
+// made from. Returns 0 on success.
+extern fn store_delete(name: string, version: string) u32
+
+// A JSON document naming who may withdraw a module, or "" when the module is not
+// published here.
+//
+// It is the store's own answer rather than a handler's, because the record the
+// check reads has to be the one the store acts on: a handler that kept its own
+// copy of who owns what could be brought into step with the store, and then
+// would not be.
+extern fn store_publisher(name: string) string
+
+// Record whether a module is anybody's to install or its owner's alone.
+// Returns 0 on success.
+extern fn store_set_visibility(name: string, visibility: string) u32
+
+// A JSON array of module metadata matching a query, as seen by one identity.
+//
+// Visibility is applied here rather than by a handler, because what a caller may
+// be told is a property of the store's record: a private module is only in the
+// answer for its owner. `mine` narrows it to the caller's own modules, whatever
+// their visibility.
+extern fn store_search(query: string, viewer: string, mine: bool) string
 
 // A JSON document listing a module's stored versions.
 extern fn store_versions(name: string) string

@@ -16,57 +16,41 @@ package core
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-
-	"rho/internal/paths"
 )
 
 /* -------------------------------------------------------------------------- */
 /*  Public API - Search                                                        */
 /* -------------------------------------------------------------------------- */
 
-// SearchRegistry searches for modules in the local registry
+// SearchRegistry lists what is installed in the local registry.
+//
+// It reads the installed tree rather than the index, because the tree is what
+// the toolchain dispatches to and a Rho import resolves against: a module that
+// is not on disk is not installed however well the index records it. The index
+// is reconciled first, because it is the only place that says which of the
+// installed versions is selected and which registry each one came from.
 func SearchRegistry(query string) ([]RegistryEntry, error) {
-	registryPath, err := paths.GetRegistryPath()
+	if _, err := Reconcile(); err != nil {
+		return nil, err
+	}
+	installed, err := ReadInstalled()
 	if err != nil {
 		return nil, err
 	}
-	registryFile := filepath.Join(registryPath, "registry.yaml")
 
-	registry, err := readRegistry(registryFile)
-	if err != nil {
-		return nil, err
-	}
-
-	var results []RegistryEntry
-
-	// Search components
-	for _, c := range registry.Components {
-		if query == "" || containsIgnoreCase(c.Name, query) {
-			active := findActiveVersion(registry.ActiveComponents, c.Name)
-			results = append(results, RegistryEntry{
-				Name:    c.Name,
-				Version: c.Version,
-				Type:    "component",
-				Active:  active == c.Version,
-			})
+	results := []RegistryEntry{}
+	for _, entry := range installed {
+		if query != "" && !containsIgnoreCase(entry.Name, query) {
+			continue
 		}
+		results = append(results, RegistryEntry{
+			Name:    entry.Name,
+			Version: entry.Version,
+			Type:    entry.Kind,
+			Active:  entry.IsSelected(),
+			Origin:  entry.Origin,
+		})
 	}
-
-	// Search plugins
-	for _, p := range registry.Plugins {
-		if query == "" || containsIgnoreCase(p.Name, query) {
-			active := findActiveVersion(registry.ActivePlugins, p.Name)
-			results = append(results, RegistryEntry{
-				Name:    p.Name,
-				Version: p.Version,
-				Type:    "plugin",
-				Active:  active == p.Version,
-			})
-		}
-	}
-
 	return results, nil
 }
 
@@ -75,8 +59,15 @@ type RegistryEntry struct {
 	Name    string
 	Version string
 	Type    string
-	Active  bool
+	// Active is true for the version the toolchain will resolve to.
+	Active bool
+	// Origin is "local" for a module published from a directory and "remote"
+	// for one fetched from a registry.
+	Origin string
 }
+
+// IsRemote reports whether a module came from a configured remote registry.
+func (e RegistryEntry) IsRemote() bool { return e.Origin == originRemote }
 
 func containsIgnoreCase(s, substr string) bool {
 	s = toLower(s)
@@ -119,95 +110,43 @@ func findActiveVersion(active []ActiveEntry, name string) string {
 /*  Public API - Unpublish                                                     */
 /* -------------------------------------------------------------------------- */
 
-// UnpublishModule removes a module version from the registry and installed modules
-// Returns error if trying to unpublish the active version without other versions available
+// UnpublishModule removes a module version from the local registry.
+//
+// It is the name this operation had before the local and remote registries were
+// separated, and it is kept because it is what the tests and any caller from
+// before that separation call. The rule is UninstallLocal's: the selected
+// version is refused until it is deactivated, because it is the version a
+// project is currently resolved against.
 func UnpublishModule(name, version string) error {
-	registryPath, err := paths.GetRegistryPath()
-	if err != nil {
-		return err
-	}
-	registryFile := filepath.Join(registryPath, "registry.yaml")
-
-	registry, err := readRegistry(registryFile)
-	if err != nil {
-		return err
-	}
-
-	// Find module type and validate
-	moduleType, found := findModuleType(registry, name, version)
-	if !found {
-		return fmt.Errorf("module %s@%s not found in registry", name, version)
-	}
-
-	// Check if this version is active
-	isActive := isActiveVersion(registry, moduleType, name, version)
-
-	// Count other versions of this module
-	otherVersions := countOtherVersions(registry, moduleType, name, version)
-
-	if isActive && otherVersions > 0 {
-		return fmt.Errorf("cannot unpublish active version %s@%s (other versions exist). Use 'rho module activate' to switch active version first", name, version)
-	}
-
-	// If it's the only version and active, allow unpublish but clear from active list
-	if isActive && otherVersions == 0 {
-		clearActiveVersion(registry, moduleType, name)
-	}
-
-	// Remove from version list
-	removeVersionEntry(registry, moduleType, name, version)
-
-	// If was active, clear active (will be set to another version if available)
-	if isActive {
-		clearActiveVersion(registry, moduleType, name)
-		// Auto-activate another version if available
-		if otherVersions > 0 {
-			newActive := getLatestVersion(registry, moduleType, name)
-			if newActive != "" {
-				setActiveVersion(registry, moduleType, name, newActive)
-			}
-		}
-	}
-
-	// Write updated registry
-	if err := writeRegistry(registryFile, registry); err != nil {
-		return err
-	}
-
-	// Remove installed module directory
-	modulesDir, err := paths.GetModulesInstalledPath()
-	if err != nil {
-		return err
-	}
-	moduleDir := filepath.Join(modulesDir, moduleType, fmt.Sprintf("%s@%s", name, version))
-	os.RemoveAll(moduleDir)
-
-	fmt.Printf("Unpublished %s@%s\n", name, version)
-	return nil
+	return UninstallLocal(name, version)
 }
 
+// findModuleType reports which kind a name@version is installed under, over
+// every kind the local registry tracks rather than the two that predate the
+// rest. A kind left out here is a module that is installed and that no command
+// can activate or unpublish, because nothing would recognise what it is.
 func findModuleType(registry *Registry, name, version string) (string, bool) {
-	for _, c := range registry.Components {
-		if c.Name == name && c.Version == version {
-			return "component", true
-		}
-	}
-	for _, p := range registry.Plugins {
-		if p.Name == name && p.Version == version {
-			return "plugin", true
+	for _, kind := range IndexKinds {
+		for _, entry := range *versionBucketOf(registry, kind) {
+			if entry.Name == name && entry.Version == version {
+				return kind, true
+			}
 		}
 	}
 	return "", false
 }
 
+// The five helpers below all ask the same question of one kind's list, so they
+// all go through the kind's bucket rather than repeating the two-kind switch
+// they all used to carry. A switch that lists two kinds out of four is a bucket
+// lookup that someone has to remember to extend.
+
 func isActiveVersion(registry *Registry, moduleType, name, version string) bool {
-	var active []ActiveEntry
-	if moduleType == "component" {
-		active = registry.ActiveComponents
-	} else if moduleType == "plugin" {
-		active = registry.ActivePlugins
+	active := activeBucketOf(registry, moduleType)
+	if active == nil {
+		return false
 	}
-	for _, a := range active {
+	for _, a := range *active {
 		if a.Name == name && a.Version == version {
 			return true
 		}
@@ -216,14 +155,12 @@ func isActiveVersion(registry *Registry, moduleType, name, version string) bool 
 }
 
 func countOtherVersions(registry *Registry, moduleType, name, version string) int {
-	var versions []VersionEntry
-	if moduleType == "component" {
-		versions = registry.Components
-	} else if moduleType == "plugin" {
-		versions = registry.Plugins
+	versions := versionBucketOf(registry, moduleType)
+	if versions == nil {
+		return 0
 	}
 	count := 0
-	for _, v := range versions {
+	for _, v := range *versions {
 		if v.Name == name && v.Version != version {
 			count++
 		}
@@ -232,13 +169,10 @@ func countOtherVersions(registry *Registry, moduleType, name, version string) in
 }
 
 func removeVersionEntry(registry *Registry, moduleType, name, version string) {
-	var versions *[]VersionEntry
-	if moduleType == "component" {
-		versions = &registry.Components
-	} else if moduleType == "plugin" {
-		versions = &registry.Plugins
+	versions := versionBucketOf(registry, moduleType)
+	if versions == nil {
+		return
 	}
-
 	newList := []VersionEntry{}
 	for _, v := range *versions {
 		if !(v.Name == name && v.Version == version) {
@@ -249,13 +183,10 @@ func removeVersionEntry(registry *Registry, moduleType, name, version string) {
 }
 
 func clearActiveVersion(registry *Registry, moduleType, name string) {
-	var active *[]ActiveEntry
-	if moduleType == "component" {
-		active = &registry.ActiveComponents
-	} else if moduleType == "plugin" {
-		active = &registry.ActivePlugins
+	active := activeBucketOf(registry, moduleType)
+	if active == nil {
+		return
 	}
-
 	newList := []ActiveEntry{}
 	for _, a := range *active {
 		if a.Name != name {
@@ -266,15 +197,12 @@ func clearActiveVersion(registry *Registry, moduleType, name string) {
 }
 
 func getLatestVersion(registry *Registry, moduleType, name string) string {
-	var versions []VersionEntry
-	if moduleType == "component" {
-		versions = registry.Components
-	} else if moduleType == "plugin" {
-		versions = registry.Plugins
+	versions := versionBucketOf(registry, moduleType)
+	if versions == nil {
+		return ""
 	}
-
 	var latest string
-	for _, v := range versions {
+	for _, v := range *versions {
 		if v.Name == name {
 			if latest == "" || compareVersions(v.Version, latest) > 0 {
 				latest = v.Version
@@ -338,13 +266,7 @@ func parseInt(s string) int {
 
 // ActivateModule sets a specific version as active
 func ActivateModule(name, version string) error {
-	registryPath, err := paths.GetRegistryPath()
-	if err != nil {
-		return err
-	}
-	registryFile := filepath.Join(registryPath, "registry.yaml")
-
-	registry, err := readRegistry(registryFile)
+	registry, err := Reconcile()
 	if err != nil {
 		return err
 	}
@@ -359,6 +281,10 @@ func ActivateModule(name, version string) error {
 	setActiveVersion(registry, moduleType, name, version)
 
 	// Write registry
+	registryFile, err := registryFilePath()
+	if err != nil {
+		return err
+	}
 	if err := writeRegistry(registryFile, registry); err != nil {
 		return err
 	}

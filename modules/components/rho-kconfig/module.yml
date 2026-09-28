@@ -2,6 +2,7 @@ module:
   name: rho-kconfig
   type: component
   version: 0.1.0
+  author: Aurel Miron
   description: Configuration bridge between a Rho project and the Kconfig tooling around it
   command: kconfig
   import_path: rho.kconfig

@@ -2,6 +2,7 @@ module:
   name: rho-log
   type: component
   version: 0.1.1
+  author: Aurel Miron
   description: Structured logging
   command: log
   import_path: rho.log

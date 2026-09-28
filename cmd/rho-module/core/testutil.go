@@ -73,6 +73,29 @@ active_plugins:
 `
 	os.WriteFile(registryFile, []byte(testRegistry), 0644)
 
+	// The index says what is known about the installed modules; the tree is
+	// what is installed. A fixture that wrote only the index described a
+	// registry holding nothing, which is a state the toolchain cannot be in
+	// without someone having deleted the directories by hand — so the fixture
+	// installs them, the way a publish or a fetch does.
+	installed := [][2]string{
+		{"component", "math@1.0.0"},
+		{"component", "math@1.2.0"},
+		{"component", "io@1.0.0"},
+		{"component", "io@1.1.0"},
+		{"plugin", "http@0.9.0"},
+	}
+	modulesRoot, err := paths.GetModulesInstalledPath()
+	if err != nil {
+		t.Fatalf("GetModulesInstalledPath failed: %v", err)
+	}
+	for _, entry := range installed {
+		dir := filepath.Join(modulesRoot, entry[0], entry[1])
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("cannot create %s: %v", dir, err)
+		}
+	}
+
 	// Also create local cache for getLocalVersions tests
 	cachePath, _ := paths.GetCachePath()
 	os.MkdirAll(filepath.Join(cachePath, "math@1.0.0"), 0755)

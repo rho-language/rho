@@ -31,6 +31,13 @@ import (
 // ValidModuleTypes lists all allowed module.type values.
 var ValidModuleTypes = []string{"rho", "module", "component", "plugin", "interfaces"}
 
+// ValidVisibilities lists the visibilities a module may be published under.
+//
+// Public is the default rather than a choice a manifest has to make: a module
+// that says nothing is a module anybody may install, which is what publishing
+// to a registry means unless it is said otherwise.
+var ValidVisibilities = []string{"public", "private"}
+
 // RhoSourceModuleTypes are the module types written in Rho. They declare a
 // main entry point, unlike `interfaces` modules which are native libraries
 // consumed through the build section.
@@ -77,6 +84,24 @@ func ModuleSchema() Schema {
 					{Name: "import_path", Required: false, Kind: KindString},
 					// Descriptive metadata carried by published modules.
 					{Name: "description", Required: false, Kind: KindString},
+					// author is who published the module, and the only identity a
+					// remote registry will let withdraw it. A registry records
+					// the author against the module's name the first time it is
+					// published and refuses an unpublish for anyone else, so
+					// this is the claim the registry checks rather than one it
+					// trusts: the caller's credential has to say the same thing.
+					//
+					// It is optional in the schema so that a module being read,
+					// built or validated locally is not required to claim a
+					// publisher; a registry refuses a publish without one.
+					{Name: "author", Required: false, Kind: KindString},
+					// visibility is whether a published module is anybody's to
+					// install or its owner's alone. It is declared here rather
+					// than inferred, because who may install a module is a
+					// statement about the module and not a fact about the
+					// registry it happens to be on.
+					{Name: "visibility", Required: false, Kind: KindString,
+						AllowedValues: ValidVisibilities},
 					{Name: "maintainer", Required: false, Kind: KindString},
 					{Name: "license", Required: false, Kind: KindString},
 					{Name: "created", Required: false, Kind: KindString},
