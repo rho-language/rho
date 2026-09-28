@@ -27,15 +27,15 @@
 // SPDX-License-Identifier: MIT
 //
 
-// Package rhooas turns the route metadata a Rho service describes itself with
-// into an OpenAPI 3.1 document.
+// Package rhoopenapi turns the route metadata a Rho service describes itself
+// with into an OpenAPI 3.1 document.
 //
 // It is a package of its own rather than a file beside the reading, because the
 // two have different owners. The metadata is the contract between everything
 // that reads a Rho service — this writer, a generated client, a contract test —
 // and it should not carry a third party's type names. An OpenAPI document is one
 // reading of that contract, and a later one will be a second.
-package rhooas
+package rhoopenapi
 
 import (
 	"fmt"
@@ -75,6 +75,8 @@ type Document struct {
 	Components *Components `json:"components,omitempty"`
 	// Tags are the groups the operations are listed under, in order.
 	Tags []Tag `json:"tags,omitempty"`
+	// Security is what a caller has to prove for the service as a whole.
+	Security []map[string][]string `json:"security,omitempty"`
 
 	// order records the order the service declared its paths in, so a
 	// regenerated document produces no diff when nothing changed. It is not
@@ -102,15 +104,20 @@ type PathItem map[string]Operation
 
 // Operation is one documented method on a path.
 type Operation struct {
-	OperationID string                 `json:"operationId"`
-	Summary     string                 `json:"summary,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	Tags        []string               `json:"tags,omitempty"`
-	Parameters  []Parameter            `json:"parameters,omitempty"`
-	RequestBody *RequestBody           `json:"requestBody,omitempty"`
-	Responses   map[string]Response    `json:"responses"`
-	Deprecated  bool                   `json:"deprecated,omitempty"`
-	Extra       map[string]interface{} `json:"-"`
+	OperationID string              `json:"operationId"`
+	Summary     string              `json:"summary,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Tags        []string            `json:"tags,omitempty"`
+	Parameters  []Parameter         `json:"parameters,omitempty"`
+	RequestBody *RequestBody        `json:"requestBody,omitempty"`
+	Responses   map[string]Response `json:"responses"`
+	// Security is what a caller has to prove for this operation, or nil to
+	// take whatever the document says for the service as a whole. An entry
+	// with an empty alternative means a credential is accepted but not
+	// required, which is how a conditional check is written down.
+	Security   []map[string][]string  `json:"security,omitempty"`
+	Deprecated bool                   `json:"deprecated,omitempty"`
+	Extra      map[string]interface{} `json:"-"`
 }
 
 // Parameter is one documented value of a request.
@@ -154,9 +161,22 @@ type Schema struct {
 	Enum        []string           `json:"enum,omitempty"`
 }
 
-// Components holds the schemas operations refer to by name.
+// Components holds what operations refer to by name.
 type Components struct {
-	Schemas map[string]*Schema `json:"schemas,omitempty"`
+	Schemas         map[string]*Schema        `json:"schemas,omitempty"`
+	SecuritySchemes map[string]SecurityScheme `json:"securitySchemes,omitempty"`
+}
+
+// SecurityScheme is how a caller proves who it is, as a document describes it.
+type SecurityScheme struct {
+	Type        string `json:"type"`
+	Scheme      string `json:"scheme,omitempty"`
+	In          string `json:"in,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	// BearerFormat is a hint to a client about what the token is, which
+	// `JWT` states for the token shape this toolchain issues.
+	BearerFormat string `json:"bearerFormat,omitempty"`
 }
 
 // Tag is a group of operations.
@@ -195,7 +215,7 @@ func OpenAPI(spec Spec, options OpenAPIOptions) Document {
 			Description: spec.Description,
 		},
 		Paths:      map[string]PathItem{},
-		Components: &Components{Schemas: map[string]*Schema{}},
+		Components: &Components{},
 	}
 	if options.Server != "" {
 		document.Servers = []Server{{URL: options.Server, Description: options.ServerDescription}}
@@ -205,26 +225,87 @@ func OpenAPI(spec Spec, options OpenAPIOptions) Document {
 		document.Tags = append(document.Tags, Tag{Name: tag})
 	}
 
+	// How a caller proves who it is is stated once, and the operations that
+	// need it refer to it by name. A service that asks for nothing gets no
+	// scheme and no requirements, because a document that demanded a
+	// credential nobody enforces teaches a client to send one it has no
+	// reason to hold.
+	security := spec.Security.Describe()
+	scheme := ""
+	if security.Scheme != rhorouter.SecurityNone {
+		scheme = security.Name
+		document.Components.SecuritySchemes = map[string]SecurityScheme{
+			scheme: securitySchemeFor(security),
+		}
+		if security.Required {
+			document.Security = []map[string][]string{{scheme: {}}}
+		}
+	}
+
 	// The order the paths first appear is recorded so a regenerated document
 	// produces no diff. Every operation is laid out regardless: a path is
 	// served by more than one method as a rule rather than as an exception.
-	seen := map[string]bool{}
 	for _, operation := range spec.Operations {
 		path := options.BasePath + operation.Path
 		item, present := document.Paths[path]
 		if !present {
 			item = PathItem{}
 			document.Paths[path] = item
-			seen[path] = true
 			document.order.paths = append(document.order.paths, path)
 		}
-		_ = seen
-		item[strings.ToLower(operation.Method)] = documentOperation(operation)
+		laid := documentOperation(operation)
+		laid.Security = operationSecurity(operation, path, scheme, security)
+		item[strings.ToLower(operation.Method)] = laid
 	}
-	if len(document.Components.Schemas) == 0 {
+	if len(document.Components.SecuritySchemes) == 0 && len(document.Components.Schemas) == 0 {
 		document.Components = nil
 	}
 	return document
+}
+
+// securitySchemeFor describes a declared scheme the way a document does.
+func securitySchemeFor(security rhorouter.Security) SecurityScheme {
+	scheme := SecurityScheme{Description: security.Description}
+	switch security.Scheme {
+	case rhorouter.SecurityBearer:
+		scheme.Type = "http"
+		scheme.Scheme = "bearer"
+		// The toolchain issues JSON Web Tokens, and saying so tells a client
+		// what it is holding rather than only how to send it.
+		scheme.BearerFormat = "JWT"
+	default:
+		// A scheme this writer has not met is named rather than guessed at,
+		// so a document that cannot describe one says less instead of wrong.
+		scheme.Type = "http"
+		scheme.Scheme = security.Scheme
+	}
+	return scheme
+}
+
+// operationSecurity returns what a caller has to prove for one operation, or
+// nil to take what the document says for the service.
+//
+// An operation the pipeline exempts, or one whose handler checks a credential
+// without the pipeline enforcing it, gets an entry with an empty alternative:
+// a caller may present a credential or may not. That is exactly the shape of a
+// conditional check, and the alternative is what makes it a document a client
+// can act on rather than one it has to guess about.
+func operationSecurity(operation rhorouter.Operation, path, scheme string,
+	security rhorouter.Security) []map[string][]string {
+
+	if scheme == "" {
+		return nil
+	}
+	if security.Public(path) {
+		return nil
+	}
+	if security.Required {
+		return nil
+	}
+	if !operation.NeedsAuth {
+		return nil
+	}
+	return []map[string][]string{{scheme: {}}, {}}
 }
 
 // documentOperation lays one operation out.
@@ -343,6 +424,7 @@ func (d Document) String() string {
 	writeServers(out, root, d.Servers)
 	writeTags(out, root, d.Tags)
 	writePaths(out, root, d)
+	writeSecurity(root, d.Security)
 	writeComponents(out, root, d.Components)
 
 	root.close()
@@ -525,6 +607,7 @@ func writeOperation(item *block, operation Operation) {
 	if operation.Deprecated {
 		item.field("deprecated", "true")
 	}
+	writeRequirements(item, operation.Security)
 	if len(operation.Parameters) > 0 {
 		list := item.arr("parameters")
 		for _, parameter := range operation.Parameters {
@@ -595,16 +678,90 @@ func writeResponse(entry *block, value Response) {
 	entry.close()
 }
 
+// writeSecurity writes what the service as a whole asks a caller to prove.
+func writeSecurity(root *block, security []map[string][]string) {
+	if len(security) == 0 {
+		return
+	}
+	list := root.arr("security")
+	for _, requirement := range security {
+		entry := list.elemObj()
+		for _, name := range sortedKeys(requirement) {
+			scopes := entry.arr(name)
+			for _, scope := range requirement[name] {
+				scopes.elem("%s", quote(scope))
+			}
+			scopes.closeArray()
+		}
+		entry.close()
+	}
+	list.closeArray()
+}
+
+// writeRequirements writes what one operation asks a caller to prove. An entry
+// with an empty alternative is written as an empty object, which is how a
+// document says that a credential is accepted but not required.
+func writeRequirements(item *block, security []map[string][]string) {
+	if len(security) == 0 {
+		return
+	}
+	list := item.arr("security")
+	for _, requirement := range security {
+		if len(requirement) == 0 {
+			list.elem("{}")
+			continue
+		}
+		entry := list.elemObj()
+		for _, name := range sortedKeys(requirement) {
+			scopes := entry.arr(name)
+			for _, scope := range requirement[name] {
+				scopes.elem("%s", quote(scope))
+			}
+			scopes.closeArray()
+		}
+		entry.close()
+	}
+	list.closeArray()
+}
+
 func writeComponents(_ *writer, root *block, components *Components) {
-	if components == nil || len(components.Schemas) == 0 {
+	if components == nil ||
+		(len(components.Schemas) == 0 && len(components.SecuritySchemes) == 0) {
 		return
 	}
 	body := root.obj("components")
-	schemas := body.obj("schemas")
-	for _, name := range sortedKeys(components.Schemas) {
-		writeSchema(schemas.obj(name), components.Schemas[name])
+	if len(components.SecuritySchemes) > 0 {
+		schemes := body.obj("securitySchemes")
+		for _, name := range sortedKeys(components.SecuritySchemes) {
+			scheme := components.SecuritySchemes[name]
+			entry := schemes.obj(name)
+			entry.field("type", "%s", quote(scheme.Type))
+			if scheme.Scheme != "" {
+				entry.field("scheme", "%s", quote(scheme.Scheme))
+			}
+			if scheme.In != "" {
+				entry.field("in", "%s", quote(scheme.In))
+			}
+			if scheme.Name != "" {
+				entry.field("name", "%s", quote(scheme.Name))
+			}
+			if scheme.BearerFormat != "" {
+				entry.field("bearerFormat", "%s", quote(scheme.BearerFormat))
+			}
+			if scheme.Description != "" {
+				entry.field("description", "%s", quote(scheme.Description))
+			}
+			entry.close()
+		}
+		schemes.close()
 	}
-	schemas.close()
+	if len(components.Schemas) > 0 {
+		schemas := body.obj("schemas")
+		for _, name := range sortedKeys(components.Schemas) {
+			writeSchema(schemas.obj(name), components.Schemas[name])
+		}
+		schemas.close()
+	}
 	body.close()
 }
 
@@ -742,4 +899,121 @@ func quote(value string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Checking                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// Problem is something wrong with a description that a document cannot state.
+//
+// The checks are the ones a description can fail at while still being a
+// document: a generator that read one would produce a client that cannot be
+// called, and the failure would appear in the client rather than here.
+type Problem struct {
+	// Operation is the operation the problem is about, which is its identifier
+	// or the route when it has none.
+	Operation string
+	// Message says what is wrong.
+	Message string
+}
+
+// Check reports what a description cannot express, in the order it was read.
+//
+// What is checked is what the document format requires and the reading cannot
+// invent:
+//
+//   - every operation has an identifier, because a generated client names its
+//     methods after one;
+//   - no two operations claim the same identifier, because a client cannot
+//     distinguish them;
+//   - every path wildcard is declared, because a document that omitted one
+//     would describe a caller's parameter as unnameable;
+//   - every declared path parameter is captured, because a caller could not
+//     supply one the route has nowhere to put.
+//
+// An operation that names no status is not a problem. A handler can delegate
+// past the level a reading follows, and a document expresses that as the
+// catch-all response: the service answers something, and the description says
+// it does not know what.
+//
+// What is deliberately not checked is whether a description matches the
+// program. It cannot fail that: it is read from the program.
+func Check(spec Spec) []Problem {
+	problems := []Problem{}
+	seen := map[string]string{}
+
+	for _, operation := range spec.Operations {
+		where := firstNonEmpty(operation.ID, operation.Method+" "+operation.Path)
+		if strings.TrimSpace(operation.ID) == "" {
+			problems = append(problems, Problem{
+				Operation: where,
+				Message:   "the operation has no identifier, so a client cannot name it",
+			})
+		} else if previous, taken := seen[operation.ID]; taken {
+			problems = append(problems, Problem{
+				Operation: where,
+				Message:   "the identifier " + operation.ID + " is already claimed by " + previous,
+			})
+		} else {
+			seen[operation.ID] = operation.Method + " " + operation.Path
+		}
+
+		declared := map[string]bool{}
+		for _, parameter := range operation.Parameters {
+			if parameter.In == rhorouter.InPath {
+				declared[parameter.Name] = true
+			}
+		}
+		for _, name := range wildcards(operation.Path) {
+			if !declared[name] {
+				problems = append(problems, Problem{
+					Operation: where,
+					Message:   "the path captures " + name + " and no parameter declares it",
+				})
+			}
+		}
+
+		for _, parameter := range operation.Parameters {
+			if parameter.In == rhorouter.InPath && !captures(operation.Path, parameter.Name) {
+				problems = append(problems, Problem{
+					Operation: where,
+					Message: "the parameter " + parameter.Name +
+						" is declared in the path and the path captures nothing called that",
+				})
+			}
+		}
+	}
+	return problems
+}
+
+// captures reports whether a path captures a name.
+func captures(path, name string) bool {
+	for _, captured := range wildcards(path) {
+		if captured == name {
+			return true
+		}
+	}
+	return false
+}
+
+// wildcards returns the `{name}` placeholders in a path.
+func wildcards(path string) []string {
+	out := []string{}
+	for i := 0; i < len(path); {
+		if path[i] != '{' {
+			i++
+			continue
+		}
+		end := strings.IndexByte(path[i:], '}')
+		if end < 0 {
+			break
+		}
+		name := strings.TrimSuffix(path[i+1:i+end], "...")
+		if name != "" {
+			out = append(out, name)
+		}
+		i += end + 1
+	}
+	return out
 }

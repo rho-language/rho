@@ -10,8 +10,10 @@ use (
 	./modules/components/rho-log
 	./modules/components/rho-target
 	./modules/components/rho-lsp
+	./modules/components/rho-openapi
 	./modules/components/rho-router
 	./modules/components/rho-test
+	./modules/plugins/rho-doc-api
 	./modules/plugins/rho-doc-toc
 	./modules/plugins/rho-test-junit
 )

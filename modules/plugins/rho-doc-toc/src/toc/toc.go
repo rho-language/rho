@@ -39,15 +39,27 @@ import (
 // reported rather than answered with something it would misread.
 const ProtocolVersion = 1
 
-// Request is what a documentation build sends.
+// Request is what a documentation build sends: the shared envelope, whose
+// payload is the site this build is about.
+//
+// The envelope is the toolchain's and says which hook is being answered; the
+// payload is the component's and says what it is being answered about. A plugin
+// that read the envelope's top level would find every field of it empty.
 type Request struct {
-	Version int    `json:"version"`
-	Hook    string `json:"hook"`
-	Command string `json:"command"`
+	Version   int             `json:"version"`
+	Hook      string          `json:"hook"`
+	Command   string          `json:"command"`
+	Component string          `json:"component"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+}
+
+// Site is this component's part of a request: the site being built, and the
+// page when one is being asked about.
+type Site struct {
 	Site    string `json:"site"`
-	Project string `json:"project"`
-	Out     string `json:"out"`
-	Pages   []Page `json:"pages"`
+	Project string `json:"project,omitempty"`
+	Out     string `json:"out,omitempty"`
+	Pages   []Page `json:"pages,omitempty"`
 	Page    *Page  `json:"page,omitempty"`
 }
 
@@ -95,6 +107,12 @@ func Run(input io.Reader, output io.Writer) error {
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return fmt.Errorf("cannot read the request: %w", err)
 	}
+	site := Site{}
+	if len(request.Payload) > 0 {
+		if err := json.Unmarshal(request.Payload, &site); err != nil {
+			return fmt.Errorf("cannot read the site: %w", err)
+		}
+	}
 	if request.Version != ProtocolVersion {
 		// A different version is answered with a diagnostic rather than with a
 		// guess, so the build reports a plugin that does not fit.
@@ -110,11 +128,11 @@ func Run(input io.Reader, output io.Writer) error {
 	response := Response{Version: ProtocolVersion}
 	switch request.Hook {
 	case HookIndex:
-		response.Pages = append(response.Pages, contents(request))
+		response.Pages = append(response.Pages, contents(site))
 	case HookPage:
-		if request.Page != nil {
+		if site.Page != nil {
 			response.Replacements = map[string]string{
-				request.Page.Target: Notice(*request.Page, request.Site),
+				site.Page.Target: Notice(*site.Page, site.Site),
 			}
 		}
 	}
@@ -126,7 +144,7 @@ func Run(input io.Reader, output io.Writer) error {
 // Pages are grouped by section, in the order they arrive, which is the order
 // the build says it reads them in. A section with no pages does not appear: a
 // heading over nothing is noise.
-func contents(request Request) Page {
+func contents(request Site) Page {
 	var body strings.Builder
 	body.WriteString("<nav class=\"generated-toc\">\n")
 	body.WriteString("<p class=\"toc-title\">All pages</p>\n<ul>\n")
@@ -160,7 +178,7 @@ func contents(request Request) Page {
 
 // sectionOf is the section the contents page is listed under: the section most
 // pages belong to, so it sits next to them.
-func sectionOf(request Request) string {
+func sectionOf(request Site) string {
 	counts := map[string]int{}
 	for _, page := range request.Pages {
 		counts[page.Section]++

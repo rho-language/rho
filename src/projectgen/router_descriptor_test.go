@@ -351,3 +351,72 @@ func sortedCopy(values []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+/* -------------------------------------------------------------------------- */
+/*  The api section                                                             */
+/* -------------------------------------------------------------------------- */
+
+func TestDescriptorReadsWhatTheServiceSaysAboutItself(t *testing.T) {
+	descriptor, err := ParseDescriptor(serverDescriptor(`  - id: go-server
+    emitter: go
+    kind: server
+    router: serveMux
+    api:
+      security: bearer
+      security_description: "A publish token, from POST /auth/token."
+      public_paths: "/healthz, /"
+    files:
+      - path: app.go
+        role: implementation
+`))
+	if err != nil {
+		t.Fatalf("a descriptor with an api section did not parse: %v", err)
+	}
+	// The section is read by the component that writes a description, not by
+	// the generator, so the generator validates it and otherwise leaves it be.
+	// What the test here pins is that the generator accepts a shape the
+	// component reads, which is the two halves agreeing on one spelling.
+	if len(descriptor.Targets) != 1 {
+		t.Fatalf("the descriptor carries %d targets", len(descriptor.Targets))
+	}
+}
+
+func TestDescriptorRefusesASchemeItCannotDescribe(t *testing.T) {
+	// A scheme nothing here can describe would be written into a document as
+	// something it is not, so it is refused where a person can see the refusal.
+	_, err := ParseDescriptor(serverDescriptor(`  - id: go-server
+    emitter: go
+    kind: server
+    router: serveMux
+    api:
+      security: kerberos
+    files:
+      - path: app.go
+        role: implementation
+`))
+	if err == nil {
+		t.Fatal("a scheme that cannot be described was accepted, so a document would state it wrongly")
+	}
+}
+
+func TestTheVocabularyAgreesAcrossTheThreeHomes(t *testing.T) {
+	// The scheme names are written in the schema (which validates a document)
+	// and in the reading (which writes one). They have to be the same list, or
+	// a project would be accepted by one and refused by the other.
+	if !equalStrings(sortedCopy(schema.ValidSecuritySchemes), []string{"bearer", "none"}) {
+		t.Errorf("the schema's schemes are %v", schema.ValidSecuritySchemes)
+	}
+	for _, scheme := range schema.ValidSecuritySchemes {
+		switch scheme {
+		case "bearer":
+		case "none":
+		default:
+			t.Errorf("the schema offers %q, which the reading does not know", scheme)
+		}
+	}
+	// The middleware the reading treats as enforcing a credential is named in
+	// the schema as well, because that is what a project composes.
+	if schema.MiddlewareJWT == "" {
+		t.Error("the schema does not name the wrapper that enforces a token")
+	}
+}

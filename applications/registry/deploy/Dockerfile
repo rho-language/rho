@@ -38,20 +38,39 @@ RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho     ./cmd/rho \
  && HOME=/home/rho ./bin/rho install --force
 
 # Build the components this service depends on and publish them into the tool
-# home. The logger is imported by the service, and the documentation generator is
-# the component the registry uses to document a published module, so both have
-# to be present in the image: a registry that could not reach a generator would
-# hold modules it cannot document.
+# home. Each of them is something the registry would be a lesser thing without:
+#
+#   rho-fmt, rho-log   the formatter the compiler uses and the logger the
+#                      service writes its own records with;
+#   rho-router         reads a Rho service's routes, so the registry can
+#                      describe its own API and a held module's;
+#   rho-openapi        writes that description as an OpenAPI 3.1 document, which
+#                      the openapiemit port embeds at build time;
+#   rho-doc            documents a published module, and is what renders the
+#                      reference the API plugin below adds to;
+#   rho-doc-api        a plugin for rho-doc that puts a served module's HTTP API
+#                      into its documentation, so a published module arrives
+#                      with its API described.
+#
+# A registry that could not reach a generator would hold modules it cannot
+# document, and one that could not write a description would serve an API it
+# does not describe.
 # -buildvcs=false because the image carries sources without the history, which
 # is what a copied tree is; the go.work file is what lets a component resolve
 # the toolchain it is built against from the tree rather than from a network.
-RUN cd /src/modules/components/rho-fmt && go build -buildvcs=false -o rho-fmt ./src \
- && cd /src/modules/components/rho-log && go build -buildvcs=false -o rho-log ./src \
- && cd /src/modules/components/rho-doc && go build -buildvcs=false -o rho-doc ./src \
+RUN cd /src/modules/components/rho-fmt   && go build -buildvcs=false -o rho-fmt   ./src \
+ && cd /src/modules/components/rho-log   && go build -buildvcs=false -o rho-log   ./src \
+ && cd /src/modules/components/rho-router && go build -buildvcs=false -o rho-router ./src \
+ && cd /src/modules/components/rho-openapi && go build -buildvcs=false -o rho-openapi ./src \
+ && cd /src/modules/components/rho-doc   && go build -buildvcs=false -o rho-doc   ./src \
+ && cd /src/modules/plugins/rho-doc-api  && go build -buildvcs=false -o rho-doc-api ./src \
  && cd /src \
  && HOME=/home/rho ./bin/rho module publish modules/components/rho-fmt \
  && HOME=/home/rho ./bin/rho module publish modules/components/rho-log \
- && HOME=/home/rho ./bin/rho module publish modules/components/rho-doc
+ && HOME=/home/rho ./bin/rho module publish modules/components/rho-router \
+ && HOME=/home/rho ./bin/rho module publish modules/components/rho-openapi \
+ && HOME=/home/rho ./bin/rho module publish modules/components/rho-doc \
+ && HOME=/home/rho ./bin/rho module publish modules/plugins/rho-doc-api
 
 # The runtime tree: an installed toolchain plus the sources rho compiles at
 # start-up, being the standard library and the service.

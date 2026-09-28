@@ -48,12 +48,24 @@ targets:
     # carries the method-and-wildcard patterns these routes are declared with,
     # so the generated project routes its requests with nothing fetched.
     router: serveMux
+    # What the registry says about itself, over and above what its routes say.
+    #
+    # Reading is public; publishing needs a publish token, and the handlers that
+    # check one are the ones that say so. The scheme is declared here because a
+    # description cannot derive what a credential is from a call in a body, and
+    # the address a caller gets one from is the one thing no source records.
+    api:
+      security: bearer
+      security_description: "A publish token in the Authorization header, obtained from POST /auth/token."
+      public_paths: "/, /search, /healthz"
     # Supplies the store_put/store_get/store_has/store_search externs the
-    # handlers declare.
+    # handlers declare, the documentation generator the pages come from, and the
+    # service's own API description.
     ports:
       - docemit
       - fsstore
       - logemit
+      - openapiemit
     # A registry is read from a browser on another origin, so every request is
     # named before anything can be correlated with it, and a caller that floods
     # one route must not cost every other caller a request.

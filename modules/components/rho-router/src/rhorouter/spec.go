@@ -53,6 +53,11 @@ type Spec struct {
 	ModuleVersion string `json:"moduleVersion,omitempty"`
 	// Source is the project the routes were read from.
 	Source string `json:"source,omitempty"`
+	// Security is how a caller proves who it is, or nil for a service that
+	// asks for nothing. It comes from the descriptor of the target that serves
+	// the routes, because it is a fact about the deployment rather than about
+	// a handler.
+	Security *Security `json:"security,omitempty"`
 	// Operations are the routes, in declaration order.
 	Operations []Operation `json:"operations"`
 }
@@ -88,6 +93,11 @@ type Operation struct {
 	// library's helpers has them written down; one that does not has none
 	// listed, which is an absence rather than a claim.
 	Responses []Response `json:"responses,omitempty"`
+	// NeedsAuth is true when the handler checks a credential, so a caller may
+	// need a token. It is "may" rather than "must": a check can be
+	// conditional, and a document says so with a security entry that has an
+	// empty alternative.
+	NeedsAuth bool `json:"needsAuth,omitempty"`
 	// Tag groups the operation with others. A tag is the module the route was
 	// declared in, unless the sources say otherwise.
 	Tag string `json:"tag,omitempty"`
