@@ -62,6 +62,36 @@ type Provides struct {
 	// Hooks are the names a plugin may answer, in the order a run goes through
 	// them.
 	Hooks []string
+	// Contracts are what this component needs a plugin to be, which is a
+	// different question from which hooks it answers.
+	//
+	// Hooks say how a plugin is called; they do not say what it is for. A
+	// component that offers `index` and `page` may be extended by a plugin that
+	// writes a table of contents and by one that writes an API reference, and
+	// both answer `index`. A contract names which of those a plugin is, so a
+	// person enabling one can see what they are enabling and a component can
+	// say how many of them it takes.
+	Contracts []Contract
+}
+
+// Contract is one thing a component needs a plugin to be.
+//
+// The name is the contract, and One says how many plugins may fill it: a
+// component that runs statements needs exactly one engine, while one that
+// assembles a set of pages takes every content plugin that is enabled.
+type Contract struct {
+	// Name is what a plugin writes in `implements` to provide this.
+	Name string
+	// Description is what a person reading a list of plugins is shown, and is
+	// the answer to "what is this for" that a list of hooks cannot give.
+	Description string
+	// One is whether exactly one enabled plugin may fill this. False is a
+	// pipeline: every enabled plugin runs.
+	One bool
+	// Hooks are the hooks a plugin filling this answers. They are the same set
+	// the component offers; naming them here is what makes a contract
+	// checkable rather than a label.
+	Hooks []string
 }
 
 // Extends is how a plugin says which component it plugs into.
@@ -72,6 +102,13 @@ type Provides struct {
 type Extends struct {
 	// Component is the name of the component this plugin extends.
 	Component string
+	// Implements are the contracts of that component this plugin fills.
+	//
+	// A plugin says what it is here rather than leaving a reader to infer it
+	// from the hooks it answers: two plugins may answer the same hook and be
+	// entirely different things, and this is what tells them apart when someone
+	// decides whether to run one.
+	Implements []string
 	// Hooks are the hooks of that component this plugin answers. Every one of
 	// them has to be offered by the component.
 	Hooks []string
@@ -650,13 +687,45 @@ func parseProvides(node yaml.Value) *Provides {
 	if node.Kind != yaml.KindMap {
 		return nil
 	}
-	provides := &Provides{Hooks: yamlStrings(node.Map["hooks"])}
-	if len(provides.Hooks) == 0 {
-		// A section with no hooks says nothing, which is how a module says it
+	provides := &Provides{
+		Hooks:     yamlStrings(node.Map["hooks"]),
+		Contracts: parseContracts(node.Map["contracts"]),
+	}
+	if len(provides.Hooks) == 0 && len(provides.Contracts) == 0 {
+		// A section with neither says nothing, which is how a module says it
 		// offers no place for a plugin to stand.
 		return nil
 	}
 	return provides
+}
+
+// parseContracts reads what a component needs a plugin to be.
+func parseContracts(node yaml.Value) []Contract {
+	if node.Kind != yaml.KindList {
+		return nil
+	}
+	out := make([]Contract, 0, len(node.List))
+	for _, entry := range node.List {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		contract := Contract{
+			Name:        yamlUnquote(entry.Map["name"].Str),
+			Description: yamlUnquote(entry.Map["description"].Str),
+			// `one: false` is written to say a contract is a pipeline, and it
+			// means the same as leaving it out. A contract that says nothing
+			// takes every plugin that offers it, because a component that
+			// assembles something is finished by contributions rather than
+			// chosen between.
+			One:   yamlUnquote(entry.Map["one"].Str) == "true",
+			Hooks: yamlStrings(entry.Map["hooks"]),
+		}
+		if contract.Name == "" {
+			continue
+		}
+		out = append(out, contract)
+	}
+	return out
 }
 
 // parseExtends reads what a plugin plugs into.
@@ -666,8 +735,9 @@ func parseExtends(doc yaml.Value) *Extends {
 		return nil
 	}
 	extension := &Extends{
-		Component: component,
-		Hooks:     yamlStrings(doc.Map["hooks"]),
+		Component:  component,
+		Implements: yamlStrings(doc.Map["implements"]),
+		Hooks:      yamlStrings(doc.Map["hooks"]),
 	}
 	for _, item := range doc.Map["commands"].List {
 		if item.Kind != yaml.KindMap {

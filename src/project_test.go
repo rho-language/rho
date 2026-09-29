@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rho/src/deps"
 )
 
 func TestCompileProjectResolvesImportAndInclude(t *testing.T) {
@@ -376,8 +378,28 @@ func TestInstalledComponentWinsOverRepositoryTree(t *testing.T) {
 	writeComponent(t, installed, "from-installation")
 	project := writeComponentProject(t, filepath.Join(repo, "applications", "app"), true)
 
+	entry := filepath.Join(project, "src", "main.rho")
+	// Installing a component makes it available; using it is a decision. Until
+	// that decision is made the import is refused, and the refusal names the
+	// command that makes it — a build that quietly used the installed copy would
+	// be running a component nobody enabled, and one that quietly used the
+	// working tree instead would hide that the installed copy is there at all.
 	out := filepath.Join(t.TempDir(), "app.c")
-	if err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), out); err != nil {
+	err := CompileProjectTo(entry, out)
+	if err == nil {
+		t.Fatal("an installed component that was never enabled was used")
+	}
+	if !strings.Contains(err.Error(), "rho module enable rho-log@0.1.0") {
+		t.Fatalf("the refusal does not say how to fix it: %v", err)
+	}
+
+	// Enabled, it wins over the working tree. That is the whole reason to
+	// install one.
+	if err := deps.Enable(deps.KindComponent, "rho-log"); err != nil {
+		t.Fatal(err)
+	}
+	out = filepath.Join(t.TempDir(), "app.c")
+	if err := CompileProjectTo(entry, out); err != nil {
 		t.Fatalf("compile component import: %v", err)
 	}
 	data, err := os.ReadFile(out)
@@ -391,6 +413,8 @@ func TestInstalledComponentWinsOverRepositoryTree(t *testing.T) {
 
 func TestComponentImportResolvesNewestInstalledVersion(t *testing.T) {
 	// The version the build links is the version the import has to compile.
+	// Turning a module on without naming a version means the newest installed
+	// one, so this is also the rule that a plain `enable` is the newest.
 	rhoHome := t.TempDir()
 	t.Setenv("RHO_HOME", rhoHome)
 	repo := t.TempDir()
@@ -398,6 +422,9 @@ func TestComponentImportResolvesNewestInstalledVersion(t *testing.T) {
 	installed := filepath.Join(rhoHome, "modules", "installed", "component")
 	writeComponent(t, filepath.Join(installed, "rho-log@0.1.0"), "from-0-1-0")
 	writeComponent(t, filepath.Join(installed, "rho-log@0.2.0"), "from-0-2-0")
+	if err := deps.Enable(deps.KindComponent, "rho-log"); err != nil {
+		t.Fatal(err)
+	}
 	project := writeComponentProject(t, filepath.Join(repo, "applications", "app"), true)
 
 	out := filepath.Join(t.TempDir(), "app.c")

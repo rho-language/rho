@@ -18,6 +18,12 @@ features:
 # for `rho-sql` before anything has read a line of its manifest.
 extends: rho-sql
 
+# What this plugin is for, as a contract of rho-sql. A plugin says what
+# it provides rather than leaving a reader to infer it from the hooks it
+# answers: two plugins may answer the same hook and be unrelated things.
+implements:
+  - engine
+
 hooks:
   - describe
   - migrate

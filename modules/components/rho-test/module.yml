@@ -22,6 +22,18 @@ deps:
 # asking are the ones only a project can answer: what a run found, and how a
 # result should be reported.
 provides:
+  # Two contracts rather than one, because discovering a project's tests and
+  # reporting a finished run are unrelated jobs, and a plugin that only reports
+  # is not a plugin that discovers.
+  contracts:
+    - name: discover
+      description: Finds the tests a run will execute.
+      one: false
+      hooks: [discover]
+    - name: report
+      description: Reports a finished run in a form a system reads.
+      one: false
+      hooks: [run]
   hooks:
     # Once, over the test files the run found: a plugin that knows a project's
     # own test layout, or that generates tests, answers here.

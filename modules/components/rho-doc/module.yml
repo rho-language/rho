@@ -37,6 +37,13 @@ docs:
     - docs/index.md
 
 provides:
+  # What a plugin is here for. Every enabled one contributes, because a set of
+  # pages is finished by what each adds to it rather than chosen between.
+  contracts:
+    - name: contents
+      description: Adds to a finished set of pages: a table of contents, an API reference, an index.
+      one: false
+      hooks: [index, page]
   hooks:
     # Once, over the finished set of pages: a table of contents, an index.
     - index

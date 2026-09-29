@@ -76,6 +76,12 @@ func Main(args []string) int {
 		err = Search(args[1:])
 	case "list":
 		err = List(args[1:])
+	case "enable":
+		err = Enable(args[1:])
+	case "disable":
+		err = Disable(args[1:])
+	case "plugin":
+		err = PluginCommand(args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, "unknown module command:", cmd)
 		fmt.Fprintln(os.Stderr, Commands())

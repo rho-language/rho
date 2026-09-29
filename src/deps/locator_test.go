@@ -186,13 +186,29 @@ func TestLocatePrefersInstalledComponentOverRepository(t *testing.T) {
 	installed := filepath.Join(rhoHome, "modules", "installed", "component", "rho-log@0.1.0")
 	writeComponent(t, installed)
 
+	// An installed but unactivated component is not used, so a checkout still
+	// builds from its own tree rather than from something on the machine that
+	// nobody chose to put there.
 	loc := &DefaultLocator{ProjectRoot: project}
 	got, err := loc.Locate(DepSpec{Name: "rho-log"})
 	if err != nil {
 		t.Fatalf("Locate error: %v", err)
 	}
+	if got == installed {
+		t.Fatalf("an unactivated installed component was used: %s", got)
+	}
+
+	// Activated, it takes precedence over the working tree: that is the whole
+	// reason to install one.
+	if err := Enable(KindComponent, "rho-log"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = (&DefaultLocator{ProjectRoot: project}).Locate(DepSpec{Name: "rho-log"})
+	if err != nil {
+		t.Fatalf("Locate error: %v", err)
+	}
 	if got != installed {
-		t.Fatalf("expected the installed component %s, got %s", installed, got)
+		t.Fatalf("expected the activated component %s, got %s", installed, got)
 	}
 }
 
@@ -255,18 +271,76 @@ func TestLocateIgnoresRepositoryComponentWhenASourceIsDeclared(t *testing.T) {
 	}
 }
 
-func TestInstalledComponentRootPrefersNewestVersion(t *testing.T) {
-	// Two installed versions of one component: the import has to resolve the
-	// version the build links, not whichever the directory listing names first.
+func TestAnInstalledComponentIsNotActiveUntilItIsChosen(t *testing.T) {
+	// Installing makes a component available. Using it is a separate decision,
+	// and a build that reached for a component nobody enabled would run code its
+	// author never asked for.
 	rhoHome := t.TempDir()
 	t.Setenv("RHO_HOME", rhoHome)
 	installed := filepath.Join(rhoHome, "modules", "installed", "component")
 	writeComponent(t, filepath.Join(installed, "rho-log@0.1.0"))
 	writeComponent(t, filepath.Join(installed, "rho-log@0.2.0"))
 
-	want := filepath.Join(installed, "rho-log@0.2.0")
+	if got := InstalledComponentRoot("rho-log"); got != "" {
+		t.Fatalf("an installed component was used before it was activated: %s", got)
+	}
+	// It is still there to be turned on, which is what distinguishes inactive
+	// from absent.
+	if got := InstalledVersions(KindComponent, "rho-log"); len(got) != 2 {
+		t.Fatalf("expected two installed versions, got %v", got)
+	}
+}
+
+func TestTheActiveVersionIsTheOneThatRunsNotTheNewest(t *testing.T) {
+	// Several versions may be installed at once, and exactly one of them is the
+	// one a build links. Choosing the largest number instead would make a build
+	// depend on what was installed last rather than on what anyone decided.
+	rhoHome := t.TempDir()
+	t.Setenv("RHO_HOME", rhoHome)
+	installed := filepath.Join(rhoHome, "modules", "installed", "component")
+	writeComponent(t, filepath.Join(installed, "rho-log@0.1.0"))
+	writeComponent(t, filepath.Join(installed, "rho-log@0.2.0"))
+
+	if err := SetVersionEnabled(KindComponent, "rho-log", "0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(installed, "rho-log@0.1.0")
 	if got := InstalledComponentRoot("rho-log"); got != want {
-		t.Fatalf("expected the newest installed component %s, got %s", want, got)
+		t.Fatalf("expected the activated component %s, got %s", want, got)
+	}
+	// The choice survives a fresh read, which is what makes it a record rather
+	// than a setting that lasts one command.
+	if err := SetVersionEnabled(KindComponent, "rho-log", "0.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if got := InstalledComponentRoot("rho-log"); got != filepath.Join(installed, "rho-log@0.2.0") {
+		t.Fatalf("expected the newly activated version, got %s", got)
+	}
+}
+
+func TestADisabledComponentIsNotUsedAndSaysHowToTurnItOn(t *testing.T) {
+	rhoHome := t.TempDir()
+	t.Setenv("RHO_HOME", rhoHome)
+	installed := filepath.Join(rhoHome, "modules", "installed", "component")
+	writeComponent(t, filepath.Join(installed, "rho-log@0.1.0"))
+
+	if err := Enable(KindComponent, "rho-log"); err != nil {
+		t.Fatal(err)
+	}
+	if got := InstalledComponentRoot("rho-log"); got == "" {
+		t.Fatal("an enabled component did not resolve")
+	}
+	if err := Disable(KindComponent, "rho-log"); err != nil {
+		t.Fatal(err)
+	}
+	if got := InstalledComponentRoot("rho-log"); got != "" {
+		t.Fatalf("a disabled component was still used: %s", got)
+	}
+	// A run that needed it is told the command that fixes it, rather than
+	// reporting that something is missing when the reader has it.
+	err := &NotEnabledError{Kind: KindComponent, Name: "rho-log", Installed: []string{"0.1.0"}}
+	if !strings.Contains(err.Error(), "rho module enable rho-log@0.1.0") {
+		t.Errorf("the message does not say how to fix it: %v", err)
 	}
 }
 

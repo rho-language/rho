@@ -127,6 +127,11 @@ type Plugin struct {
 	Root string
 	// Extends is the component this plugin plugs into.
 	Extends string
+	// Implements are the contracts of that component this plugin fills, which
+	// is what says what the plugin is rather than which hooks it happens to
+	// answer. Two plugins may answer the same hook and be unrelated things, and
+	// this is what tells them apart when someone decides whether to run one.
+	Implements []string
 	// Hooks are the hooks of that component this plugin answers, and the
 	// component offers every one of them.
 	Hooks []string
@@ -182,6 +187,12 @@ type Source struct {
 }
 
 // Discover reads the plugins attached to one component.
+//
+// A plugin that is installed and not active is not here: it is available, and
+// this is the set that runs. A component that needs one of them and cannot find
+// it says so, rather than carrying on with fewer than it asked for — a build
+// that silently dropped a formatter would produce pages nobody asked for the
+// shape of.
 func (s Source) Discover(component string) []Plugin {
 	found := []Plugin{}
 	for _, plugin := range s.All() {
@@ -190,6 +201,84 @@ func (s Source) Discover(component string) []Plugin {
 		}
 	}
 	return found
+}
+
+// Contract is what a component needs a plugin to be.
+//
+// The name is the contract and One says how many plugins may fill it. Hooks say
+// how a plugin is called; this says what it is for, which is the question a
+// person enabling one is actually asking.
+type Contract struct {
+	Name        string
+	Component   string
+	Description string
+	One         bool
+	Hooks       []string
+}
+
+// Contracts reads what a component needs a plugin to be.
+//
+// A component that declares none has no contract model, and every plugin
+// extending it is offered to every run of it — which is what a component whose
+// one plugin is the only kind there is wants.
+func (s Source) Contracts(component string) []Contract {
+	home := s.RhoHome
+	if home == "" {
+		home = deps.RhoHome()
+	}
+	if home == "" {
+		return nil
+	}
+	root := deps.InstalledComponentRoot(component)
+	if root == "" {
+		return nil
+	}
+	manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
+	if err != nil || manifest == nil || manifest.Provides == nil {
+		return nil
+	}
+	out := make([]Contract, 0, len(manifest.Provides.Contracts))
+	for _, contract := range manifest.Provides.Contracts {
+		out = append(out, Contract{
+			Name:        contract.Name,
+			Component:   component,
+			Description: contract.Description,
+			One:         contract.One,
+			Hooks:       contract.Hooks,
+		})
+	}
+	return out
+}
+
+// Fills reports whether a plugin fills a contract, and which.
+//
+// A plugin that names no contract is offered to every run of the component,
+// which is what a plugin written before contracts existed does and is why a
+// component that needs to tell its plugins apart has to say so.
+func (p Plugin) Fills(contract string) bool {
+	if contract == "" || len(p.Implements) == 0 {
+		return true
+	}
+	for _, offered := range p.Implements {
+		if offered == contract {
+			return true
+		}
+	}
+	return false
+}
+
+// FillsAny reports whether a plugin fills at least one of the contracts, which
+// is how a component asks which of its plugins it could run.
+func (p Plugin) FillsAny(contracts []Contract) bool {
+	if len(contracts) == 0 {
+		return true
+	}
+	for _, contract := range contracts {
+		if p.Fills(contract.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // All reads every plugin that may be run, whatever component each one extends.
@@ -253,11 +342,12 @@ func readPlugin(root string, seen map[string]bool) (Plugin, bool) {
 	seen[manifest.ModuleName] = true
 
 	plugin := Plugin{
-		Name:    manifest.ModuleName,
-		Version: manifest.Version,
-		Root:    root,
-		Extends: extension.Component,
-		Hooks:   extension.Hooks,
+		Name:       manifest.ModuleName,
+		Version:    manifest.Version,
+		Root:       root,
+		Extends:    extension.Component,
+		Implements: extension.Implements,
+		Hooks:      extension.Hooks,
 	}
 	for _, command := range extension.Commands {
 		plugin.Commands = append(plugin.Commands, Command{Name: command.Name, Run: command.Run, Hook: command.Hook})

@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"rho/src/deps"
 	"time"
 )
 
@@ -63,7 +65,15 @@ func startRegistry(t *testing.T, token string) *registryServer {
 func sqlComponentInstalled(t *testing.T) {
 	t.Helper()
 	if _, err := componentBinary(SQLComponentName); err != nil {
-		t.Skipf("the %s component is not installed: %v", SQLComponentName, err)
+		t.Skipf("the %s component is not installed or enabled: %v", SQLComponentName, err)
+	}
+	// The component generates the statements; the engine types them. Both are
+	// modules a person turns on, so both are checked: a machine that has the
+	// generator and not the engine would generate nothing and report it as a
+	// generation failure, which is a much less useful thing to read.
+	if deps.InstalledPluginRoot(SQLiteEnginePlugin) == "" {
+		t.Skipf("the %s plugin is not installed or enabled; run: rho plugin enable %s",
+			SQLiteEnginePlugin, SQLiteEnginePlugin)
 	}
 }
 

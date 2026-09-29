@@ -27,6 +27,14 @@ deps:
   rho-log: ">=0.1.0"
 
 provides:
+  # What a plugin is here for. Exactly one engine fills it: a service runs its
+  # statements against one database, and a second engine would be a second
+  # database nobody chose.
+  contracts:
+    - name: engine
+      description: Runs a service's SQL against a database.
+      one: true
+      hooks: [describe, migrate, query, describe_query]
   hooks:
     # describe is asked what an engine is and what it can be asked.
     - describe
