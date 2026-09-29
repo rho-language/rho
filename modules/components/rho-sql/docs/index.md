@@ -6,7 +6,129 @@ in between knows what either side is.
 (sql:declaring)=
 ## Declaring
 
-A project keeps its SQL in two files, in the project root or in `sql/`:
+A project says it has a database in one place, in its own manifest:
+
+```yaml
+# module.yml
+requires:
+  - name: rho/sqlite
+    version: ^1.0.0
+
+sql:
+  driver: rho-sql-sqlite     # the engine that types and runs the statements
+  schema: db/schema.yml      # the tables
+  out: src/db                # where the generated Rho is written
+```
+
+`requires` names the runtime package the built program links, and `driver` names
+the engine that answers a statement. They are deliberately different names: the
+first is a library, the second is the program that holds it.
+
+(sql:tables)=
+### Tables as declarations
+
+A project's tables are declared, not written as SQL. Declaring a table is
+declaring a name, its columns and what each holds; the create statement and the
+operations over it follow from that:
+
+```yaml
+# db/schema.yml
+tables:
+  - name: customers
+    description: The people who buy things.
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+        auto: true
+      - name: name
+        type: text
+        not_null: true
+        unique: true
+      - name: address
+        type: text
+      - name: balance
+        type: number
+        default: "0"
+```
+
+The list is a list rather than a mapping because declaration order is the order
+of the generated struct's fields, and a mapping has none.
+
+What may be declared on a column:
+
+| Key | What it is |
+|-----|------------|
+| `name` | the column, as the database will call it |
+| `type` | what it holds: `integer`, `text`, `float`, `boolean`, `bytes`, `time`, `json`, `number` |
+| `description` | the prose a reader of the generated code is looking for |
+| `primary_key` | the column is part of the key |
+| `auto` | the database generates the value, which only a key may be |
+| `not_null` | the column refuses a null |
+| `unique` | the column's values are unique |
+| `default` | a literal, or an expression such as `datetime('now')` |
+| `references` | the table and column a foreign key points at, as `users(id)` |
+
+The vocabulary is a meaning rather than a storage class. `number` is a number the
+database keeps exactly, `text` is text of any length, and what a dialect calls
+them is the engine's business — a project that moves from one engine to another
+changes its driver and not its tables.
+
+A declaration is checked here rather than discovered at run time: a column with
+no type, a generated column that is not a key, a table named twice and a type
+outside the vocabulary are all reported, with the line, before anything is
+generated.
+
+(sql:generated)=
+### What is generated
+
+Three things, all from that one file:
+
+- the **create statements**, written as the schema the engine is handed, so the
+  database a service creates and the code generated from the same reading cannot
+  come to describe two different things;
+- the **row types**, one struct per table, which a caller gets as a whole table
+  rather than as a shape only one statement happens to produce;
+- the **common operations** per table, as named statements the rest of the
+  pipeline reads like any other:
+
+| Operation | What it does |
+|-----------|--------------|
+| `insert_<table>` | adds a row, and answers how many |
+| `get_<table>` | the row with this key, or no rows |
+| `list_<table>` | every row |
+| `update_<table>` | changes the row with this key |
+| `delete_<table>` | removes the row with this key |
+
+So a project that declared one table has five typed functions and a create
+statement, and wrote neither. What is *not* generated is a statement that is
+about the service's domain rather than about its tables — a search with a
+visibility rule, a join, a count by owner. Those go in a `queries` file, named,
+and are generated the same way:
+
+```sql
+-- name: find_customer
+-- Returns the customer at this address.
+SELECT id, name FROM customers WHERE address = :address;
+```
+
+```yaml
+# module.yml
+sql:
+  driver: rho-sql-sqlite
+  schema: db/schema.yml
+  queries: db/queries.sql
+  out: src/db
+```
+
+A schema may also be written as SQL — the file's extension says which, and a
+project that wrote create statements gets those read as written.
+
+A project with no manifest still works. Its SQL is looked for under `sql/`, and
+what is generated is the two standalone backends described below rather than
+Rho, because a directory of SQL is not a Rho module.
+
+Two files, then:
 
 ```
 sql/
@@ -104,12 +226,23 @@ The same reading that an engine is handed is what generated code is written
 from:
 
 ```sh
-rho sql generate .                     # the schema, the schema's own types
-rho sql generate . -engine rho-sqlite  # with the engine typing the results
+rho build .                            # generating happens as part of the build
+rho sql generate . -engine rho-sql-sqlite  # or on its own, with the engine typing
 ```
 
-It writes two backends, each to a directory of its own, because a Go package and
-a C translation unit cannot share one:
+A Rho module gets Rho: one file per statement, the row types they return, and a
+contract the compiler reads:
+
+```
+src/db/
+  models.rho        the row types
+  queries.rho       one function per statement
+  statements.json   what the generated functions are, for the port
+```
+
+A project that is not a Rho module — a directory of SQL with no manifest — gets
+the two standalone backends instead, each to a directory of its own, because a Go
+package and a C translation unit cannot share one:
 
 ```
 queries/
@@ -117,13 +250,7 @@ queries/
   c/   models.h,   queries.c
 ```
 
-**Go** is written against `database/sql`, which every driver sits behind. A
-caller opens the handle with the driver it configured:
-
-```go
-queries.UseDB(handle)
-rows, err := queries.FindCustomer(ctx, "1 Bridge Street")
-```
+**Go** is written against `database/sql`, which every driver sits behind.
 
 **C** is written against a small handle the generated file owns — an opaque
 `rho_db`, a `rho_value`, and eight functions. C has no standard every driver sits
@@ -152,6 +279,70 @@ A type the mapping does not place is carried as text and named in a note on the
 function, rather than coerced into a neighbour. A column carried as a string
 compiles, runs, and returns the value the database sent; a number carried as
 zeroes would do none of those things.
+
+(sql:port)=
+## Using the generated code
+
+A handler calls a statement by its name. It never writes SQL and never names an
+engine: which database the statements run against is a deployment decision, and a
+detail the handler knew would be a handler that stopped working when it changed.
+
+The generated files are the project's own module, so a handler includes them the
+way it includes any of its own sources:
+
+```rho
+module billing
+
+include "db/models.rho"
+include "db/queries.rho"
+
+import std.sql
+import std.core.slice
+import std.core.ptr
+
+fn main() void {
+    let opened = sql_open("billing.db")
+    if !opened.is_ok {
+        return
+    }
+    let db: SqlDb = opened.ok
+    sql_apply(db, "")
+
+    let rows: Slice[Customer] = Slice[Customer]{ Ptr[Customer](0), 0 }
+    let found = FindCustomer("1 Bridge Street", db, rows, 16)
+    if found.is_ok {
+        print("found them")
+    }
+    sql_close(db)
+}
+```
+
+What each surface is:
+
+| Call | What it does |
+|------|--------------|
+| `sql_open(path)` | opens a database and answers a handle, or why it could not |
+| `sql_apply(db, "")` | creates the tables the schema declares, and is what a service runs before it takes a request rather than on every one |
+| `sql_close(db)` | releases the handle |
+| `sql_exec(db, name, sql, values, affected)` | runs a statement that changes rows and answers how many |
+| `sql_prepare`/`sql_run`/`sql_read_column`/`sql_finalize` | walk a result a row at a time, without holding every row at once |
+| `sql_bind` | binds a value to a prepared statement, by position |
+| `sql_last_message(db)` | the engine's own account of the last failure |
+| the generated functions | one per statement, typed, returning `Result[u32, SqlError]` |
+
+The declarations are in `std/sql.rho`, and what supplies them is the `sql` port,
+which the compiler generates into the project being built. A project that
+declares `sql:` gets that port without asking for it, because the code generated
+from its statements calls into it.
+
+The port is written against `database/sql`, so the driver is the one deployment
+names — `RHO_SQL_DRIVER`, defaulting to `sqlite` — and the database is
+`RHO_SQL_DATABASE`. A program generated on a workstation and deployed to a
+service does not carry the workstation's driver with it.
+
+Nothing allocates on the Rho side. A generated read takes a slice the caller owns
+and answers how many rows it wrote into it, which is what lets the same file run
+on a device with a fixed heap and in a service with a collector.
 
 (sql:writing-an-engine)=
 ## Writing an engine

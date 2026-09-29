@@ -29,12 +29,13 @@
 // SPDX-License-Identifier: MIT
 //
 
-package main
+package sqlite
 
 import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -50,7 +51,7 @@ import (
 
 // engine is the sqlite engine, holding its connection for as long as a caller
 // keeps asking.
-type engine struct {
+type Engine struct {
 	mu sync.Mutex
 	db *sql.DB
 	// path is the database file, which is remembered so a caller can be told
@@ -63,10 +64,27 @@ type engine struct {
 // The name is read from the environment rather than from a request, because a
 // database is a deployment decision and a caller that could change it by asking
 // differently would be a caller that could reach a database it was not given.
-func open() (*engine, error) {
-	path := os.Getenv("RHO_SQLITE_PATH")
+func Open() (*Engine, error) {
+	// The component says which database to work against and whether it is
+	// disposable; this is the engine that decides what those mean. The path is
+	// read from RHO_SQLITE_PATH as well, because that is what a deployment sets
+	// and a deployment should not have to learn the component's vocabulary.
+	path := os.Getenv(rhosql.DatabaseEnv)
+	if path == "" {
+		path = os.Getenv("RHO_SQLITE_PATH")
+	}
 	if path == "" {
 		path = "data/app.sqlite"
+	}
+	if os.Getenv(rhosql.ScratchEnv) != "" {
+		// A scratch database is a file to be made and thrown away, so the path
+		// the component gave is a directory rather than a file.
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				return nil, fmt.Errorf("cannot make a scratch directory at %s: %w", path, err)
+			}
+		}
+		path = filepath.Join(path, "scratch.sqlite")
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -80,11 +98,11 @@ func open() (*engine, error) {
 		db.Close()
 		return nil, fmt.Errorf("cannot reach %s: %w", path, err)
 	}
-	return &engine{db: db, path: path}, nil
+	return &Engine{db: db, path: path}, nil
 }
 
 // Describe says what this engine is.
-func (e *engine) Describe() rhosql.Engine {
+func (e *Engine) Describe() rhosql.Engine {
 	return rhosql.Engine{
 		Name:    "sqlite",
 		Version: e.sqliteVersion(),
@@ -106,7 +124,7 @@ func (e *engine) Describe() rhosql.Engine {
 // sqliteVersion is the library's own version, which is what a caller wants when
 // a statement behaves differently from how it used to — `RETURNING` arrived in
 // 3.35, and a service on an older file would want to know that.
-func (e *engine) sqliteVersion() string {
+func (e *Engine) sqliteVersion() string {
 	var version string
 	if err := e.db.QueryRow("SELECT sqlite_version()").Scan(&version); err != nil {
 		return "unknown"
@@ -116,7 +134,7 @@ func (e *engine) sqliteVersion() string {
 
 // close releases the connection, so a session that ends does not leave the
 // database file held.
-func (e *engine) close() {
+func (e *Engine) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.db != nil {
@@ -126,7 +144,7 @@ func (e *engine) close() {
 }
 
 // Migrate creates the tables a schema declares.
-func (e *engine) Migrate(request rhosql.MigrateRequest) (rhosql.MigrateResponse, error) {
+func (e *Engine) Migrate(request rhosql.MigrateRequest) (rhosql.MigrateResponse, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	response := rhosql.MigrateResponse{}
@@ -149,7 +167,7 @@ func (e *engine) Migrate(request rhosql.MigrateRequest) (rhosql.MigrateResponse,
 }
 
 // Query runs one statement.
-func (e *engine) Query(request rhosql.QueryRequest) (rhosql.QueryResponse, error) {
+func (e *Engine) Query(request rhosql.QueryRequest) (rhosql.QueryResponse, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -172,7 +190,7 @@ func (e *engine) Query(request rhosql.QueryRequest) (rhosql.QueryResponse, error
 }
 
 // selectRows runs a statement that returns rows and reads them in order.
-func (e *engine) selectRows(statement string, values []any, response rhosql.QueryResponse) (rhosql.QueryResponse, error) {
+func (e *Engine) selectRows(statement string, values []any, response rhosql.QueryResponse) (rhosql.QueryResponse, error) {
 	rows, err := e.db.Query(statement, values...)
 	if err != nil {
 		return response, engineError(err, "")
@@ -208,7 +226,7 @@ func (e *engine) selectRows(statement string, values []any, response rhosql.Quer
 // sqlite prepares a statement to answer this, which is how a caller generates a
 // typed result rather than an untyped one: the columns come from the engine's
 // own reading of the statement, not from a guess about the select list.
-func (e *engine) DescribeQuery(request rhosql.DescribeQueryRequest) (rhosql.DescribeQueryResponse, error) {
+func (e *Engine) DescribeQuery(request rhosql.DescribeQueryRequest) (rhosql.DescribeQueryResponse, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

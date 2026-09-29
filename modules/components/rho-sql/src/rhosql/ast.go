@@ -91,6 +91,12 @@ type Column struct {
 	Default string `json:"default,omitempty"`
 	// Unique is whether the column's values are unique.
 	Unique bool `json:"unique,omitempty"`
+	// Auto is whether the database generates the value, which only a key may
+	// be. A generated column is not a value a caller passes to an insert.
+	Auto bool `json:"auto,omitempty"`
+	// References is the table and column a foreign key points at, as it is
+	// written, or "" when the column is not one.
+	References string `json:"references,omitempty"`
 }
 
 // Query is one named statement in `queries.sql`.

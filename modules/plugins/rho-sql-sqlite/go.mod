@@ -1,6 +1,6 @@
 module github.com/rho/rho-sql-sqlite
 
-go 1.18
+go 1.23
 
 require (
 	github.com/rho/rho-sql v0.0.0

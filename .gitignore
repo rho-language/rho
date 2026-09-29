@@ -17,6 +17,15 @@ Makefile
 # Resolved dependency lockfiles, produced by a build
 rho.lock
 
+# The Rho a project's SQL generates, written beside the project's own sources so
+# the compiler and the project are reading one set of files.
+#
+# They are outputs: a build runs the generator before it compiles, and the
+# statements come from the schema the project declared. A deployment therefore
+# generates them, and keeping a copy here would only risk a checked-in file
+# disagreeing with the schema it was generated from.
+applications/registry/src/db/
+
 # A component's or plugin's built command, which `rho module publish` packs
 # beside the manifest. It is a build artefact of the module, not a source file.
 modules/components/*/rho-*

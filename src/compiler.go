@@ -109,6 +109,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 		IncludePaths: includePaths,
 		SourceFiles:  sourceFiles,
 		Config:       configBridge(path, outputDir),
+		SQL:          sqlBridge(ProjectRoot(path)),
 	}
 	for _, target := range targets {
 		if _, err := projectgen.Generate(ctx, target); err != nil {
@@ -150,6 +151,17 @@ type GeneratedTarget struct {
 // reports how each is built. An only value restricts the build to that single
 // target, which is how a test module asks for the backend it can run.
 func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only string) ([]GeneratedTarget, error) {
+	projectRoot := ProjectRoot(path)
+	// A project that declared SQL gets its statements generated before anything
+	// is compiled, because the generated Rho is an input to the compile: a
+	// handler calls a function that does not exist until this has run. Running
+	// it here rather than as a separate command is what makes `rho build` mean
+	// "build what this project declares" rather than "build what was already
+	// written down".
+	if err := runSQLGeneration(projectRoot); err != nil {
+		return nil, err
+	}
+
 	compiled, err := loadModuleGraphWithDependencies(path, dependencyRoots)
 	if err != nil {
 		return nil, err
@@ -159,7 +171,6 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 		return nil, err
 	}
 
-	projectRoot := ProjectRoot(path)
 	descriptor, err := ResolveDescriptor(projectRoot)
 	if err != nil {
 		return nil, err
@@ -214,6 +225,7 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 			IncludePaths: includePaths,
 			SourceFiles:  sourceFiles,
 			Config:       configBridge(projectRoot, dir),
+			SQL:          sqlBridge(projectRoot),
 			Connection:   connection,
 			Variant:      variants[target.ID],
 		}
@@ -268,6 +280,19 @@ func BuildGoProject(generatedDir, outputDir, outputName string) (string, error) 
 		return "", err
 	}
 	binary := filepath.Join(outputDir, outputName)
+	// A generated project that requires a module has to have its go.sum written
+	// before it can build: `go build` does not download what a go.mod names but
+	// has not verified. This is that step, and it is silent when it succeeds —
+	// the output of a dependency resolution is not something a person asked to
+	// read.
+	if goModHasRequires(generatedDir) {
+		resolve := exec.Command("go", "mod", "tidy")
+		resolve.Dir = generatedDir
+		resolve.Env = append(os.Environ(), "GOWORK=off")
+		if out, err := resolve.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("the modules this project requires could not be resolved: %w\n%s", err, out)
+		}
+	}
 	cmd := exec.Command("go", "build", "-o", binary, ".")
 	cmd.Dir = generatedDir
 	// A generated project stands on its own: it has no requirements beyond the
@@ -283,6 +308,24 @@ func BuildGoProject(generatedDir, outputDir, outputName string) (string, error) 
 }
 
 // TargetOutputName is the binary name a target's build produces.
+// goModHasRequires reports whether a generated project's go.mod names a module
+// to download.
+//
+// A project with only the standard library is built as it stands, and running a
+// dependency resolution for it would be a step that does nothing.
+func goModHasRequires(generatedDir string) bool {
+	content, err := os.ReadFile(filepath.Join(generatedDir, "go.mod"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "require") {
+			return true
+		}
+	}
+	return false
+}
+
 func TargetOutputName(moduleName, targetID string) string {
 	if moduleName != "" {
 		return moduleName
@@ -438,6 +481,119 @@ func configBridge(projectRoot, outputDir string) *projectgen.Config {
 	return bridge
 }
 
+// runSQLGeneration generates a project's statements from the SQL it declared.
+//
+// The generation is the rho-sql component's work, and it is run as a process
+// for the same reason the documentation generator is: the component is a
+// separate program reached through the local registry, and the build should not
+// be tied to a SQL reader it does not have. The engine that types the statements
+// is a plugin the component reaches in turn, so a build that asks an engine for
+// its columns gets an engine's answer rather than a reading of a select list.
+//
+// A project that declared no SQL does nothing here, which is a fact rather than
+// a failure: most modules are libraries.
+func runSQLGeneration(projectRoot string) error {
+	declared := sqlBridge(projectRoot)
+	if !declared.Configured() {
+		return nil
+	}
+	// A project whose generated code calls into a package it never named is a
+	// build that works on the machine that generated it and nowhere else. The
+	// requirement is what anyone building it later reads, so a project that
+	// declared a database and no requirement is told once, and the build goes on:
+	// a project generated only to be read is a project that never needed one.
+	warnMissingRequirement(projectRoot, declared)
+	binary, err := componentBinary(SQLComponentName)
+	if err != nil {
+		return err
+	}
+	command := exec.Command(binary, "generate", projectRoot)
+	command.Stdout = os.Stderr
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("the statements this project declared could not be generated: %w", err)
+	}
+	return nil
+}
+
+// warnMissingRequirement says so when a project declared a database and named
+// nothing its generated code links against.
+//
+// The `sql.driver` and `requires:` are different names on purpose — one is the
+// engine plugin that answers a statement, the other the runtime package the
+// code calls into — so this does not compare them. It asks only whether the
+// project named any requirement at all, which is the fact the schema documents
+// as the one a build has to record.
+func warnMissingRequirement(projectRoot string, declared *projectgen.SQL) {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil || manifest == nil {
+		return
+	}
+	if len(manifest.Requires) > 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"rho build: this project declares a %s database and no `requires:`; the "+
+			"generated code calls into a runtime package, and a project that does "+
+			"not name it builds only where it was generated\n",
+		declared.Driver)
+}
+
+// SQLComponentName is the component that turns SQL into Rho.
+const SQLComponentName = "rho-sql"
+
+// componentBinary is the program an installed component runs, which is the file
+// its manifest names under `main:`.
+//
+// A component whose manifest names no binary is a library rather than a
+// component, and asking it to run is a mistake worth a message rather than a
+// path that does not exist.
+func componentBinary(name string) (string, error) {
+	root := deps.InstalledComponentRoot(name)
+	if root == "" {
+		return "", fmt.Errorf(
+			"this project declared SQL, which needs the %s component, and it is "+
+				"not installed; publish it with: rho module publish %s",
+			name, filepath.Join("modules", "components", name))
+	}
+	manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
+	if err != nil || manifest.Main == "" {
+		return "", fmt.Errorf("the installed %s component does not say what to run", name)
+	}
+	return filepath.Join(root, manifest.Main), nil
+}
+
+// sqlBridge reads the database a project declared, or nil when it declared none.
+//
+// The generated statements are written by the rho-sql component, which is a
+// separate program reached the way every other component is. This reads the
+// declaration so the generator knows a project has a database and can supply the
+// port its generated code calls into; it does not read the SQL itself.
+func sqlBridge(projectRoot string) *projectgen.SQL {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil || manifest == nil || !manifest.SQL.Declared() {
+		return nil
+	}
+	declared := manifest.SQL
+	bridge := &projectgen.SQL{
+		Driver:  declared.Driver,
+		Schema:  declared.SchemaPath(projectRoot),
+		Queries: declared.QueriesPath(projectRoot),
+		Out:     declared.OutPath(projectRoot),
+		Package: declared.Package,
+	}
+	if bridge.Package == "" {
+		// The generated file belongs to the project, so it is named and
+		// packaged as the project is and a handler imports it the way it
+		// imports anything else.
+		bridge.Package = ProjectName(projectRoot)
+	}
+	if bridge.Package == "" {
+		bridge.Package = "queries"
+	}
+	return bridge
+}
+
 func ProjectRoot(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -510,6 +666,9 @@ func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*a
 	if err != nil {
 		return nil, err
 	}
+	if err := loadDatabaseSurface(root, entry, projectRoot, dependencyRoots, components, visited); err != nil {
+		return nil, err
+	}
 	if manifest, manifestErr := deps.LoadManifest(filepath.Join(projectRoot, "rho.mod")); manifestErr == nil {
 		root.Features = append(root.Features, manifest.Features...)
 	}
@@ -518,6 +677,41 @@ func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*a
 	}
 	return root, nil
 }
+
+// loadDatabaseSurface brings the database surface into a project that declared
+// one.
+//
+// A project that declares `sql:` gets a port generated into it, and the port is
+// written in the vocabulary the standard library declares: a handle, a value, a
+// statement. Those have to be in scope for the generated program to compile, and
+// the project does not import them itself — it declared a database, which is the
+// statement that it has one.
+//
+// So the surface is imported for it, the same way a feature's modules are: it is
+// a consequence of a declaration rather than something a project repeats. A
+// project that does import it is unaffected, because a module already in the
+// graph is not loaded twice.
+func loadDatabaseSurface(module *ast.Module, sourcePath, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) error {
+	if !sqlBridge(projectRoot).Configured() {
+		return nil
+	}
+	importPath, err := resolveImport(DatabaseSurfaceModule, sourcePath, projectRoot, dependencyRoots, components)
+	if err != nil {
+		return fmt.Errorf("the database surface %q could not be found: %w", DatabaseSurfaceModule, err)
+	}
+	imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, components, visited)
+	if err != nil {
+		return err
+	}
+	markModuleOwnership(imported, imported.Name)
+	module.Decls = append(module.Decls, imported.Decls...)
+	module.Features = append(module.Features, imported.Features...)
+	return nil
+}
+
+// DatabaseSurfaceModule is the standard library module that declares the
+// database a Rho program reaches.
+const DatabaseSurfaceModule = "std.sql"
 
 func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) error {
 	for _, feature := range module.Features {

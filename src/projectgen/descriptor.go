@@ -128,6 +128,14 @@ func (t Target) TargetKind() string {
 // binding and the middleware pipeline.
 const RoutingPortName = schema.PortHTTPRoute
 
+// SQLPortName is the port that supplies a database to a project whose
+// statements were generated from SQL.
+//
+// It is supplied by declaring `sql:` rather than by naming the port, so a
+// project that wrote SQL gets the code to run it without also having to
+// remember that the two are the same decision.
+const SQLPortName = "sql"
+
 // EffectivePorts are the ports the generator renders for this target: the ones
 // it declared, plus the routing port when it named a router or composed a
 // middleware. Asking for a router is how a target asks for the routing port, so

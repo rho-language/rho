@@ -36,10 +36,17 @@ import (
 
 // ParseSchema reads a schema file.
 //
-// A schema is a list of table declarations, and nothing else. A statement in a
-// schema file that is not a table is reported rather than ignored: a schema that
-// silently dropped what it could not read would be a schema that described a
-// different database from the one the service creates.
+// A table declaration is what a schema is read for: it is the only statement
+// that says what a column is called and what it holds, which is what a result is
+// typed from.
+//
+// A schema also holds statements that define no shape — an index over a column,
+// a row of seed data, a pragma an engine wants at start-up. Those are passed
+// over rather than refused, because the whole file is what an engine is handed
+// and a parser that rejected them would make a schema that cannot be indexed
+// the only schema this command reads. What is not passed over is a statement
+// that neither says what a table is nor is one of the statements a schema is
+// known to hold: that is a mistake, and reporting it is how it is found.
 func ParseSchema(name, text string) (Schema, []Diagnostic) {
 	schema := Schema{Version: Version, Tables: []Table{}}
 	parser := newParser(name, text)
@@ -51,20 +58,32 @@ func ParseSchema(name, text string) (Schema, []Diagnostic) {
 		if parser.peekKeyword("create") {
 			table, ok := parser.parseTable()
 			if !ok {
-				// A `CREATE` that is not a table — an index, a view — is
-				// reported, and the statement is stepped over so that the
-				// reading moves on rather than reporting the same line again.
-				parser.report("error", "this is not a table declaration")
+				// A `CREATE` that is not a table — an index, a view, a trigger —
+				// defines no column, so there is nothing here to type a result
+				// from. It is stepped over so the reading moves on.
 				parser.skipStatement()
 				continue
 			}
 			schema.Tables = append(schema.Tables, table)
 			continue
 		}
+		if parser.peekAnyKeyword(schemaFillerKeywords) {
+			// Seed data, a pragma, a drop: statements a schema holds that say
+			// nothing about a table's shape.
+			parser.skipStatement()
+			continue
+		}
 		parser.report("error", "expected CREATE TABLE, found "+parser.describe())
 		parser.skipStatement()
 	}
 	return schema, parser.diags
+}
+
+// schemaFillerKeywords are the statements a schema may hold that define no
+// column, and are therefore passed over rather than typed.
+var schemaFillerKeywords = []string{
+	"insert", "pragma", "drop", "alter", "set", "begin", "commit", "delete",
+	"update", "grant", "comment", "analyze", "vacuum",
 }
 
 // ParseQueries reads a query file.
@@ -134,9 +153,11 @@ func parseQuery(name, comment, body string, parser *parser) (Query, []Diagnostic
 		query.Verb = VerbUpdate
 	case VerbDelete:
 		query.Verb = VerbDelete
-	case Verb("from"):
+	case Verb("with"):
 		// A `WITH` is a select that starts with a common table expression, and
-		// it is a select as far as a caller is concerned.
+		// it is a select as far as a caller is concerned. The verb is the first
+		// word, so this is the word to match: matching `from` refused every one
+		// of them, because `from` is never the first word of anything.
 		query.Verb = VerbSelect
 	default:
 		parser.report("error", "a query must be a SELECT, an INSERT, an UPDATE or a DELETE, found "+verb)
@@ -298,9 +319,10 @@ func firstWord(text string) (string, string) {
 
 // parametersOf reads the values a statement takes.
 //
-// Only the markers are read, and they are read with the table's columns in hand
-// where there is one, so a parameter carries the column it is compared against:
-// that is what lets an engine plan the query rather than guess at it.
+// What is read is the markers and where they appear, which is all this file can
+// know: a marker's *type* is the column it is compared against, and a column is
+// a fact about the schema, which is read from another file. The generator puts
+// the two together, because it has both.
 //
 // A `where` clause is carried as written. Re-deriving a predicate here would be a
 // second implementation of the one thing an engine is best placed to do.
@@ -346,6 +368,9 @@ func parametersOf(statement string, parser *parser) []Parameter {
 type aMarker struct {
 	name string
 	kind Marker
+	// at is where the marker starts, so a reader that wants to know what it is
+	// compared against can look around it without scanning the statement again.
+	at int
 }
 
 // markersIn finds every parameter marker in a statement.
@@ -361,7 +386,7 @@ func markersIn(statement string) []aMarker {
 		case '\'', '"', '`':
 			i = skipLiteral(runes, i)
 		case '?':
-			out = append(out, aMarker{name: "?", kind: MarkerPositional})
+			out = append(out, aMarker{name: "?", kind: MarkerPositional, at: i})
 		case '$':
 			if i+1 < len(runes) && isDigit(runes[i+1]) {
 				start := i
@@ -369,7 +394,7 @@ func markersIn(statement string) []aMarker {
 				for i+1 < len(runes) && isDigit(runes[i+1]) {
 					i++
 				}
-				out = append(out, aMarker{name: string(runes[start : i+1]), kind: MarkerNumbered})
+				out = append(out, aMarker{name: string(runes[start : i+1]), kind: MarkerNumbered, at: start})
 			}
 		case ':', '@':
 			// `::` is a cast and `:=` is an assignment; neither is a parameter.
@@ -385,7 +410,7 @@ func markersIn(statement string) []aMarker {
 				i++
 			}
 			i--
-			out = append(out, aMarker{name: string(runes[start+1 : i+1]), kind: MarkerNamed})
+			out = append(out, aMarker{name: string(runes[start+1 : i+1]), kind: MarkerNamed, at: start})
 		}
 	}
 	return out

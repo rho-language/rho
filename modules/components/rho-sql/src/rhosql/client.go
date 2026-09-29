@@ -36,6 +36,10 @@ type Client struct {
 	plugin  plugins.Plugin
 	session *plugins.Session
 	engine  Engine
+	// environment is added to the engine process, and is how a caller points it
+	// at a database of its own. It is set before the session starts, because a
+	// process reads its environment once.
+	environment []string
 
 	mu sync.Mutex
 	// described is whether the engine has been asked what it is. A caller that
@@ -83,6 +87,39 @@ func Open(name string) (*Client, error) {
 // Plugin is the plugin this client talks to, which is what a caller reports when
 // it wants to say which engine answered.
 func (c *Client) Plugin() plugins.Plugin { return c.plugin }
+
+// UseEnvironment tells the engine something about where to run, which is how a
+// caller asks it to work against a database of its own rather than the one a
+// deployment configured.
+//
+// It has to be called before the first request, because an engine reads its
+// environment once when it starts.
+func (c *Client) UseEnvironment(values ...string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.session != nil {
+		return fmt.Errorf("the engine has already started, so it has read its environment")
+	}
+	c.environment = append(c.environment, values...)
+	return nil
+}
+
+// OpenAt is Open with somewhere for the engine to run.
+//
+// It is what a component uses to generate a description: describing a statement
+// needs the statement prepared, preparing it needs the tables, and creating them
+// in the database a service runs against would be a side effect of asking a
+// question.
+func OpenAt(name string, environment ...string) (*Client, error) {
+	client, err := Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.UseEnvironment(environment...); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
 
 // Engine is what the engine said about itself, once it has been asked. A caller
 // that reads it before the engine has answered is told the caller has to ask,
@@ -139,7 +176,10 @@ func (c *Client) openSession() error {
 	if c.session != nil {
 		return nil
 	}
-	session, err := plugins.Open(plugins.SessionOptions{Plugin: c.plugin})
+	session, err := plugins.Open(plugins.SessionOptions{
+		Plugin:      c.plugin,
+		Environment: c.environment,
+	})
 	if err != nil {
 		return err
 	}
@@ -209,18 +249,13 @@ func (c *Client) Close() error {
 // A plugin that answered with something other than the shape the hook asks for
 // is a plugin that is not this version of the protocol, and saying so is more
 // useful than an empty answer a caller would read as "no rows".
+//
+// What a plugin could not do is reported in its diagnostics rather than in its
+// payload, because a failed hook has no payload. That is read first: an engine
+// that refused and said why is more useful than one reported as having said
+// nothing, and the reason is the whole of what a caller can act on.
 func decodePayload[T any](answer plugins.Response, hook string) (T, error) {
 	var out T
-	if len(answer.Payload) == 0 {
-		return out, fmt.Errorf("the engine answered %s with nothing", hook)
-	}
-	if err := json.Unmarshal(answer.Payload, &out); err != nil {
-		return out, fmt.Errorf(
-			"the engine's answer to %s is not the shape this component expects: %w", hook, err)
-	}
-	// A plugin reports what it could not do in its diagnostics rather than in
-	// the payload, because a failed hook has no payload. A caller gets that as
-	// an error rather than as a zero value it would act on.
 	for _, item := range answer.Diagnostics {
 		if item.Level == "error" {
 			return out, EngineError{Response: ErrorResponse{
@@ -228,6 +263,13 @@ func decodePayload[T any](answer plugins.Response, hook string) (T, error) {
 				Message: item.Message,
 			}}
 		}
+	}
+	if len(answer.Payload) == 0 {
+		return out, fmt.Errorf("the engine answered %s with nothing", hook)
+	}
+	if err := json.Unmarshal(answer.Payload, &out); err != nil {
+		return out, fmt.Errorf(
+			"the engine's answer to %s is not the shape this component expects: %w", hook, err)
 	}
 	return out, nil
 }

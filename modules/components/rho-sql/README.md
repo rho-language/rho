@@ -55,6 +55,14 @@ INSERT INTO customers (address, name) VALUES (:address, :name) RETURNING id;
 an engine is handed. The parameters come out with the marker they were written
 in, because which marker an engine takes is most of what differs between them.
 
+The Rho surface a project's generated statements are written against is
+`std.sql`, which the standard library declares and the compiler's `sql` port
+supplies. It lives in the standard library rather than in this component's
+manifest because every project that declares `sql:` gets it: a project should not
+have to depend on the generator to have the library its own generated code
+imports. The component publishes no interface of its own, so the surface is
+declared once.
+
 ## What an engine is
 
 A plugin. It answers four hooks and is reached over the same protocol every
@@ -119,3 +127,11 @@ should not move when the engine does.
 ```sh
 cd modules/components/rho-sql && go build -o rho-sql ./src
 ```
+
+## What generating touches
+
+`rho sql generate` works against a **scratch database** of its own. Describing a
+statement needs it prepared, preparing it needs the tables, and creating them in
+the database a service runs against would make a command that writes files into
+a command that changes production. `rho sql run` is the other way round: it is a
+person trying a statement out, so it uses the configured database and says so.

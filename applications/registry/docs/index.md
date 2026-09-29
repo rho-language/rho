@@ -38,18 +38,47 @@ credential manager, expire, and have a ceiling: a token can never outlive
 
 ## Storage
 
-Packages are stored on the filesystem, under a data directory that lives
-outside the application:
+What a registry knows is kept in tables, declared in `db/schema.yml` and created
+when the service starts:
+
+| Table | What it holds |
+|-------|---------------|
+| `users` | the identities, named by whatever credential presented them |
+| `roles` | the named permissions an identity may hold |
+| `user_roles` | which roles an identity holds |
+| `tokens` | the credentials the service has issued, and which have been withdrawn |
+| `modules` | the names it holds, who owns each, and whether each is public |
+| `module_maintainers` | which identities may publish to a module, and as what |
+| `module_versions` | the published versions, each with its package and its manifest |
+
+A publish is therefore one commit: the upload and the record of who made it are
+the same statement. A registry that wrote a package to a file and then wrote the
+record beside it could be interrupted between the two, and what is left is a
+module nobody owns.
+
+What stays on the filesystem is what is *derived* rather than recorded — the
+source tree a package is unpacked into, and the documentation generated from it:
 
 ```
-<data>/modules/<name>/<version>/package.rho-pkg   the uploaded package
-<data>/modules/<name>/<version>/meta.json         its metadata
-<data>/index/<name>.json                          the version list
+<data>/registry.db                                 the records
+<data>/docs/<name>/<version>/                      the generated pages
+<data>/modules/<name>/<version>/src/               the unpacked package
 ```
 
-The data directory is separate so that installing a new version of the registry
-over the old one cannot take the modules with it. `RHO_REGISTRY_DATA` overrides
-it, which is what a container uses.
+The database sits beside the data directory rather than inside the served tree,
+and is named by `RHO_SQL_DATABASE` — defaulting to `<data>/registry.db` — while
+`RHO_SQL_DRIVER` names the driver, defaulting to `sqlite`. Both are the
+deployment's to choose, because a binary that compiled either in would be a
+binary this build decided them for.
+
+The data directory is separate from the application so that installing a new
+version over the old one cannot take the modules with it. `RHO_REGISTRY_DATA`
+overrides it, which is what a container uses.
+
+The tables are declared rather than written as SQL: adding a column is a change
+to one file, and the schema the service creates and the code generated from it
+come from the same reading of it. The generated Rho is an output of the build
+and is not checked in.
 
 ## Building it
 
