@@ -18,7 +18,7 @@
 // SPDX-License-Identifier: MIT
 //
 
-package main
+package sqlite
 
 import (
 	"path/filepath"
@@ -29,14 +29,14 @@ import (
 
 // openTest connects to a database in a temporary directory, so each test has one
 // that nothing else can see.
-func openTest(t *testing.T) *engine {
+func openTest(t *testing.T) *Engine {
 	t.Helper()
 	t.Setenv("RHO_SQLITE_PATH", filepath.Join(t.TempDir(), "test.sqlite"))
-	e, err := open()
+	e, err := Open()
 	if err != nil {
 		t.Fatalf("the engine did not open: %v", err)
 	}
-	t.Cleanup(e.close)
+	t.Cleanup(e.Close)
 	return e
 }
 

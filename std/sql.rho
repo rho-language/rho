@@ -1,0 +1,249 @@
+module std.sql
+
+// The database surface a Rho program uses, and nothing about how it reaches one.
+//
+// What a program writes here compiles and runs unchanged whether the engine
+// behind it is a C library on a microcontroller or `database/sql` in a service.
+// That is the point of the module: the SQL a service declares is the SQL it
+// runs, and the engine underneath it is a deployment decision rather than a
+// second dialect of the same program.
+//
+// # The two backings
+//
+// On a C target the functions below are bound to the engine's own C entry
+// points — for sqlite, `sqlite3_open_v2`, `sqlite3_prepare_v2`, `sqlite3_step`
+// and `sqlite3_column_*` — through the FFI declarations rho-cimport already
+// provides. A device with 2 KB of RAM runs the same queries as a service with a
+// garbage collector, because nothing here allocates: rows are written into a
+// slice the caller owns.
+//
+// On a Go target the same functions are bound to `database/sql` by a gateway
+// generated at build time, with the driver the project declared. The gateway is
+// what turns a column of a row into the field of a struct, and it is generated
+// rather than written so that a project's rows are typed by the database that
+// holds them.
+//
+// # Handles
+//
+// A handle is an address the engine owns and Rho cannot look inside. It is
+// deliberately unnameable — a program can pass it back and cannot forge one, so
+// it cannot reach a database it was not given.
+//
+// # Errors
+//
+// A failure is a `SqlError` and a success is a count, carried in a
+// `Result[u32, SqlError]`: a statement that read rows answers how many, a
+// statement that changed them answers how many, and a statement that failed
+// answers why. Nothing is thrown across a boundary, so a device without an
+// unwinding runtime and a service with one behave the same way.
+
+import std.core.ptr
+import std.core.result
+import std.core.slice
+
+// A database handle, owned by the engine behind it.
+//
+// It is a struct rather than a bare address so that opening one can fill it in:
+// a handle does not exist until the open succeeds, and a type a caller has to
+// pass by value could never come back holding anything. It is still unnameable
+// from Rho's side — a program can pass it back and cannot forge one.
+struct SqlDb {
+    // raw is the engine's own address. A program can carry a handle and pass it
+    // on; it cannot read this or write it.
+    raw: u64
+}
+
+// SqlError is what a statement reports when it could not run.
+//
+// The message is the engine's own, because the engine is the thing that knows:
+// a constraint it refused to violate, a column that is not there, a file it
+// could not open. A translated message would be a guess at which of those
+// happened.
+// A prepared statement, owned by the engine behind it.
+//
+// A statement is a handle for the same reason a database is: preparing one
+// reaches the engine, and a program can neither read what it is nor forge one.
+struct SqlStmt {
+    // raw is the engine's own address for this statement.
+    raw: u64
+}
+
+struct SqlError {
+    message: string
+    // code is the engine's own number for the failure, or -1 when it gave none.
+    // A caller that wants to branch on a constraint rather than read a sentence
+    // has something to branch on.
+    code: i32
+}
+
+// SqlKind is what a value is, which is what lets one value type carry what a
+// column can hold without a union in the language.
+struct SqlKind {
+    // The kinds. They are values rather than a language enum because Rho has no
+    // enum yet, and a struct of constants is what one looks like.
+    static_null: i32
+    static_integer: i32
+    static_float: i32
+    static_boolean: i32
+    static_text: i32
+    static_blob: i32
+}
+
+// SqlValue is one value going in or coming out.
+//
+// It is typed rather than a bare `any` because a value that crossed into a
+// driver as text and came back as a float has already lost the digits the
+// database was asked to store, and a value that arrived as the wrong kind is a
+// value nobody can act on.
+struct SqlValue {
+    kind: i32
+    integer: i64
+    real: f64
+    boolean: bool
+    text: string
+    // blob is binary data, carried as text because C has no other way to hold
+    // bytes that may contain a zero; a blob column's value is read with
+    // blob_length and blob_at rather than as a string that ends early.
+    blob: string
+    is_null: bool
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Opening                                                                     */
+/* -------------------------------------------------------------------------- */
+
+// sql_open opens a database and answers a handle to it.
+//
+// The path is the engine's own, because what a database is called is the
+// engine's business: a file on one, a connection string on another. A caller
+// passes what its engine was configured with.
+//
+// The handle comes back as the value, because a handle does not exist until
+// this succeeds: a caller that declared one already holds a zero, and asking it
+// to pass that in would hand the engine a copy it could fill without the caller
+// ever seeing.
+//
+// A `Result` is the shape the language already has for a value that may not be
+// there, and its error is the engine's own message rather than a struct, so a
+// caller that could not open its database is told why without unwrapping
+// anything.
+extern fn sql_open(path: string) Result[SqlDb, string]
+
+// sql_close closes a handle and releases what the engine held for it. A device
+// that opened a database and did not close it has run out of memory.
+extern fn sql_close(db: SqlDb) void
+
+// sql_last_message is the engine's own account of the last failure, read when a
+// call returns non-zero and nothing better was said.
+extern fn sql_last_message(db: SqlDb) string
+
+/* -------------------------------------------------------------------------- */
+/*  Statements                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// sql_apply creates the tables a schema declares, and answers how many it made.
+//
+// A service applies a schema before it takes a request rather than on every one,
+// so applying twice is a service that has been restarted against a database it
+// created last time: the second application finds the tables and changes
+// nothing.
+extern fn sql_apply(db: SqlDb, schema: string) u32
+
+// sql_exec runs a statement that changes rows, and answers how many it changed.
+//
+// The values are positional and match the statement's markers in the order they
+// were written, because that is the order a caller has them in.
+extern fn sql_exec(db: SqlDb, name: string, sql: string, values: Slice[SqlValue], affected: Ptr[u32]) u32
+
+// sql_prepare compiles a statement and answers a handle to it.
+//
+// Preparing is separate from running because it is the only way to read a
+// statement's shape: `sql_column_count` and `sql_column_name` answer what it
+// returns, which is how a caller types a result rather than guessing at one from
+// the select list.
+extern fn sql_prepare(db: SqlDb, sql: string, stmt: Ptr[SqlStmt]) u32
+
+// sql_run steps a prepared statement once and answers whether it has another
+// row, so a caller can walk a result a row at a time without holding every row
+// in memory at once.
+extern fn sql_run(stmt: SqlStmt, more: Ptr[u32]) u32
+
+// sql_reset rewinds a prepared statement so it can be run again with new values,
+// which is what makes a prepared statement worth preparing.
+extern fn sql_reset(stmt: SqlStmt) u32
+
+// sql_finalize releases a prepared statement.
+extern fn sql_finalize(stmt: SqlStmt) void
+
+// sql_column_count is how many columns a prepared statement returns.
+extern fn sql_column_count(stmt: SqlStmt) u32
+
+// sql_column_name is the name of one column, which is how a row is read by the
+// names the database holds rather than by the order a query happened to list
+// them in.
+extern fn sql_column_name(stmt: SqlStmt, index: u32) string
+
+// sql_column_type is one column's type in the engine's own spelling, so a caller
+// can decide what to do with a column it did not expect.
+extern fn sql_column_type(stmt: SqlStmt, index: u32) string
+
+// sql_read_column reads one column of the current row into a value.
+extern fn sql_read_column(stmt: SqlStmt, index: u32, value: Ptr[SqlValue]) u32
+
+// sql_bind binds a value to a parameter of a prepared statement, by position.
+extern fn sql_bind(stmt: SqlStmt, index: u32, value: SqlValue) u32
+
+/* -------------------------------------------------------------------------- */
+/*  What a caller can say about a value                                        */
+/* -------------------------------------------------------------------------- */
+
+// The kinds a value carries. They are named here so a generated query and a
+// hand-written one agree, rather than each spelling its own numbers.
+fn kind_null() i32 { return 0 }
+fn kind_integer() i32 { return 1 }
+fn kind_float() i32 { return 2 }
+fn kind_boolean() i32 { return 3 }
+fn kind_text() i32 { return 4 }
+fn kind_blob() i32 { return 5 }
+
+// null_value is the value that is nothing, which SQL distinguishes from the
+// empty string and from zero and a caller therefore has to be able to say.
+fn null_value() SqlValue {
+    return SqlValue{ kind_null(), 0, 0.0, false, "", "", true }
+}
+
+fn int_value(v: i64) SqlValue {
+    return SqlValue{ kind_integer(), v, 0.0, false, "", "", false }
+}
+
+fn float_value(v: f64) SqlValue {
+    return SqlValue{ kind_float(), 0, v, false, "", "", false }
+}
+
+fn bool_value(v: bool) SqlValue {
+    return SqlValue{ kind_boolean(), 0, 0.0, v, "", "", false }
+}
+
+fn text_value(v: string) SqlValue {
+    return SqlValue{ kind_text(), 0, 0.0, false, v, "", false }
+}
+
+fn blob_value(v: string) SqlValue {
+    return SqlValue{ kind_blob(), 0, 0.0, false, "", v, false }
+}
+
+// is_null reports whether a value read from a column was absent, which is a
+// fact about the row rather than about the value.
+fn is_null(v: SqlValue) bool {
+    return v.is_null
+}
+
+// ok turns a status into a result, which is the whole of the error path a
+// generated query has: a non-zero status becomes the engine's own message, and
+// a zero status becomes a count.
+fn ok[T = Unit, E = Unit](value: T, code: i32, message: string) Result[T, E] {
+    if code == 0 {
+        return Ok[T, E](value)
+    }
+    return Err[T, E](message)
+}

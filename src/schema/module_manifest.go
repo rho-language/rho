@@ -113,6 +113,76 @@ func ModuleSchema() Schema {
 				Kind:     KindString,
 			},
 			{
+				// requires lists the runtime packages the built project needs,
+				// which is a different thing from `deps`: a dependency is
+				// resolved and written into the project at build time, while a
+				// requirement is a package the generated code links against and
+				// that the project's own manifest has to name for anyone who
+				// builds it later.
+				//
+				// A database driver is the first thing that needs one: the code
+				// a `sql:` block generates calls into it, and a project whose
+				// generated code names a driver nobody declared has a build that
+				// works on the machine that generated it and nowhere else.
+				Name:     "requires",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindMap,
+					Fields: []FieldSchema{
+						{Name: "name", Required: true, RejectNull: true, Kind: KindString},
+						{Name: "version", Required: false, Kind: KindString},
+					},
+				},
+			},
+			{
+				// The sql section is what a project writes to have its SQL
+				// turned into Rho code. It is a declaration rather than a
+				// setting, because everything in it says where something is
+				// rather than how it should behave.
+				//
+				// Nothing here names an engine's settings. The driver names the
+				// engine plugin, which decides what its own settings are, and
+				// the engine is handed what it needs through the environment.
+				Name:     "sql",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					// driver is the engine plugin the generated code runs
+					// against, as it is named in the manifest. An engine that is
+					// not installed is a build that cannot run its own
+					// statements, so a missing one is reported as a build error
+					// rather than as an absent page.
+					{Name: "driver", Required: true, RejectNull: true, Kind: KindString},
+					// schema is the file a project's tables are declared in,
+					// relative to the project. It is required, because a
+					// database whose tables nothing states is a database whose
+					// generated code is typed from guesses.
+					//
+					// A schema may be a file of create statements or a file of
+					// declarations, and which one it is is the file's extension:
+					// a project that declared tables gets the create statements
+					// written from them.
+					{Name: "schema", Required: true, RejectNull: true, Kind: KindString},
+					// queries is where a project's own statements live, relative
+					// to the project. It is optional: the common operations over
+					// a declared table — read one by its key, read them all, add
+					// one, change one, remove one — are generated from the table
+					// itself, so a project only writes this file for the
+					// statements that are about its domain rather than about its
+					// tables.
+					{Name: "queries", Required: false, Kind: KindString},
+					// out is where the generated Rho is written, relative to the
+					// project. It defaults to the schema file's own directory, so
+					// a project that keeps its SQL in one place gets its
+					// generated code beside it.
+					{Name: "out", Required: false, Kind: KindString},
+					// package is the Rho module the generated file belongs to,
+					// which defaults to the project's own name.
+					{Name: "package", Required: false, Kind: KindString},
+				},
+			},
+			{
 				Name:     "deps",
 				Required: false,
 				Kind:     KindMap,
@@ -317,7 +387,7 @@ func ModuleSchema() Schema {
 // It validates the base schema and adds type-specific rules:
 //   - component: 'command' is recommended for dynamic dispatch
 //   - plugin: 'extends:' should name a component, and 'hooks:' the stages of it
-//              the plugin answers
+//     the plugin answers
 //   - rho/module: 'main' should point to a .rho source file
 //   - depends: each entry must specify 'git' or 'path'
 func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors {

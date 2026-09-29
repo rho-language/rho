@@ -138,6 +138,23 @@ type Manifest struct {
 	// define its symbols, the values it sets, and which dialect the generated
 	// headers are written in.
 	Config *ConfigManifest
+	// Requires are the runtime packages a built project links against, which is
+	// a different thing from Deps: a dependency is resolved into the project,
+	// and a requirement is a package the generated code calls into and that the
+	// project's own manifest names for anyone who builds it later.
+	//
+	// They are read rather than carried because nothing here resolves a Rho
+	// package. What the build does with them is refuse to stay silent about a
+	// project that generated code calling into a package it never named, which
+	// is a build that works on the machine that generated it and nowhere else.
+	Requires []string
+	// SQL is the database a project declares, or nil when it declared none.
+	//
+	// It is read here rather than in the component that generates from it,
+	// because the build has to know a project has a database: the generated
+	// statements call into a port, and a build that did not know would produce
+	// a project whose code refers to functions nothing defines.
+	SQL *SQLManifest
 	// Docs is the doc-as-code this module carries. Nil means the module says
 	// nothing about its documentation.
 	Docs *DocManifest
@@ -324,7 +341,9 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	// that only declares a configuration are both possible, and a section read
 	// inside another would be read only when that other is there.
 	m.Connection = parseCConnection(doc.Map["c_connection"])
+	m.Requires = parseRequires(doc.Map["requires"])
 	m.Config = parseConfigManifest(doc.Map["config"])
+	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
 
@@ -451,6 +470,123 @@ type ConfigManifest struct {
 	// the project root. It is read with the compiler's own front end, so a
 	// value written in Rho is a value the compiler would accept.
 	Module string
+}
+
+// parseRequires reads the runtime packages a project links against.
+//
+// A requirement is a name, and the version beside it is what the project was
+// written against. Neither is resolved here: they are what the module states
+// about itself, and the name is what a warning is about when it is absent.
+func parseRequires(node yaml.Value) []string {
+	if node.Kind != yaml.KindList {
+		return nil
+	}
+	out := make([]string, 0, len(node.List))
+	for _, entry := range node.List {
+		if entry.Kind != yaml.KindMap {
+			// A requirement written as a bare name is still a requirement, and
+			// refusing it would be refusing a manifest the schema accepts.
+			if name := strings.TrimSpace(entry.Str); name != "" {
+				out = append(out, name)
+			}
+			continue
+		}
+		if name := strings.TrimSpace(entry.Map["name"].Str); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// SQLManifest is a project's declaration that it has a database.
+//
+// Everything here is a location or a name. None of it is a setting: the driver
+// decides what its own settings are, so a project does not have to know that a
+// database is a file on one engine and a connection string on another.
+type SQLManifest struct {
+	// Driver is the engine plugin the generated code runs against, as it is
+	// named in the manifest.
+	Driver string
+	// Schema and Queries are the files the SQL is written in, relative to the
+	// project root. Both are needed: the schema says what the tables are, which
+	// is what a result is typed from, and the queries say which of them run.
+	Schema  string
+	Queries string
+	// Out is the directory the generated Rho is written to, relative to the
+	// project root. Empty means the queries file's own directory.
+	Out string
+	// Package is the Rho module the generated file belongs to. Empty means the
+	// project's own name.
+	Package string
+}
+
+// Declared reports whether a project said it has a database.
+func (s *SQLManifest) Declared() bool {
+	return s != nil && (s.Driver != "" || s.Schema != "" || s.Queries != "")
+}
+
+// SchemaPath is the schema file, resolved against a project root.
+func (s *SQLManifest) SchemaPath(projectRoot string) string {
+	return projectRootPath(projectRoot, s.Schema)
+}
+
+// QueriesPath is the queries file, resolved against a project root.
+func (s *SQLManifest) QueriesPath(projectRoot string) string {
+	return projectRootPath(projectRoot, s.Queries)
+}
+
+// OutPath is the directory the generated Rho goes in, resolved against a
+// project root. With no `out`, it is the queries file's own directory, so a
+// project that keeps its SQL in one place gets its generated code beside it.
+func (s *SQLManifest) OutPath(projectRoot string) string {
+	if s == nil {
+		return ""
+	}
+	if s.Out != "" {
+		return projectRootPath(projectRoot, s.Out)
+	}
+	// With no `out`, the generated code is written beside the files it was
+	// generated from. The statements are preferred when there are any, and the
+	// schema otherwise, because a project that declared tables and no statements
+	// still has somewhere its generated code belongs.
+	if s.Queries != "" {
+		return filepath.Dir(projectRootPath(projectRoot, s.Queries))
+	}
+	if s.Schema != "" {
+		return filepath.Dir(projectRootPath(projectRoot, s.Schema))
+	}
+	return ""
+}
+
+// projectRootPath resolves a manifest-relative path against a project root.
+func projectRootPath(projectRoot, relative string) string {
+	if relative == "" {
+		return ""
+	}
+	if filepath.IsAbs(relative) {
+		return filepath.Clean(relative)
+	}
+	return filepath.Clean(filepath.Join(projectRoot, filepath.FromSlash(relative)))
+}
+
+// parseSQLManifest reads the database a project declares.
+func parseSQLManifest(node yaml.Value) *SQLManifest {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	sql := &SQLManifest{
+		Driver:  yamlString(node, "driver"),
+		Schema:  yamlString(node, "schema"),
+		Queries: yamlString(node, "queries"),
+		Out:     yamlString(node, "out"),
+		Package: yamlString(node, "package"),
+	}
+	if !sql.Declared() {
+		// A section that names nothing is no section, rather than one that
+		// generates from files that were never given.
+		return nil
+	}
+	return sql
 }
 
 // parseCConnection reads the native library a project links.

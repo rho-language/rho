@@ -52,6 +52,10 @@ type Session struct {
 	plugin  Plugin
 	command Command
 	program string
+	// environment is added to the process's own, and is where a component puts
+	// what an engine needs to know before it is asked anything: a database path,
+	// a connection string, a scratch directory.
+	environment []string
 
 	mu      sync.Mutex
 	process *exec.Cmd
@@ -87,7 +91,11 @@ type SessionOptions struct {
 // first request does. A service that configures a database it never queries
 // never pays for the connection.
 func Open(options SessionOptions) (*Session, error) {
-	session := &Session{plugin: options.Plugin, stderr: &bytes.Buffer{}}
+	session := &Session{
+		plugin:      options.Plugin,
+		environment: append([]string{}, options.Environment...),
+		stderr:      &bytes.Buffer{},
+	}
 	if options.Command != "" {
 		// A named command is the one the caller wants; an unnamed one is the
 		// plugin's first, which is the only sensible default for a plugin with
@@ -190,6 +198,10 @@ func (s *Session) start() error {
 		"RHO_PLUGIN_HOOK="+s.command.Stage(),
 		"RHO_PLUGIN_SESSION=1",
 	)
+	// What the caller set comes last, so it is what the process sees: a
+	// component that points an engine at a database of its own is asking for
+	// that database rather than for whatever the environment had.
+	process.Env = append(process.Env, s.environment...)
 	process.Stderr = s.stderr
 
 	stdin, err := process.StdinPipe()

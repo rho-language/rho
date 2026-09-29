@@ -154,20 +154,27 @@ func TestAColonInsideAStringIsNotAStatementEnd(t *testing.T) {
 	}
 }
 
-func TestAStatementThatIsNotATableIsReported(t *testing.T) {
-	// A schema that quietly dropped what it could not read would describe a
-	// different database from the one the service creates.
-	_, diagnostics := ParseSchema("schema.sql",
-		"CREATE INDEX idx ON customers (name);\nCREATE TABLE t (id integer);\n")
-	if !HasErrors(diagnostics) {
-		t.Fatal("a statement that is not a table was accepted")
+func TestAStatementThatDefinesNoColumnIsPassedOver(t *testing.T) {
+	// A real schema holds more than tables: an index over a column, a row of seed
+	// data, a pragma an engine wants at start-up. None of them says what a column
+	// is, so none of them is typed — and refusing them would make a schema that
+	// cannot be indexed the only schema this reads. The whole file is what an
+	// engine is handed, so the statements are applied whether or not they are
+	// understood here.
+	schema, diagnostics := ParseSchema("schema.sql",
+		"CREATE INDEX idx ON customers (name);\nINSERT INTO roles (name) VALUES ('owner');\nCREATE TABLE t (id integer);\n")
+	if HasErrors(diagnostics) {
+		t.Fatalf("a schema holding an index and a seed row was refused: %+v", diagnostics)
+	}
+	if len(schema.Tables) != 1 || schema.Tables[0].Name != "t" {
+		t.Fatalf("the table after the index was not read: %+v", schema.Tables)
 	}
 }
 
 func TestTheDiagnosticNamesTheLine(t *testing.T) {
 	// A line is what a person can go and look at.
 	_, diagnostics := ParseSchema("schema.sql",
-		"CREATE TABLE good (id integer PRIMARY KEY);\nDELETE FROM customers;\n")
+		"CREATE TABLE good (id integer PRIMARY KEY);\nSELCT * FROM ;\n")
 	if len(diagnostics) == 0 {
 		t.Fatal("nothing was reported")
 	}

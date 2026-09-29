@@ -369,3 +369,84 @@ func TestAConfigSectionThatDeclaresNothingIsNoSection(t *testing.T) {
 		t.Fatalf("expected the dialect to be read, got %+v", config)
 	}
 }
+
+// A project's `sql:` block is read at build time as well as at generation time:
+// the build has to know a project has a database, because the generated code
+// calls into a port and a build that did not know would produce a project whose
+// functions nothing defines.
+func TestLoadYAMLManifestSQL(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `module:
+  name: myapp
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+sql:
+  driver: rho-sql-sqlite
+  schema: db/schema.sql
+  queries: db/queries.sql
+  out: src/db
+  package: billing.db
+`
+	path := filepath.Join(dir, "module.yml")
+	if err := os.WriteFile(path, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.SQL.Declared() {
+		t.Fatal("a project that declared SQL was read as having none")
+	}
+	if m.SQL.Driver != "rho-sql-sqlite" {
+		t.Errorf("the driver is %q, want the one the project named", m.SQL.Driver)
+	}
+	if got := m.SQL.SchemaPath(dir); got != filepath.Join(dir, "db", "schema.sql") {
+		t.Errorf("the schema resolves to %q", got)
+	}
+	if got := m.SQL.QueriesPath(dir); got != filepath.Join(dir, "db", "queries.sql") {
+		t.Errorf("the statements resolve to %q", got)
+	}
+	if got := m.SQL.OutPath(dir); got != filepath.Join(dir, "src", "db") {
+		t.Errorf("the generated Rho goes in %q", got)
+	}
+	if m.SQL.Package != "billing.db" {
+		t.Errorf("the generated file is packaged as %q", m.SQL.Package)
+	}
+}
+
+// With no `out`, the generated file belongs beside the statements it came from,
+// so a reader looking for it looks in the one place it is.
+func TestLoadYAMLManifestSQLDefaultsOutToTheStatements(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "module.yml")
+	if err := os.WriteFile(path, []byte(
+		"module:\n  name: myapp\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\nsql:\n  driver: rho-sql-sqlite\n  schema: db/schema.sql\n  queries: db/queries.sql\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.SQL.OutPath(dir); got != filepath.Join(dir, "db") {
+		t.Errorf("with no `out` the generated Rho goes in %q, want the statements' own directory", got)
+	}
+}
+
+// A project with no `sql:` block has no database, which is a fact rather than
+// something to refuse: most modules are libraries.
+func TestLoadYAMLManifestWithoutSQL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "module.yml")
+	if err := os.WriteFile(path, []byte("module:\n  name: myapp\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.SQL != nil {
+		t.Error("a project that declared no database was read as having one")
+	}
+}

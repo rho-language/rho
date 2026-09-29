@@ -156,3 +156,175 @@ func TestAnEmptyProjectGeneratesSomethingThatCompiles(t *testing.T) {
 		}
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  What the tests above did not catch                                          */
+/* -------------------------------------------------------------------------- */
+
+// The cases below are the ones this file was missing. Each of them was a defect
+// that a parse-only check passed: the file was well-formed and did not compile,
+// or compiled and did not work. A generator's output is judged by a compiler and
+// a caller, so these are written to be judged by both.
+
+func TestAProjectWithNoStatementsStillCompiles(t *testing.T) {
+	// A project being started declares its tables and no statements yet, and its
+	// generated file has to build like any other: the last time this happened the
+	// file was well-formed and did not compile, and a parse-only check said it
+	// was fine.
+	result := NewGenerator(Schema{Tables: []Table{{
+		Name:    "t",
+		Columns: []Column{{Name: "id", Type: "integer"}},
+	}}}, "queries", nil).Generate()
+	if len(result.Queries) != 0 {
+		t.Fatal("the fixture declares statements, so it is not testing an empty project")
+	}
+	source := QueriesGo(result)
+	// An import nothing uses is a file the compiler refuses, so the imports have
+	// to be the ones the file uses.
+	if strings.Contains(source, `"context"`) {
+		t.Errorf("a file with no statements imports context, which nothing uses:\n%s", source)
+	}
+	if !strings.Contains(source, `"database/sql"`) {
+		t.Error("a file with no statements does not import the database it holds a handle for")
+	}
+	if _, err := goparser.ParseFile(token.NewFileSet(), "queries.go", source, 0); err != nil {
+		t.Fatalf("does not parse: %v", err)
+	}
+}
+
+func TestACommonTableExpressionIsASelect(t *testing.T) {
+	// A `WITH` is a select that starts with a common table expression. The verb is
+	// the first word, so matching anything but `with` refuses every one of them.
+	schema, diagnostics := ParseQueries("queries.sql",
+		"-- name: recent\n"+
+			"WITH recent AS (SELECT id FROM customers) SELECT id FROM recent;\n")
+	if HasErrors(diagnostics) {
+		t.Fatalf("a common table expression was refused: %+v", diagnostics)
+	}
+	if len(schema.Queries) != 1 || schema.Queries[0].Verb != VerbSelect {
+		t.Fatalf("a common table expression read as %+v", schema.Queries)
+	}
+}
+
+func TestAParameterTakesTheTypeOfTheColumnItIsComparedAgainst(t *testing.T) {
+	// The column is written beside the marker in every statement a service
+	// writes, and reading it is what makes a generated function take a number
+	// where the column is a number. Without it every parameter is text, and a
+	// caller passes `"42"` and hopes.
+	result := generated(t, nil)
+	types := map[string]string{}
+	for _, query := range result.Queries {
+		for _, parameter := range query.Parameters {
+			types[query.Name+"."+parameter.Name] = parameter.Type.GoType()
+		}
+	}
+	// `limit` is an integer column, and `address` is text, and the two are told
+	// apart. The names are the ones the generated Rho spells, because that is
+	// what a handler writes and what the backends lower for themselves.
+	if got := types["CustomersLimited.limit"]; got != "int64" {
+		t.Errorf("a parameter compared against an integer column is a %s", got)
+	}
+	if got := types["FindCustomer.address"]; got != "string" {
+		t.Errorf("a parameter compared against a text column is a %s", got)
+	}
+}
+
+func TestAParameterComparedBothWaysRoundIsTyped(t *testing.T) {
+	// A comparison is written either way round, and a reader that only looked
+	// after the marker would miss half of them.
+	schema, diagnostics := ParseQueries("queries.sql",
+		"-- name: by_id\nSELECT id FROM customers WHERE :id = id;\n")
+	if HasErrors(diagnostics) {
+		t.Fatalf("did not read: %+v", diagnostics)
+	}
+	full := theProject(t)
+	full.Queries = schema.Queries
+	result := NewGenerator(full, "queries", nil).Generate()
+	if len(result.Queries) != 1 || len(result.Queries[0].Parameters) != 1 {
+		t.Fatalf("read %+v", result.Queries)
+	}
+	if got := result.Queries[0].Parameters[0].Type.GoType(); got != "int64" {
+		t.Errorf("a parameter written before the column is a %s", got)
+	}
+}
+
+func TestTheGeneratedCFillsTheRowsItReturns(t *testing.T) {
+	// C has no slice to return, so a function fills an array the caller owns. A
+	// function that declared a row and never read a column into it would compile,
+	// return a count, and give the caller nothing — which is what it did.
+	_, _, _, _, cQueries := generatedWith(t, nil)
+	if !strings.Contains(cQueries, "rho_rows_column(result,") {
+		t.Error("the generated C never reads a column, so the rows it counts are empty")
+	}
+	// And the values it reads go into named fields, not into nothing.
+	// The fields are the C spelling, which is lower case: the struct is a C
+	// struct and its members are C names.
+	for _, want := range []string{"rows[wrote].id = column.integer", "rows[wrote].name = column.text"} {
+		if !strings.Contains(cQueries, want) {
+			t.Errorf("the generated C does not contain %q:\n%s", want, cQueries)
+		}
+	}
+	// A caller has to be able to say where the rows go.
+	if !strings.Contains(cQueries, "FindCustomerRow *rows, int capacity") {
+		t.Error("the generated C gives the caller nowhere to put the rows")
+	}
+}
+
+func TestTheGeneratedCTakesAParameterInItsOwnType(t *testing.T) {
+	// A caller passing a number should pass a number. Taking a tagged value
+	// instead is asking every caller to build the boundary's own shape, which is
+	// the generator's job rather than theirs.
+	_, _, _, _, cQueries := generatedWith(t, nil)
+	// `limit` is an integer column and `address` is text, so the two are taken
+	// differently — the same way the generated Go takes them.
+	if !strings.Contains(cQueries, "int64_t limit") {
+		t.Errorf("a parameter compared against an integer column is not an integer:\n%s", cQueries[:600])
+	}
+	if !strings.Contains(cQueries, "rho_text address") {
+		t.Errorf("a parameter compared against a text column is not text")
+	}
+	// And the value the engine is given says which it is.
+	if !strings.Contains(cQueries, ".kind = RHO_INTEGER") || !strings.Contains(cQueries, ".kind = RHO_TEXT") {
+		t.Error("the wrapped values do not carry their kinds")
+	}
+}
+
+func TestACommonTableExpressionsColumnsAreTheOuterSelects(t *testing.T) {
+	// `WITH x AS (SELECT …) SELECT id, name FROM …` has two select lists, and the
+	// columns a caller gets are the second one's. Reading the first gave the
+	// sub-select's columns, which are columns the statement does not return.
+	got := selectedColumns(Query{SQL: "WITH recent AS (SELECT id FROM customers) " +
+		"SELECT id, name FROM customers"})
+	want := []string{"id", "name"}
+	if len(got) != len(want) {
+		t.Fatalf("the columns read as %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("column %d is %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestASelectListsItsColumnsWhateverSurroundsThem(t *testing.T) {
+	cases := map[string][]string{
+		"SELECT id FROM t":                               {"id"},
+		"SELECT id, name FROM t":                         {"id", "name"},
+		"SELECT id, name FROM t WHERE x = :x":            {"id", "name"},
+		"SELECT id, name FROM t ORDER BY id":             {"id", "name"},
+		"SELECT count(*) AS total FROM t":                {"count(*)"},
+		`SELECT a."id", b."name" FROM a JOIN b ON 1 = 1`: {`a."id"`, `b."name"`},
+	}
+	for statement, want := range cases {
+		got := selectedColumns(Query{SQL: statement})
+		if len(got) != len(want) {
+			t.Errorf("%q read as %v, want %v", statement, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%q column %d is %q, want %q", statement, i, got[i], want[i])
+			}
+		}
+	}
+}

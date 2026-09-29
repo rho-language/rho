@@ -17,6 +17,7 @@
 package projectgen
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -73,6 +74,214 @@ func (a Artifacts) RoleContent(role string) (string, bool) {
 	}
 }
 
+// SQL is the database a project declared: where its SQL is written, where the
+// generated Rho goes, and the DDL the generated statements assume.
+//
+// The generator carries it and does not interpret it. Turning SQL into Rho is
+// the rho-sql component's work, and a build that wants that asks that component
+// for it rather than growing a SQL reader here.
+type SQL struct {
+	// Driver is the engine plugin the generated code runs against.
+	Driver string
+	// Schema and Queries are the files the SQL is written in, absolute.
+	Schema  string
+	Queries string
+	// Out is the directory the generated Rho is written to, absolute. Empty
+	// means the pass has not run, which is a fact the caller acts on rather
+	// than a default this generator invents.
+	Out string
+	// Package is the Rho module the generated file belongs to.
+	Package string
+	// DDL is the schema's own text, which the sql port embeds so a service can
+	// create the tables its statements assume.
+	DDL string
+	// Statements are what the generated Rho declares, read from the contract
+	// the rho-sql component wrote beside it.
+	Statements []codegen.SQLStatement
+}
+
+// sqlContractFile is what the rho-sql component writes beside the files it
+// generated: the statements as the port implements them.
+const sqlContractFile = "statements.json"
+
+// readSQLStatements reads the contract a project's generated SQL was described
+// in.
+//
+// A contract that cannot be read is an empty list rather than an error. The
+// generated Rho is still compiled either way, and a build that failed here
+// would refuse a project whose Rho is complete — the missing implementations
+// then surface as undefined functions at the Go build, which is where the
+// reader can act on them.
+func readSQLStatements(generatedDir string) []codegen.SQLStatement {
+	data, err := os.ReadFile(filepath.Join(generatedDir, sqlContractFile))
+	if err != nil {
+		return nil
+	}
+	var contract struct {
+		Statements []struct {
+			Name       string `json:"name"`
+			Comment    string `json:"comment"`
+			SQL        string `json:"sql"`
+			Result     string `json:"result"`
+			Affected   bool   `json:"affected"`
+			Parameters []struct {
+				Name      string `json:"name"`
+				GoType    string `json:"goType"`
+				IsInteger bool   `json:"integer"`
+				IsFloat   bool   `json:"float"`
+				IsText    bool   `json:"text"`
+				IsBoolean bool   `json:"boolean"`
+			} `json:"parameters"`
+			Fields []struct {
+				Name      string `json:"name"`
+				Column    string `json:"column"`
+				GoType    string `json:"goType"`
+				IsInteger bool   `json:"integer"`
+				IsFloat   bool   `json:"float"`
+				IsText    bool   `json:"text"`
+				IsBoolean bool   `json:"boolean"`
+				IsBlob    bool   `json:"blob"`
+			} `json:"fields"`
+		} `json:"statements"`
+	}
+	if err := json.Unmarshal(data, &contract); err != nil {
+		return nil
+	}
+	out := make([]codegen.SQLStatement, 0, len(contract.Statements))
+	for _, statement := range contract.Statements {
+		converted := codegen.SQLStatement{
+			Name:     statement.Name,
+			Comment:  statement.Comment,
+			SQL:      statement.SQL,
+			Result:   statement.Result,
+			Affected: statement.Affected,
+		}
+		for _, parameter := range statement.Parameters {
+			converted.Parameters = append(converted.Parameters, codegen.SQLParameter{
+				Name:      parameter.Name,
+				GoType:    parameter.GoType,
+				IsInteger: parameter.IsInteger,
+				IsFloat:   parameter.IsFloat,
+				IsText:    parameter.IsText,
+				IsBoolean: parameter.IsBoolean,
+			})
+		}
+		for _, field := range statement.Fields {
+			converted.Fields = append(converted.Fields, codegen.SQLField{
+				Name:      field.Name,
+				Column:    field.Column,
+				GoType:    field.GoType,
+				IsInteger: field.IsInteger,
+				IsFloat:   field.IsFloat,
+				IsText:    field.IsText,
+				IsBoolean: field.IsBoolean,
+				IsBlob:    field.IsBlob,
+			})
+		}
+		out = append(out, converted)
+	}
+	return out
+}
+
+// Configured reports whether a project declared a database.
+//
+// It is asked of the schema rather than of the statements, because a project that
+// declared its tables and wrote no statements of its own is a project with a
+// database: the common operations over those tables are generated from them, so
+// there is nothing for the project to write and nothing missing from it.
+func (s *SQL) Configured() bool {
+	return s != nil && (s.Schema != "" || s.Queries != "")
+}
+
+// DriverName is the engine a project declared, or "" when it declared none.
+//
+// A project with no database has no driver, and a nil SQL is that project: the
+// accessor exists so a caller never has to ask whether a declaration is there
+// before reading it.
+func (s *SQL) DriverName() string {
+	if s == nil {
+		return ""
+	}
+	return s.Driver
+}
+
+// GeneratedDir is where the generated Rho was written, or "" when there is none.
+func (s *SQL) GeneratedDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.Out
+}
+
+// DriverPackage is the Go module that registers the driver, without a version,
+// which is what an import line is written with.
+func (s *SQL) DriverPackage() string {
+	if s == nil {
+		return ""
+	}
+	switch s.Driver {
+	case "rho-sql-sqlite", "sqlite", "rho/sqlite":
+		return "modernc.org/sqlite"
+	}
+	return ""
+}
+
+// Requirement is the go.mod line a generated Go project needs for its driver.
+//
+// A driver is a Go package that registers itself with the standard library, so
+// a project that has one has to have that package in its go.mod before the
+// generated code can open anything. Only the pure-Go sqlite driver is known by
+// name: it is the one a Rho project asks for, and it needs no C toolchain to
+// build — which is what makes a generated program runnable anywhere Go is.
+//
+// A project that named another driver gets no requirement written for it, and
+// the port reports at run time that the driver is not registered: guessing a Go
+// module path from a database name would produce a build that fails for a
+// reason the project cannot act on.
+func (s *SQL) Requirement() string {
+	if s == nil {
+		return ""
+	}
+	switch s.Driver {
+	case "rho-sql-sqlite", "sqlite", "rho/sqlite":
+		return "modernc.org/sqlite v1.34.5"
+	}
+	return ""
+}
+
+// schemaText is the DDL the port embeds, or "" when it could not be read.
+//
+// A schema that cannot be read is not fatal here: the statements were already
+// generated from it, and a build that failed on a missing schema would refuse a
+// project whose Rho compiles. The port creates no tables in that case, which is
+// the correct behaviour for a service that was given a prepared database.
+func (s *SQL) schemaText() string {
+	if s == nil {
+		return ""
+	}
+	if s.DDL != "" {
+		return s.DDL
+	}
+	// The generated schema is what the port embeds, and it is preferred because
+	// a project may declare its tables rather than writing create statements.
+	// The declarations are turned into DDL by the component that also generated
+	// the code, so the schema a service applies and the code it runs come from
+	// one reading of one file.
+	if s.Out != "" {
+		if data, err := os.ReadFile(filepath.Join(s.Out, "schema.sql")); err == nil {
+			return string(data)
+		}
+	}
+	if s.Schema == "" {
+		return ""
+	}
+	data, err := os.ReadFile(s.Schema)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // Context carries everything a backend needs to render a project.
 type Context struct {
 	// ModuleName is the Rho module name, used for banners and build files.
@@ -94,6 +303,13 @@ type Context struct {
 	// what it wrote, so the configuration a project declares is resolved by the
 	// build rather than assumed by the generator.
 	Config *Config
+	// SQL is the database a project declared, or nil when it declared none.
+	//
+	// It is carried rather than interpreted, for the same reason the Kconfig
+	// bridge is: generating the statements is the rho-sql component's work, and
+	// this generator's part is to know that a project has one and to supply the
+	// port the generated code calls into.
+	SQL *SQL
 	// Connection is the native library this build links, or nil when the project
 	// declared none. A variant is one build target of a connected project: the
 	// vendor library that implements it, and the macros that select it.
@@ -197,6 +413,14 @@ func generateTemplates(ctx Context, target Target) error {
 // supplied by the backend, so a Rho project needs no hand-written host code.
 func generatePorts(ctx Context, target Target) error {
 	ports := target.EffectivePorts()
+	// A project that declared a database gets the sql port without asking for
+	// it, because the code generated from its statements calls into it. Asking
+	// for the port as well would be a second statement of the same fact, and a
+	// project that generated queries and forgot to name the port would produce a
+	// project whose functions nothing defines.
+	if ctx.SQL.Configured() && !containsString(ports, SQLPortName) {
+		ports = append(append([]string{}, ports...), SQLPortName)
+	}
 	if len(ports) == 0 {
 		return nil
 	}
@@ -216,10 +440,14 @@ func generatePorts(ctx Context, target Target) error {
 	}
 
 	content := codegen.EmitGoPorts(codegen.PortContext{
-		IR:          ctx.IR,
-		ModuleName:  ctx.ModuleName,
-		ProjectRoot: ctx.ProjectRoot,
-		Server:      ServerConfigFor(target),
+		IR:               ctx.IR,
+		ModuleName:       ctx.ModuleName,
+		ProjectRoot:      ctx.ProjectRoot,
+		Server:           ServerConfigFor(target),
+		SQLSchema:        ctx.SQL.schemaText(),
+		SQLDriver:        ctx.SQL.DriverName(),
+		SQLDriverPackage: ctx.SQL.DriverPackage(),
+		SQLQueries:       readSQLStatements(ctx.SQL.GeneratedDir()),
 	}, ports)
 	if content == "" {
 		return nil

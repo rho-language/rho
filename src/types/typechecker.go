@@ -43,6 +43,13 @@ type TypeChecker struct {
 	// Structs the module declares itself, as opposed to synthesised ones.
 	userStructs map[string]bool
 
+	// externNames are the functions this module declared as externs, which a
+	// port supplies. They are recorded so a call to one is checked by its
+	// arguments even when the declaring module was not imported.
+	externNames map[string]bool
+
+	// aliases are names for other types, as in `type SqlDb = Ptr[Unit]`.
+	aliases map[string]string
 	// Generic declarations, kept as templates until monomorphised.
 	genericStructs map[string]ast.StructDecl
 	genericFuncs   map[string]ast.FuncDecl
@@ -68,6 +75,11 @@ type functionType struct {
 	params []ir.Type
 	result ir.Type
 	cName  string
+	// genericParams are the type parameters a declaration was written with, or
+	// none. They are carried so a name declared twice can be resolved: a
+	// concrete declaration is what an unqualified call means, and a generic one
+	// only wins where nothing concrete was declared.
+	genericParams []string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -82,6 +94,8 @@ func New() *TypeChecker {
 		fields:             map[string]map[string]ir.Type{},
 		genericParams:      map[string][]string{},
 		userStructs:        map[string]bool{},
+		externNames:        map[string]bool{},
+		aliases:            map[string]string{},
 		genericStructs:     map[string]ast.StructDecl{},
 		genericFuncs:       map[string]ast.FuncDecl{},
 		seenInstantiation:  map[string]bool{},
@@ -98,11 +112,18 @@ func New() *TypeChecker {
 	tc.types["u32"] = ir.Type{Kind: ir.TypeU32, Name: "u32"}
 	tc.types["u64"] = ir.Type{Kind: ir.TypeU64, Name: "u64"}
 	tc.types["i32"] = ir.Type{Kind: ir.TypeI32, Name: "i32"}
+	tc.types["i64"] = ir.Type{Kind: ir.TypeI64, Name: "i64"}
 	tc.types["f64"] = ir.Type{Kind: ir.TypeF64, Name: "f64"}
 	tc.types["string"] = ir.Type{Kind: ir.TypeString, Name: "string"}
 	for _, name := range []string{"String", "Slice", "Ptr", "Option", "Result", "Array", "Map", "Range", "RS485", "UART", "I2C", "SPI", "GPIO", "Timer", "Modbus", "TimeSpec"} {
 		tc.types[name] = ir.Type{Kind: ir.TypeStruct, Name: name}
 	}
+	// `Unit` is deliberately not registered here. It is the type of nothing,
+	// used as a generic's default and as the element of a pointer a foreign
+	// library owns, and it is synthesised — declared as an empty struct — by
+	// synthesizeDefaultTypes when a program names it. Registering it as a
+	// known type would make that synthesis believe it had already been declared
+	// and leave the backend with a type nothing defines.
 
 	return tc
 }
@@ -149,7 +170,20 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			if fn.Owner != "" {
 				tc.funcs[fn.Owner+"."+fn.Name] = entry
 			}
-			if _, exists := tc.funcs[fn.Name]; !exists {
+			// A name declared once is that declaration, and a second one does
+			// not replace it. The exception is a generic: a call written
+			// unqualified is a call to something the caller can see, and a
+			// concrete declaration is what an unqualified call means when the
+			// generic beside it would have to be deduced from the arguments.
+			//
+			// Two modules can each declare a name as ordinary as `error` — the
+			// standard library's result accessor and a logger's own — and a
+			// program that imported both would otherwise have the generic win
+			// and be told it cannot deduce type arguments for a call that names
+			// no types at all.
+			existing, exists := tc.funcs[fn.Name]
+			if !exists || (len(existing.genericParams) > 0 && len(fn.TypeParams) == 0) {
+				entry.genericParams = fn.TypeParams
 				tc.funcs[fn.Name] = entry
 			}
 		}
@@ -157,6 +191,23 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	for _, decl := range m.Decls {
 		if s, ok := decl.(ast.StructDecl); ok {
 			tc.types[s.Name] = ir.Type{Kind: ir.TypeStruct, Name: s.Name}
+		}
+	}
+	// An alias is registered before anything is validated, because a function
+	// body may name the alias as a type and as a constructor — `SqlDb(0)` —
+	// and a body validated before the alias exists would be told it calls a
+	// function nobody declared. Registration is a first pass because it is a
+	// declaration rather than a check: nothing here can fail on a well-formed
+	// alias, and a malformed one is a manifest a resolver reports.
+	for _, decl := range m.Decls {
+		if d, ok := decl.(ast.TypeDecl); ok {
+			// An alias is a name for another type, not a new type of its own.
+			// Registering it as a struct would make the backend define a struct
+			// whose name is the written spelling — `SqlDb` becoming a type called
+			// `Ptr[Unit]` — so an alias a program uses for a handle is a type
+			// nothing can name. The alias is recorded and resolution follows it.
+			tc.aliases[d.Name] = d.Type.String()
+			tc.types[d.Name] = ir.Type{Kind: ir.TypeStruct, Name: d.Name}
 		}
 	}
 
@@ -179,7 +230,10 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				return err
 			}
 		case ast.TypeDecl:
-			tc.types[d.Name] = ir.Type{Kind: ir.TypeStruct, Name: d.Type.String()}
+			// An alias was registered in the pass above, before anything was
+			// validated. There is nothing to check: the target is resolved
+			// wherever it is named, and a name that resolves to nothing becomes
+			// an error at the use rather than at the declaration.
 		default:
 			return fmt.Errorf("unknown top-level declaration")
 		}
@@ -476,9 +530,15 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		// A generic call is checked against the signature with its type
 		// arguments substituted, which is what makes Ok[u32, u32](7) work.
 		// When the arguments are omitted they are deduced from the call site.
+		//
+		// This is only the case when the name is generic. A name declared twice
+		// — a logger's `error(subject, message)` beside the standard library's
+		// `error[T, E](result)` — is called as the concrete declaration, and
+		// taking the generic one here would ask a call that names no types to
+		// deduce them.
 		var subs map[string]ir.Type
 		if identifier, ok := value.Callee.(ast.IdentifierExpr); ok {
-			if decl, generic := tc.genericFuncs[identifier.Name]; generic {
+			if decl, generic := tc.genericFuncs[identifier.Name]; generic && tc.isGenericName(identifier.Name) {
 				args := value.TypeArgs
 				if len(args) == 0 {
 					if deduced := tc.applicationFor(value, scope, expected); len(deduced) > 0 {
@@ -511,7 +571,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if identifier, ok := value.Callee.(ast.IdentifierExpr); ok {
 			var exists bool
 			signature, exists = tc.funcs[identifier.Name]
-			if !exists && identifier.Name != "print" && !isCallableBuiltin(identifier.Name, tc.types) && !isExternalBuiltin(identifier.Name) {
+			if !exists && identifier.Name != "print" && !isCallableBuiltin(identifier.Name, tc.types) && !isExternalBuiltin(identifier.Name) && !tc.isTypeName(identifier.Name) {
+				// A call to a type is a construction, not a call to something
+				// missing: `SqlDb(0)` builds a value of that type, and a program
+				// that writes one is spelling a type rather than calling a
+				// function that was never declared.
 				return ir.Type{}, fmt.Errorf("undefined function %q", identifier.Name)
 			}
 			if identifier.Name == "print" {
@@ -546,6 +610,21 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 					}
 					if strings.HasPrefix(identifier.Name, "c_") || identifier.Name == "sizeof" {
 						return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
+					}
+					// An extern declared by an imported module is a promise a
+					// port fulfils, and its signature is the declaration's. When
+					// the declaration is not in scope — a module that calls one
+					// without importing the module that declared it — the call
+					// is checked by its arguments alone rather than refused: the
+					// generated program carries the declaration, and refusing
+					// here would fail a program that the port can build.
+					if tc.isExternName(identifier.Name) {
+						for _, argument := range value.Args {
+							if _, err := tc.exprType(argument, scope); err != nil {
+								return ir.Type{}, err
+							}
+						}
+						return ir.Type{Kind: ir.TypeU32, Name: "u32"}, nil
 					}
 					return ir.Type{}, nil
 				}
@@ -706,6 +785,8 @@ func primitiveKind(name string) ir.TypeKind {
 		return ir.TypeU64
 	case "i32":
 		return ir.TypeI32
+	case "i64":
+		return ir.TypeI64
 	case "f64":
 		return ir.TypeF64
 	case "string":
@@ -777,7 +858,10 @@ func isBuiltinMemberCall(member ast.MemberExpr) bool {
 }
 
 func numeric(value ir.Type) bool {
-	return value.Kind == ir.TypeI32 || value.Kind == ir.TypeU8 || value.Kind == ir.TypeU16 || value.Kind == ir.TypeU32 || value.Kind == ir.TypeU64 || value.Kind == ir.TypeF64
+	return value.Kind == ir.TypeI32 || value.Kind == ir.TypeI64 ||
+		value.Kind == ir.TypeU8 || value.Kind == ir.TypeU16 ||
+		value.Kind == ir.TypeU32 || value.Kind == ir.TypeU64 ||
+		value.Kind == ir.TypeF64
 }
 func comparable(left, right ir.Type) bool { return assignable(left, right) || assignable(right, left) }
 
@@ -823,7 +907,22 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 				tc.genericFuncs[fn.Name] = fn
 				continue
 			}
+			if fn.Extern {
+				tc.externNames[fn.Name] = true
+			}
 			out.Funcs = append(out.Funcs, tc.funcToIR(fn))
+		}
+	}
+
+	// Aliases are carried so a backend can define them: a program may declare a
+	// value under the name it gave a type, and a file that emitted only the type
+	// being named would leave that declaration referring to nothing.
+	for _, decl := range m.Decls {
+		if d, ok := decl.(ast.TypeDecl); ok {
+			out.Aliases = append(out.Aliases, ir.AliasIR{
+				Name:   d.Name,
+				Target: tc.cTypeFor(tc.typeFor(d.Type.String())),
+			})
 		}
 	}
 
@@ -932,9 +1031,30 @@ func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type 
 	// `Ptr[u8]` mangles it into a name no C compiler knows, and every foreign
 	// call that passes a pointer goes through here.
 	if expr.Name == "Ptr" {
+		// A pointer to nothing is a handle, and a handle is a struct carrying an
+		// address rather than a raw pointer. That is what lets a program hold
+		// one, pass it, and get one back: a pointer to an empty struct has none
+		// of those, and a cast of 0 could not build it.
+		//
+		// Every other `Ptr[T]` stays a real pointer, because a pointer into the
+		// middle of a buffer has no name of its own and nothing to hold.
+		element := ""
+		if len(expr.Args) > 0 {
+			element = expr.Args[0].String()
+		}
+		if element == "Unit" || element == "void" || element == "" {
+			typ.Kind = ir.TypeStruct
+			typ.Name = "PtrUnit"
+			typ.Args = nil
+			return typ
+		}
 		typ.Kind = ir.TypePtr
 	}
-	if typ.Kind != ir.TypePtr {
+	// An alias is a name for another type, so the written spelling is not the
+	// type: replacing the name with it would make `SqlDb` a type of its own
+	// that nothing defines, which is what a handle would otherwise be.
+	_, aliased := tc.aliases[expr.Name]
+	if typ.Kind != ir.TypePtr && !aliased {
 		typ.Name = expr.String()
 	}
 	typ.ArrayLen = 0
@@ -948,6 +1068,15 @@ func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type 
 }
 
 func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
+	// An alias resolves to what it names, so a handle written as `SqlDb` is the
+	// pointer it is and a backend spells it as one.
+	//
+	// The follow is depth-bounded because an alias is a claim a manifest can
+	// make wrongly — `type A = B` and `type B = A` is a document nobody has to
+	// compile to write — and a resolution that loops takes the compiler with it.
+	if resolved, found := tc.followAlias(name, 0); found {
+		return resolved, true
+	}
 	if typ, ok := tc.types[name]; ok {
 		return typ, true
 	}
@@ -971,6 +1100,13 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 		return typ, true
 	}
 	if (strings.Contains(name, "[") || (len(base) == 1 && base != "")) && unicodeUpper(base[0]) {
+		return ir.Type{Kind: ir.TypeStruct, Name: name}, true
+	}
+	// `Unit` is the type of nothing, and it is what a handle points at. It is
+	// synthesised when a generic names it as a default, but a pointer may name it
+	// before anything has declared one, and a name that resolves to nothing is
+	// how a handle becomes a pointer to a pointer.
+	if name == "Unit" || name == "RhoUnit" {
 		return ir.Type{Kind: ir.TypeStruct, Name: name}, true
 	}
 	return ir.Type{}, false
@@ -1130,6 +1266,36 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				// A string or environment intrinsic, emitted by both backends
 				// under a fixed name.
 				callee = intrinsicLowering[identifier.Name]
+			case tc.isTypeName(identifier.Name):
+				// A call to a type is a conversion, not a call. `Ptr[Unit](0)` and
+				// `SqlDb(0)` build a value of that type; without this they are
+				// mangled as if they named a generic function, and the generated
+				// code calls a function that was never written.
+				//
+				// The target is spelled with its arguments, which is where the
+				// element of a pointer lives: the parser splits `Ptr[Unit]` into
+				// the name `Ptr` and one type argument, and a cast to the name
+				// alone would be a cast to a pointer with no element.
+				//
+				// The spelling is the backend's own rather than a C type name,
+				// because this string is the Go and the C expression alike: a
+				// conversion written as a C type name is not a conversion in Go
+				// at all, and the value it built was a nil.
+				written := identifier.Name
+				if len(expr.TypeArgs) > 0 {
+					args := make([]string, 0, len(expr.TypeArgs))
+					for _, argument := range expr.TypeArgs {
+						args = append(args, tc.cTypeFor(tc.typeFor(argument.String())))
+					}
+					written = identifier.Name + "<" + strings.Join(args, ", ") + ">"
+				}
+				callee = tc.cTypeFor(tc.typeFor(written))
+				if len(expr.Args) > 0 {
+					// An alias resolves to what it names, so `SqlDb(0)` is a
+					// conversion to the pointer it is rather than to a type
+					// called SqlDb that nothing defines.
+					return "(" + callee + ")" + tc.lowerExpr(expr.Args[0], scope)
+				}
 			case len(expr.TypeArgs) > 0 || isGenericCallee(tc, identifier.Name):
 				// A generic call names a specialisation, so emit the mangled
 				// name the monomorphised function is emitted under, including
@@ -1202,7 +1368,12 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 	case ast.CastExpr:
 		// A C cast. The Go backend recognises the same spelling and emits a
 		// real conversion, so both backends read one expression.
-		return "(" + cTypeForName(expr.Type.String()) + ")" + tc.lowerExpr(expr.Value, scope)
+		//
+		// The type is resolved rather than spelled from the written name, because
+		// a cast to a pointer or to an alias is not a type with that name: `Ptr[T]`
+		// cast to by name is a C expression naming a function, not a cast.
+		castTo := tc.typeFor(expr.Type.String())
+		return "(" + tc.cTypeFor(castTo) + ")" + tc.lowerExpr(expr.Value, scope)
 	default:
 		return "0"
 	}
@@ -1255,6 +1426,8 @@ func cTypeForKind(kind ir.TypeKind) string {
 		return "uint64_t"
 	case ir.TypeI32:
 		return "int32_t"
+	case ir.TypeI64:
+		return "int64_t"
 	case ir.TypeF64:
 		return "double"
 	default:
@@ -1294,8 +1467,14 @@ func cTypeForName(name string) string {
 		element := strings.TrimSuffix(strings.TrimPrefix(name[len(base):], "["), "]")
 		// A pointer to nothing is a pointer to nothing: `Ptr[Unit]` is how a
 		// foreign handle is declared, and C spells that void*.
+		//
+		// Go spells it as a nameable struct rather than a raw pointer, because a
+		// program has to be able to hold a handle, pass it, and get one back. A
+		// bare `*Unit` would be a pointer to an empty struct — something no
+		// address can meaningfully be, and something a cast of `0` could not
+		// build.
 		if element == "" || element == "Unit" || element == "void" {
-			return "void*"
+			return mangleTypeName("Ptr" + element)
 		}
 		return cTypeForName(element) + "*"
 	}
@@ -1435,4 +1614,184 @@ func irModuleUsesProtocolTypes(m ir.ModuleIR) bool {
 		return false
 	}
 	return mentions(RequestTypeName) || mentions(ResponseTypeName)
+}
+
+// isUnitOrVoid reports whether a type is the one that means "nothing", which a
+// pointer to it renders as the opaque handle C calls void*.
+func isUnitOrVoid(t ir.Type) bool {
+	if t.Kind == ir.TypeVoid {
+		return true
+	}
+	// A type that names Unit means Unit whatever kind it carries: `Unit` is
+	// synthesised on use rather than registered, so a pointer to it can arrive
+	// before anything has declared it, and a handle would then be a pointer to
+	// a pointer.
+	return t.Name == "Unit" || t.Name == "RhoUnit"
+}
+
+// isGenericName reports whether the declaration an unqualified call resolves to
+// is a generic one.
+//
+// A name may be declared twice: a generic one that needs its type arguments
+// deduced and a concrete one that takes none. The concrete declaration is what an
+// unqualified call means, so this is asked before the generic path is taken — a
+// call that names no types is not a call that wants them deduced, it is a call to
+// the declaration that has none.
+func (tc *TypeChecker) isGenericName(name string) bool {
+	entry, declared := tc.funcs[name]
+	if !declared {
+		// Nothing concrete was declared, so the generic declaration is the one
+		// the call names.
+		return true
+	}
+	return len(entry.genericParams) > 0
+}
+
+// isExternName reports whether a name is one this project declared as an extern.
+//
+// The set is filled as declarations are seen, and read when a call cannot be
+// matched to one. A name that is a promise a port fulfils is checked against its
+// arguments rather than refused, so a module that calls a port's function
+// without importing the module that declared it still typechecks — the
+// declaration travels with the generated program.
+func (tc *TypeChecker) isExternName(name string) bool {
+	return tc.externNames[name]
+}
+
+// cTypeFor spells a resolved type the way C spells it, for the casts the
+// lowering writes.
+//
+// It resolves rather than spell from a written name because a cast target is
+// often a pointer or an alias, neither of which is a name C knows. A cast to
+// `Ptr[T]` written from the name would be a C expression naming a function that
+// does not exist; spelled from the type it is a cast.
+func (tc *TypeChecker) cTypeFor(t ir.Type) string {
+	// The alias is followed once: `resolveType` has already depth-bounded the
+	// chain, so a name that resolves to itself cannot send this into a loop
+	// here. That matters because an alias is a claim a manifest can make
+	// wrongly, and `type A = A` is a document nobody has to compile to write.
+	if name, ok := tc.aliases[t.Name]; ok {
+		if resolved, found := tc.resolveType(name); found && resolved.Name != t.Name {
+			return tc.cTypeFor(resolved)
+		}
+	}
+	switch t.Kind {
+	case ir.TypeVoid:
+		return "void"
+	case ir.TypeBool:
+		return "bool"
+	case ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeI64:
+		return cTypeForName(t.Name)
+	case ir.TypeF64:
+		return "double"
+	case ir.TypeString:
+		return "const char*"
+	case ir.TypePtr:
+		if len(t.Args) == 0 || isUnitOrVoid(t.Args[0]) {
+			return "void*"
+		}
+		return tc.cTypeFor(t.Args[0]) + "*"
+	case ir.TypeStruct:
+		if t.Name != "" {
+			return mangleTypeName(t.Name)
+		}
+	}
+	return "void*"
+}
+
+// isTypeName reports whether a name is a type rather than a function, which is
+// what tells a conversion from a call.
+//
+// The two are written the same way in Rho — `Name(value)` — and only the tables
+// tell them apart. A call to a function mangles to a function, and a call to a
+// type is a conversion, so mistaking one for the other produces a program that
+// calls a function which was never written.
+func (tc *TypeChecker) isTypeName(name string) bool {
+	if _, alias := tc.aliases[name]; alias {
+		return true
+	}
+	if _, generic := tc.genericStructs[name]; generic {
+		return true
+	}
+	// A pointer is spelled `Ptr[T]` and is never a function, so a name that
+	// begins like one and carries a type argument is a type.
+	if strings.HasPrefix(name, "Ptr[") {
+		return true
+	}
+	if _, known := tc.types[name]; known {
+		return true
+	}
+	// A bare primitive or a single-letter type parameter.
+	if isKnownTypeName(name) {
+		return true
+	}
+	if len(name) == 1 && unicodeUpper(name[0]) {
+		return true
+	}
+	return false
+}
+
+// isKnownTypeName reports whether a name is one of the language's own types.
+func isKnownTypeName(name string) bool {
+	switch name {
+	case "void", "bool", "u8", "u16", "u32", "u64", "i32", "i64", "f64", "string",
+		"Unit", "RhoUnit", "Result", "Option", "Slice", "Ptr", "Array", "Map", "String":
+		return true
+	}
+	return false
+}
+
+// followAlias resolves a chain of aliases to the type at the end of it, or
+// reports that the name is not one.
+//
+// The depth is bounded because an alias is a claim rather than a compiled
+// declaration, and a cycle is a claim a manifest can make by accident. A bound
+// turns a document that loops into a name nothing resolves, which is a message
+// about the manifest rather than a compiler that never returns.
+func (tc *TypeChecker) followAlias(name string, depth int) (ir.Type, bool) {
+	if depth > 16 {
+		return ir.Type{}, false
+	}
+	target, ok := tc.aliases[name]
+	if !ok {
+		return ir.Type{}, false
+	}
+	// `type A = A` names itself, and resolving it would be resolving it for
+	// ever.
+	if target == name {
+		return ir.Type{}, false
+	}
+	return tc.resolveTypeBounded(target, depth+1)
+}
+
+// resolveTypeBounded is resolveType with the alias chain's depth carried, so a
+// cycle is seen rather than followed.
+func (tc *TypeChecker) resolveTypeBounded(name string, depth int) (ir.Type, bool) {
+	if resolved, found := tc.followAlias(name, depth); found {
+		return resolved, true
+	}
+	if typ, ok := tc.types[name]; ok {
+		return typ, true
+	}
+	base := name
+	element := ""
+	if i := strings.IndexByte(base, '['); i >= 0 {
+		element = strings.TrimSuffix(base[i+1:], "]")
+		base = base[:i]
+	}
+	if base == "Ptr" {
+		pointer := ir.Type{Kind: ir.TypePtr, Name: name}
+		if element != "" {
+			pointer.Args = []ir.Type{tc.typeFor(element)}
+		}
+		return pointer, true
+	}
+	if typ, ok := tc.types[base]; ok {
+		typ.Name = name
+		return typ, true
+	}
+	if (strings.Contains(name, "[") || (len(base) == 1 && base != "")) && unicodeUpper(base[0]) {
+		return ir.Type{Kind: ir.TypeStruct, Name: name}, true
+	}
+	return ir.Type{}, false
 }

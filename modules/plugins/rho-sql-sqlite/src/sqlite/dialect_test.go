@@ -16,7 +16,7 @@
 // SPDX-License-Identifier: MIT
 //
 
-package main
+package sqlite
 
 import (
 	"errors"

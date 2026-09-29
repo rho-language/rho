@@ -53,6 +53,11 @@ User=rho
 Group=rho
 Environment=RHO_HTTP_ADDR=127.0.0.1:8080
 Environment=RHO_REGISTRY_DATA=/var/lib/rho-registry
+# The database and the driver it is reached through. Both default to the data
+# directory and to sqlite, which is right for a single-node deployment; a
+# deployment pointing at a server sets them to name it.
+Environment=RHO_SQL_DATABASE=/var/lib/rho-registry/registry.db
+Environment=RHO_SQL_DRIVER=sqlite
 EnvironmentFile=-/etc/rho/registry.env
 ExecStart=/usr/local/bin/registry
 Restart=on-failure

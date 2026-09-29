@@ -1,0 +1,183 @@
+# The registry's own tables.
+#
+# A registry answers one question and, in a table, what the answer is made of:
+# who an identity is, what it may do, and which modules it published. Declaring
+# them here rather than writing create statements gives the service three things
+# at once — the tables it creates, a typed Rho function for the common operation
+# on each, and the row types those functions use.
+#
+# What is not here is the documentation generated from a package and the source
+# tree it was unpacked into. Those are derived, they are many small files, and a
+# database holding them would be a cache.
+#
+# SPDX-License-Identifier: MIT
+
+tables:
+  # users are identities, named by whatever the credential said.
+  #
+  # There is no registration: an identity exists once it has published something
+  # or been granted a role. A registry that required an account before a first
+  # publish would be a service that cannot be tried without being joined.
+  - name: users
+    description: The identities the registry knows.
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+        auto: true
+      - name: name
+        type: text
+        not_null: true
+        unique: true
+      - name: created_at
+        type: text
+        not_null: true
+        default: "datetime('now')"
+
+  # roles are named permissions, so what an identity may do is data rather than
+  # code.
+  - name: roles
+    description: The permissions a maintainer may hold over a module.
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+        auto: true
+      - name: name
+        type: text
+        not_null: true
+        unique: true
+      - name: description
+        type: text
+
+  # user_roles maps an identity to the roles it holds.
+  - name: user_roles
+    description: Which roles an identity holds.
+    columns:
+      - name: user_id
+        type: integer
+        not_null: true
+        primary_key: true
+        references: users(id)
+      - name: role_id
+        type: integer
+        not_null: true
+        primary_key: true
+        references: roles(id)
+
+  # tokens are issued credentials.
+  #
+  # The token itself is signed and self-describing, so this table is what a
+  # service can revoke and what it can audit: which identity asked for a token,
+  # for which registry, with which scopes, and until when.
+  - name: tokens
+    description: Credentials the service has issued.
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+        auto: true
+      - name: user_id
+        type: integer
+        not_null: true
+        references: users(id)
+      - name: registry
+        type: text
+      - name: scopes
+        type: text
+      - name: issued_at
+        type: text
+        not_null: true
+        default: "datetime('now')"
+      - name: expires_at
+        type: text
+      - name: revoked
+        type: boolean
+        not_null: true
+        default: "0"
+
+  # modules are names, and a name is claimed once.
+  #
+  # The owner is the identity that published the name first, and visibility is
+  # whether anybody may install it or its owner alone. Both are properties of
+  # the name rather than of a version: a module that is private is private in
+  # all of them.
+  - name: modules
+    description: The module names the registry holds.
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+        auto: true
+      - name: name
+        type: text
+        not_null: true
+        unique: true
+      - name: owner_id
+        type: integer
+        references: users(id)
+      - name: visibility
+        type: text
+        not_null: true
+        default: "'public'"
+        description: public, or private to the owner alone.
+      - name: created_at
+        type: text
+        not_null: true
+        default: "datetime('now')"
+
+  # module_maintainers are the identities that may publish to a module, and the
+  # role each holds over it.
+  #
+  # It is a table rather than a column because letting a second identity in has
+  # to be a change to what is stored rather than a change to what is read.
+  - name: module_maintainers
+    description: Which identities may publish to a module, and as what.
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+        auto: true
+      - name: module_id
+        type: integer
+        not_null: true
+        references: modules(id)
+      - name: user_id
+        type: integer
+        not_null: true
+        references: users(id)
+      - name: role_id
+        type: integer
+        references: roles(id)
+
+  # module_versions are the published artifacts.
+  #
+  # The package is the row. Storing it here rather than in a file beside the
+  # metadata is what makes a publish one commit: a registry that wrote a package
+  # and then a record of who published it can be interrupted between the two, and
+  # what is left is a module nobody owns.
+  - name: module_versions
+    description: The published versions of a module.
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+        auto: true
+      - name: module_id
+        type: integer
+        not_null: true
+        references: modules(id)
+      - name: version
+        type: text
+        not_null: true
+      - name: payload
+        type: bytes
+      - name: meta
+        type: json
+      - name: publisher_id
+        type: integer
+        references: users(id)
+      - name: published_at
+        type: text
+        not_null: true
+        default: "datetime('now')"

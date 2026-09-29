@@ -1,6 +1,6 @@
 module github.com/rho/rho-sql
 
-go 1.18
+go 1.23
 
 require rho v0.0.0
 

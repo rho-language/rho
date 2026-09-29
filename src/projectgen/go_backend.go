@@ -59,6 +59,15 @@ func EmitGoProject(ctx Context) (Artifacts, error) {
 		requires = append(append([]string{}, requires...), requirement)
 	}
 
+	// A database driver is a Go package that registers itself, so a project
+	// with a database and no driver in its go.mod links and then cannot open
+	// anything. The requirement is written for it, for the same reason: it is
+	// the project's statement of what it needs, and the port is what fails
+	// when it is missing.
+	if requirement := ctx.SQL.Requirement(); requirement != "" {
+		requires = append(append([]string{}, requires...), requirement)
+	}
+
 	switch kind {
 	case "server":
 		// How a service routes and what it wraps the router in is the

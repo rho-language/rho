@@ -164,6 +164,16 @@ extern int  rho_rows_column(rho_rows *rows, int index, rho_value *out);
 `
 
 // writeCQuery is one generated function.
+//
+// C has no slice to return, so a function that reads rows fills an array the
+// caller owns and answers how many it filled. That is the shape a C caller
+// expects, and it is the shape that makes the values reachable: a function that
+// returned a count and nothing else would be one no caller could read.
+//
+// The values are read column by column into the row's own fields, in the order
+// the columns were declared, which is the order the database returns them. One
+// accessor per column and one conversion per type, so what a caller reads out of
+// the row is the type the schema says it is.
 func writeCQuery(b *strings.Builder, query GeneratedQuery, models map[string]Model) {
 	writeCComment(b, query.Comment, "")
 	for _, warning := range query.Warnings {
@@ -177,12 +187,22 @@ func writeCQuery(b *strings.Builder, query GeneratedQuery, models map[string]Mod
 	name := lowerFirst(query.Name)
 	fmt.Fprintf(b, "static const char *sql_%s = %s;\n\n", name, cString(query.SQL))
 
-	// The signature takes the handle and one value per marker, and a status out,
-	// because C has no way to return an error and a value at once.
+	// The signature takes the handle, one value per marker, and then where the
+	// rows go: C has no way to return both an error and a value.
+	//
+	// A parameter is taken in the type its column has — the same type the
+	// generated Go takes — and wrapped into the boundary's value inside the
+	// function. A caller passing a number should pass a number, not build a
+	// tagged union for it.
 	parameters := []string{"rho_db *db"}
 	for _, parameter := range query.Parameters {
 		parameters = append(parameters,
-			fmt.Sprintf("rho_value %s", lowerFirst(parameter.Name)))
+			fmt.Sprintf("%s %s", cTypeOf(parameter.Type), lowerFirst(parameter.Name)))
+	}
+	model, returnsRows := models[query.Result]
+	if returnsRows {
+		parameters = append(parameters,
+			fmt.Sprintf("%s *rows", model.Name), "int capacity")
 	}
 	parameters = append(parameters, "int *status")
 
@@ -190,46 +210,80 @@ func writeCQuery(b *strings.Builder, query GeneratedQuery, models map[string]Mod
 	fmt.Fprintf(b, "    rho_value values[%d];\n", len(query.Parameters))
 	fmt.Fprintf(b, "    int count = %d;\n", len(query.Parameters))
 	for i, parameter := range query.Parameters {
-		fmt.Fprintf(b, "    values[%d] = %s;\n", i, lowerFirst(parameter.Name))
+		fmt.Fprintf(b, "    values[%d] = %s;\n", i,
+			cWrapped(parameter.Type, lowerFirst(parameter.Name)))
 	}
 
-	model, returnsRows := models[query.Result]
-	if returnsRows && query.Verb == VerbSelect {
-		fmt.Fprintf(b, "    rho_rows *rows = 0;\n")
-		fmt.Fprintf(b, "    int rc = rho_db_query(db, sql_%s, values, count, &rows);\n", name)
-		b.WriteString("    if (rc != 0) { *status = rc; return 0; }\n")
-		b.WriteString("    int wrote = 0;\n")
-		b.WriteString("    while (1) {\n")
-		b.WriteString("        int more = 0;\n")
-		b.WriteString("        if (rho_rows_next(rows, &more) != 0) { rho_rows_close(rows); *status = 1; return wrote; }\n")
-		b.WriteString("        if (!more) { break; }\n")
-		fmt.Fprintf(b, "        %s row;\n", model.Name)
-		b.WriteString("        wrote++;\n")
-		b.WriteString("    }\n")
-		b.WriteString("    rho_rows_close(rows);\n    *status = 0;\n    return wrote;\n}\n\n")
-		return
-	}
-
-	// A write. What it changed is the answer, and a write that returns rows is
-	// read the same way a read's are, so it is not a second shape.
 	if returnsRows {
-		fmt.Fprintf(b, "    rho_rows *rows = 0;\n")
-		fmt.Fprintf(b, "    int rc = rho_db_query(db, sql_%s, values, count, &rows);\n", name)
-		b.WriteString("    if (rc != 0) { *status = rc; return 0; }\n")
-		b.WriteString("    int wrote = 0;\n")
-		b.WriteString("    while (1) {\n")
-		b.WriteString("        int more = 0;\n")
-		b.WriteString("        if (rho_rows_next(rows, &more) != 0) { rho_rows_close(rows); *status = 1; return wrote; }\n")
-		b.WriteString("        if (!more) { break; }\n")
-		b.WriteString("        wrote++;\n")
-		b.WriteString("    }\n")
-		b.WriteString("    rho_rows_close(rows);\n    *status = 0;\n    return wrote;\n}\n\n")
+		writeCRows(b, name, model)
 		return
 	}
 	fmt.Fprintf(b, "    long long affected = 0;\n")
 	fmt.Fprintf(b, "    int rc = rho_db_exec(db, sql_%s, values, count, &affected);\n", name)
 	b.WriteString("    if (rc != 0) { *status = rc; return 0; }\n")
 	b.WriteString("    *status = 0;\n    return (int)affected;\n}\n\n")
+}
+
+// writeCRows is the body of a function that reads rows into a caller's array.
+func writeCRows(b *strings.Builder, name string, model Model) {
+	b.WriteString("    rho_rows *result = 0;\n")
+	fmt.Fprintf(b, "    int rc = rho_db_query(db, sql_%s, values, count, &result);\n", name)
+	b.WriteString("    if (rc != 0) { *status = rc; return 0; }\n\n")
+	b.WriteString("    int wrote = 0;\n")
+	b.WriteString("    while (wrote < capacity) {\n")
+	b.WriteString("        int more = 0;\n")
+	b.WriteString("        if (rho_rows_next(result, &more) != 0) { rho_rows_close(result); *status = 1; return wrote; }\n")
+	b.WriteString("        if (!more) { break; }\n")
+	b.WriteString("        rho_value column;\n")
+	for i, field := range model.Fields {
+		fieldName := lowerFirst(field.Name)
+		fmt.Fprintf(b, "        rho_rows_column(result, %d, &column);\n", i)
+		fmt.Fprintf(b, "        rows[wrote].%s = %s;\n", fieldName, cConversion(field.Type, "column"))
+	}
+	b.WriteString("        wrote++;\n")
+	b.WriteString("    }\n")
+	b.WriteString("    // A database that returned more rows than fit is a caller who asked for\n")
+	b.WriteString("    // too few, and leaving them unread would be a result nobody reports.\n")
+	b.WriteString("    rho_rows_close(result);\n")
+	b.WriteString("    *status = 0;\n    return wrote;\n}\n\n")
+}
+
+// cWrapped is a parameter the caller gave, as the boundary's value.
+//
+// The caller passes the type its column has, and the kind is what the engine
+// reads to know how to hand it to the database: a number passed as a number and
+// a string passed as text, rather than one type that stands in for both.
+func cWrapped(what Type, name string) string {
+	switch what {
+	case TypeInteger:
+		return "(rho_value){ .kind = RHO_INTEGER, .integer = " + name + " }"
+	case TypeFloat:
+		return "(rho_value){ .kind = RHO_FLOAT, .real = " + name + " }"
+	case TypeBoolean:
+		return "(rho_value){ .kind = RHO_BOOLEAN, .boolean = " + name + " }"
+	default:
+		return "(rho_value){ .kind = RHO_TEXT, .text = " + name + " }"
+	}
+}
+
+// cConversion is a value read out of a column, as the field it goes in.
+//
+// A value is read through the same accessors whichever type it is, and what
+// differs is which member of it is taken: a number from its number, text from
+// its text. Nothing is checked here, because the engine that filled the value
+// already reported its kind and a C caller checking again would be checking the
+// engine's own answer.
+func cConversion(what Type, value string) string {
+	switch what {
+	case TypeInteger:
+		return value + ".integer"
+	case TypeFloat:
+		return value + ".real"
+	case TypeBoolean:
+		return value + ".boolean"
+	default:
+		return value + ".text"
+	}
 }
 
 // writeCHeader is what a generated C file opens with.

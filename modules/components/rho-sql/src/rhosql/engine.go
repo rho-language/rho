@@ -60,6 +60,22 @@ var OfferedHooks = []string{HookDescribe, HookMigrate, HookQuery, HookDescribeQu
 // thing it does not have to be told.
 const ComponentName = "rho-sql"
 
+// The environment an engine is told about its database through.
+//
+// The component does not know what an engine calls its own settings — a path to
+// a file, a connection string, a cluster — so it says what it means and lets the
+// engine decide. Naming one engine's variable here would make this a component
+// for that engine, which is the thing it exists not to be.
+const (
+	// DatabaseEnv names the database an engine should work against.
+	DatabaseEnv = "RHO_SQL_DATABASE"
+	// ScratchEnv says the database is disposable, which is how a caller asks an
+	// engine to work somewhere it may create and drop anything. Asking for a
+	// description is asking a question, and a question should not change the
+	// database it was asked about.
+	ScratchEnv = "RHO_SQL_SCRATCH"
+)
+
 // Engine is what an engine says about itself.
 //
 // It is asked before anything else, and a caller that does not ask cannot know

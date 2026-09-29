@@ -147,8 +147,13 @@ type Field struct {
 
 // GeneratedQuery is one function, from one named statement.
 type GeneratedQuery struct {
-	// Name is the Go function name, which is the statement's.
+	// Name is the function's name, which is the statement's own, in the
+	// language's spelling.
 	Name string
+	// Extern is the name the port implements it under. It differs from Name
+	// because the port is written in the target's language and spells names its
+	// way, while the Rho a handler calls keeps the name the service wrote.
+	Extern string
 	// Comment is the statement's description, and it becomes the function's
 	// documentation.
 	Comment string
@@ -348,10 +353,25 @@ func (g *Generator) query(query Query) GeneratedQuery {
 	}
 	generated := GeneratedQuery{
 		Name:     goFuncName(query.Name),
+		Extern:   "sql_" + cName(stripSQLPrefix(query.Name)),
 		Comment:  query.Comment,
 		Verb:     query.Verb,
 		SQL:      statement,
 		Affected: query.Verb != VerbSelect && !query.ReturnsRows(),
+	}
+	// The values are the statement's own, and a write has them as much as a read
+	// does. They are built before the shape is, because a write has no shape to
+	// build: the parameters a caller passes and the rows a caller reads are two
+	// different facts, and only the second is about what the statement returns.
+	for _, parameter := range query.Parameters {
+		generated.Parameters = append(generated.Parameters, Field{
+			// The Rho spelling, which the Go backend lowers for itself. A name
+			// already camel-cased here would be lowercased again by the Rho
+			// emitter, and `name` would reach a handler as `value`.
+			Name:   rhoFieldName(parameter.Name),
+			Column: parameter.Name,
+			Type:   parameterType(g, query, parameter),
+		})
 	}
 	if !query.ReturnsRows() {
 		return generated
@@ -370,13 +390,6 @@ func (g *Generator) query(query Query) GeneratedQuery {
 		result += "Row"
 	}
 	generated.Result = result
-	for _, parameter := range query.Parameters {
-		generated.Parameters = append(generated.Parameters, Field{
-			Name:   goFieldName(parameter.Name),
-			Column: parameter.Name,
-			Type:   parameterType(g, query, parameter),
-		})
-	}
 	// A value the mapping could not place is carried as text and said here, so a
 	// caller reading the generated file knows which values to check rather than
 	// finding zeroes later.
@@ -390,21 +403,134 @@ func (g *Generator) query(query Query) GeneratedQuery {
 	return generated
 }
 
-// parameterType is what a parameter is carried in, which is the column it is
-// compared against where the statement names one.
+// parameterType is what a parameter is carried in: the column it is compared
+// against, where the statement writes one beside the marker.
 //
-// A parameter with no column behind it is text, because that is what the caller
-// has: a value in a predicate the statement does not tie to a column is a value
-// this cannot type, and text is the type that keeps it.
+// Reading that column is not re-deriving the predicate. The name is already
+// written next to the marker in every statement a service writes, and taking it
+// is what makes a generated function take a number where the column is a number
+// — which is the difference between a caller passing `42` and a caller passing
+// `"42"` and hoping.
+//
+// A parameter compared against something that is not a column of the table — an
+// expression, a value in an insert's list — is text, because text is the type
+// that keeps whatever the caller has.
 func parameterType(g *Generator, query Query, parameter Parameter) Type {
-	if parameter.Column != "" {
-		if table, found := g.schema.Table(query.Table); found {
-			if column, ok := table.Column(parameter.Column); ok {
-				return ReduceType(column.Type)
+	table, found := g.schema.Table(query.Table)
+	if !found {
+		return TypeText
+	}
+	// A statement this generator wrote knows which column each value is for,
+	// and that is a better answer than reading the text: a value written into a
+	// `VALUES` list has no column beside it, and a value compared against a
+	// column is only found by looking next to the marker. A statement a service
+	// wrote has no column recorded, and the text is read for one.
+	name := parameter.Column
+	if name == "" {
+		name = columnFor(query.SQL, parameter, table)
+	}
+	if column, ok := table.Column(name); ok {
+		return ReduceType(column.Type)
+	}
+	return TypeText
+}
+
+// columnFor is the column a marker is compared against, or "" when the statement
+// does not name one.
+//
+// It looks on both sides of the marker, because a comparison is written either
+// way round, and it accepts a name only if the table has such a column — a word
+// that is not a column is not a column because it is next to a marker.
+func columnFor(statement string, parameter Parameter, table Table) string {
+	for _, position := range markerPositions(statement, parameter) {
+		for _, word := range adjacentWords(statement, position) {
+			if _, found := table.Column(word); found {
+				return word
 			}
 		}
 	}
-	return TypeText
+	return ""
+}
+
+// markerPositions are where a parameter's marker appears in a statement, so the
+// words around it can be read without re-reading the statement for each.
+func markerPositions(statement string, parameter Parameter) []int {
+	out := []int{}
+	for _, marker := range markersIn(statement) {
+		if marker.name == parameter.Name && marker.kind == parameter.Marker {
+			// The offset is found by the same scan the marker reader uses, so
+			// the position cannot disagree with the marker that was read.
+			out = append(out, marker.at)
+		}
+	}
+	return out
+}
+
+// adjacentWords are the words immediately before and after a position, skipping
+// whitespace and the operator between a column and its value.
+func adjacentWords(statement string, at int) []string {
+	runes := []rune(statement)
+	out := []string{}
+	// Before: step back over whitespace and one operator.
+	i := at - 1
+	for i >= 0 && (runes[i] == ' ' || runes[i] == '\t' || runes[i] == '\n') {
+		i--
+	}
+	if i >= 0 && isOperators(runes[i]) {
+		i--
+		for i >= 0 && (runes[i] == ' ' || runes[i] == '\t' || runes[i] == '\n') {
+			i--
+		}
+	}
+	if i >= 0 {
+		end := i + 1
+		for i >= 0 && isNameByte(runes[i]) {
+			i--
+		}
+		if word := string(runes[i+1 : end]); word != "" {
+			out = append(out, word)
+		}
+	}
+	// After: step forward over whitespace and one operator.
+	j := at
+	// The marker itself, which is a run of name bytes after its sigil.
+	if j < len(runes) && (runes[j] == ':' || runes[j] == '@' || runes[j] == '$' || runes[j] == '?') {
+		j++
+		for j < len(runes) && isNameByte(runes[j]) {
+			j++
+		}
+	}
+	for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t' || runes[j] == '\n') {
+		j++
+	}
+	if j < len(runes) && isOperators(runes[j]) {
+		j++
+		for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t' || runes[j] == '\n') {
+			j++
+		}
+		if j < len(runes) {
+			start := j
+			for j < len(runes) && isNameByte(runes[j]) {
+				j++
+			}
+			if word := string(runes[start:j]); word != "" {
+				out = append(out, word)
+			}
+		}
+	}
+	return out
+}
+
+// isOperators reports whether a byte is a comparison, which is what sits between
+// a column and the value compared against it.
+//
+// Only the symbols are read. A comparison written as a word — `x LIKE :pattern`
+// — leaves the word between the column and the marker, and a reader that skipped
+// it would take the word for the column. Reading it as text instead is right for
+// the same reason: a parameter compared through an operator this does not know is
+// one this cannot type, and text is the type that keeps it.
+func isOperators(r rune) bool {
+	return r == '=' || r == '<' || r == '>' || r == '!'
 }
 
 // ReturnsRows reports whether a statement returns rows, which is what decides
@@ -446,45 +572,87 @@ func returnsEverything(query Query, table Table) bool {
 
 // selectedColumns are the columns a statement names, read from its select list.
 //
-// A `select *` is every column, which is the one case a reader is right about
-// without being told.
+// The list that is read is the *outer* select's, which matters for a common
+// table expression: `WITH x AS (SELECT …) SELECT id, name FROM …` has two, and
+// the columns a caller gets are the second one's. So the scan takes the last
+// SELECT at bracket depth zero, which is the outer one whichever way a statement
+// is written, and reads from there to the FROM that belongs to it.
 func selectedColumns(query Query) []string {
-	upper := strings.ToUpper(query.SQL)
-	open := strings.Index(upper, "SELECT")
-	if open < 0 {
+	statement := query.SQL
+	runes := []rune(statement)
+	depth := 0
+	// The last SELECT at depth zero is the outer one: a sub-select is inside
+	// brackets, so every depth-zero SELECT is a statement's own.
+	start := -1
+	for i := 0; i < len(runes); i++ {
+		switch {
+		case runes[i] == '\'' || runes[i] == '"' || runes[i] == '`':
+			i = skipLiteral(runes, i)
+		case runes[i] == '(' || runes[i] == '[':
+			depth++
+		case runes[i] == ')' || runes[i] == ']':
+			depth--
+		case depth == 0 && atWordRunes(runes, i, "SELECT"):
+			start = i + len("SELECT")
+		}
+	}
+	if start < 0 {
 		return nil
 	}
-	rest := query.SQL[open+len("SELECT"):]
-	if from := indexWord(upper, "FROM"); from >= 0 {
-		rest = rest[:from]
+	// The list runs to the FROM that belongs to this select, which is the first
+	// one at depth zero after it.
+	end := len(runes)
+	depth = 0
+	for i := start; i < len(runes); i++ {
+		switch runes[i] {
+		case '\'':
+			i = skipLiteral(runes, i)
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ' ':
+			if depth == 0 && atWordRunes(runes, i+1, "FROM") {
+				end = i
+				i = len(runes)
+			}
+		}
 	}
-	rest = strings.TrimSpace(rest)
-	if rest == "*" {
-		table, _ := lookupTable(query)
-		return table
+	list := strings.TrimSpace(string(runes[start:end]))
+	if list == "*" {
+		// A `select *` is every column, which the caller resolves against the
+		// table: `*` says the list is the table's rather than one written out.
+		return nil
 	}
 	out := []string{}
-	for _, part := range strings.Split(rest, ",") {
+	for _, part := range splitTopLevel(list, ',') {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		// An `alias` or an expression is a column with a name the service
-		// chose, which is a thing a caller is given rather than looked up.
+		// An alias or an expression is a column with a name the service chose,
+		// which is a thing a caller is given rather than looked up.
 		if index := strings.Index(part, " "); index > 0 {
 			part = part[:index]
 		}
-		out = append(out, strings.Trim(part, `"`))
+		out = append(out, unquote(part))
 	}
 	return out
 }
 
-// lookupTable is the table a statement reads, and its columns.
-func lookupTable(query Query) ([]string, bool) {
-	if query.Table == "" {
-		return nil, false
+// atWordRunes reports whether a word is written at a position, on word
+// boundaries.
+func atWordRunes(runes []rune, at int, word string) bool {
+	end := at + len(word)
+	if at < 0 || end > len(runes) {
+		return false
 	}
-	return nil, true
+	if !strings.EqualFold(string(runes[at:end]), word) {
+		return false
+	}
+	before := at == 0 || !isNameByte(runes[at-1])
+	after := end == len(runes) || !isNameByte(runes[end])
+	return before && after
 }
 
 // sameNames reports whether two column lists are the same, without regard to
@@ -505,25 +673,6 @@ func sameNames(left, right []string) bool {
 	return true
 }
 
-// indexWord is where a word appears in a statement in upper case, at a boundary.
-func indexWord(upper, word string) int {
-	at := 0
-	for {
-		index := strings.Index(upper[at:], word)
-		if index < 0 {
-			return -1
-		}
-		start := at + index
-		end := start + len(word)
-		before := start == 0 || !isTypeByte(upper[start-1])
-		after := end == len(upper) || !isTypeByte(upper[end])
-		if before && after {
-			return start
-		}
-		at = end
-	}
-}
-
 func typeOrUnknown(declared string) string {
 	if declared == "" {
 		return "not one it names"
@@ -534,6 +683,31 @@ func typeOrUnknown(declared string) string {
 /* -------------------------------------------------------------------------- */
 /*  Names                                                                       */
 /* -------------------------------------------------------------------------- */
+
+// cName is a name in the spelling a C library and an extern agree on: lower
+// case with underscores. It is the name a port implements a statement under and
+// the name the generated Rho calls it by, so both backends and the surface a
+// handler sees agree on one spelling.
+func cName(name string) string {
+	var b strings.Builder
+	for i, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			if i > 0 {
+				b.WriteRune('_')
+			}
+			b.WriteRune(r + ('a' - 'A'))
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '_' || r == '-':
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "q"
+	}
+	return b.String()
+}
 
 // goFuncName is a statement's name as a Go function.
 //
@@ -620,4 +794,13 @@ func sortedNames(names []string) []string {
 	out := append([]string{}, names...)
 	sort.Strings(out)
 	return out
+}
+
+// stripSQLPrefix removes a leading `sql_` from a statement's name.
+//
+// A service may name a statement `sql_find_customer`, and prefixing that again
+// gives `sql_sql_find_customer` — a name that is correct and that nobody would
+// have written. The prefix is the port's, so it is added once.
+func stripSQLPrefix(name string) string {
+	return strings.TrimPrefix(strings.ToLower(name), "sql_")
 }

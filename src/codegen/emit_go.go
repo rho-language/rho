@@ -67,6 +67,22 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 		body.WriteString("\n")
 	}
 
+	// A type alias is defined as one, so a value declared under the name a
+	// program gave a type has that name to refer to. An alias whose target is
+	// itself an alias is resolved to the type behind it, because Go has no
+	// chain of aliases and a program that followed one would not compile.
+	for _, alias := range m.Aliases {
+		target := goTypeForCName(alias.Target)
+		if target == "" {
+			continue
+		}
+		fmt.Fprintf(&body, "// %s is the name this module gives %s.\n", alias.Name, target)
+		fmt.Fprintf(&body, "type %s = %s\n", goTypeName(alias.Name), target)
+	}
+	if len(m.Aliases) > 0 {
+		body.WriteString("\n")
+	}
+
 	hasInit := hasGoInit(m)
 	if hasInit {
 		fmt.Fprintf(&body, "// %s runs Rho module initialisation before %s.\nfunc %s() {\n", AppInitName, AppMainName, AppInitName)
@@ -112,18 +128,100 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	b.WriteString("package main\n")
 	// Imports follow actual use so the generated file never carries an
 	// unused import.
+	imports := []string{}
 	if strings.Contains(body.String(), "fmt.") {
-		b.WriteString("\nimport \"fmt\"\n")
+		imports = append(imports, "fmt")
+	}
+	// A pointer is carried as an unsafe.Pointer, because a Rho pointer is a raw
+	// address rather than a Go reference: it may point into memory a foreign
+	// library owns, and the language does not promise it points at anything Go
+	// keeps alive. A module that declares one needs the import; importing it
+	// unconditionally would be an unused import in every module that does not.
+	// The import follows what the file actually says. A pointer whose element
+	// is known is spelled `*T` and needs no import; what needs one is a pointer
+	// the file touches as an address — a slice's data, a cast of a raw value.
+	// A module that only ever names a pointer's element would otherwise carry
+	// an import nothing uses, and an unused import does not compile.
+	if moduleHasPointer(m) && goBodyUsesUnsafe(body.String()) {
+		imports = append(imports, "unsafe")
+	}
+	if len(imports) == 1 {
+		// A single import is written on one line, because a block around one
+		// name is the shape a reader does not expect to see in generated code.
+		fmt.Fprintf(&b, "\nimport %q\n", imports[0])
+	} else if len(imports) > 1 {
+		fmt.Fprintf(&b, "\nimport (\n")
+		for _, name := range imports {
+			fmt.Fprintf(&b, "\t%q\n", name)
+		}
+		b.WriteString(")\n")
 	}
 
-// RhoUnit is what a Rho value that means "no value" is in Go: a real,
+	// RhoUnit is what a Rho value that means "no value" is in Go: a real,
 	// nameable and empty type, so a program that binds one can hold it. It goes
 	// after the imports, because Go reads the file in order.
 	b.WriteString("\n// RhoUnit is the type of a Rho value that means \"no value\".\n")
 	b.WriteString("type RhoUnit struct{}\n")
 	b.WriteString("\n")
+
+	// PtrUnit is a raw address a program cannot look inside, which is what a
+	// handle and a slice's data both are. It is defined when a declaration names
+	// it rather than always, because a module that holds neither has no reason
+	// to carry a type nothing in it refers to.
+	if moduleUsesPtrUnit(m) {
+		b.WriteString("// PtrUnit is an address Rho can carry and not read: what a slice's\n")
+		b.WriteString("// data is, and what an engine handle is.\n")
+		b.WriteString("type PtrUnit struct {\n\traw uint64\n}\n")
+		b.WriteString("\n")
+	}
 	b.WriteString(body.String())
 	return b.String()
+}
+
+// bodyUsesPtrUnit reports whether the emitted body names the opaque address.
+//
+// It is asked of the text rather than the declarations because a slice's data
+// field names it without any declaration of its own: the field is a pointer into
+// a buffer, and the buffer's address is a thing a program can hold and not read.
+func moduleUsesPtrUnit(m ir.ModuleIR) bool {
+	// A struct field is where it first appears: a slice's data is one, and a
+	// value built from that slice is one too. The declarations are asked rather
+	// than the emitted text, because the struct that names it is written after
+	// the point at which the decision has to be made.
+	found := false
+	var visit func(typ ir.Type)
+	visit = func(typ ir.Type) {
+		// A pointer to nothing renders as PtrUnit, which is the one pointer the
+		// backend gives a name to. The type arrives as a pointer with no element
+		// or an empty one — a slice's data, a handle — so it is the element that
+		// is asked about rather than the name, which is decided here.
+		if typ.Kind == ir.TypePtr && (len(typ.Args) == 0 ||
+			typ.Args[0].Kind == ir.TypeVoid ||
+			typ.Args[0].Name == "Unit" || typ.Args[0].Name == "RhoUnit" ||
+			typ.Args[0].Name == "") {
+			found = true
+			return
+		}
+		if typ.Name == "PtrUnit" || typ.Name == "PtrVoid" {
+			found = true
+			return
+		}
+		for _, argument := range typ.Args {
+			visit(argument)
+		}
+	}
+	for _, structure := range m.Structs {
+		for _, field := range structure.Fields {
+			visit(field.Type)
+		}
+	}
+	for _, fn := range m.Funcs {
+		for _, param := range fn.Params {
+			visit(param.Type)
+		}
+		visit(fn.ReturnType)
+	}
+	return found
 }
 
 func emitGoStruct(b *strings.Builder, structure ir.StructIR) {
@@ -391,7 +489,7 @@ func goZeroValue(t ir.Type) string {
 	switch t.Kind {
 	case ir.TypeBool:
 		return "false"
-	case ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeF64:
+	case ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeI64, ir.TypeF64:
 		return "0"
 	case ir.TypeString:
 		return "\"\""
@@ -626,4 +724,65 @@ func goModulePath(name string) string {
 func goBanner(m ir.ModuleIR, file, brief string) string {
 	return fmt.Sprintf("//\n// @file %s\n// @brief %s\n//\n// @project %s\n// @version 0.1\n// @date 2026\n//\n// SPDX-License-Identifier: MIT\n//\n\n",
 		file, brief, m.Name)
+}
+
+// moduleHasPointer reports whether any of the module's declarations mention a
+// pointer.
+//
+// It is asked of the declarations rather than of the emitted text, because a
+// pointer in a signature reaches the generated file whether or not a body
+// happens to use it, and a module whose only pointer is a parameter — a handle
+// passed to a foreign call, which is the usual shape — would otherwise be
+// emitted without the import its own signature needs.
+// goBodyUsesUnsafe reports whether the emitted body reaches the unsafe package.
+//
+// The import exists for the places a value crosses into Go's own pointer world:
+// building a slice from an address, or converting a raw one. A pointer that is
+// only ever named as `*T` is ordinary Go and needs no import.
+func goBodyUsesUnsafe(body string) bool {
+	return strings.Contains(body, "unsafe.")
+}
+
+func moduleHasPointer(m ir.ModuleIR) bool {
+	found := false
+	var visit func(typ ir.Type)
+	visit = func(typ ir.Type) {
+		// A pointer to nothing is a handle, and a handle lowers to the
+		// `PtrUnit` struct rather than to an `unsafe.Pointer`. It is the one
+		// pointer that is not a raw address, so it does not bring the import
+		// with it — and importing it anyway would be an unused import in every
+		// module that only holds handles.
+		if typ.Kind == ir.TypePtr {
+			// A handle arrives spelled either way: as a pointer to nothing, or
+			// already carrying the name the backend gives it. Both are the same
+			// type, and neither is a raw address.
+			if typ.Name == "PtrUnit" || typ.Name == "PtrVoid" {
+				return
+			}
+			if len(typ.Args) > 0 {
+				element := typ.Args[0]
+				if element.Name == "Unit" || element.Name == "" ||
+					element.Kind == ir.TypeVoid {
+					return
+				}
+			}
+			found = true
+			return
+		}
+		for _, argument := range typ.Args {
+			visit(argument)
+		}
+	}
+	for _, structure := range m.Structs {
+		for _, field := range structure.Fields {
+			visit(field.Type)
+		}
+	}
+	for _, fn := range m.Funcs {
+		for _, param := range fn.Params {
+			visit(param.Type)
+		}
+		visit(fn.ReturnType)
+	}
+	return found
 }

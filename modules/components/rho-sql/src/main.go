@@ -5,6 +5,7 @@
 //	rho sql read <project>       read schema.sql and queries.sql, and say what they declare
 //	rho sql ast <project>        the same, as the JSON contract engines are given
 //	rho sql queries <project>     list the statements, and what each takes and returns
+//	rho sql generate <project>   write the statements as code, from the schema
 //	rho sql engine <name>        what an installed engine says about itself
 //	rho sql engines              the engines that are installed
 //	rho sql run <project> <name>  run one statement against a database and print the rows
@@ -48,17 +49,22 @@ const (
 const usage = `rho sql - the SQL a service declares, and the engine that runs it
 
 usage:
+  rho sql generate <project>     write the statements as code
   rho sql read <project>         read the SQL and say what it declares
   rho sql ast <project>          the same, as the JSON contract engines are given
-  rho sql queries <project>       list the statements, and what each takes
-  rho sql engines                 the engines that are installed
+  rho sql queries <project>      list the statements, and what each takes
+  rho sql engines                the engines that are installed
   rho sql engine <name>          what an engine says about itself
   rho sql run <project> <name>   run one statement and print what came back
 
 flags:
   -engine <name>  the engine to run against; RHO_SQL_ENGINE otherwise
-  -out <path>     write to a file rather than to standard output
+  -out <path>     where generate writes, or the file the reading commands write to
   -plain          report in a form a script can read
+
+generate writes what a project declared, in the form its manifest asks for:
+a project with an sql section gets Rho and the contract the port reads, and a
+project that is a directory of SQL gets the standalone Go and C backends.
 `
 
 func main() {
@@ -140,7 +146,23 @@ func generateCommand(args []string) int {
 	if status != 0 {
 		return status
 	}
-	schema, diagnostics := readProject(project)
+	// What the project declared decides what is read and what is written, so a
+	// manifest's `sql:` block is read before anything is generated rather than
+	// being a record of a decision the generator ignores.
+	declaration := LoadDeclaration(project)
+	paths, err := declaration.Resolve(project)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rho sql: %v\n", err)
+		return 1
+	}
+	// The engine is the project's unless a flag or the environment names
+	// another: which database a project generates against is a fact about the
+	// project, and a person asking for a different one is a deliberate act
+	// rather than the default.
+	if declaration.SQL.Driver != "" {
+		engineName = declaration.SQL.Driver
+	}
+	schema, ddl, diagnostics := readDeclared(paths)
 	if rhosql.HasErrors(diagnostics) {
 		for _, item := range diagnostics {
 			fmt.Fprintf(os.Stderr, "rho sql: %s:%d: %s\n", item.File, item.Line, item.Message)
@@ -155,12 +177,12 @@ func generateCommand(args []string) int {
 	// prepared statement and a generated function both want.
 	rendered := map[string]string{}
 	if engineName != "" {
-		client, err := rhosql.Open(engineName)
+		client, cleanup, err := scratchEngine(engineName)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rho sql: %v\n", err)
 			return 1
 		}
-		defer client.Close()
+		defer cleanup()
 		if _, err := client.Migrate(schema, false); err != nil {
 			fmt.Fprintf(os.Stderr, "rho sql: the schema could not be applied: %v\n", err)
 			return 1
@@ -188,25 +210,68 @@ func generateCommand(args []string) int {
 	// which is right: the markers are the engine's business and a caller that
 	// has not asked an engine has not been told which markers it takes.
 	generated := rhosql.NewGenerator(schema, "queries", results).WithRenderedSQL(rendered).Generate()
-	root := out
+	// The generated file belongs to the project, so it is named and packaged as
+	// the project is, and a handler imports it the way it imports anything else.
+	rhoPackage := paths.Package
+	if rhoPackage == "" {
+		rhoPackage = "queries"
+	}
+	root := paths.Out
+	// `-out` still wins: a person who names a directory meant it, and the
+	// manifest is the default rather than an override of an explicit request.
+	if out != "" {
+		root = out
+	}
 	if root == "" {
 		root = filepath.Join(project, "queries")
 	}
-	// The two backends are written to a directory each. A Go package and a C
-	// translation unit cannot share one, and a project that generates for both
-	// would otherwise get a package the C compiler refuses.
+	// Rho first: it is what a service calls, and the two backends exist so the
+	// same file builds for a device and for a service. They go to a directory
+	// each, because a Go package and a C translation unit cannot share one, and
+	// the Rho file sits beside neither — it is the project's own source.
+	rhoOptions := rhosql.RhoOptions{Package: rhoPackage}
+	// The row types go in their own file rather than beside the statements.
+	//
+	// A statement names the shape of the rows it returns, and the shape is
+	// defined once per table or once per statement. Writing the definitions into
+	// the statements file would put a struct between two functions that are
+	// about the same thing, and would re-declare a shape two statements share —
+	// so a file that emitted them inline would not compile the moment a project
+	// wrote its second query against the same table.
 	files := map[string]string{
-		"go/models.go":  rhosql.ModelsGo(generated),
-		"go/queries.go": rhosql.QueriesGo(generated),
-		"c/models.h":    rhosql.ModelsC(generated),
-		"c/queries.c":   rhosql.QueriesC(generated),
+		"models.rho":  generated.ModelsRho(rhoOptions),
+		"queries.rho": generated.QueriesRho(rhoOptions),
+		// The contract is what the build reads to implement the externs the
+		// generated Rho declares. It is written here rather than derived again
+		// from the SQL by the compiler, because the Rho that names a statement
+		// and the Go that implements it have to agree — and two readings of the
+		// same SQL are two chances to disagree.
+		rhosql.ContractFile: contractOf(generated),
 	}
-	paths := make([]string, 0, len(files))
+	// The schema the engine is given. For a project that declared tables it is
+	// written from those declarations, so the create statements and the code
+	// generated from the same reading cannot come to disagree.
+	if ddl != "" {
+		files["schema.sql"] = ddl
+	}
+	// The standalone backends are for a project that is not a Rho module: a Go
+	// service or a C program that wants its statements typed, and has no compiler
+	// to generate the port for it. A Rho module does not need them — the port is
+	// generated into the project it builds — and writing them would put a Go
+	// package inside the project's own sources, where any build of a surrounding
+	// Go module would find it and try to compile it.
+	if !declaration.Found {
+		files["go/models.go"] = rhosql.ModelsGo(generated)
+		files["go/queries.go"] = rhosql.QueriesGo(generated)
+		files["c/models.h"] = rhosql.ModelsC(generated)
+		files["c/queries.c"] = rhosql.QueriesC(generated)
+	}
+	names := make([]string, 0, len(files))
 	for name := range files {
-		paths = append(paths, name)
+		names = append(names, name)
 	}
-	sort.Strings(paths)
-	for _, name := range paths {
+	sort.Strings(names)
+	for _, name := range names {
 		path := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "rho sql: %v\n", err)
@@ -219,6 +284,49 @@ func generateCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "rho sql: wrote %s\n", path)
 	}
 	return 0
+}
+
+// contractOf is the machine-readable half of what was generated, for the build
+// to read when it supplies the port that implements the statements.
+func contractOf(generated rhosql.Result) string {
+	encoded, err := generated.GoContract()
+	if err != nil {
+		// A contract that cannot be written leaves the statements themselves
+		// intact, and the build then reports an undefined function — which says
+		// more than a JSON encoding error would.
+		return "{\n  \"package\": \"\",\n  \"statements\": []\n}\n"
+	}
+	return encoded
+}
+
+// scratchEngine opens an engine against a database of its own, so that asking it
+// about a schema does not touch the database a service runs against.
+//
+// Generating a description needs each statement prepared, and preparing a
+// statement needs the tables to exist. Creating them where the service runs would
+// make `rho sql generate` a command that changes production, which is not
+// something a command that writes files should ever be.
+//
+// The engine is told where to work through its environment, because that is how
+// an engine is configured: it reads the path once, when it starts.
+func scratchEngine(name string) (*rhosql.Client, func(), error) {
+	directory, err := os.MkdirTemp("", "rho-sql-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { os.RemoveAll(directory) }
+	// The component says what it means and the engine decides what that is: it
+	// does not know whether an engine's database is a file, a connection string
+	// or a cluster, and naming one engine's setting would make it a component for
+	// that engine.
+	client, err := rhosql.OpenAt(name,
+		rhosql.DatabaseEnv+"="+filepath.Join(directory, "scratch"),
+		rhosql.ScratchEnv+"=1")
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return client, func() { client.Close(); cleanup() }, nil
 }
 
 // queriesCommand lists the statements a project declares.
@@ -306,23 +414,65 @@ func describe(schema rhosql.Schema) string {
 // statements together and out of the sources that use them.
 var SQLDirs = []string{"", "sql", "db", "database"}
 
+// readDeclared reads a project's tables and statements, and answers the schema
+// an engine is given alongside them.
+//
+// A declaration file and a schema of statements are two ways to describe the same
+// database, and which one a project used decides what is derived: a project that
+// wrote create statements gets those statements, and a project that declared
+// tables gets the create statements written from them and the common operations
+// over them, so neither has to write what the other already said.
+//
+// A file that is either is optional in the sense that a missing one is not an
+// error: a project may declare its tables and not its statements yet, and reading
+// what is there is more useful than refusing. What is there is still parsed and
+// still checked, so a statement that cannot be read is reported wherever it was
+// found.
+//
+// The DDL that comes back is what an engine is handed. For declarations it is
+// generated, and from the same reading the code was generated from, so the
+// database a service creates and the code that runs against it cannot come to
+// describe two different things.
+func readDeclared(paths SQLPaths) (rhosql.Schema, string, []rhosql.Diagnostic) {
+	empty := rhosql.Schema{Tables: []rhosql.Table{}, Queries: []rhosql.Query{}}
+	if paths.Schema == "" {
+		return empty, "", nil
+	}
+	declared := readIfPresent(paths.Schema)
+
+	var schema rhosql.Schema
+	var diagnostics []rhosql.Diagnostic
+	ddl := declared
+	if rhosql.IsEntitySchema(paths.Schema) {
+		tables, tableDiagnostics := rhosql.ParseEntities(filepath.Base(paths.Schema), declared)
+		diagnostics = append(diagnostics, tableDiagnostics...)
+		ddl = rhosql.EntitiesDDL(tables)
+		schema = rhosql.Schema{Version: rhosql.Version, Tables: tables, Queries: rhosql.CRUDQueries(tables)}
+	} else {
+		parsed, schemaDiagnostics := rhosql.ParseSchema(SchemaFile, declared)
+		diagnostics = append(diagnostics, schemaDiagnostics...)
+		schema = parsed
+	}
+
+	// A project that wrote no statements of its own declares no statements: the
+	// file is optional, and reading an absent one would report that it holds
+	// nothing, which is a fact about a file that is not there.
+	if statements := readIfPresent(paths.Queries); statements != "" {
+		queries, queryDiagnostics := rhosql.ParseQueries(filepath.Base(paths.Queries), statements)
+		diagnostics = append(diagnostics, queryDiagnostics...)
+		schema.Queries = append(schema.Queries, queries.Queries...)
+	}
+	return schema, ddl, diagnostics
+}
+
 // readProject reads a project's SQL from where it declares it.
 func readProject(project string) (rhosql.Schema, []rhosql.Diagnostic) {
-	for _, sub := range SQLDirs {
-		directory := filepath.Join(project, sub)
-		schemaPath := filepath.Join(directory, SchemaFile)
-		queriesPath := filepath.Join(directory, QueriesFile)
-		// A directory with no schema is not the one; the search moves on.
-		if _, err := os.Stat(schemaPath); err != nil {
-			continue
-		}
-		schema, diagnostics := rhosql.ParseSchema(SchemaFile, readIfPresent(schemaPath))
-		queries, queryDiagnostics := rhosql.ParseQueries(QueriesFile, readIfPresent(queriesPath))
-		diagnostics = append(diagnostics, queryDiagnostics...)
-		schema.Queries = queries.Queries
-		return schema, diagnostics
+	paths, err := LoadDeclaration(project).Resolve(project)
+	if err != nil {
+		return rhosql.Schema{Tables: []rhosql.Table{}, Queries: []rhosql.Query{}}, nil
 	}
-	return rhosql.Schema{Tables: []rhosql.Table{}, Queries: []rhosql.Query{}}, nil
+	schema, _, diagnostics := readDeclared(paths)
+	return schema, diagnostics
 }
 
 // readIfPresent reads a file, or nothing when it is not there.

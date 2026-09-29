@@ -308,6 +308,10 @@ fn use() void {
 /* -------------------------------------------------------------------------- */
 
 // default(T) is the zero value of T, which Result and Option depend on.
+//
+// A struct's zero value is written with empty braces rather than with a single
+// zero: `{0}` is how C zeroes a struct's first member and means nothing in Go,
+// where a literal has to name every field it sets. `{}` is valid in both.
 func TestZeroValueFor(t *testing.T) {
 	tc := New()
 	// A specialisation with fields is zeroed; the caller registers them.
@@ -318,7 +322,7 @@ func TestZeroValueFor(t *testing.T) {
 		"i32":         "0",
 		"f64":         "0",
 		"string":      `""`,
-		"Option[u32]": "(Option_u32){0}",
+		"Option[u32]": "(Option_u32){}",
 	}
 	for in, want := range cases {
 		if got := tc.zeroValueFor(in); got != want {

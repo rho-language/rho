@@ -38,12 +38,19 @@ provides:
     # generated result is typed from.
     - describe_query
 
+# The component publishes no Rho interface, and deliberately.
+#
+# The Rho surface a project's generated statements are written against is
+# `std.sql`, which the standard library declares and the compiler's `sql` port
+# supplies. It is written for the language rather than for this component,
+# because every project that declares `sql:` gets it — a project should not have
+# to depend on the generator to have the library its own generated code imports.
+#
+# Publishing the same surface here as well would be a second declaration of it,
+# and two declarations of one set of `extern fn`s are two things to keep in step.
 package:
   kind: component
   binary: true
-  import_path: rho.sql
-  interface:
-    - src/rho.sql.rho
   include:
     - module.yml
     - README.md

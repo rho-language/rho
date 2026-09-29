@@ -1,6 +1,6 @@
 module rho
 
-go 1.22
+go 1.23
 
 replace github.com/rho/rho-lsp => ./modules/components/rho-lsp
 

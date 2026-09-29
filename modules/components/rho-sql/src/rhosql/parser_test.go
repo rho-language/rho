@@ -231,13 +231,16 @@ func TestIfNotExistsIsReadAndAnIndexIsNotATable(t *testing.T) {
 		t.Error("IF NOT EXISTS was not read")
 	}
 
-	// An index is a statement every engine understands and none of them spell
-	// the same way, so it is reported rather than read as a table with an index
-	// for a name.
-	_, diagnostics = ParseSchema("schema.sql",
+	// An index is read past rather than read as a table whose name is the index.
+	// It defines no column, so there is nothing to type from it; it is applied by
+	// the engine, which is handed the schema's own text.
+	schema, diagnostics = ParseSchema("schema.sql",
 		"CREATE INDEX idx ON customers (name);\nCREATE TABLE t (id integer);\n")
-	if !HasErrors(diagnostics) {
-		t.Error("a statement that is not a table was accepted, and a schema that drops what it cannot read describes a different database")
+	if HasErrors(diagnostics) {
+		t.Fatalf("an index was refused: %+v", diagnostics)
+	}
+	if len(schema.Tables) != 1 || schema.Tables[0].Name != "t" {
+		t.Errorf("the table after the index was not read: %+v", schema.Tables)
 	}
 }
 

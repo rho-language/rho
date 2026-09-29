@@ -258,6 +258,8 @@ func resolveTypeName(name string) (ir.Type, error) {
 		return ir.Type{Kind: ir.TypeU64, Name: "u64"}, nil
 	case "i32":
 		return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
+	case "i64":
+		return ir.Type{Kind: ir.TypeI64, Name: "i64"}, nil
 	case "f64":
 		return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
 	case "string":
@@ -505,8 +507,14 @@ func (tc *TypeChecker) buildSubstitution(typeParams []string, typeDefaults map[s
 /*  Zero Values                                                               */
 /* -------------------------------------------------------------------------- */
 
-// zeroValueFor returns the C spelling of a type's zero value, backing the
-// `default(T)` expression that Result and Option need.
+// zeroValueFor returns the zero value of a type, backing the `default(T)`
+// expression that Result and Option need.
+//
+// The spelling is the one both backends read, so it has to be valid in each.
+// `{0}` is how C zeroes a struct's first member and means nothing in Go, where a
+// struct literal needs every field written out; `{}` is valid in both and is
+// what "no value" actually is. A struct with fields is therefore zeroed with
+// braces rather than with a single zero.
 func (tc *TypeChecker) zeroValueFor(name string) string {
 	base := name
 	if i := strings.IndexByte(base, '['); i >= 0 {
@@ -523,11 +531,9 @@ func (tc *TypeChecker) zeroValueFor(name string) string {
 		return `""`
 	default:
 		// A struct, possibly a mangled generic specialisation, uses the same
-		// spelling as its declaration. A struct with no fields, such as the
-		// synthesised Unit, is initialised empty.
-		if tc.structHasFields(name) {
-			return "(" + mangleTypeName(name) + "){0}"
-		}
+		// spelling as its declaration. An empty braces is the zero value in
+		// both languages: C guarantees the members are zeroed, and Go fills
+		// them with their own zero values.
 		return "(" + mangleTypeName(name) + "){}"
 	}
 }
@@ -578,6 +584,18 @@ func (tc *TypeChecker) structToSpecialisation(s ast.StructDecl, subs map[string]
 		fieldType := tc.typeFromExpr(f.TypeExpr, s.TypeParams)
 		if f.TypeExpr.Name == "" {
 			fieldType = tc.typeFor(f.Type)
+		} else if fieldType.Kind == ir.TypePtr {
+			// A pointer is a kind with an element, not a name, so substituting
+			// it means substituting the element. Resolving the name instead —
+			// which is what a struct field goes through normally — loses both the
+			// kind and the element, so `ptr: Ptr[T]` became a field of a type
+			// called `Ptr` that no backend can name.
+			fieldType = ir.Type{Kind: ir.TypePtr, Name: fieldType.Name}
+			for _, argument := range fieldType.Args {
+				fieldType.Args = append(fieldType.Args, tc.substituteType(argument, subs))
+			}
+			fields[i] = ir.FieldIR{Name: f.Name, Type: fieldType}
+			continue
 		}
 		fieldType = tc.declaredTypeWith(fieldType.Name, subs)
 		fields[i] = ir.FieldIR{Name: f.Name, Type: fieldType}
@@ -692,8 +710,27 @@ func (tc *TypeChecker) seedInstantiations(m ast.Module) {
 	for _, decl := range m.Decls {
 		switch decl := decl.(type) {
 		case ast.FuncDecl:
-			if len(decl.TypeParams) == 0 {
-				tc.scanExprs(decl.Body)
+			if len(decl.TypeParams) > 0 {
+				// A template is expanded through the applications that name it,
+				// so its own signature is not an application of itself.
+				continue
+			}
+			// A function's signature is where a generated function keeps its
+			// types: a query takes a `Slice[CustomerRow]` and returns a
+			// `Result[u32, SqlError]`, and both applications appear only here and
+			// never in a body. Seeding from bodies alone left the one shape the
+			// language is most often written in unexpanded.
+			tc.scanTypeApplication(decl.ReturnType)
+			for _, param := range decl.Params {
+				tc.scanTypeApplication(param.Type)
+			}
+			tc.scanExprs(decl.Body)
+		case ast.StructDecl:
+			if len(decl.TypeParams) > 0 {
+				continue
+			}
+			for _, field := range decl.Fields {
+				tc.scanTypeApplication(field.Type)
 			}
 		}
 	}
@@ -920,7 +957,6 @@ func (tc *TypeChecker) expectedHint(written string, resolved ir.Type) ir.Type {
 // `Result<T, E = ()>`.
 const defaultTypeName = "Unit"
 
-
 // synthesizeDefaultTypes emits a zero-sized struct for any name used as a
 // type parameter default that the module does not define itself, so a default
 // always has a definition the backends can emit.
@@ -1044,7 +1080,17 @@ func (tc *TypeChecker) undeducedParams(typeParams []string, defaults map[string]
 
 // isGenericCallee reports whether a name refers to a generic function, so
 // lowering knows to emit a specialisation name even without type arguments.
+// isGenericCallee reports whether a call names a generic function.
+//
+// A name declared both ways — a generic and a concrete declaration of the same
+// name — is called as the concrete one. A logger's `error(subject, message)`
+// beside the standard library's `error[T, E](result)` is the case this is about:
+// an unqualified call with no type arguments is a call to the declaration that
+// takes none, and treating it as a generic one asks a call that named no types
+// to deduce them, and lowers to a specialisation of the other function.
 func isGenericCallee(tc *TypeChecker, name string) bool {
-	_, ok := tc.genericFuncs[name]
-	return ok
+	if _, ok := tc.genericFuncs[name]; !ok {
+		return false
+	}
+	return tc.isGenericName(name)
 }

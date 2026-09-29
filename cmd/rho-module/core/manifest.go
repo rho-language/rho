@@ -74,6 +74,45 @@ type ModuleYAML struct {
 	Main     string
 	Deps     map[string]string
 	Features []string
+	// SQL is what the project declared about its database, and what the
+	// generator is driven by. Declared is not the same as enabled: a project
+	// without one has no SQL, and a project with one has generated Rho it did
+	// not write.
+	SQL SQLConfig
+	// Requires are the packages a built project links against, which is a
+	// different thing from Deps: a dependency is resolved into the project and a
+	// requirement is a package the generated code calls into.
+	Requires []Requirement
+}
+
+// SQLConfig is a project's declaration that it has a database.
+//
+// Everything here is a location or a name, and none of it is a setting: the
+// driver decides what its own settings are, so a project does not have to know
+// that a database is a file on one engine and a connection string on another.
+type SQLConfig struct {
+	// Driver is the engine plugin the generated code runs against.
+	Driver string
+	// Schema and Queries are the files the SQL is written in, relative to the
+	// project.
+	Schema  string
+	Queries string
+	// Out is where the generated Rho is written, relative to the project. It
+	// defaults to the queries file's directory, so a project that keeps its SQL
+	// in one place gets its generated code beside it.
+	Out string
+	// Package is the Rho module the generated file belongs to, defaulting to
+	// the project's own name.
+	Package string
+}
+
+// Declared reports whether a project has said it has a database.
+func (c SQLConfig) Declared() bool { return c.Driver != "" || c.Queries != "" }
+
+// Requirement is a package a built project needs at run time.
+type Requirement struct {
+	Name    string
+	Version string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -109,6 +148,32 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 		Main:     root.Map["main"].Str,
 		Deps:     map[string]string{},
 		Features: []string{},
+		SQL:      SQLConfig{},
+		Requires: []Requirement{},
+	}
+
+	// The sql section, which is what a project writes to have its SQL turned
+	// into Rho code. A project without one declares no SQL, which is a fact
+	// rather than a failure: most modules are libraries.
+	if sqlNode, ok := root.Map["sql"]; ok && sqlNode.Kind == yaml.KindMap {
+		mod.SQL = SQLConfig{
+			Driver:  sqlNode.Map["driver"].Str,
+			Schema:  sqlNode.Map["schema"].Str,
+			Queries: sqlNode.Map["queries"].Str,
+			Out:     sqlNode.Map["out"].Str,
+			Package: sqlNode.Map["package"].Str,
+		}
+	}
+
+	// requires, the packages a built project links against.
+	for _, entry := range root.Map["requires"].List {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		mod.Requires = append(mod.Requires, Requirement{
+			Name:    entry.Map["name"].Str,
+			Version: entry.Map["version"].Str,
+		})
 	}
 
 	// deps

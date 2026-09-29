@@ -107,7 +107,7 @@ func TestTheCarriedTypeIsTheOnesALanguageHas(t *testing.T) {
 		TypeFloat:   {"float64", "f64"},
 		TypeText:    {"string", "string"},
 		TypeBoolean: {"bool", "bool"},
-		TypeBytes:   {"[]byte", "string"},
+		TypeBytes:   {"string", "string"},
 		TypeTime:    {"string", "string"},
 		TypeUnknown: {"string", "string"},
 	}
@@ -121,12 +121,14 @@ func TestTheCarriedTypeIsTheOnesALanguageHas(t *testing.T) {
 	}
 }
 
-func TestBytesAreCarriedAsTextBecauseBytesAreNotText(t *testing.T) {
-	// A blob with a zero byte in it is not a string, and a generated field that
-	// claims it is has lied about the value it holds. It is carried as bytes in
-	// Go and as text in Rho, which is what each language has.
-	if got := TypeBytes.GoType(); got != "[]byte" {
-		t.Errorf("bytes are a Go %q, want []byte", got)
+func TestBytesAreCarriedAsAStringInBothLanguages(t *testing.T) {
+	// A blob has to cross the boundary as something a Rho value can hold, and a
+	// Rho string is the only sequence it has. The Go side is spelled to match, so
+	// that a generated function taking a byte column takes the string its call
+	// site passes: a `[]byte` here would make every statement with a byte column
+	// fail to link, because a `string` is not assignable to one.
+	if got := TypeBytes.GoType(); got != "string" {
+		t.Errorf("a byte column is a Go %q, want string, which is what its call sites pass", got)
 	}
 	if got := TypeBytes.RhoType(); got != "string" {
 		t.Errorf("bytes are a Rho %q, want string, which is the type Rho has for them", got)

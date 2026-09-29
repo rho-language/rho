@@ -1,6 +1,6 @@
 module github.com/rho/rho-doc
 
-go 1.18
+go 1.23
 
 require (
 	github.com/rho/rho-fmt v0.0.0

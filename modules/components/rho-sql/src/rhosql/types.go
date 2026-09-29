@@ -73,11 +73,11 @@ const (
 // stores, and it is spelled out rather than approximated because it is the
 // affinity a sqlite column actually has.
 //
-//	1. a type containing INT is an integer
-//	2. a type containing CHAR, CLOB or TEXT is text
-//	3. a type containing BLOB, or with no type at all, is bytes
-//	4. a type containing REAL, FLOA or DOUB is a float
-//	5. anything else is a number
+//  1. a type containing INT is an integer
+//  2. a type containing CHAR, CLOB or TEXT is text
+//  3. a type containing BLOB, or with no type at all, is bytes
+//  4. a type containing REAL, FLOA or DOUB is a float
+//  5. anything else is a number
 //
 // A number is kept as a number rather than as a float, because a scaled number
 // is a number the caller is going to do arithmetic on and a float64 is the wrong
@@ -253,7 +253,14 @@ func (t Type) GoType() string {
 	case TypeBoolean:
 		return "bool"
 	case TypeBytes:
-		return "[]byte"
+		// A byte column is a Go `string`, not a `[]byte`.
+		//
+		// Rho has one sequence type and it is a string, so a generated function
+		// takes a byte column as a string and a caller has nothing to convert.
+		// Declaring it as `[]byte` here would make the contract describe a
+		// parameter the call sites do not pass: a `string` is not assignable to
+		// a `[]byte`, so every statement taking one would fail to link.
+		return "string"
 	case TypeNull:
 		return "any"
 	}
