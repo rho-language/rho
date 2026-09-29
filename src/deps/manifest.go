@@ -74,6 +74,40 @@ type Provides struct {
 	Contracts []Contract
 }
 
+// ModuleSettings is what a module can be configured with, and the file its
+// configured values live in.
+//
+// The declaration is in the manifest rather than only in the values file because
+// the manifest is what a person reads to find out what a module can be asked to
+// do: the values file says what they are set to, and the manifest says what may
+// be set, what it is called and what it is for.
+type ModuleSettings struct {
+	// File is the YAML file the values live in, relative to the module root.
+	// It is part of the package, so a module installed from a registry carries
+	// its own configuration with it and reads the same file wherever it lands.
+	File string
+	// Settings are the values a person may change, each with what it is called
+	// and what it is for. The default is what the file itself carries, and is
+	// repeated here so that a module with no values file yet still says what it
+	// takes.
+	Settings []Setting
+}
+
+// Setting is one value a module can be asked for.
+type Setting struct {
+	// Name is how the value is written in the file and how a person sets it.
+	Name string
+	// Description is what a person reading a form is shown, and is the reason
+	// the declaration exists: a name alone does not say what a value is for.
+	Description string
+	// Default is what the value is when nothing has set it.
+	Default string
+	// Choices are the values a setting takes, when it takes a fixed set. A
+	// setting with choices is one a person can be shown a list for rather than
+	// asked to know the spelling of.
+	Choices []string
+}
+
 // Contract is one thing a component needs a plugin to be.
 //
 // The name is the contract, and One says how many plugins may fill it: a
@@ -195,6 +229,14 @@ type Manifest struct {
 	// Docs is the doc-as-code this module carries. Nil means the module says
 	// nothing about its documentation.
 	Docs *DocManifest
+	// Settings is what a person may configure this module with, and the file the
+	// configured values live in. Nil means the module takes no configuration,
+	// which is what a library is.
+	//
+	// It is not the Kconfig bridge, which is a project's build configuration and
+	// is read by the generator: that is Config, and this is a person changing
+	// how an installed tool behaves.
+	Settings *ModuleSettings
 	// Provides is what this module offers a plugin. Only a component has
 	// something to offer.
 	Provides *Provides
@@ -379,6 +421,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	// inside another would be read only when that other is there.
 	m.Connection = parseCConnection(doc.Map["c_connection"])
 	m.Requires = parseRequires(doc.Map["requires"])
+	m.Settings = parseSettingsManifest(doc.Map["settings"])
 	m.Config = parseConfigManifest(doc.Map["config"])
 	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")
@@ -680,6 +723,41 @@ func parseConfigManifest(node yaml.Value) *ConfigManifest {
 		return nil
 	}
 	return config
+}
+
+// parseSettingsManifest reads what a module can be configured with.
+//
+// A file with no settings is still a file: it is where the values go, and a
+// module that takes configuration it has not described yet is one a person
+// cannot be shown a form for.
+func parseSettingsManifest(node yaml.Value) *ModuleSettings {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	settings := &ModuleSettings{File: yamlUnquote(node.Map["file"].Str)}
+	for _, entry := range node.Map["settings"].List {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		setting := Setting{
+			Name:        yamlUnquote(entry.Map["name"].Str),
+			Description: yamlUnquote(entry.Map["description"].Str),
+			Default:     yamlUnquote(entry.Map["default"].Str),
+		}
+		for _, choice := range entry.Map["choices"].List {
+			if choice.Str != "" {
+				setting.Choices = append(setting.Choices, choice.Str)
+			}
+		}
+		if setting.Name == "" {
+			continue
+		}
+		settings.Settings = append(settings.Settings, setting)
+	}
+	if settings.File == "" && len(settings.Settings) == 0 {
+		return nil
+	}
+	return settings
 }
 
 // parseProvides reads what a component offers a plugin.

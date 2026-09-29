@@ -7,12 +7,13 @@ use (
 	./modules/components/rho-doc
 	./modules/components/rho-fmt
 	./modules/components/rho-kconfig
+	./modules/components/rho-keeper
 	./modules/components/rho-log
-	./modules/components/rho-target
 	./modules/components/rho-lsp
 	./modules/components/rho-openapi
 	./modules/components/rho-router
 	./modules/components/rho-sql
+	./modules/components/rho-target
 	./modules/components/rho-test
 	./modules/plugins/rho-doc-api
 	./modules/plugins/rho-doc-toc

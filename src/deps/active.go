@@ -418,3 +418,27 @@ func quoteYAML(value string) string {
 	}
 	return value
 }
+
+// NotEnabledHere is the refusal for a module that a command tried to use and
+// that is installed and not enabled, or "" when the version named is the one
+// that runs.
+//
+// It is the same refusal every caller gives, from one place, because the two
+// ways of reaching a module — a build resolving an import and a person typing a
+// command — must not say different things about the same state.
+func NotEnabledHere(kind, name, entry string) (string, error) {
+	version := entry
+	if index := strings.LastIndex(entry, "@"); index >= 0 {
+		version = entry[index+1:]
+	}
+	state, err := LoadEnabled()
+	if err != nil {
+		return "", err
+	}
+	if state.IsEnabled(kind, name, version) {
+		return "", nil
+	}
+	installed := InstalledVersions(kind, name)
+	unavailable := &NotEnabledError{Kind: kind, Name: name, Installed: installed}
+	return unavailable.Error(), nil
+}

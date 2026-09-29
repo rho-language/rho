@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rho keeper</title>
+<link rel="stylesheet" href="/static/keeper.css">
+</head>
+<body>
+<div class="shell">
+
+  <nav class="side">
+    <div class="brand">
+      <span class="hex" aria-hidden="true">⬡</span>
+      <span class="name">rho keeper</span>
+      <span class="ver" id="brand-ver">—</span>
+    </div>
+    <ul class="nav">
+      <li><a href="#/overview" data-nav="overview"><span class="ico">◱</span>Overview</a></li>
+      <li><a href="#/modules"   data-nav="modules"><span class="ico">▤</span>Modules<span class="count" id="nav-modules"></span></a></li>
+      <li><a href="#/contracts" data-nav="contracts"><span class="ico">◈</span>Contracts &amp; plugins<span class="count" id="nav-contracts"></span></a></li>
+      <li><a href="#/docs"      data-nav="docs"><span class="ico">▦</span>Docs</a></li>
+      <li><a href="#/cli"       data-nav="cli"><span class="ico">&gt;_</span>CLI</a></li>
+      <li><a href="#/system"    data-nav="system"><span class="ico">⌘</span>System<span class="count" id="nav-system"></span></a></li>
+    </ul>
+    <div class="side-foot">
+      <span class="k">Local</span>
+      <code id="local-home">—</code>
+    </div>
+  </nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="crumb" id="crumb">Overview</div>
+      <div class="top-right">
+        <!-- The data comes from these; everything else on the page is the frame. -->
+        <span class="conn" id="conn" data-state="connecting">
+          <span class="dot"></span><span id="conn-text">connecting</span>
+        </span>
+      </div>
+    </header>
+
+    <main>
+      <!-- /api/v1/events streams the state; /api/v1/docs is the module's own. -->
+
+      <!-- overview -->
+      <section class="view" data-view="overview">
+        <div class="cards" id="cards"></div>
+
+        <div class="block">
+          <div class="block-head">
+            <h2>Contract satisfaction</h2>
+            <span class="hint">Whether each installed component has what it needs to run.</span>
+          </div>
+          <table class="grid">
+            <thead>
+              <tr><th>Contract</th><th>Filled by</th><th>How many</th><th>Status</th></tr>
+            </thead>
+            <tbody id="matrix"></tbody>
+          </table>
+          <p class="empty" id="matrix-empty" hidden>No installed component declares a contract.</p>
+        </div>
+      </section>
+
+      <!-- modules -->
+      <section class="view" data-view="modules" hidden>
+        <div class="block-head">
+          <h2>Installed</h2>
+          <input id="filter" type="search" placeholder="filter by name, description or contract" autocomplete="off" spellcheck="false">
+        </div>
+        <table class="grid">
+          <thead>
+            <tr><th>Name</th><th>Kind</th><th>Version</th><th>Used</th><th>What it is</th><th class="right">Docs</th></tr>
+          </thead>
+          <tbody id="modules"></tbody>
+        </table>
+        <p class="empty" id="modules-empty" hidden>Nothing matches that.</p>
+      </section>
+
+      <!-- contracts -->
+      <section class="view" data-view="contracts" hidden>
+        <div class="split">
+          <div class="block">
+            <div class="block-head"><h2>Contracts</h2></div>
+            <table class="grid">
+              <thead><tr><th>Contract</th><th>Status</th></tr></thead>
+              <tbody id="contracts"></tbody>
+            </table>
+            <p class="empty" id="contracts-empty" hidden>No installed component declares a contract.</p>
+          </div>
+          <div class="block">
+            <div class="block-head"><h2>Plugins</h2></div>
+            <table class="grid">
+              <thead><tr><th>Plugin</th><th>Provides</th><th>Used</th></tr></thead>
+              <tbody id="plugins"></tbody>
+            </table>
+            <p class="empty" id="plugins-empty" hidden>No plugin is installed.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- docs -->
+      <section class="view" data-view="docs" hidden>
+        <div class="split-wide docs-layout">
+          <nav class="block doc-files">
+            <div class="block-head"><h2>Pages</h2></div>
+            <ul class="doc-tree" id="doc-files"></ul>
+          </nav>
+          <div class="block">
+            <div class="block-head"><h2 id="doc-title">Documentation</h2><span class="hint" id="docs-hint"></span></div>
+            <div class="doc-body">
+              <article class="prose" id="docs"><p class="none">Loading&hellip;</p></article>
+              <aside class="toc" id="toc" hidden></aside>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- cli -->
+      <section class="view" data-view="cli" hidden>
+        <div class="block">
+          <div class="block-head">
+            <h2>CLI</h2>
+            <span class="hint">Read from the toolchain that is installed, so it cannot go stale.</span>
+          </div>
+          <div class="cli" id="cli"><p class="none">Reading the toolchain&hellip;</p></div>
+        </div>
+      </section>
+
+      <!-- one module -->
+      <section class="view" data-view="module" hidden>
+        <div class="split-wide">
+          <div class="block">
+            <div class="block-head">
+              <h2 id="detail-title">Module</h2>
+              <span class="hint" id="detail-kind"></span>
+            </div>
+            <dl class="facts" id="detail-facts"></dl>
+            <div class="detail-actions" id="detail-actions"></div>
+          </div>
+          <div class="block">
+            <div class="block-head">
+              <h2>Settings</h2>
+              <span class="hint" id="detail-config"></span>
+            </div>
+            <div class="settings" id="detail-settings"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- system -->
+      <section class="view" data-view="system" hidden>
+        <div class="split">
+          <div class="block">
+            <div class="block-head"><h2>Environment</h2><span class="hint">What this machine is, for asking why something will not run.</span></div>
+            <dl class="facts" id="system-facts"></dl>
+          </div>
+          <div class="block">
+            <div class="block-head"><h2>Toolchain</h2><span class="hint">What a build reaches for.</span></div>
+            <table class="grid">
+              <thead><tr><th>Tool</th><th>Version</th></tr></thead>
+              <tbody id="system-drivers"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="unknown" hidden>
+        <div class="block"><div class="block-head"><h2>No such page</h2></div>
+          <p class="empty">Pick one on the left.</p></div>
+      </section>
+
+      <div class="block" id="last-panel" hidden>
+        <div class="block-head"><h2>Last change</h2></div>
+        <div class="change">
+          <code id="last-command"></code>
+          <span id="last-outcome"></span>
+        </div>
+      </div>
+
+      <div class="block" id="errors-panel" hidden>
+        <div class="block-head"><h2>What could not be read</h2></div>
+        <ul class="errors" id="errors"></ul>
+      </div>
+    </main>
+
+    <footer>
+      <span id="read">reading&hellip;</span>
+      <span class="home" id="home"></span>
+    </footer>
+  </div>
+</div>
+
+<script src="/static/keeper.js"></script>
+</body>
+</html>

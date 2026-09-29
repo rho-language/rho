@@ -25,14 +25,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	install "rho/cmd/rho-install/install"
-	util "rho/cmd/rho-install/util"
 	modcli "rho/cmd/rho-module/cli"
 	modcore "rho/cmd/rho-module/core"
 	pkgcli "rho/cmd/rho-pkg/cli"
 	"time"
 
 	modremote "rho/cmd/rho-module/remote"
-	src "rho/src"       // compiler orchestrator v3
+	src "rho/src" // compiler orchestrator v3
+	clicore "rho/src/cli"
 	deps "rho/src/deps" // dependency system
 )
 
@@ -161,6 +161,22 @@ func runDynamicModule(cmd string, args []string) bool {
 
 				// Check if this module's command matches
 				if manifest.Module.Command == cmd {
+					// Found it. A module that is installed and not enabled is
+					// not run: a command that reached a component nobody
+					// enabled is a component that is in use without anyone
+					// having decided it should be. The refusal names the command
+					// that decides, because the reader is looking at a failure
+					// and the fix is one command away.
+					notEnabled, err := deps.NotEnabledHere(moduleType, manifest.Module.Name, e.Name())
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "rho:", err)
+						os.Exit(1)
+					}
+					if notEnabled != "" {
+						fmt.Fprintln(os.Stderr, "rho:", notEnabled)
+						os.Exit(1)
+					}
+
 					// Found it! Load and run
 					mod, err := modcore.LoadInstalledModule(manifest.Module.Name)
 					if err != nil {
@@ -236,69 +252,128 @@ func buildRhoExecutables() error {
 }
 
 func installCLI(args []string) int {
-	fmt.Println("Installing Rho ecosystem...")
-
 	force := false
-	if len(args) == 1 && args[0] == "--force" {
-		force = true
+	update := false
+	for _, arg := range args {
+		switch arg {
+		case "--force":
+			force = true
+		case "--update", "-u":
+			update = true
+		default:
+			fmt.Printf("rho install: unknown option %q\n", arg)
+			fmt.Println("usage: rho install [--force] [--update]")
+			return 1
+		}
+	}
+
+	if update {
+		// Updating is what a developer does after changing the toolchain, and it
+		// is the reason a machine ends up running yesterday's `rho` while the
+		// source in front of it is today's.
+		//
+		// It replaces the toolchain and nothing else. The registry, the installed
+		// modules, the module cache, the credentials and the configuration all
+		// belong to the user, and an update that touched them would be an update
+		// that could lose work.
+		return updateCLI()
 	}
 
 	if force {
-		// --force means reinstall the toolchain over an existing installation,
-		// so only the binaries it owns are replaced. The registry, the installed
-		// modules, the module cache, the credentials and the configuration all
-		// belong to the user and survive: reinstalling must not take them.
-		binPath, err := install.GetBinPath()
+		// --force is the destructive one, and it is destructive on purpose: it
+		// takes the installation away and puts it back, so that a machine which
+		// has been changed by hand is returned to a state where every part of it
+		// came from one install. Everything the user has — what they published,
+		// what they fetched, who they logged in as — goes with it, which is why
+		// it is a flag and not the default.
+		home, err := install.GetRhoHome()
 		if err != nil {
 			fmt.Println("rho install:", err)
 			return 1
 		}
-		if err := os.RemoveAll(binPath); err != nil {
+		fmt.Printf("Removing %s and everything in it...\n", home)
+		if err := os.RemoveAll(home); err != nil {
 			fmt.Println("rho install:", err)
 			return 1
 		}
 	}
 
-	steps := []struct {
-		name string
-		fn   func() error
-	}{
-		{"Creating directory structure", install.EnsurePaths},
-		{"Building Rho executables", buildRhoExecutables},
-		{"Installing binaries", func() error {
-			// Binaries are expected to be in ./bin relative to rho
-			return install.InstallAllBinaries("./bin")
-		}},
-		{"Initializing registry", install.InitLocalRegistry},
-		{"Initializing cache", install.InitCache},
-		{"Initializing config", install.InitConfig},
-		{"Adding Rho to PATH", install.AddRhoToPath},
-	}
-
-	for _, step := range steps {
+	fmt.Println("Installing Rho ecosystem...")
+	for _, step := range installSteps() {
 		fmt.Printf(" - %s...\n", step.name)
 		if err := step.fn(); err != nil {
 			fmt.Printf("   ERROR: %v\n", err)
 			return 1
 		}
 	}
-
 	fmt.Println("Rho installation complete.")
-	fmt.Println()
-	fmt.Println("To activate Rho in your current shell, run:")
-	switch util.DetectShell() {
-	case "bash":
-		fmt.Println("  source ~/.bashrc")
-	case "zsh":
-		fmt.Println("  source ~/.zshrc")
-	case "fish":
-		fmt.Println("  source ~/.config/fish/config.fish")
-	default:
-		fmt.Println("  source ~/.profile")
-	}
-	fmt.Println()
-
 	return 0
+}
+
+// updateCLI replaces the toolchain in place.
+//
+// The order is the whole of it: the binaries are built first and copied over
+// second. An install that removed them first and then failed to build left a
+// machine with no toolchain at all and no way back — which is why building
+// happens before anything is replaced, here and in a full install alike.
+// installBinaries puts the built toolchain in place, replacing what is there if
+// there is anything.
+func installBinaries() error {
+	if install.IsInstalled() {
+		return install.UpdateBinaries("./bin")
+	}
+	return install.InstallAllBinaries("./bin")
+}
+
+func updateCLI() int {
+	steps := installSteps()
+	for _, step := range steps {
+		if !step.updates {
+			continue
+		}
+		fmt.Printf(" - %s...\n", step.name)
+		if err := step.fn(); err != nil {
+			fmt.Printf("   ERROR: %v\n", err)
+			fmt.Println("   The installed toolchain has been left as it was.")
+			return 1
+		}
+	}
+	fmt.Println("Toolchain updated.")
+	return 0
+}
+
+// installStep is one thing an install does, and whether an update does it too.
+type installStep struct {
+	name string
+	fn   func() error
+	// updates is whether this step is part of an update. A step that writes the
+	// user's registry, credentials or modules is not one.
+	updates bool
+}
+
+// installSteps is everything an install does, in the order it does it.
+//
+// Everything that writes the toolchain is marked as an update's business, and
+// everything that writes the user's data is not.
+func installSteps() []installStep {
+	return []installStep{
+		{"Creating directory structure", install.EnsurePaths, true},
+		{"Installing the documentation", func() error { return install.InstallDocs(".") }, true},
+		{"Building Rho executables", buildRhoExecutables, true},
+		// The binaries are what an update replaces, and what an install puts in
+		// place for the first time. Which of the two is happening is the only
+		// difference between them, and it is decided by whether there is already
+		// a toolchain to replace.
+		{"Installing binaries", installBinaries, true},
+		// The registry, the cache and the configuration hold what the user has
+		// done — what they published, what they fetched, who they logged in as.
+		// An update does not touch them, because a toolchain is not theirs to
+		// reset and nothing about a new binary makes their data stale.
+		{"Initializing registry", install.InitLocalRegistry, false},
+		{"Initializing cache", install.InitCache, false},
+		{"Initializing config", install.InitConfig, false},
+		{"Adding Rho to PATH", install.AddRhoToPath, false},
+	}
 }
 
 // configCLI reads and writes the remote registry configuration, so a
@@ -716,14 +791,37 @@ func buildCLI(args []string) int {
 func printHelp() {
 	fmt.Println("Rho Programming Language CLI")
 	fmt.Println()
+
+	// What is on offer is read, not written down.
+	//
+	// The toolchain's own commands are inside this binary and are the same
+	// everywhere. A component's command exists only where the component is
+	// installed and has been turned on, so a machine with nothing installed is
+	// told only what the toolchain can do by itself — which is a shorter list,
+	// and the true one.
+	core, components := clicore.All()
+	width := 0
+	for _, command := range core {
+		if len(command.Invocation) > width {
+			width = len(command.Invocation)
+		}
+	}
 	fmt.Println("Commands:")
-	fmt.Println("  rho run <file.rho>          Run a Rho program")
-	fmt.Println("  rho build <file.rho> [-o]   Compile Rho → C (+ deps)")
-	fmt.Println("  rho install           	   Install Rho programming language")
-	fmt.Println("  rho pkg <command>           Package management (init, pack, unpack, inspect)")
-	fmt.Println("  rho module <command>        Module management (init, validate, info, publish, download, install, remove, update, search)")
-	fmt.Println("  rho lsp                     Start the Rho language server")
-	fmt.Println("  rho test [path]             Run Rho tests")
-	fmt.Println("  rho auth <command>          Registry credentials: login, status, list, revoke")
-	fmt.Println("  rho help                    Show this help")
+	for _, command := range core {
+		fmt.Printf("  %-*s  %s\n", width, "rho "+command.Invocation, command.Description)
+	}
+	if len(components) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("From installed components:")
+	width = 0
+	for _, command := range components {
+		if len(command.Invocation) > width {
+			width = len(command.Invocation)
+		}
+	}
+	for _, command := range components {
+		fmt.Printf("  %-*s  %s\n", width, "rho "+command.Invocation, command.Description)
+	}
 }

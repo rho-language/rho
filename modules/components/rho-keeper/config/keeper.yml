@@ -1,0 +1,20 @@
+# Where the rho keeper dashboard listens.
+#
+# This file is part of the module: it is in the package, and a keeper installed
+# from a registry reads the same file wherever it lands. It sits beside
+# module.yml because that is where a person looks for how a module is configured,
+# and because a file that travels with the thing it configures cannot be left
+# behind by an upgrade.
+
+# The address to listen on. A bare number is a port on this machine, which is
+# what somebody who typed one meant.
+#
+# A change here is remembered: naming an address on the command line writes this
+# file, so a port chosen once is the port every later run uses. Delete the line
+# to go back to the default.
+addr: 127.0.0.1:8477
+
+# Whether to say which modules are enabled on standard output on every request.
+# It is on because a local server that says nothing is a server nobody can tell
+# is running, and off for a person who has decided they do not want to know.
+log_requests: true
