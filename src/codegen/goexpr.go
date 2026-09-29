@@ -95,6 +95,30 @@ var goCasts = map[string]string{
 	"long long":     "int64",
 	"long double":   "float64",
 	"struct char":   "int8",
+	// The language's own scalar names. A lowering spells a type in the
+	// language's own vocabulary, and the backend has to read that rather than
+	// guess: `i64` and `long long` are the same type, and a file that dropped
+	// one of them would build a conversion of a type nothing declares.
+	"i8":   "int8",
+	"i16":  "int16",
+	"i32":  "int32",
+	"i64":  "int64",
+	"u8":   "uint8",
+	"u16":  "uint16",
+	"u32":  "uint32",
+	"u64":  "uint64",
+	"f32":  "float32",
+	"f64":  "float64",
+	"f128": "float64",
+	// A pointer to nothing is a handle, and the backend gives it a nameable
+	// type so a program can hold one. A cast written `void*` and left as a cast
+	// is not a Go expression at all, and every call that carried a handle would
+	// fail to parse.
+	"void *":  "PtrUnit",
+	"void*":   "PtrUnit",
+	"Unit *":  "PtrUnit",
+	"Unit*":   "PtrUnit",
+	"PtrUnit": "PtrUnit",
 }
 
 // cLibraryCalls maps C stdio helpers to their Go equivalents.
@@ -324,6 +348,19 @@ func translateParen(src []byte, start int) (int, string, bool) {
 		return afterCast, goType, true
 	}
 
+	// A cast to a struct is a literal, not a conversion: `PtrUnit(0)` would be
+	// a call of a struct, which is not a thing. A handle is built from its
+	// address, and the struct's one field is that address.
+	if goStruct := goCompoundType(typeName); goStruct != "" && isStructCastTarget(typeName) {
+		operandStart := skipSpaces(src, afterCast)
+		operandEnd, ok := scanPrimaryExpr(src, operandStart)
+		if !ok {
+			return 0, "", false
+		}
+		operand := ToGoExpr(string(src[operandStart:operandEnd]))
+		return operandEnd, goStruct + "{raw: " + operand + "}", true
+	}
+
 	// Plain cast: (Type)expr becomes GoType(expr). The operand is a single
 	// primary expression, so the rewrite stays local and balanced.
 	if conversion, ok := goCasts[typeName]; ok {
@@ -341,6 +378,21 @@ func translateParen(src []byte, start int) (int, string, bool) {
 	}
 
 	return 0, "", false
+}
+
+// isStructCastTarget reports whether a cast to this type builds a struct rather
+// than converting a value.
+//
+// A pointer is the one that matters: a Rho handle is a pointer to nothing, which
+// the backend spells as a struct carrying the address, and `PtrUnit(0)` written
+// as a conversion is a call of a struct — not a thing Go can express.
+func isStructCastTarget(typeName string) bool {
+	trimmed := strings.TrimSpace(typeName)
+	switch trimmed {
+	case "void *", "void*", "Unit *", "Unit*", "PtrUnit", "PtrVoid":
+		return true
+	}
+	return strings.HasPrefix(trimmed, "Ptr[")
 }
 
 // isCTypeQualifier reports whether a C type word is only a qualifier or width
@@ -627,6 +679,8 @@ func goTypeForIR(t ir.Type) string {
 		return "uint64"
 	case ir.TypeI32:
 		return "int32"
+	case ir.TypeI64:
+		return "int64"
 	case ir.TypeF64:
 		return "float64"
 	case ir.TypeString:
@@ -634,8 +688,13 @@ func goTypeForIR(t ir.Type) string {
 	case ir.TypeStruct:
 		return goTypeName(t.Name)
 	case ir.TypePtr:
-		if len(t.Args) == 0 {
-			return "unsafe.Pointer"
+		// A pointer to nothing is a handle, and it is a nameable struct rather
+		// than a raw pointer: a program has to be able to hold one, pass it and
+		// get one back, and `*Unit` is a pointer to an empty struct that a cast
+		// of 0 could not build.
+		if len(t.Args) == 0 || t.Args[0].Kind == ir.TypeVoid ||
+			t.Args[0].Name == "Unit" || t.Args[0].Name == "" {
+			return "PtrUnit"
 		}
 		element := goTypeForIR(t.Args[0])
 		if element == "" {

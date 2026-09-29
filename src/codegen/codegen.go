@@ -329,7 +329,7 @@ func (cg *Codegen) emitFunctionSignature(fn ir.FuncIR) {
 
 func defaultValueFor(t ir.Type) string {
 	switch t.Kind {
-	case ir.TypeBool, ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeF64:
+	case ir.TypeBool, ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeI64, ir.TypeF64:
 		return "0"
 	case ir.TypeString:
 		return "NULL"
@@ -478,6 +478,8 @@ func cTypeFor(t ir.Type) string {
 		return "uint64_t"
 	case ir.TypeI32:
 		return "int32_t"
+	case ir.TypeI64:
+		return "int64_t"
 	case ir.TypeF64:
 		return "double"
 	case ir.TypeString:

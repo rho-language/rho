@@ -244,6 +244,23 @@ func (p *parser) peekKeyword(word string) bool {
 	return len(fields) > 0 && strings.EqualFold(fields[0], word)
 }
 
+// peekAnyKeyword reports whether the line opens with one of these words.
+//
+// It is how a schema's statements that define no column are recognised in one
+// place, rather than a list of comparisons growing in the reader.
+func (p *parser) peekAnyKeyword(words []string) bool {
+	fields := strings.Fields(p.line())
+	if len(fields) == 0 {
+		return false
+	}
+	for _, word := range words {
+		if strings.EqualFold(fields[0], word) {
+			return true
+		}
+	}
+	return false
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Table declarations                                                          */
 /* -------------------------------------------------------------------------- */

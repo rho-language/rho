@@ -1,6 +1,6 @@
 module github.com/rho/rho-cimport
 
-go 1.18
+go 1.23
 
 require (
 	rho v0.0.0

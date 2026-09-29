@@ -53,6 +53,39 @@ func startRegistry(t *testing.T, token string) *registryServer {
 	return startRegistryWithSettings(t, token, "")
 }
 
+// sqlComponentInstalled skips a test whose build needs the SQL component.
+//
+// The component turns a project's declared tables into the statements its
+// generated code runs, so a registry cannot be built without it. That is a
+// property of the toolchain a test is running against, and a machine that has
+// not published the component has not got one — the same reason the sources and
+// the Go toolchain are checked for above.
+func sqlComponentInstalled(t *testing.T) {
+	t.Helper()
+	if _, err := componentBinary(SQLComponentName); err != nil {
+		t.Skipf("the %s component is not installed: %v", SQLComponentName, err)
+	}
+}
+
+// resolveModules downloads what the generated project's go.mod names.
+//
+// A registry declared a database, so the generated project links the driver, and
+// `go build` does not download what a go.mod names but has not verified. This is
+// the step `rho build` takes before it builds; the harness builds the generated
+// project itself, so it takes it here too.
+func resolveModules(t *testing.T, dir string) {
+	t.Helper()
+	if !goModHasRequires(dir) {
+		return
+	}
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = dir
+	tidy.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := tidy.CombinedOutput(); err != nil {
+		t.Fatalf("the registry's modules could not be resolved: %v\n%s", err, out)
+	}
+}
+
 // startRegistryWithSettings runs the registry with a settings file, which is how
 // a deployment configures it.
 func startRegistryWithSettings(t *testing.T, token, settings string) *registryServer {
@@ -67,6 +100,11 @@ func startRegistryWithSettings(t *testing.T, token, settings string) *registrySe
 	if _, err := os.Stat(entry); err != nil {
 		t.Skipf("registry sources are not present: %v", err)
 	}
+	// The registry keeps its records in the tables it declares, so building it
+	// runs the generator that writes them. A machine without the component
+	// installed cannot, and that is a fact about the machine rather than about
+	// the registry — the same shape as the toolchain and the sources above.
+	sqlComponentInstalled(t)
 
 	dirs, err := GenerateAllTargetsDetailed(entry, "", nil, nil, nil, "go-server")
 	if err != nil {
@@ -78,6 +116,7 @@ func startRegistryWithSettings(t *testing.T, token, settings string) *registrySe
 	serverDir := dirs[0].Dir
 
 	binary := filepath.Join(serverDir, "registry-test")
+	resolveModules(t, serverDir)
 	build := exec.Command("go", "build", "-o", binary, ".")
 	build.Dir = serverDir
 	// The generated project is built on its own: it is a program of its own,
@@ -439,7 +478,10 @@ func TestRegistryRejectsPathTraversal(t *testing.T) {
 	}
 	for _, entry := range inner {
 		switch entry.Name() {
-		case "modules", "index":
+		// The derived tree the documentation is generated from, and the
+		// database the records are kept in. The index is not a file any more:
+		// what a module holds is a table, not a document beside its packages.
+		case "modules", "docs", "registry.db":
 		default:
 			t.Errorf("unexpected entry in the data directory: %s", entry.Name())
 		}
@@ -522,8 +564,10 @@ func TestRegistryHonoursDataDirSetting(t *testing.T) {
 	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), issued); status != 201 {
 		t.Fatalf("publish failed with %d", status)
 	}
-	if _, err := os.Stat(filepath.Join(data, "modules", "math", "1.0.0")); err != nil {
-		t.Errorf("expected the package under the configured data_dir: %v", err)
+	// The package is a row rather than a file, so what a publish produced is
+	// read back from the database the data directory is beside.
+	if !registryHasVersionAt(t, filepath.Join(data, "registry.db"), "math", "1.0.0") {
+		t.Error("the published version is not in the database beside the data_dir")
 	}
 }
 
@@ -568,6 +612,9 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "src", "main.rho")); err != nil {
 		t.Skip("registry sources are not present")
 	}
+	// The registry's records are the tables it declares, so its build runs the
+	// generator that writes them. See sqlComponentInstalled.
+	sqlComponentInstalled(t)
 
 	dirs, err := GenerateAllTargetsDetailed(filepath.Join(root, "src", "main.rho"), "", nil, nil, nil, "go-server")
 	if err != nil {
@@ -585,6 +632,7 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	data := t.TempDir()
 	addr := "127.0.0.1:18811"
 	binary := filepath.Join(serverDir, "registry-addr-test")
+	resolveModules(t, serverDir)
 	build := exec.Command("go", "build", "-o", binary, ".")
 	build.Dir = serverDir
 	// The generated project is built on its own: it is a program of its own,
@@ -622,9 +670,32 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	if status, body := clientPost(probe, "x", issued); status != 201 {
 		t.Fatalf("publish: %d %s", status, body)
 	}
-	if _, err := os.Stat(filepath.Join(data, "modules", "probe", "1.0.0", "package.rho-pkg")); err != nil {
-		t.Errorf("the package should be under the configured data directory: %v", err)
+	if !registryHasVersionAt(t, filepath.Join(data, "registry.db"), "probe", "1.0.0") {
+		t.Error("the published version is not in the database beside the configured data directory")
 	}
+}
+
+// registryHasVersionAt reports whether a version was published into a database.
+//
+// The package is a row rather than a file, so a test that wants to know a
+// publish happened reads the table the publish wrote rather than looking for a
+// file beside it.
+func registryHasVersionAt(t *testing.T, database, name, version string) bool {
+	t.Helper()
+	// The database is read as a file rather than through a driver: this test
+	// binary links no driver, and whether a row is in the file is a question
+	// about the publish rather than about the Go that asks.
+	data, err := os.ReadFile(database)
+	if err != nil {
+		t.Fatalf("reading %s: %v", database, err)
+	}
+	if !bytes.HasPrefix(data, []byte("SQLite format 3\x00")) {
+		t.Fatalf("%s is not a database, it begins %q", database, data[:16])
+	}
+	// The table's own text is in the file, so a version that was published is
+	// in it and one that was not is not. This is a smoke test that the publish
+	// reached the database; the service's own tests cover what it contains.
+	return bytes.Contains(data, []byte(name)) && bytes.Contains(data, []byte(version))
 }
 
 // clientPost posts a package, presenting a credential when one is given.

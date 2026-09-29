@@ -13,6 +13,29 @@ build:
   targets:
     - go-server
 
+# What the built service links against at run time, over and above the packages
+# a dependency resolves to. The service's records live in a database, so the
+# built program needs the driver that opens one: a registry whose generated code
+# names a driver nobody declared builds only on the machine that generated it.
+requires:
+  - name: rho/sqlite
+    version: ^1.0.0
+
+# The registry's own records.
+#
+# Who an identity is, what it may do, and which modules it published live in
+# tables rather than in files beside the packages, which is what makes a publish
+# one commit: an upload and the record of who made it are the same transaction,
+# so there is no window in which a module exists and nobody owns it.
+#
+# The schema is the whole of what the service owns. The statements are the named
+# operations over it, so what the registry does to its tables is something a
+# person deploying it can read rather than infer from Go.
+sql:
+  driver: rho-sql-sqlite
+  schema: db/schema.yml
+  out: src/db
+
 # The application logs its own domain events: a publish accepted or refused, a
 # download served or missed. The service manager already collects the process's
 # own records, so these are the ones worth keeping in an application log.

@@ -17,6 +17,13 @@ module registry
 // would qualify them with the module name, which a generated port does not.
 include "registry/storage.rho"
 
+// The tables the service keeps its records in, and the typed operations over
+// them. They are generated from the declarations in db/schema.yml, so the
+// statements the service runs and the database it creates come from one reading
+// of one file.
+include "db/models.rho"
+include "db/queries.rho"
+
 import std.web.http
 import rho.log
 import registry.validate

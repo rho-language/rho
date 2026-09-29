@@ -33,6 +33,10 @@ const (
 	TypeU32
 	TypeU64
 	TypeI32
+	// TypeI64 is a signed 64-bit integer. A database column is one, and so is
+	// anything read from a file or a clock: i32 is a width, and a value that
+	// came from outside is not one the program chose.
+	TypeI64
 	TypeF64
 	TypeString
 	TypeStruct
@@ -66,6 +70,21 @@ type ModuleIR struct {
 	// Routes are the HTTP routes the module exposes, meaningful for a server
 	// target.
 	Routes []RouteIR
+	// Aliases are the names a module gave to other types, as in
+	// `type SqlDb = Ptr[Unit]`. They are carried because a backend has to
+	// define them: a program may declare a value under the alias, and a file
+	// that emitted only the type it names would leave that declaration referring
+	// to a name nothing defines.
+	Aliases []AliasIR
+}
+
+// AliasIR is one type alias a module declares.
+type AliasIR struct {
+	// Name is the alias as the program wrote it.
+	Name string
+	// Target is the type it names, already resolved to the spelling the backend
+	// renders — a C type name for the C backend, a Go one for the Go backend.
+	Target string
 }
 
 /* -------------------------------------------------------------------------- */

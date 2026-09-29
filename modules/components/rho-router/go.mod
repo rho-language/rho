@@ -1,6 +1,6 @@
 module github.com/rho/rho-router
 
-go 1.18
+go 1.23
 
 require (
 	github.com/rho/rho-log v0.0.0

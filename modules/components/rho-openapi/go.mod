@@ -1,6 +1,6 @@
 module github.com/rho/rho-openapi
 
-go 1.18
+go 1.23
 
 require (
 	github.com/rho/rho-doc v0.0.0
