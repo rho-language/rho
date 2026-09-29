@@ -106,6 +106,12 @@ func main() {
 	case "module":
 		os.Exit(modcli.Main(os.Args[2:]))
 
+	// Plugins are modules, so `rho module enable` is where one is turned on;
+	// `rho plugin` is a shorter way of saying the same thing for the case where
+	// the plugins are what the question is about.
+	case "plugin":
+		os.Exit(modcli.Main(append([]string{"plugin"}, os.Args[2:]...)))
+
 	case "install":
 		os.Exit(installCLI(os.Args[2:]))
 

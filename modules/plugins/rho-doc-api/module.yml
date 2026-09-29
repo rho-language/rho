@@ -23,6 +23,12 @@ features:
 # one documentation site rather than two.
 extends: rho-doc
 
+# What this plugin is for, as a contract of rho-doc. A plugin says what
+# it provides rather than leaving a reader to infer it from the hooks it
+# answers: two plugins may answer the same hook and be unrelated things.
+implements:
+  - contents
+
 hooks:
   - index
 

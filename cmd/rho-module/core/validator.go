@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"rho/src/deps"
@@ -151,6 +152,64 @@ func validatePlugin(dir string, manifest *deps.Manifest) error {
 		stage := command.Stage()
 		if !extension.Answers(stage) {
 			return fmt.Errorf("command %q answers hook %q, which the plugin does not declare", command.Name, stage)
+		}
+	}
+	return validateContracts(extension, component)
+}
+
+// validateContracts checks what a plugin says it is against what its component
+// says it can be.
+//
+// A plugin that implements a contract the component does not offer is a plugin
+// written against a component that has since changed: it will never be run, and
+// finding that out at validation is much cheaper than finding it out from a
+// pipeline that silently did less than the plugin was written to do.
+//
+// A plugin that names no contract is accepted. A component whose plugins are all
+// of one kind has no reason to name them, and requiring it to would be a rule
+// with no failure behind it.
+func validateContracts(extension *deps.Extends, component *deps.Manifest) error {
+	if len(extension.Implements) == 0 || component.Provides == nil {
+		return nil
+	}
+	contracts := map[string]deps.Contract{}
+	for _, contract := range component.Provides.Contracts {
+		contracts[contract.Name] = contract
+	}
+	for _, named := range extension.Implements {
+		contract, offered := contracts[named]
+		if !offered {
+			available := make([]string, 0, len(contracts))
+			for name := range contracts {
+				available = append(available, name)
+			}
+			sort.Strings(available)
+			if len(available) == 0 {
+				return fmt.Errorf(
+					"%s offers no contracts, so %s cannot implement %q; "+
+						"a component says what a plugin is for under `provides: contracts:`",
+					extension.Component, extension.Component, named)
+			}
+			return fmt.Errorf(
+				"%q is not a contract of %s; it offers %s",
+				named, extension.Component, strings.Join(available, ", "))
+		}
+		// The contract names the hooks a plugin filling it answers, which makes
+		// it checkable rather than a label. A plugin that answers a hook outside
+		// the contract it declared is answering something nobody asked it for.
+		if len(contract.Hooks) == 0 {
+			continue
+		}
+		within := map[string]bool{}
+		for _, hook := range contract.Hooks {
+			within[hook] = true
+		}
+		for _, hook := range extension.Hooks {
+			if !within[hook] {
+				return fmt.Errorf(
+					"hook %q is outside the %q contract of %s, which covers %s",
+					hook, contract.Name, extension.Component, strings.Join(contract.Hooks, ", "))
+			}
 		}
 	}
 	return nil

@@ -40,6 +40,32 @@ jobs:
           fi
         done
 
+    # Installing a module makes it available; using it is a separate decision,
+    # and a module that is not enabled is not used. A machine that means to run
+    # something therefore has to say so, and this is where CI says it.
+    #
+    # The registry's tests need the SQL component and the sqlite engine, and skip
+    # without them. Enabling both here means they run rather than skip, which is
+    # the difference between a registry whose records are checked and one that is
+    # only built.
+    - name: Enable the modules the tests need
+      run: |
+        go build -o ./bin/rho ./cmd/rho
+        for module in modules/components/*/ modules/plugins/*/; do
+          if [ -f "$module/module.yml" ]; then
+            name=$(awk '/^  name: /{print $2; exit}' "$module/module.yml")
+            case "$name" in
+              rho-sql|rho-doc|rho-test|rho-router|rho-auth|rho-log|rho-openapi|rho-fmt|rho-cimport|rho-kconfig|rho-lsp|rho-target)
+                ./bin/rho module enable "$name" || true
+                ;;
+            esac
+          fi
+        done
+        ./bin/rho plugin enable rho-sql-sqlite || true
+        ./bin/rho plugin enable rho-doc-toc || true
+        ./bin/rho plugin enable rho-doc-api || true
+        ./bin/rho plugin enable rho-test-junit || true
+
     - name: Configure CMake
       run: cmake -S . -B build -DBUILD_TESTING=ON
 
