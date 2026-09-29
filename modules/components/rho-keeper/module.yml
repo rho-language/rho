@@ -1,0 +1,77 @@
+# A component rather than an application, because it is a tool: `rho keeper`
+# dispatches to it, the way `rho doc` dispatches to the generator. It is not a
+# service anyone deploys, and it holds no state of its own - everything it shows
+# is read from the installation it is reporting on.
+#
+# It is installed but not enabled, like every other module: having it on the
+# machine is not a decision to run it, and `rho module enable rho-keeper` is
+# that decision.
+module:
+  name: rho-keeper
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: A local dashboard for the Rho installation and its registry
+  command: keeper
+  import_path: rho.keeper
+
+main: rho-keeper
+
+features:
+  - dashboard
+  - registry
+  - modules
+
+# What a person may configure it with.
+#
+# The values live in a YAML file beside this one, and the file is part of the
+# package: a keeper installed from a registry reads the same file wherever it
+# lands, rather than one the installation had to be told about. The declaration
+# is here rather than only in the file because this is what a person reads to
+# find out what the dashboard can be asked to do — the file says what the values
+# are set to, and this says what may be set, what it is called and what it is
+# for.
+#
+# A module with more than one file puts them in a config/ directory and names
+# this file as config/keeper.yml. One file sits at the root beside this manifest,
+# because a directory holding a single file is a directory somebody has to look
+# inside to find out what is in it.
+settings:
+  file: config/keeper.yml
+  settings:
+    - name: addr
+      description: >-
+        The address to listen on. A bare number is a port on this machine.
+        Naming one on the command line rewrites this file, so a port chosen
+        once is the port every later run uses.
+      default: 127.0.0.1:8477
+    - name: log_requests
+      description: Whether to say which modules are enabled on every request.
+      default: "true"
+      choices: ["true", "false"]
+
+# The commands it answers.
+#
+# A component's commands are what the CLI dispatches to, so this is also the
+# surface `rho keeper --help` lists.
+commands:
+  - name: start
+    description: Run the dashboard on a port
+    run: rho-keeper
+    hook: start
+  - name: status
+    description: Report what is installed and enabled, on one line per module
+    run: rho-keeper
+    hook: status
+
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    # The settings a person can change. They travel with the module so that a
+    # keeper installed from a registry is configured by the same file as one run
+    # from a checkout, rather than by whatever the installation happened to
+    # have.
+    - config

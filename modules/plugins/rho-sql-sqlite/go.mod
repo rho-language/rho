@@ -5,8 +5,9 @@ go 1.23
 require (
 	github.com/rho/rho-sql v0.0.0
 	modernc.org/sqlite v1.28.0
-	rho v0.0.0
 )
+
+require rho v0.0.0 // indirect
 
 // The engine is a plugin: it is dispatched to rather than compiled into a
 // service, and it is reached over the same protocol every plugin speaks.
