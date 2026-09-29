@@ -215,6 +215,40 @@ enabled plugin rho-sql-sqlite at 0.1.0
   fills this (fills this)
 ```
 
+## rho keeper
+
+One component reads the installation and shows it, so that the answers to "what
+have I got, and is it being used?" are somewhere to look rather than something to
+reconstruct from a directory listing:
+
+```sh
+rho module enable rho-keeper
+rho keeper
+```
+
+```
+rho keeper: http://127.0.0.1:8477/
+rho keeper: press ctrl-c to stop
+```
+
+It shows every module with its version, whether it is the one a run would use,
+and what its own manifest says about it. It shows every version installed rather
+than only the one in use, because showing one would imply there was only one. It
+shows the contracts the installed components offer and which plugins fill them,
+which is the question contracts exist for. And it shows what it could not read,
+each with its reason — a list that quietly leaves things out is a list nobody
+can trust to be complete.
+
+The first version reads and does not write, deliberately. A page that looks like
+it can change something is a page a person trusts with a change they did not mean
+to make, so the dashboard shows and the commands are printed next to the things
+they change. It is also not a daemon: it runs while you run it, and stopping it
+is stopping the terminal.
+
+`rho keeper status` is the same reading without the page, so a person in a
+terminal and a person with a browser are told the same thing. That is the reason
+the reading is a library rather than something either command reimplements.
+
 ## Several versions, one of them used
 
 A machine may hold several versions of a module at once — a dependency brought in

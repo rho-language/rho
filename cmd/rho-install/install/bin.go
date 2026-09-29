@@ -28,7 +28,23 @@ import (
 /* -------------------------------------------------------------------------- */
 
 // InstallBinary copies a single binary into ~/.rho/bin.
-func InstallBinary(src string) error {
+// InstallBinary puts a built binary in place.
+//
+// It refuses to overwrite: an install that silently replaced a binary would leave
+// nobody knowing which one they were running, and a first install over a
+// directory that is not a Rho home would put a toolchain into it. Replacing is
+// what an update is for, and it says so.
+func InstallBinary(src string) error { return installBinary(src, false) }
+
+// ReplaceBinary puts a built binary in place, over whatever is there.
+//
+// This is an update: the caller has built the binary and intends it to run, and
+// the one in place is the one being updated. The old one is moved aside first and
+// only removed once the new one is written, so a failure part-way through leaves
+// a working toolchain rather than a half-written one.
+func ReplaceBinary(src string) error { return installBinary(src, true) }
+
+func installBinary(src string, replace bool) error {
 	binPath, err := GetBinPath()
 	if err != nil {
 		return err
@@ -40,9 +56,20 @@ func InstallBinary(src string) error {
 
 	dst := filepath.Join(binPath, filepath.Base(src))
 
-	// Avoid accidental overwrite
+	// A binary that is already there is only replaced when the caller said it was
+	// an update, and even then the old one is moved aside first: a write that
+	// fails half way through a truncated executable is a machine with no
+	// toolchain, and the binary in place is a working one.
+	var previous string
 	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("binary already exists: %s", dst)
+		if !replace {
+			return fmt.Errorf("binary already exists: %s", dst)
+		}
+		previous = dst + ".previous"
+		_ = os.Remove(previous)
+		if err := os.Rename(dst, previous); err != nil {
+			return fmt.Errorf("cannot move the installed binary aside: %w", err)
+		}
 	}
 
 	in, err := os.Open(src)
@@ -51,8 +78,11 @@ func InstallBinary(src string) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY, 0o755)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
+		if previous != "" {
+			_ = os.Rename(previous, dst)
+		}
 		return fmt.Errorf("cannot create destination binary: %w", err)
 	}
 	defer out.Close()
@@ -65,6 +95,20 @@ func InstallBinary(src string) error {
 }
 
 // InstallAllBinaries installs all Rho executables.
+// UpdateBinaries replaces the toolchain's binaries, in place.
+//
+// It is `InstallAllBinaries` for the case where there is a toolchain to update,
+// which is the case a developer is in after changing the source in front of it.
+func UpdateBinaries(srcDir string) error {
+	for _, b := range []string{"rho", "rho-deps"} {
+		src := filepath.Join(srcDir, b)
+		if err := ReplaceBinary(src); err != nil {
+			return fmt.Errorf("failed to install %s: %w", b, err)
+		}
+	}
+	return nil
+}
+
 func InstallAllBinaries(srcDir string) error {
 	// The same set the installation check verifies. cmd/rho-pkg is a library
 	// with no main package, so there is no binary to install for it. The
