@@ -93,12 +93,31 @@ func InstalledPluginNames() []string {
 
 // highestInstalledRoot returns the newest installed directory named `name`
 // across the given publication kinds.
+// highestInstalledRoot is the root of the version of a module that runs.
+//
+// It is the active version where one was chosen, and the highest installed
+// where one was not. The distinction is the point of the record: a machine may
+// hold several versions of a module, and a build that picked the largest number
+// rather than the chosen one would run whatever was installed last rather than
+// what anyone decided to use.
+//
+// A module that is installed and not active has no root here, and the caller is
+// told so rather than being handed a version nobody enabled.
 func highestInstalledRoot(name string, kinds ...string) string {
 	home := RhoHome()
 	if home == "" {
 		return ""
 	}
 	base := filepath.Join(home, "modules", "installed")
+
+	state, err := LoadEnabled()
+	if err != nil {
+		// A record that cannot be read is a fact about the installation, and
+		// guessing past it would run a module whose state nobody can see. The
+		// highest installed is still the best answer available, which is what
+		// this installation did before there was a record.
+		state = &Enabled{versions: map[string]string{}}
+	}
 
 	best := ""
 	bestVersion := ""
@@ -113,6 +132,9 @@ func highestInstalledRoot(name string, kinds ...string) string {
 			}
 			installed, version, cut := strings.Cut(entry.Name(), "@")
 			if !cut || installed != name || version == "" {
+				continue
+			}
+			if !state.IsEnabled(kind, name, version) {
 				continue
 			}
 			if best == "" || compareModuleVersions(version, bestVersion) > 0 {

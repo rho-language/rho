@@ -128,9 +128,19 @@ func reportLocal(query string) error {
 				fmt.Printf("\n  %s:\n", kind)
 				shown = true
 			}
+			// Two different things are worth knowing and they are not the same
+			// one: which version the registry index resolves a name to, and
+			// whether the module is enabled and used at all. A module can be
+			// selected by the index and still not be the one a run uses.
 			mark := ""
 			if r.Active {
 				mark = "  (selected)"
+			}
+			if kind == "component" || kind == "plugin" {
+				state, err := enabledStateFor(kind, r.Name, r.Version)
+				if err == nil && state != "" {
+					mark += "  (" + state + ")"
+				}
 			}
 			origin := ""
 			if r.Origin == "remote" {

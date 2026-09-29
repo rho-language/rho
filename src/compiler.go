@@ -542,6 +542,11 @@ func warnMissingRequirement(projectRoot string, declared *projectgen.SQL) {
 // SQLComponentName is the component that turns SQL into Rho.
 const SQLComponentName = "rho-sql"
 
+// SQLiteEnginePlugin is the engine that types a project's statements when it
+// declared the sqlite one, which is the engine this repository's own projects
+// use.
+const SQLiteEnginePlugin = "rho-sql-sqlite"
+
 // componentBinary is the program an installed component runs, which is the file
 // its manifest names under `main:`.
 //
@@ -551,6 +556,17 @@ const SQLComponentName = "rho-sql"
 func componentBinary(name string) (string, error) {
 	root := deps.InstalledComponentRoot(name)
 	if root == "" {
+		// A component that is installed and not enabled is not the same as one
+		// that was never installed, and saying so is the difference between a
+		// reader who has to install something and one who has to turn something
+		// on. The record knows which it is.
+		if versions := deps.InstalledVersions(deps.KindComponent, name); len(versions) > 0 {
+			return "", &deps.NotEnabledError{
+				Kind:      deps.KindComponent,
+				Name:      name,
+				Installed: versions,
+			}
+		}
 		return "", fmt.Errorf(
 			"this project declared SQL, which needs the %s component, and it is "+
 				"not installed; publish it with: rho module publish %s",
@@ -660,11 +676,14 @@ func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*a
 	// The declared components are resolved once for the whole graph. Every
 	// import asks the same question, and answering it per import re-reads the
 	// manifests for a result that cannot differ inside one load.
-	components := dependencyComponents(projectRoot)
-	visited := map[string]bool{}
-	root, err := loadModuleFile(entry, projectRoot, dependencyRoots, components, visited)
+	components, err := dependencyComponents(projectRoot)
 	if err != nil {
 		return nil, err
+	}
+	visited := map[string]bool{}
+	root, loadErr := loadModuleFile(entry, projectRoot, dependencyRoots, components, visited)
+	if loadErr != nil {
+		return nil, loadErr
 	}
 	if err := loadDatabaseSurface(root, entry, projectRoot, dependencyRoots, components, visited); err != nil {
 		return nil, err
@@ -858,23 +877,32 @@ func matchesImport(importPath, wanted string) bool {
 // Only declared dependencies are returned: a component is a dependency by being
 // named in the manifest, which is also what installs it, so an import and the
 // install list cannot disagree.
-func dependencyComponents(projectRoot string) []installedComponent {
+func dependencyComponents(projectRoot string) ([]installedComponent, error) {
 	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
 	if err != nil || manifest == nil {
-		return nil
+		return nil, nil
 	}
 	// A component type is loaded from a component source root; a Rho library from
 	// the module cache. Only the component tree is searched here, because that
 	// is where a component keeps its Rho sources alongside its command.
 	found := []installedComponent{}
 	for _, spec := range manifest.Deps {
-		root, importPath, ok := componentRoot(projectRoot, spec)
-		if !ok {
+		root, importPath, err := componentRoot(projectRoot, spec)
+		if err != nil {
+			// A dependency that is installed and not active is a stop, not a
+			// dependency that happens to be missing: the reader has it, and the
+			// build is refusing to use what they did not enable.
+			if unavailable, strict := err.(*deps.NotEnabledError); strict {
+				return found, unavailable
+			}
+			continue
+		}
+		if root == "" {
 			continue
 		}
 		found = append(found, installedComponent{root: root, importPath: importPath})
 	}
-	return found
+	return found, nil
 }
 
 // componentRoot returns the directory a declared dependency is read from as a
@@ -889,26 +917,37 @@ func dependencyComponents(projectRoot string) []installedComponent {
 // with nothing installed falls back to the component in the working tree of the
 // repository it lives in, which is what lets a checkout build on a machine that
 // has never installed anything.
-func componentRoot(projectRoot string, spec deps.DepSpec) (root string, importPath string, ok bool) {
+func componentRoot(projectRoot string, spec deps.DepSpec) (root string, importPath string, err error) {
 	if spec.Path != "" || spec.GitURL != "" || spec.EnvVar != "" || spec.Type == deps.DepTypeC {
-		return "", "", false
+		return "", "", nil
 	}
 	root = deps.InstalledComponentRoot(spec.Name)
 	if root == "" {
+		// An import that names a component is consumed as one, and a component
+		// that is installed but not active is not consumed at all. Falling
+		// through to the tree here would quietly build against a copy the
+		// person never chose, which is the failure this record exists to stop.
+		if versions := deps.InstalledVersions(deps.KindComponent, spec.Name); len(versions) > 0 {
+			return "", "", &deps.NotEnabledError{
+				Kind:      deps.KindComponent,
+				Name:      spec.Name,
+				Installed: versions,
+			}
+		}
 		root = deps.VendoredComponentRoot(projectRoot, spec.Name)
 	}
 	if root == "" {
-		return "", "", false
+		return "", "", nil
 	}
 	// A directory in a component tree is a component by construction, and its
 	// own manifest says which import name it answers to: a component published
 	// under one name can be imported under another, and a manifest that is not
 	// a component at all does not answer a Rho import.
-	componentManifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
-	if err != nil || componentManifest.ModuleType != "component" {
-		return "", "", false
+	componentManifest, manifestErr := deps.LoadManifest(filepath.Join(root, "module.yml"))
+	if manifestErr != nil || componentManifest.ModuleType != "component" {
+		return "", "", nil
 	}
-	return root, componentManifest.ImportPath, true
+	return root, componentManifest.ImportPath, nil
 }
 
 func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []string, components []installedComponent) (string, error) {

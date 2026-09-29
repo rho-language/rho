@@ -228,6 +228,23 @@ func ModuleSchema() Schema {
 				Kind:     KindMap,
 				Fields: []FieldSchema{
 					{Name: "hooks", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// contracts say what a plugin has to be for this component,
+					// which the hooks alone do not: two plugins may answer the
+					// same hook and be unrelated things, and a person deciding
+					// whether to run one needs to be able to see what it is.
+					//
+					// A contract names what is filled and says how many plugins
+					// may fill it: one is a choice between engines, and not one
+					// is a pipeline every enabled plugin joins.
+					{Name: "contracts", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "name", Required: true, RejectNull: true, Kind: KindString},
+							{Name: "description", Required: false, Kind: KindString},
+							{Name: "one", Required: false, Kind: KindString},
+							{Name: "hooks", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+						},
+					}},
 				},
 			},
 			{
@@ -238,6 +255,19 @@ func ModuleSchema() Schema {
 				Name:     "extends",
 				Required: false,
 				Kind:     KindString,
+			},
+			{
+				// The contracts of the component this plugin fills, so a plugin
+				// says what it is rather than leaving it to be read off the
+				// hooks it happens to answer. A contract is checked against the
+				// ones the component offers, which is what catches a plugin
+				// written against a component that has since changed.
+				Name:     "implements",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindString,
+				},
 			},
 			{
 				// The hooks of the component this plugin answers. Each has to

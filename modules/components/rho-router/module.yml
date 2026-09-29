@@ -47,6 +47,17 @@ deps:
 # toolchain alone, so the router, the binding and the middleware are written into
 # it. The command is what a person reaches for, and what a plugin extends.
 provides:
+  # Each of these is one thing a service is described by, and a service is
+  # described once: two specifications would be two services.
+  contracts:
+    - name: spec
+      description: What the service exposes, before it is written.
+      one: true
+      hooks: [spec, operation]
+    - name: openapi
+      description: The emitted OpenAPI document.
+      one: true
+      hooks: [openapi]
   hooks:
     # Once over the whole service: what the module exposes, before it is
     # written. A plugin may add operations, group them, or refuse one.

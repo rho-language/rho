@@ -1,10 +1,12 @@
 package core
 
 import (
-    "os"
-    "path/filepath"
-    "strings"
-    "testing"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"rho/src/deps"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -12,10 +14,10 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestValidateModule(t *testing.T) {
-    tmp := t.TempDir()
+	tmp := t.TempDir()
 
-    // module.yml
-    os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(`
+	// module.yml
+	os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(`
 module:
   name: hello
   type: module
@@ -24,13 +26,13 @@ module:
 main: src/lib.rho
 `), 0644)
 
-    // src/lib.rho
-    os.Mkdir(filepath.Join(tmp, "src"), 0755)
-    os.WriteFile(filepath.Join(tmp, "src", "lib.rho"), []byte("module hello"), 0644)
+	// src/lib.rho
+	os.Mkdir(filepath.Join(tmp, "src"), 0755)
+	os.WriteFile(filepath.Join(tmp, "src", "lib.rho"), []byte("module hello"), 0644)
 
-    if err := ValidateModule(tmp); err != nil {
-        t.Fatalf("ValidateModule failed: %v", err)
-    }
+	if err := ValidateModule(tmp); err != nil {
+		t.Fatalf("ValidateModule failed: %v", err)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -38,9 +40,9 @@ main: src/lib.rho
 /* -------------------------------------------------------------------------- */
 
 func TestValidateMissingMain(t *testing.T) {
-    tmp := t.TempDir()
+	tmp := t.TempDir()
 
-    os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(`
+	os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(`
 module:
   name: hello
   type: module
@@ -49,11 +51,11 @@ module:
 main: src/lib.rho
 `), 0644)
 
-    os.Mkdir(filepath.Join(tmp, "src"), 0755)
+	os.Mkdir(filepath.Join(tmp, "src"), 0755)
 
-    if err := ValidateModule(tmp); err == nil {
-        t.Fatalf("expected error for missing main file")
-    }
+	if err := ValidateModule(tmp); err == nil {
+		t.Fatalf("expected error for missing main file")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -61,9 +63,9 @@ main: src/lib.rho
 /* -------------------------------------------------------------------------- */
 
 func TestValidatePlugin(t *testing.T) {
-    tmp := t.TempDir()
+	tmp := t.TempDir()
 
-    os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(`
+	os.WriteFile(filepath.Join(tmp, "module.yml"), []byte(`
 module:
   name: plug
   type: plugin
@@ -72,15 +74,15 @@ module:
 main: src/plugin.rho
 `), 0644)
 
-    os.Mkdir(filepath.Join(tmp, "src"), 0755)
-    os.WriteFile(filepath.Join(tmp, "src", "plugin.rho"), []byte("module plug"), 0644)
+	os.Mkdir(filepath.Join(tmp, "src"), 0755)
+	os.WriteFile(filepath.Join(tmp, "src", "plugin.rho"), []byte("module plug"), 0644)
 
-    writeComponent(t, filepath.Dir(tmp), "host", []string{"init"})
-    writeAttachedPlugin(t, tmp, "testplugin", "host", []string{"init"}, [][2]string{{"init", "init"}})
+	writeComponent(t, filepath.Dir(tmp), "host", []string{"init"})
+	writeAttachedPlugin(t, tmp, "testplugin", "host", []string{"init"}, [][2]string{{"init", "init"}})
 
-    if err := ValidateModule(tmp); err != nil {
-        t.Fatalf("plugin validation failed: %v", err)
-    }
+	if err := ValidateModule(tmp); err != nil {
+		t.Fatalf("plugin validation failed: %v", err)
+	}
 }
 
 // writeComponent writes a component that offers a set of hooks, in the
@@ -291,6 +293,13 @@ func TestValidateRejectsAPluginThatExtendsAPlugin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(installed, "module.yml"), []byte(manifest), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// It has to be enabled to resolve at all. A module that is installed and
+	// not enabled is not used, so the check this is about would otherwise never
+	// be reached — it would stop one step earlier, saying the plugin cannot be
+	// found, which is a different and much less useful thing to say.
+	if err := deps.Enable(deps.KindPlugin, "host"); err != nil {
+		t.Fatal(err)
+	}
 	tmp := t.TempDir()
 	writeAttachedPlugin(t, tmp, "testplugin", "host", []string{"index"}, [][2]string{{"index", "index"}})
 
@@ -309,5 +318,150 @@ func TestValidateRejectsWhatANonComponentOffers(t *testing.T) {
 	err := ValidateModule(tmp)
 	if err == nil || !strings.Contains(err.Error(), "cannot offer hooks") {
 		t.Fatalf("expected a non-component offering hooks to be rejected, got %v", err)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Contracts                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// writeContractComponent writes a component that offers the hooks and the
+// contracts a plugin is checked against.
+func writeContractComponent(t *testing.T, dir, name string, contracts map[string][]string) string {
+	return writeContractComponentWith(t, dir, name, contracts, nil)
+}
+
+// writeContractComponentWith is that, for a component that also offers hooks no
+// contract covers.
+func writeContractComponentWith(t *testing.T, dir, name string, contracts map[string][]string, extraHooks []string) string {
+	t.Helper()
+	root := filepath.Join(dir, name+"@0.1.0")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The component offers every hook named, and its contracts cover some of
+	// them. A hook the component offers but no contract covers is what the
+	// contract check exists to catch, so the two are kept separate here.
+	manifest := "module:\n  name: " + name + "\n  type: component\n  version: 0.1.0\n\nmain: " + name + "\n\nprovides:\n  contracts:\n"
+	offered := []string{}
+	for contract, hooks := range contracts {
+		manifest += "    - name: " + contract + "\n      one: true\n      hooks:\n"
+		for _, hook := range hooks {
+			manifest += "        - " + hook + "\n"
+		}
+	}
+	manifest += "  hooks:\n"
+	for _, hooks := range contracts {
+		offered = append(offered, hooks...)
+	}
+	offered = append(offered, extraHooks...)
+	for _, hook := range offered {
+		manifest += "    - " + hook + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// A plugin says what it is by naming a contract of the component it extends. A
+// contract the component does not offer is a plugin written against a component
+// that has since changed, and finding that out at validation is much cheaper
+// than finding it out from a pipeline that did less than the plugin was written
+// to do.
+func TestValidateRejectsAContractTheComponentDoesNotOffer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RHO_HOME", home)
+	writeContractComponent(t, filepath.Join(home, "modules", "installed", "component"),
+		"host", map[string][]string{"contents": {"index"}})
+	if err := deps.Enable(deps.KindComponent, "host"); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	writeAttachedPlugin(t, dir, "toc", "host", []string{"index"}, [][2]string{{"index", "index"}})
+	// Rewrite the manifest to claim a contract the component does not have.
+	path := filepath.Join(dir, "module.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "extends: host\n",
+		"extends: host\n\nimplements:\n  - nonsense\n", 1)
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = ValidateModule(dir)
+	if err == nil || !strings.Contains(err.Error(), `"nonsense" is not a contract`) {
+		t.Fatalf("expected a contract the component does not offer to be rejected, got %v", err)
+	}
+	// The message names what is on offer, because a reader who has to go and
+	// look has been told what is wrong but not what to write.
+	if !strings.Contains(err.Error(), "it offers contents") {
+		t.Errorf("the refusal does not say what is on offer: %v", err)
+	}
+}
+
+// A contract names the hooks a plugin filling it answers, which is what makes it
+// checkable rather than a label. A plugin answering something outside it is
+// answering a hook nobody asked it for.
+func TestValidateRejectsAHookOutsideTheContractItClaims(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RHO_HOME", home)
+	writeContractComponentWith(t, filepath.Join(home, "modules", "installed", "component"),
+		"host", map[string][]string{"contents": {"index"}}, []string{"page"})
+	if err := deps.Enable(deps.KindComponent, "host"); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	// The component offers both hooks; the contract covers only one of them.
+	writeAttachedPlugin(t, dir, "toc", "host", []string{"index", "page"}, [][2]string{
+		{"index", "index"}, {"page", "page"},
+	})
+	path := filepath.Join(dir, "module.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "extends: host\n",
+		"extends: host\n\nimplements:\n  - contents\n", 1)
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = ValidateModule(dir)
+	if err == nil || !strings.Contains(err.Error(), "outside the \"contents\" contract") {
+		t.Fatalf("expected a hook outside the contract to be rejected, got %v", err)
+	}
+}
+
+// A plugin that names a contract the component does offer, and answers only
+// that contract's hooks, passes. This is the case the check exists to protect:
+// a plugin that fits is not caught by a rule meant to catch one that does not.
+func TestValidateAcceptsAPluginThatFitsItsContract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RHO_HOME", home)
+	writeContractComponent(t, filepath.Join(home, "modules", "installed", "component"),
+		"host", map[string][]string{"contents": {"index"}})
+	if err := deps.Enable(deps.KindComponent, "host"); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	writeAttachedPlugin(t, dir, "toc", "host", []string{"index"}, [][2]string{{"index", "index"}})
+	path := filepath.Join(dir, "module.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "extends: host\n",
+		"extends: host\n\nimplements:\n  - contents\n", 1)
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateModule(dir); err != nil {
+		t.Fatalf("a plugin that fits its contract was rejected: %v", err)
 	}
 }
