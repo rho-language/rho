@@ -19,7 +19,6 @@
 package state
 
 import (
-	"github.com/rho/rho-lsp/src/analysis"
 	"github.com/rho/rho-lsp/src/protocol"
 )
 
@@ -62,48 +61,3 @@ func NewGlobalSymbolTable() *GlobalSymbolTable {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  ExtractSymbols                                                              */
-/* -------------------------------------------------------------------------- */
-
-func ExtractSymbols(ast *analysis.Module) *SymbolTable {
-	table := NewSymbolTable()
-
-	if ast == nil {
-		return table
-	}
-
-	for _, node := range ast.Nodes {
-		name := node.Name()
-		if name == "" {
-			continue
-		}
-
-		// Declaration
-		if node.IsDecl() {
-			table.Local[name] = true
-			table.LocalLocations[name] = protocol.Location{
-				URI: ast.URI,
-				Range: protocol.Range{
-					Start: protocol.Position{Line: node.Line(), Character: node.Column()},
-					End:   protocol.Position{Line: node.Line(), Character: node.Column() + len(name)},
-				},
-			}
-			table.RoleRefs[node.Role()+":"+name] = append(table.RoleRefs[node.Role()+":"+name], table.LocalLocations[name])
-		}
-
-		// Reference
-		if node.IsRef() {
-			loc := protocol.Location{
-				URI: ast.URI,
-				Range: protocol.Range{
-					Start: protocol.Position{Line: node.Line(), Character: node.Column()},
-					End:   protocol.Position{Line: node.Line(), Character: node.Column() + len(name)},
-				},
-			}
-			table.LocalRefs[name] = append(table.LocalRefs[name], loc)
-			table.RoleRefs[node.Role()+":"+name] = append(table.RoleRefs[node.Role()+":"+name], loc)
-		}
-	}
-
-	return table
-}

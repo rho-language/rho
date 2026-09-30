@@ -113,6 +113,17 @@ type Token struct {
 	Kind Kind
 	Lex  string
 	Pos  int // byte offset in source
+	// Line and Column are where the token starts, counting from one. They are
+	// kept as the lexer moves rather than counted afterwards, because counting
+	// afterwards is something every consumer would have to do, and would do
+	// differently.
+	//
+	// Column counts runes, not bytes: a column that counted bytes would put
+	// everything after a character with an accent in it in the wrong place, and
+	// an editor that highlights the wrong character is worse than one that
+	// highlights nothing.
+	Line   int
+	Column int
 }
 
 // Lex tokenizes a complete source string and returns the first lexical error.
@@ -142,6 +153,12 @@ type Lexer struct {
 	length int
 	ch     rune
 	width  int
+	// line and column are where the character in ch begins, counting from one.
+	// They describe the character already read rather than the next one to be,
+	// which is what makes a token's recorded position the position of its first
+	// character and not the one after it.
+	line   int
+	column int
 	// stringErr records why a string literal was rejected, so the caller can
 	// report an invalid escape instead of a misleading unterminated string.
 	stringErr string
@@ -157,6 +174,11 @@ func New(source string) *Lexer {
 		src:    source,
 		length: len(source),
 		pos:    0,
+		line:   1,
+		// The column is zero until the first character has been read, because
+		// readChar is what puts the first character at one. Starting at one
+		// would make every character in a file one further along than it is.
+		column: 0,
 	}
 	l.readChar()
 	return l
@@ -165,22 +187,25 @@ func New(source string) *Lexer {
 // Next returns the next token from the input stream.
 func (l *Lexer) Next() Token {
 	l.skipWhitespace()
-	startPos := l.pos
+	// Where this token begins, taken after the whitespace and before anything
+	// reads a character for it. Taken any later and every token would carry the
+	// position of the one after it.
+	startPos, startLine, startColumn := l.pos, l.line, l.column
 
 	if l.ch == 0 {
-		return Token{Kind: TokenEOF, Lex: "", Pos: l.pos}
+		return Token{Kind: TokenEOF, Lex: "", Pos: startPos, Line: startLine, Column: startColumn}
 	}
 
 	// Identifiers / keywords
 	if isLetter(l.ch) {
 		ident := l.readIdent()
-		return Token{Kind: lookupKeyword(ident), Lex: ident, Pos: startPos}
+		return Token{Kind: lookupKeyword(ident), Lex: ident, Pos: startPos, Line: startLine, Column: startColumn}
 	}
 
 	// Numbers
 	if isDigit(l.ch) {
 		num := l.readNumber()
-		return Token{Kind: TokenNumber, Lex: num, Pos: startPos}
+		return Token{Kind: TokenNumber, Lex: num, Pos: startPos, Line: startLine, Column: startColumn}
 	}
 
 	// Strings
@@ -189,172 +214,172 @@ func (l *Lexer) Next() Token {
 		str := l.readString()
 		if str == "\x00unterminated" {
 			if l.stringErr != "" {
-				return Token{Kind: TokenIllegal, Lex: l.stringErr, Pos: startPos}
+				return Token{Kind: TokenIllegal, Lex: l.stringErr, Pos: startPos, Line: startLine, Column: startColumn}
 			}
-			return Token{Kind: TokenIllegal, Lex: "unterminated string", Pos: startPos}
+			return Token{Kind: TokenIllegal, Lex: "unterminated string", Pos: startPos, Line: startLine, Column: startColumn}
 		}
-		return Token{Kind: TokenString, Lex: str, Pos: startPos}
+		return Token{Kind: TokenString, Lex: str, Pos: startPos, Line: startLine, Column: startColumn}
 	}
 
 	// Symbols & operators
 	switch l.ch {
 	case '{':
 		l.readChar()
-		return Token{Kind: TokenLBrace, Lex: "{", Pos: startPos}
+		return Token{Kind: TokenLBrace, Lex: "{", Pos: startPos, Line: startLine, Column: startColumn}
 	case '}':
 		l.readChar()
-		return Token{Kind: TokenRBrace, Lex: "}", Pos: startPos}
+		return Token{Kind: TokenRBrace, Lex: "}", Pos: startPos, Line: startLine, Column: startColumn}
 	case '(':
 		l.readChar()
-		return Token{Kind: TokenLParen, Lex: "(", Pos: startPos}
+		return Token{Kind: TokenLParen, Lex: "(", Pos: startPos, Line: startLine, Column: startColumn}
 	case ')':
 		l.readChar()
-		return Token{Kind: TokenRParen, Lex: ")", Pos: startPos}
+		return Token{Kind: TokenRParen, Lex: ")", Pos: startPos, Line: startLine, Column: startColumn}
 	case '[':
 		l.readChar()
-		return Token{Kind: TokenLBracket, Lex: "[", Pos: startPos}
+		return Token{Kind: TokenLBracket, Lex: "[", Pos: startPos, Line: startLine, Column: startColumn}
 	case ']':
 		l.readChar()
-		return Token{Kind: TokenRBracket, Lex: "]", Pos: startPos}
+		return Token{Kind: TokenRBracket, Lex: "]", Pos: startPos, Line: startLine, Column: startColumn}
 	case ':':
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenAssign, Lex: ":=", Pos: startPos}
+			return Token{Kind: TokenAssign, Lex: ":=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenColon, Lex: ":", Pos: startPos}
+		return Token{Kind: TokenColon, Lex: ":", Pos: startPos, Line: startLine, Column: startColumn}
 	case ';':
 		l.readChar()
-		return Token{Kind: TokenSemicolon, Lex: ";", Pos: startPos}
+		return Token{Kind: TokenSemicolon, Lex: ";", Pos: startPos, Line: startLine, Column: startColumn}
 	case ',':
 		l.readChar()
-		return Token{Kind: TokenComma, Lex: ",", Pos: startPos}
+		return Token{Kind: TokenComma, Lex: ",", Pos: startPos, Line: startLine, Column: startColumn}
 	case '.':
 		if l.peekChar() == '.' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenRange, Lex: "..", Pos: startPos}
+			return Token{Kind: TokenRange, Lex: "..", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenDot, Lex: ".", Pos: startPos}
+		return Token{Kind: TokenDot, Lex: ".", Pos: startPos, Line: startLine, Column: startColumn}
 	case '-':
 		if l.peekChar() == '>' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenArrow, Lex: "->", Pos: startPos}
+			return Token{Kind: TokenArrow, Lex: "->", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenAssign, Lex: "-=", Pos: startPos}
+			return Token{Kind: TokenAssign, Lex: "-=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenMinus, Lex: "-", Pos: startPos}
+		return Token{Kind: TokenMinus, Lex: "-", Pos: startPos, Line: startLine, Column: startColumn}
 	case '+':
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenAssign, Lex: "+=", Pos: startPos}
+			return Token{Kind: TokenAssign, Lex: "+=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenPlus, Lex: "+", Pos: startPos}
+		return Token{Kind: TokenPlus, Lex: "+", Pos: startPos, Line: startLine, Column: startColumn}
 	case '*':
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenAssign, Lex: "*=", Pos: startPos}
+			return Token{Kind: TokenAssign, Lex: "*=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenStar, Lex: "*", Pos: startPos}
+		return Token{Kind: TokenStar, Lex: "*", Pos: startPos, Line: startLine, Column: startColumn}
 	case '/':
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenAssign, Lex: "/=", Pos: startPos}
+			return Token{Kind: TokenAssign, Lex: "/=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenSlash, Lex: "/", Pos: startPos}
+		return Token{Kind: TokenSlash, Lex: "/", Pos: startPos, Line: startLine, Column: startColumn}
 	case '%':
 		l.readChar()
-		return Token{Kind: TokenPercent, Lex: "%", Pos: startPos}
+		return Token{Kind: TokenPercent, Lex: "%", Pos: startPos, Line: startLine, Column: startColumn}
 	case '!':
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenNotEqual, Lex: "!=", Pos: startPos}
+			return Token{Kind: TokenNotEqual, Lex: "!=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenNot, Lex: "!", Pos: startPos}
+		return Token{Kind: TokenNot, Lex: "!", Pos: startPos, Line: startLine, Column: startColumn}
 	case '=':
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenEqual, Lex: "==", Pos: startPos}
+			return Token{Kind: TokenEqual, Lex: "==", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		// "=>" binds a route to its handler, as in
 		// `route GET "/health" => handle_health`.
 		if l.peekChar() == '>' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenFatArrow, Lex: "=>", Pos: startPos}
+			return Token{Kind: TokenFatArrow, Lex: "=>", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenAssign, Lex: "=", Pos: startPos}
+		return Token{Kind: TokenAssign, Lex: "=", Pos: startPos, Line: startLine, Column: startColumn}
 	case '<':
 		if l.peekChar() == '<' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenLess, Lex: "<<", Pos: startPos}
+			return Token{Kind: TokenLess, Lex: "<<", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenLessEqual, Lex: "<=", Pos: startPos}
+			return Token{Kind: TokenLessEqual, Lex: "<=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenLess, Lex: "<", Pos: startPos}
+		return Token{Kind: TokenLess, Lex: "<", Pos: startPos, Line: startLine, Column: startColumn}
 	case '>':
 		if l.peekChar() == '>' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenGreater, Lex: ">>", Pos: startPos}
+			return Token{Kind: TokenGreater, Lex: ">>", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		if l.peekChar() == '=' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenGreaterEqual, Lex: ">=", Pos: startPos}
+			return Token{Kind: TokenGreaterEqual, Lex: ">=", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenGreater, Lex: ">", Pos: startPos}
+		return Token{Kind: TokenGreater, Lex: ">", Pos: startPos, Line: startLine, Column: startColumn}
 	case '&':
 		if l.peekChar() == '&' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenAnd, Lex: "&&", Pos: startPos}
+			return Token{Kind: TokenAnd, Lex: "&&", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenBitAnd, Lex: "&", Pos: startPos}
+		return Token{Kind: TokenBitAnd, Lex: "&", Pos: startPos, Line: startLine, Column: startColumn}
 	case '|':
 		if l.peekChar() == '|' {
 			l.readChar()
 			l.readChar()
-			return Token{Kind: TokenOr, Lex: "||", Pos: startPos}
+			return Token{Kind: TokenOr, Lex: "||", Pos: startPos, Line: startLine, Column: startColumn}
 		}
 		l.readChar()
-		return Token{Kind: TokenBitOr, Lex: "|", Pos: startPos}
+		return Token{Kind: TokenBitOr, Lex: "|", Pos: startPos, Line: startLine, Column: startColumn}
 	case '^':
 		l.readChar()
-		return Token{Kind: TokenCaret, Lex: "^", Pos: startPos}
+		return Token{Kind: TokenCaret, Lex: "^", Pos: startPos, Line: startLine, Column: startColumn}
 	case '~':
 		l.readChar()
-		return Token{Kind: TokenBitNot, Lex: "~", Pos: startPos}
+		return Token{Kind: TokenBitNot, Lex: "~", Pos: startPos, Line: startLine, Column: startColumn}
 	}
 
 	// Unknown character
 	illegal := string(l.ch)
 	l.readChar()
-	return Token{Kind: TokenIllegal, Lex: illegal, Pos: startPos}
+	return Token{Kind: TokenIllegal, Lex: illegal, Pos: startPos, Line: startLine, Column: startColumn}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -365,13 +390,24 @@ func (l *Lexer) readChar() {
 	if l.pos >= l.length {
 		l.ch = 0
 		l.width = 0
+		l.column++
 		return
 	}
 	r, width := utf8.DecodeRuneInString(l.src[l.pos:])
 	if r == utf8.RuneError && width == 1 {
 		l.ch = 0
 		l.width = 0
+		l.column++
 		return
+	}
+	// A newline ends the line and starts a column; every other character is one
+	// further along. The position recorded is that of the character being read,
+	// so the first character of a file is at one, one.
+	if r == '\n' {
+		l.line++
+		l.column = 1
+	} else {
+		l.column++
 	}
 	l.ch = r
 	l.width = width

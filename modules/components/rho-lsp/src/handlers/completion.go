@@ -16,6 +16,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/rho/rho-lsp/src/protocol"
@@ -43,7 +44,6 @@ func HandleCompletion(req protocol.Request, ws *state.Workspace) *protocol.Respo
 		}
 	}
 
-	// Collect completion items
 	items := []protocol.CompletionItem{}
 	lineText := ""
 	if params.Position.Line >= 0 {
@@ -53,7 +53,16 @@ func HandleCompletion(req protocol.Request, ws *state.Workspace) *protocol.Respo
 		}
 	}
 	prefix := completionPrefix(lineText)
-	members := strings.HasSuffix(strings.TrimSpace(lineText), ".")
+
+	// After a dot, what a caller wants is a member, not a word. The server does
+	// not resolve the type before the dot, so it offers every field it knows and
+	// names the struct each came from — which is wrong often and useful always,
+	// where returning nothing is wrong always and useful never. Advertising the
+	// dot and answering it with nothing is the worst of the three.
+	if strings.HasSuffix(strings.TrimSpace(lineText), ".") {
+		return memberCompletions(ws, doc, req, prefix)
+	}
+	members := false // member completion has been answered above; nothing here is one
 
 	// Keywords (minimal)
 	keywords := []string{
@@ -114,4 +123,30 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// memberCompletions are the fields of every struct the workspace knows, offered
+// after a dot.
+func memberCompletions(ws *state.Workspace, doc *state.Document, req protocol.Request, prefix string) *protocol.Response {
+	items := []protocol.CompletionItem{}
+	seen := map[string]bool{}
+	for _, entry := range ws.MemberFields() {
+		if prefix != "" && !strings.HasPrefix(entry.Name, prefix) {
+			continue
+		}
+		// The same field name on two structs is one completion offered twice, and
+		// a list with the same word in it twice is a list a reader has to read
+		// twice.
+		if seen[entry.Name] {
+			continue
+		}
+		seen[entry.Name] = true
+		items = append(items, protocol.CompletionItem{
+			Label:  entry.Name,
+			Kind:   5, // field
+			Detail: "field of " + entry.Struct,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Label < items[j].Label })
+	return &protocol.Response{JsonRPC: "2.0", ID: req.ID, Result: items}
 }

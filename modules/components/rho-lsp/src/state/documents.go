@@ -20,10 +20,10 @@
 package state
 
 import (
-	"unicode/utf8"
-
-	"github.com/rho/rho-lsp/src/analysis"
 	"github.com/rho/rho-lsp/src/protocol"
+	"rho/src"
+	"rho/src/frontend/lexer"
+	"unicode/utf8"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -34,11 +34,22 @@ type Document struct {
 	URI     string
 	Text    string
 	Version int
-	Tokens  []analysis.Token
-	AST     *analysis.Module
-	Indexer *analysis.Indexer
+	// Tokens are the file's tokens, which is what the handler that highlights
+	// with them reads. They come from the compiler's lexer, so a keyword this
+	// server highlights is a keyword the compiler has.
+	Tokens []lexer.Token
+	// Index is what the file declares and where, read from the compiler's own
+	// syntax tree.
+	Index *Index
+	// Symbols is that, in the shape the navigation handlers ask their questions
+	// of.
 	Symbols *SymbolTable
 	Diags   []protocol.Diagnostic
+	// Fields are the struct fields the file declares. A completion after a dot
+	// offers these, which is the whole of what it can offer: this server does
+	// not resolve a receiver's type, so it offers every field it knows and says
+	// which struct each came from.
+	Fields []Field
 }
 
 /* -------------------------------------------------------------------------- */
@@ -49,8 +60,7 @@ func NewDocument(uri, text string) *Document {
 	doc := &Document{
 		URI:     uri,
 		Text:    text,
-		Tokens:  []analysis.Token{},
-		AST:     nil,
+		Tokens:  []lexer.Token{},
 		Symbols: NewSymbolTable(),
 		Diags:   []protocol.Diagnostic{},
 	}
@@ -85,21 +95,28 @@ func (d *Document) ApplyChange(change protocol.TextDocumentContentChangeEvent) {
 /* -------------------------------------------------------------------------- */
 
 func (d *Document) Recompute() {
-	// Lex
-	d.Tokens = analysis.Lex(d.Text)
+	d.Tokens = Tokens(d.Text)
 
-	// Parse
-	var parseDiags []analysis.Diagnostic
-	d.AST, parseDiags = analysis.Parse(d.Tokens)
-	d.AST.URI = d.URI
-	d.Diags = make([]protocol.Diagnostic, 0, len(parseDiags))
-	d.Diags = append(d.Diags, analysisDiagnostics(parseDiags)...)
-	// analysis.Analyze is scope-unaware (no params/let/imports/fields), so it
-	// is not wired into live diagnostics to avoid false "undefined symbol" noise.
+	// The document is read the way the compiler reads it, so a squiggle here and
+	// a build failure there are the same finding said twice by the same reading.
+	//
+	// A server with its own parser would be a second opinion about the language,
+	// and would go stale the first time the language moved: a new keyword, a new
+	// declaration, a new rule. Reading the compiler's front end is what makes the
+	// two unable to disagree.
+	d.Diags = compilerDiagnostics(d.URI, d.Text)
 
-	// Extract symbols
-	d.Symbols = ExtractSymbols(d.AST)
-	d.Indexer = analysis.BuildIndexer(d.AST)
+	// And what the file declares is read from the same tree, so a name a
+	// completion offers is a name the compiler knows and a place it reports is a
+	// place in the same coordinates everything else is in.
+	d.Index = BuildIndex(d.URI, d.Text)
+	if d.Index != nil {
+		d.Symbols = d.Index.Symbols
+		d.Fields = d.Index.Fields
+	} else {
+		d.Symbols = NewSymbolTable()
+		d.Fields = nil
+	}
 }
 
 func offsetAt(text string, position protocol.Position) int {
@@ -126,10 +143,30 @@ func offsetAt(text string, position protocol.Position) int {
 	return len(text)
 }
 
-func analysisDiagnostics(diags []analysis.Diagnostic) []protocol.Diagnostic {
-	out := make([]protocol.Diagnostic, 0, len(diags))
-	for _, diagnostic := range diags {
-		out = append(out, protocol.Diagnostic{Range: protocol.Range{Start: protocol.Position{Line: diagnostic.Line, Character: diagnostic.Column}, End: protocol.Position{Line: diagnostic.Line, Character: diagnostic.Column + 1}}, Severity: 1, Message: diagnostic.Message})
+// compilerDiagnostics is what the compiler makes of this text, in the shape a
+// language server publishes.
+func compilerDiagnostics(uri, text string) []protocol.Diagnostic {
+	found := rho.ParseSource(uri, text)
+	out := make([]protocol.Diagnostic, 0, len(found.Diagnostics))
+	for _, diagnostic := range found.Diagnostics {
+		severity := 1
+		if diagnostic.Severity == "warning" {
+			severity = 2
+		}
+		line, column := diagnostic.Line, diagnostic.Column
+		if !diagnostic.Positioned() {
+			// A finding with no place still has to be published; the first line is
+			// where an editor will show it, and a blank entry would be dropped.
+			line, column = 0, 0
+		}
+		out = append(out, protocol.Diagnostic{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: line, Character: column},
+				End:   protocol.Position{Line: line, Character: column + 1},
+			},
+			Severity: severity,
+			Message:  diagnostic.Message,
+		})
 	}
 	return out
 }
@@ -138,9 +175,10 @@ func analysisDiagnostics(diags []analysis.Diagnostic) []protocol.Diagnostic {
 /*  NodeAt                                                                      */
 /* -------------------------------------------------------------------------- */
 
-func (d *Document) NodeAt(line, col int) analysis.Node {
-	if d.Indexer == nil {
-		return nil
+// NodeAt is what is under the cursor, if anything is.
+func (d *Document) NodeAt(line, col int) (NamedPosition, bool) {
+	if d.Index == nil {
+		return NamedPosition{}, false
 	}
-	return d.Indexer.NodeAt(line, col)
+	return d.Index.At(line, col)
 }

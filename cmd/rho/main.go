@@ -230,8 +230,12 @@ func buildRhoExecutables() error {
 		// their own go.mod, published like any other module and dispatched to
 		// at run time. Building them here would put them back in the core and
 		// defeat the point of late binding.
+		//
+		// rho-lsp is an exception: it is built from source during install so
+		// a standalone deployment carries the LSP without needing a registry.
 		{"rho", "./cmd/rho"},
 		{"rho-deps", "./cmd/rho-deps"},
+		{"rho-lsp", "./modules/components/rho-lsp/src"},
 	}
 
 	if err := os.MkdirAll("./bin", 0o755); err != nil {
@@ -358,6 +362,7 @@ type installStep struct {
 func installSteps() []installStep {
 	return []installStep{
 		{"Creating directory structure", install.EnsurePaths, true},
+		{"Installing the standard library", func() error { return install.InstallStd(".") }, true},
 		{"Installing the documentation", func() error { return install.InstallDocs(".") }, true},
 		{"Building Rho executables", buildRhoExecutables, true},
 		// The binaries are what an update replaces, and what an install puts in
@@ -369,6 +374,7 @@ func installSteps() []installStep {
 		// done — what they published, what they fetched, who they logged in as.
 		// An update does not touch them, because a toolchain is not theirs to
 		// reset and nothing about a new binary makes their data stale.
+		{"Registering built-in components", func() error { return install.RegisterBuiltinComponents(".") }, true},
 		{"Initializing registry", install.InitLocalRegistry, false},
 		{"Initializing cache", install.InitCache, false},
 		{"Initializing config", install.InitConfig, false},
@@ -428,7 +434,7 @@ func configCLI(args []string) int {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  rho run                                                                   */
+/*  configCLI                                                                  */
 /* -------------------------------------------------------------------------- */
 
 func runCLI(args []string) {

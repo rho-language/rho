@@ -49,6 +49,8 @@ func TestEnsurePaths(t *testing.T) {
         home + "/registry/local",
         home + "/cache",
         home + "/config",
+        home + "/auth",
+        home + "/pkg/mod",
     }
 
     for _, p := range expected {

@@ -23,10 +23,40 @@ import "fmt"
 /*  Base Types                                                                */
 /* -------------------------------------------------------------------------- */
 
-// Node represents a generic AST node.
-// All AST nodes embed this type for future metadata (pos, file, etc).
+// Position is where something is in a source file.
+//
+// It carries all three ways of saying so because all three are asked for: a byte
+// offset to cut at, a line and column to show a person, and nothing at all for
+// something whose place was never known. Valid is what tells those apart — the
+// first byte of a file is at 0:1, and a node that was never placed is at 0:0.
+type Position struct {
+	// Offset is the byte offset into the source.
+	Offset int
+	// Line and Column are where the thing begins, counting from one. A column
+	// counts characters and not bytes, so it lines up with what an editor shows.
+	Line   int
+	Column int
+}
+
+// Valid reports whether a position is known.
+func (p Position) Valid() bool { return p.Line > 0 }
+
+// String is a position the way a compiler writes one.
+func (p Position) String() string {
+	if !p.Valid() {
+		return "unknown position"
+	}
+	return fmt.Sprintf("%d:%d", p.Line, p.Column)
+}
+
+// Node is what every AST node carries in common.
+//
+// It is embedded rather than referenced so that every node is positioned without
+// anything having to ask. A position that has to be threaded in is one that is
+// missing from the nodes nobody remembered, and a report that cannot point at a
+// node is a report a person cannot act on.
 type Node struct {
-	Pos int // byte offset in source (future: line/col)
+	Pos Position
 }
 
 /* -------------------------------------------------------------------------- */
@@ -92,14 +122,20 @@ type Include struct {
 // Decl is the interface implemented by all top-level declarations.
 type Decl interface {
 	declNode()
+	// Position is where it was written, so a report about it can say where it is
+	// and not only what it is.
+	Position() Position
 }
 
 type TypeDecl struct {
+	Node
 	Name string
 	Type TypeExpr
 }
 
 func (TypeDecl) declNode() {}
+
+func (n TypeDecl) Position() Position { return n.Pos }
 
 /* -------------------------------------------------------------------------- */
 /*  HTTP Routes                                                               */
@@ -112,6 +148,7 @@ func (TypeDecl) declNode() {}
 // The path syntax is Go's http.ServeMux pattern syntax, so the Go backend passes
 // it through unchanged. Routes are meaningful only for a server target.
 type RouteDecl struct {
+	Node
 	// Method is the HTTP method: GET, POST, PUT, DELETE or PATCH.
 	Method string
 	// Path is the ServeMux pattern, for example "/modules/{name}".
@@ -122,17 +159,18 @@ type RouteDecl struct {
 
 func (RouteDecl) declNode() {}
 
+func (n RouteDecl) Position() Position { return n.Pos }
+
 /* -------------------------------------------------------------------------- */
 /*  Struct Declaration                                                         */
 /* -------------------------------------------------------------------------- */
 
 // StructDecl represents:
 //
-//     struct Name {
-//         field: Type
-//         ...
-//     }
-//
+//	struct Name {
+//	    field: Type
+//	    ...
+//	}
 type StructDecl struct {
 	Node
 	Name       string
@@ -145,6 +183,8 @@ type StructDecl struct {
 }
 
 func (StructDecl) declNode() {}
+
+func (n StructDecl) Position() Position { return n.Pos }
 
 /* -------------------------------------------------------------------------- */
 /*  Struct Fields                                                             */
@@ -163,10 +203,9 @@ type Field struct {
 
 // FuncDecl represents:
 //
-//     fn name(param: Type, ...) -> ReturnType {
-//         ...
-//     }
-//
+//	fn name(param: Type, ...) -> ReturnType {
+//	    ...
+//	}
 type FuncDecl struct {
 	Node
 	Name       string
@@ -182,6 +221,8 @@ type FuncDecl struct {
 }
 
 func (FuncDecl) declNode() {}
+
+func (n FuncDecl) Position() Position { return n.Pos }
 
 /* -------------------------------------------------------------------------- */
 /*  Function Parameters                                                        */
@@ -202,13 +243,22 @@ type Param struct {
 // Rho 0.1 does not parse statements yet.
 type Stmt interface {
 	stmtNode()
+	// Position is where it was written, so a report about it can say where it is
+	// and not only what it is.
+	Position() Position
 }
 
-type BlockStmt struct{ Stmts []Stmt }
+type BlockStmt struct {
+	Node
+	Stmts []Stmt
+}
 
 func (BlockStmt) stmtNode() {}
 
+func (n BlockStmt) Position() Position { return n.Pos }
+
 type LetStmt struct {
+	Node
 	Name  string
 	Type  TypeExpr
 	Value Expr
@@ -216,7 +266,10 @@ type LetStmt struct {
 
 func (LetStmt) stmtNode() {}
 
+func (n LetStmt) Position() Position { return n.Pos }
+
 type AssignStmt struct {
+	Node
 	Target Expr
 	Value  Expr
 	Op     string
@@ -224,15 +277,28 @@ type AssignStmt struct {
 
 func (AssignStmt) stmtNode() {}
 
-type ExprStmt struct{ Expr Expr }
+func (n AssignStmt) Position() Position { return n.Pos }
+
+type ExprStmt struct {
+	Node
+	Expr Expr
+}
 
 func (ExprStmt) stmtNode() {}
 
-type ReturnStmt struct{ Value Expr }
+func (n ExprStmt) Position() Position { return n.Pos }
+
+type ReturnStmt struct {
+	Node
+	Value Expr
+}
 
 func (ReturnStmt) stmtNode() {}
 
+func (n ReturnStmt) Position() Position { return n.Pos }
+
 type IfStmt struct {
+	Node
 	Condition Expr
 	Then      []Stmt
 	Else      []Stmt
@@ -240,16 +306,25 @@ type IfStmt struct {
 
 func (IfStmt) stmtNode() {}
 
+func (n IfStmt) Position() Position { return n.Pos }
+
 type WhileStmt struct {
+	Node
 	Condition Expr
 	Body      []Stmt
 }
 
 func (WhileStmt) stmtNode() {}
 
-type BreakStmt struct{}
+func (n WhileStmt) Position() Position { return n.Pos }
+
+type BreakStmt struct {
+	Node
+}
 
 func (BreakStmt) stmtNode() {}
+
+func (n BreakStmt) Position() Position { return n.Pos }
 
 /* -------------------------------------------------------------------------- */
 /*  Expressions (Rho 0.2+)                                                    */
@@ -259,39 +334,69 @@ func (BreakStmt) stmtNode() {}
 // Rho 0.1 does not parse expressions yet.
 type Expr interface {
 	exprNode()
+	// Position is where it was written, so a report about it can say where it is
+	// and not only what it is.
+	Position() Position
 }
 
-type IdentifierExpr struct{ Name string }
+type IdentifierExpr struct {
+	Node
+	Name string
+}
 
 func (IdentifierExpr) exprNode() {}
 
-type NumberExpr struct{ Value string }
+func (n IdentifierExpr) Position() Position { return n.Pos }
+
+type NumberExpr struct {
+	Node
+	Value string
+}
 
 func (NumberExpr) exprNode() {}
 
-type StringExpr struct{ Value string }
+func (n NumberExpr) Position() Position { return n.Pos }
+
+type StringExpr struct {
+	Node
+	Value string
+}
 
 func (StringExpr) exprNode() {}
 
-type BoolExpr struct{ Value bool }
+func (n StringExpr) Position() Position { return n.Pos }
+
+type BoolExpr struct {
+	Node
+	Value bool
+}
 
 func (BoolExpr) exprNode() {}
 
+func (n BoolExpr) Position() Position { return n.Pos }
+
 type UnaryExpr struct {
+	Node
 	Op    string
 	Value Expr
 }
 
 func (UnaryExpr) exprNode() {}
 
+func (n UnaryExpr) Position() Position { return n.Pos }
+
 type BinaryExpr struct {
+	Node
 	Op          string
 	Left, Right Expr
 }
 
 func (BinaryExpr) exprNode() {}
 
+func (n BinaryExpr) Position() Position { return n.Pos }
+
 type CallExpr struct {
+	Node
 	Callee   Expr
 	TypeArgs []TypeExpr
 	Args     []Expr
@@ -299,39 +404,63 @@ type CallExpr struct {
 
 func (CallExpr) exprNode() {}
 
+func (n CallExpr) Position() Position { return n.Pos }
+
 type MemberExpr struct {
+	Node
 	Object Expr
 	Name   string
 }
 
 func (MemberExpr) exprNode() {}
 
-type IndexExpr struct{ Object, Index Expr }
+func (n MemberExpr) Position() Position { return n.Pos }
+
+type IndexExpr struct {
+	Node
+	Object, Index Expr
+}
 
 func (IndexExpr) exprNode() {}
 
+func (n IndexExpr) Position() Position { return n.Pos }
+
 type CastExpr struct {
+	Node
 	Type  TypeExpr
 	Value Expr
 }
 
 func (CastExpr) exprNode() {}
 
+func (n CastExpr) Position() Position { return n.Pos }
+
 type StructLiteralExpr struct {
+	Node
 	Type   TypeExpr
 	Values []Expr
 }
 
 func (StructLiteralExpr) exprNode() {}
 
-type ArrayLiteralExpr struct{ Values []Expr }
+func (n StructLiteralExpr) Position() Position { return n.Pos }
+
+type ArrayLiteralExpr struct {
+	Node
+	Values []Expr
+}
 
 func (ArrayLiteralExpr) exprNode() {}
 
+func (n ArrayLiteralExpr) Position() Position { return n.Pos }
+
 type IfExpr struct {
+	Node
 	Condition Expr
 	Then      Expr
 	Else      Expr
 }
 
 func (IfExpr) exprNode() {}
+
+func (n IfExpr) Position() Position { return n.Pos }

@@ -63,6 +63,11 @@ func render(value any) string {
 
 // WriterSink sends records to any writer, which covers standard output, a
 // serial console and a test buffer.
+//
+// It is used through a pointer, because a sink that serialises its writes holds
+// a lock and a lock copied with the value it belongs to is a lock that
+// protects nothing: each call would take its own copy of it, and two goroutines
+// writing at once would both find it free.
 type WriterSink struct {
 	Writer io.Writer
 	// Locked serialises writes when several goroutines share the sink.
@@ -71,7 +76,7 @@ type WriterSink struct {
 	mu sync.Mutex
 }
 
-func (s WriterSink) Write(line []byte) error {
+func (s *WriterSink) Write(line []byte) error {
 	if s.Locked {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -80,7 +85,7 @@ func (s WriterSink) Write(line []byte) error {
 	return err
 }
 
-func (s WriterSink) Close() error { return nil }
+func (s *WriterSink) Close() error { return nil }
 
 // Discard is a sink that throws records away. A component that is not
 // configured uses it rather than failing at run time.
