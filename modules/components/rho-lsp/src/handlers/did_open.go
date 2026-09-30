@@ -32,22 +32,23 @@ func HandleDidOpen(req protocol.Request, ws *state.Workspace) *protocol.Response
 	_ = json.Unmarshal(raw, &params)
 
 	doc := params.TextDocument
-	normalizedPath := state.NormalizeURI(doc.URI)
 
-	// Add document to workspace using normalized path key
-	ws.OpenDocument(normalizedPath, doc.Text)
+	// The original URI is what OpenDocument takes, not a path already reduced to
+	// one: it normalises internally and keeps what it was given as the URI that
+	// every location in a response is written against. Handing it a normalised
+	// path instead stored the path in place of the URI, and a client matching a
+	// definition against its own document has nothing to match.
+	ws.OpenDocument(doc.URI, doc.Text)
 
-	// Parse + analyze using normalized path key
-	diags := ws.Recompute(normalizedPath)
-
-	// LSP diagnostics response
-	result := map[string]any{
-		"diagnostics": diags,
-	}
+	// Recompute normalises the URI it is given, so the original is passed here
+	// too rather than a path derived from it.
+	diags := ws.Recompute(doc.URI)
 
 	return &protocol.Response{
 		JsonRPC: "2.0",
 		ID:      req.ID,
-		Result:  result,
+		Result: map[string]any{
+			"diagnostics": diags,
+		},
 	}
 }

@@ -268,10 +268,25 @@ func TestApplicationCanImportEmbeddedModuleGraph(t *testing.T) {
 	}
 }
 
+// A type error says where it is, not only what it is. It used to be scraped out
+// of the error's text, which is how a reworded message lost its position without
+// anything saying so.
 func TestCompilerDiagnosticIncludesSourceLocation(t *testing.T) {
-	err := CompileSource("module broken\n\nfn main() void {\n  let value: bool = 1\n}\n", filepath.Join(t.TempDir(), "broken.c"))
-	if err == nil || !strings.Contains(err.Error(), "typechecking failed: function main") {
-		t.Fatalf("expected source-aware compiler error, got %v", err)
+	source := "module broken\n\nfn main() void {\n  let value: bool = 1\n  return;\n}\n"
+	err := CompileSource(source, filepath.Join(t.TempDir(), "broken.c"))
+	if err == nil {
+		t.Fatal("expected a type error")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "cannot assign i32 to bool") {
+		t.Errorf("the error does not say what is wrong: %v", err)
+	}
+	// Line four, column four: the `let` that begins the statement, and not the
+	// function that contains it. A report that names the line a person has to
+	// change is a place to start; one that names the function is a search, and
+	// one that names nothing at all is what this replaced.
+	if !strings.Contains(message, ":4:4") {
+		t.Errorf("the error does not point at the statement: %v", err)
 	}
 }
 

@@ -28,7 +28,7 @@ func TestReferencesLocal(t *testing.T) {
 	ws := state.NewWorkspace()
 
 	// Document with a local symbol and references
-	ws.OpenDocument("file:///test.rho", "module x\nfn test() void {}\ntest()")
+	ws.OpenDocument("file:///test.rho", "module x\n\nfn test() void {\n  return;\n}\n\nfn caller() void {\n  test();\n  return;\n}\n")
 	ws.Recompute("file:///test.rho")
 
 	req := protocol.Request{
@@ -40,7 +40,7 @@ func TestReferencesLocal(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      1,
+				"line":      7,
 				"character": 4,
 			},
 		},
@@ -71,7 +71,7 @@ func TestReferencesGlobal(t *testing.T) {
 		},
 	}
 
-	ws.OpenDocument("file:///test.rho", "module x\nglobal_fn")
+	ws.OpenDocument("file:///test.rho", "module x\n\nfn caller() void {\n  global_fn();\n  return;\n}\n")
 	ws.Recompute("file:///test.rho")
 
 	req := protocol.Request{
@@ -83,8 +83,8 @@ func TestReferencesGlobal(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      1,
-				"character": 2,
+				"line":      3,
+				"character": 4,
 			},
 		},
 	}
@@ -115,8 +115,8 @@ func TestReferencesEmpty(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      10,
-				"character": 10,
+				"line":      7,
+				"character": 4,
 			},
 		},
 	}

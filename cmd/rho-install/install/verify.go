@@ -83,6 +83,8 @@ func pathsExist() bool {
 		filepath.Join(home, "registry", "local"),
 		filepath.Join(home, "cache"),
 		filepath.Join(home, "config"),
+		filepath.Join(home, "auth"),
+		filepath.Join(home, "pkg", "mod"),
 	}
 
 	for _, d := range dirs {
@@ -100,17 +102,21 @@ func binariesExist() bool {
 		return false
 	}
 
-	// The core toolchain only. A component is installed as a module, and is
-	// reached through the command its manifest publishes rather than through a
-	// binary sitting in the bin directory.
-	binaries := []string{
-		"rho",
-		"rho-deps",
-	}
-
-	for _, b := range binaries {
-		if _, err := os.Stat(filepath.Join(binPath, b)); os.IsNotExist(err) {
-			return false
+	// The same set an install puts in place, and the same distinction between
+	// what a toolchain is and what an editor needs. A component is installed as
+	// a module and reached through the command its manifest publishes rather
+	// than through a binary sitting in the bin directory — but the language
+	// server is built with the toolchain, so it is checked here too.
+	//
+	// A missing optional binary does not make this false, and it must not: the
+	// CLI asks this before running anything, so an installation without a
+	// language server reported as "not installed" would be an installation where
+	// no command runs at all.
+	for _, b := range toolchainBinaries {
+		if _, err := os.Stat(filepath.Join(binPath, b.name)); os.IsNotExist(err) {
+			if b.required {
+				return false
+			}
 		}
 	}
 

@@ -38,7 +38,7 @@ func TestIsInstalled(t *testing.T) {
 	// Fake binaries
 	binPath, _ := GetBinPath()
 	names := []string{
-		"rho", "rho-deps",
+		"rho", "rho-deps", "rho-lsp",
 	}
 
 	for _, n := range names {
@@ -65,7 +65,7 @@ func TestVerifyInstallation(t *testing.T) {
 	InitCache()
 	InitConfig()
 
-	// Fake binaries
+	// Fake binaries — only rho, missing rho-deps and rho-lsp
 	binPath, _ := GetBinPath()
 	os.WriteFile(filepath.Join(binPath, "rho"), []byte("test"), 0o755)
 

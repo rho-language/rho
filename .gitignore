@@ -1,3 +1,6 @@
+# Standalone deployment package, produced by ./build.sh
+/deploy/
+
 # CMake build output
 /build/
 /build-*/

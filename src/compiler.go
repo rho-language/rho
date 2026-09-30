@@ -37,7 +37,7 @@ import (
 	"rho/src/frontend/parser"
 	"rho/src/ir"
 	"rho/src/projectgen"
-	types "rho/src/types"
+	"rho/src/types"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -62,7 +62,7 @@ func CompileFileToWithDependencies(path, outPath string, dependencyRoots []strin
 	if err != nil {
 		return err
 	}
-	return compileModule(*mod, outPath)
+	return compileModule(*mod, outPath, path)
 }
 
 // CompileProjectTo compiles an entry file and all of its imports/includes.
@@ -336,6 +336,23 @@ func TargetOutputName(moduleName, targetID string) string {
 // DefaultBuildTarget is generated when a manifest names no targets.
 const DefaultBuildTarget = "c"
 
+// readSource is a file's text, for a report that has to count lines in it.
+//
+// A file that cannot be read yields nothing rather than stopping the report: the
+// mistake is still worth saying, and saying where it is not is better than
+// saying nothing at all.
+func readSource(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // compileToIR runs typechecking and codegen validation, reusing a preloaded
 // module when one is supplied.
 func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (ir.ModuleIR, error) {
@@ -348,7 +365,7 @@ func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (i
 	}
 	tc := types.New()
 	if err := tc.CheckModule(*compiled); err != nil {
-		return ir.ModuleIR{}, fmt.Errorf("typechecking failed: %w", err)
+		return ir.ModuleIR{}, sourceDiagnostic(path, readSource(path), "typechecking", err)
 	}
 	irModule := tc.ToIR(*compiled)
 	if err := codegen.ValidateModule(irModule); err != nil {
@@ -653,9 +670,15 @@ func ProjectOutputPath(path string) string {
 	return filepath.Join(root, buildDir, filepath.Base(replaceExt(path, ".c")))
 }
 
-func compileModule(mod ast.Module, outPath string) error {
+func compileModule(mod ast.Module, outPath string, from ...string) error {
 	tc := types.New()
 	if err := tc.CheckModule(mod); err != nil {
+		// The module was handed over rather than read here, so when the caller
+		// knows which file it came from the report points at that file and at the
+		// line; when it does not, the declaration the error names is all there is.
+		if len(from) > 0 && from[0] != "" {
+			return sourceDiagnostic(from[0], readSource(from[0]), "typechecking", err)
+		}
 		return fmt.Errorf("typechecking failed: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
@@ -775,6 +798,19 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 	}
 
 	merged := &ast.Module{Name: mod.Name, Imports: nil, Includes: nil, Features: append([]string{}, mod.Features...), Decls: append([]ast.Decl{}, mod.Decls...)}
+	// A prelude generic is a language type, so `Slice[u8]` resolves whether or
+	// not the file imported the module that declares it. That is a name with no
+	// declaration behind it, and the specialisation of a type nobody declared is
+	// a type nobody emits — which is why a program using one reached the backend
+	// with a type name it had never heard of.
+	//
+	// The declaration is therefore loaded when the type is used. Importing a
+	// module only to obtain a struct the language already provides is not a thing
+	// a program should have to do, and the module is loaded once however many
+	// times it is applied.
+	for _, name := range preludeGenericsUsedBy(mod) {
+		loadStdModuleFor(merged, name, abs, projectRoot, dependencyRoots, components, visited)
+	}
 	for _, include := range mod.Includes {
 		includePath := include.Path
 		if !filepath.IsAbs(includePath) {
@@ -806,33 +842,59 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 	return merged, nil
 }
 
+// sourceDiagnostic is a failure reported against a place in a source file.
+//
+// The place comes from the error, which carries one. It used to be scraped out
+// of the error's text, which worked until a message was reworded and then failed
+// quietly — a report with no line rather than a wrong one, and no way to tell
+// which it was.
 func sourceDiagnostic(path, source, phase string, err error) error {
-	message := err.Error()
-	byteOffset := -1
-	if marker := strings.Index(message, "byte "); marker >= 0 {
-		start := marker + len("byte ")
-		end := start
-		for end < len(message) && message[end] >= '0' && message[end] <= '9' {
-			end++
+	// A type error is looked for through whatever is wrapped around it: an
+	// error that has been through a `%w` on the way here is still the error a
+	// position belongs to, and asserting the outermost type misses it.
+	if positioned := types.AsError(err); positioned != nil {
+		if !positioned.Position.Valid() {
+			// A check that could not place its own failure. The declaration it was
+			// checking is still worth naming, and a report without a line is
+			// honest where a guessed one is not.
+			if positioned.Scope != "" {
+				return fmt.Errorf("%s %s: %s: %w", phase, path, positioned.Scope, positioned)
+			}
+			return fmt.Errorf("%s %s: %w", phase, path, positioned)
 		}
-		if end > start {
-			if parsed, parseErr := strconv.Atoi(message[start:end]); parseErr == nil {
+		return fmt.Errorf("%s %s:%d:%d: %w",
+			phase, path, positioned.Position.Line, positioned.Position.Column, positioned)
+	}
+
+	// A parser error still says where in the text it is, because the parser
+	// reports an offset inside a message rather than as an error value. That is
+	// the one place an offset is read out of a message, and it is read from one
+	// this repository writes.
+	byteOffset := -1
+	message := err.Error()
+	if marker := strings.Index(message, "byte "); marker >= 0 {
+		begin := marker + len("byte ")
+		stop := begin
+		for stop < len(message) && message[stop] >= '0' && message[stop] <= '9' {
+			stop++
+		}
+		if stop > begin {
+			if parsed, parseErr := strconv.Atoi(message[begin:stop]); parseErr == nil {
 				byteOffset = parsed
 			}
 		}
 	}
-	line, column := 1, 1
-	if byteOffset >= 0 {
-		if byteOffset > len(source) {
-			byteOffset = len(source)
-		}
-		prefix := source[:byteOffset]
-		line = 1 + strings.Count(prefix, "\n")
-		if last := strings.LastIndex(prefix, "\n"); last >= 0 {
-			column = byteOffset - last
-		} else {
-			column = byteOffset + 1
-		}
+	if byteOffset < 0 {
+		return fmt.Errorf("%s %s: %w", phase, path, err)
+	}
+	if byteOffset > len(source) {
+		byteOffset = len(source)
+	}
+	prefix := source[:byteOffset]
+	line := 1 + strings.Count(prefix, "\n")
+	column := byteOffset + 1
+	if last := strings.LastIndex(prefix, "\n"); last >= 0 {
+		column = byteOffset - last
 	}
 	return fmt.Errorf("%s %s:%d:%d: %w", phase, path, line, column, err)
 }
@@ -1017,6 +1079,18 @@ func resolveImport(name, sourcePath, projectRoot string, dependencyRoots []strin
 				}
 			}
 		}
+		// The installation the toolchain was installed into, which is where a
+		// program outside any checkout finds the library. This is the step that
+		// makes a deployed toolchain able to read the standard library at all:
+		// before it, `std` was only reachable by walking up from a source tree,
+		// so a machine that installed Rho could not compile a program that
+		// imported anything.
+		if home := deps.RhoHome(); home != "" {
+			candidate := filepath.Join(home, "std", relative+".rho")
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, nil
+			}
+		}
 	}
 	for _, dependencyRoot := range dependencyRoots {
 		candidates := []string{
@@ -1047,9 +1121,12 @@ func CompileSource(source string, outPath string) error {
 	}
 
 	// 3. Typechecking
+	//
+	// The source is the text that was compiled rather than a file, so the report
+	// is against that text — the line a reader would see is the line they wrote.
 	tc := types.New()
 	if err := tc.CheckModule(*modAST); err != nil {
-		return fmt.Errorf("typechecking failed: %w", err)
+		return sourceDiagnostic("<source>", source, "typechecking", err)
 	}
 
 	// 4. AST → IR
@@ -1177,4 +1254,151 @@ func BuiltBinary(entry string) (string, bool) {
 		return "", false
 	}
 	return candidate, true
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Prelude generics                                                          */
+/* -------------------------------------------------------------------------- */
+
+// preludeGenerics maps a type the language provides to the standard library
+// module that declares it.
+//
+// The language knows these names without an import, so a file can use one with no
+// declaration of it anywhere. What the compiler still needs is the declaration,
+// because that is what a specialisation is built from: `Slice[u8]` is an
+// expanded copy of `struct Slice[T]`, and a copy of nothing is a type the
+// backend has never heard of.
+var preludeGenerics = map[string]string{
+	"Slice":  "core.slice",
+	"Ptr":    "core.ptr",
+	"Option": "core.option",
+	"Result": "core.result",
+	"Array":  "collections.array",
+	"Map":    "collections.map",
+	"String": "core.string",
+}
+
+// preludeGenericsUsedBy are the language's own generics this module applies.
+//
+// The body is scanned as well as the signature, because the shape the language
+// is most often written in — a local declared as `let s: Slice[u8]` — mentions
+// the type only there.
+func preludeGenericsUsedBy(module *ast.Module) []string {
+	used := []string{}
+	seen := map[string]bool{}
+	note := func(written string) {
+		name, _, found := strings.Cut(written, "[")
+		if !found {
+			return
+		}
+		module_, known := preludeGenerics[name]
+		if !known || seen[name] {
+			return
+		}
+		seen[name] = true
+		used = append(used, module_)
+	}
+	var walkExpr func(expr ast.Expr)
+	walkExpr = func(expr ast.Expr) {
+		switch e := expr.(type) {
+		case nil:
+		case ast.CallExpr:
+			// A callee is an expression, and a call to a type is a conversion, so
+			// the name is taken by walking rather than by asserting: a conversion
+			// and a call look the same here and are not the same thing.
+			walkExpr(e.Callee)
+			for _, argument := range e.Args {
+				walkExpr(argument)
+			}
+		case ast.IdentifierExpr:
+			note(e.Name)
+		case ast.StructLiteralExpr:
+			note(e.Type.Name)
+			for _, value := range e.Values {
+				walkExpr(value)
+			}
+		case ast.MemberExpr:
+			walkExpr(e.Object)
+		case ast.IndexExpr:
+			walkExpr(e.Object)
+			walkExpr(e.Index)
+		case ast.BinaryExpr:
+			walkExpr(e.Left)
+			walkExpr(e.Right)
+		case ast.UnaryExpr:
+			walkExpr(e.Value)
+		}
+	}
+	var walkStmt func(stmt ast.Stmt)
+	walkStmt = func(stmt ast.Stmt) {
+		switch s := stmt.(type) {
+		case ast.LetStmt:
+			note(s.Type.String())
+			walkExpr(s.Value)
+		case ast.AssignStmt:
+			walkExpr(s.Target)
+			walkExpr(s.Value)
+		case ast.ReturnStmt:
+			walkExpr(s.Value)
+		case ast.ExprStmt:
+			walkExpr(s.Expr)
+		case ast.IfStmt:
+			walkExpr(s.Condition)
+			for _, inner := range s.Then {
+				walkStmt(inner)
+			}
+			for _, inner := range s.Else {
+				walkStmt(inner)
+			}
+		case ast.WhileStmt:
+			walkExpr(s.Condition)
+			for _, inner := range s.Body {
+				walkStmt(inner)
+			}
+		}
+	}
+	for _, decl := range module.Decls {
+		switch d := decl.(type) {
+		case ast.FuncDecl:
+			note(d.ReturnType)
+			for _, param := range d.Params {
+				note(param.Type)
+			}
+			for _, stmt := range d.Body {
+				walkStmt(stmt)
+			}
+		case ast.StructDecl:
+			for _, field := range d.Fields {
+				note(field.Type)
+			}
+		}
+	}
+	return used
+}
+
+// loadStdModuleFor loads the standard library module that declares a prelude
+// generic, unless the file already has it.
+//
+// A file that imported the module itself keeps that import, and the declarations
+// are not loaded twice: a module read once and merged twice would declare every
+// name in it twice, which is a second kind of duplicate rather than a fix.
+func loadStdModuleFor(module *ast.Module, name, from, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) {
+	standard := "std." + name
+	if strings.HasPrefix(module.Name, "std.") && module.Name == standard {
+		return
+	}
+	path, err := resolveImport(standard, from, projectRoot, dependencyRoots, components)
+	if err != nil {
+		// A type the language provides and whose declaration is not installed is a
+		// reason to say so where the type is used, not a reason to fail a file
+		// that may not use it. The checker's own message is the one a reader gets.
+		return
+	}
+	imported, err := loadModuleFile(path, projectRoot, dependencyRoots, components, visited)
+	if err != nil {
+		return
+	}
+	markModuleOwnership(imported, imported.Name)
+	module.Decls = append(module.Decls, imported.Decls...)
+	module.Features = append(module.Features, imported.Features...)
 }

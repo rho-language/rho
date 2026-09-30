@@ -47,7 +47,9 @@ modules = "%s/modules/installed"
 registry = "%s/registry/local"
 cache = "%s/cache"
 config = "%s/config"
-`, home, home, home, home, home, home)
+auth = "%s/auth"
+pkg_mod = "%s/pkg/mod"
+`, home, home, home, home, home, home, home, home)
 }
 
 /* -------------------------------------------------------------------------- */

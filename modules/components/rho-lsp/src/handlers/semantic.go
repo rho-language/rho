@@ -16,6 +16,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"rho/src/frontend/lexer"
 
 	"github.com/rho/rho-lsp/src/protocol"
 	"github.com/rho/rho-lsp/src/state"
@@ -69,13 +70,13 @@ func HandleSemanticTokens(req protocol.Request, ws *state.Workspace) *protocol.R
 				}
 				return tok.Column
 			}()),
-			uint32(len(tok.Text)),
+			uint32(len(tok.Lex)),
 			uint32(kind),
 			uint32(modifiers),
 		)
 		previousLine, previousColumn = tok.Line, tok.Column
 	}
-	ws.SemanticTokens[normalizedPath] = append([]uint32{}, tokens...)
+	ws.SetSemanticTokens(normalizedPath, append([]uint32{}, tokens...))
 
 	return &protocol.Response{
 		JsonRPC: "2.0",
@@ -107,7 +108,7 @@ func HandleSemanticTokensDelta(req protocol.Request, ws *state.Workspace) *proto
 	_ = json.Unmarshal(raw, &params)
 
 	normalizedPath := state.NormalizeURI(params.TextDocument.URI)
-	current := ws.SemanticTokens[normalizedPath]
+	current, _ := ws.SemanticTokensFor(normalizedPath)
 	if current == nil {
 		full := HandleSemanticTokens(req, ws)
 		return full
@@ -126,39 +127,48 @@ func HandleSemanticTokensDelta(req protocol.Request, ws *state.Workspace) *proto
 
 func classifyToken(doc *state.Document, index int) (int, int) {
 	tok := doc.Tokens[index]
-	if doc.AST != nil {
-		for _, node := range doc.AST.Nodes {
-			if node.Line() == tok.Line && node.Column() == tok.Column {
-				switch node.Role() {
-				case "module":
+	if doc.Index != nil {
+		for _, node := range doc.Index.Names {
+			if node.Line == tok.Line && node.Column == tok.Column {
+				switch node.Role {
+				case state.RoleModule, state.RoleStruct, state.RoleType:
 					return TokenType, 0
-				case "function":
+				case state.RoleFunction:
 					return TokenFunction, 2
-				case "field":
+				case state.RoleField:
 					return TokenField, 0
+				case state.RoleVariable, state.RoleParameter:
+					return TokenVariable, 0
 				}
 			}
 		}
 	}
-	if index > 0 && doc.Tokens[index-1].Text == "." {
+	if index > 0 && doc.Tokens[index-1].Lex == "." {
 		return TokenField, 0
 	}
-	if index > 0 && (doc.Tokens[index-1].Text == "import" || doc.Tokens[index-1].Text == "module") {
+	if index > 0 && (doc.Tokens[index-1].Lex == "import" || doc.Tokens[index-1].Lex == "module") {
 		return TokenType, 0
 	}
-	if index > 0 && doc.Tokens[index-1].Text == "fn" {
+	if index > 0 && doc.Tokens[index-1].Lex == "fn" {
 		return TokenFunction, 2
 	}
-	if tok.Kind == "keyword" {
+	// The compiler's own token kinds, rather than this server's names for them:
+	// a token highlighted as a keyword is a keyword the compiler lexed, and the
+	// two cannot disagree about what the language contains.
+	switch tok.Kind {
+	case lexer.TokenModule, lexer.TokenImport, lexer.TokenInclude, lexer.TokenStruct,
+		lexer.TokenEnum, lexer.TokenFn, lexer.TokenConfig, lexer.TokenExtern,
+		lexer.TokenIf, lexer.TokenFor, lexer.TokenMatch, lexer.TokenReturn,
+		lexer.TokenReverse, lexer.TokenStep, lexer.TokenLet, lexer.TokenWhile,
+		lexer.TokenElse, lexer.TokenBreak, lexer.TokenType, lexer.TokenRoute:
 		return TokenKeyword, 0
-	}
-	if tok.Kind == "type" {
+	case lexer.TokenTrue, lexer.TokenFalse:
 		return TokenType, 0
-	}
-	if tok.Kind == "literal" {
+	case lexer.TokenNumber, lexer.TokenString:
 		return TokenLiteral, 0
-	}
-	if tok.Kind == "operator" {
+	case lexer.TokenAssign, lexer.TokenArrow, lexer.TokenEqual, lexer.TokenNotEqual,
+		lexer.TokenLess, lexer.TokenLessEqual, lexer.TokenGreater,
+		lexer.TokenGreaterEqual, lexer.TokenAnd, lexer.TokenOr, lexer.TokenNot:
 		return TokenOperator, 0
 	}
 	return TokenVariable, 0
