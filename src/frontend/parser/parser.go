@@ -135,25 +135,63 @@ func (p *Parser) parseImports() []ast.Import {
 	return imports
 }
 
+// parseTopLevelDecls reads the declarations at the top of a file.
+//
+// A declaration is positioned where its keyword is, which is where a reader
+// expects a declaration to be: the first character of `fn`, not of its name. The
+// position is taken before the declaration is parsed, because parsing it moves
+// past every token that belongs to it.
 func (p *Parser) parseTopLevelDecls() []ast.Decl {
 	decls := []ast.Decl{}
 	for p.current.Kind != lexer.TokenEOF {
+		start := p.position()
+		var decl ast.Decl
 		switch p.current.Kind {
 		case lexer.TokenStruct:
-			decls = append(decls, p.parseStructDecl())
+			decl = p.parseStructDecl()
 		case lexer.TokenFn:
-			decls = append(decls, p.parseFuncDecl())
+			decl = p.parseFuncDecl()
 		case lexer.TokenExtern:
-			decls = append(decls, p.parseFuncDeclWithExtern())
+			decl = p.parseFuncDeclWithExtern()
 		case lexer.TokenType:
-			decls = append(decls, p.parseTypeDecl())
+			decl = p.parseTypeDecl()
 		case lexer.TokenRoute:
-			decls = append(decls, p.parseRouteDecl())
+			decl = p.parseRouteDecl()
 		default:
 			panic(fmt.Sprintf("unexpected token in top-level: %q", p.current.Lex))
 		}
+		p.locate(&decl, start)
+		decls = append(decls, decl)
 	}
 	return decls
+}
+
+// position is where the lexer currently is, in a form the tree can carry.
+func (p *Parser) position() ast.Position {
+	return ast.Position{Offset: p.current.Pos, Line: p.current.Line, Column: p.current.Column}
+}
+
+// locate puts a declaration at the place its keyword was.
+//
+// The position is where the declaration began, which the parse functions have
+// already moved past, so it is taken before they run and set afterwards. A node
+// can be any of the four kinds, and asking each in turn is four type assertions
+// rather than a change to every parse function.
+func (p *Parser) locate(node *ast.Decl, at ast.Position) {
+	switch n := (*node).(type) {
+	case ast.TypeDecl:
+		n.Pos = at
+		*node = n
+	case ast.RouteDecl:
+		n.Pos = at
+		*node = n
+	case ast.StructDecl:
+		n.Pos = at
+		*node = n
+	case ast.FuncDecl:
+		n.Pos = at
+		*node = n
+	}
 }
 
 // parseRouteDecl parses a route binding, as in
@@ -221,19 +259,40 @@ func (p *Parser) parseType() ast.TypeExpr {
 		return typeExpr
 	}
 	p.readToken()
+	// A bracket is two different things depending on what is inside it. A number
+	// on its own is a length: `u8[8]` is eight of them, and `SetError[4]` is
+	// four. A number after a comma is a value argument, because that is how a
+	// declaration says how many of something it holds: `Array[u8, 4]`.
+	//
+	// Reading every number as a length swapped the element type for the count, so
+	// `Array[u8, 4]` parsed as an array of eight-byte things of length `u8` — a
+	// name no declaration could be built from, and a type the backend had never
+	// heard of.
+	afterComma := false
 	for p.current.Kind != closing {
-		if p.current.Kind == lexer.TokenNumber {
+		if p.current.Kind == lexer.TokenNumber && !afterComma {
 			length, err := strconv.Atoi(p.current.Lex)
 			if err != nil {
 				panic("invalid array length")
 			}
 			typeExpr.ArrayLen = &length
 			p.readToken()
+		} else if p.current.Kind == lexer.TokenNumber {
+			// A value argument, which is how a declaration says how many of
+			// something it holds. It is kept as a name rather than a length,
+			// because it names the parameter it is substituted for and not a
+			// dimension of the element.
+			argument := ast.TypeExpr{Name: p.current.Lex}
+			typeExpr.Args = append(typeExpr.Args, argument)
+			p.readToken()
+			afterComma = false
 		} else {
 			typeExpr.Args = append(typeExpr.Args, p.parseType())
+			afterComma = false
 		}
 		if p.current.Kind == lexer.TokenComma {
 			p.readToken()
+			afterComma = true
 		}
 	}
 	p.readToken()
@@ -333,7 +392,15 @@ func blockExpr(statements []ast.Stmt) ast.Expr {
 	panic("expression block must contain one expression")
 }
 
+// parseStmt reads one statement.
+//
+// A statement is positioned where its first token is, taken before the statement
+// is read because reading it moves past every token that belongs to it. Setting
+// it here rather than in each case means a new kind of statement is positioned by
+// having been added, rather than by remembering.
 func (p *Parser) parseStmt() ast.Stmt {
+	start := p.position()
+	var stmt ast.Stmt
 	switch p.current.Kind {
 	case lexer.TokenLet:
 		p.readToken()
@@ -351,16 +418,17 @@ func (p *Parser) parseStmt() ast.Stmt {
 			value = p.parseExpr(0)
 		}
 		p.consumeSemi()
-		return ast.LetStmt{Name: name, Type: declaredType, Value: value}
+		stmt = ast.LetStmt{Name: name, Type: declaredType, Value: value}
 	case lexer.TokenReturn:
 		p.readToken()
 		if p.current.Kind == lexer.TokenRBrace || p.current.Kind == lexer.TokenSemicolon {
 			p.consumeSemi()
-			return ast.ReturnStmt{}
+			stmt = ast.ReturnStmt{}
+			break
 		}
 		value := p.parseExpr(0)
 		p.consumeSemi()
-		return ast.ReturnStmt{Value: value}
+		stmt = ast.ReturnStmt{Value: value}
 	case lexer.TokenIf:
 		p.readToken()
 		condition := p.parseExpr(0)
@@ -370,15 +438,15 @@ func (p *Parser) parseStmt() ast.Stmt {
 			p.readToken()
 			elseBody = p.parseBlock()
 		}
-		return ast.IfStmt{Condition: condition, Then: thenBody, Else: elseBody}
+		stmt = ast.IfStmt{Condition: condition, Then: thenBody, Else: elseBody}
 	case lexer.TokenWhile:
 		p.readToken()
 		condition := p.parseExpr(0)
-		return ast.WhileStmt{Condition: condition, Body: p.parseBlock()}
+		stmt = ast.WhileStmt{Condition: condition, Body: p.parseBlock()}
 	case lexer.TokenBreak:
 		p.readToken()
 		p.consumeSemi()
-		return ast.BreakStmt{}
+		stmt = ast.BreakStmt{}
 	default:
 		left := p.parseExpr(0)
 		if p.current.Kind == lexer.TokenAssign {
@@ -386,10 +454,44 @@ func (p *Parser) parseStmt() ast.Stmt {
 			p.readToken()
 			value := p.parseExpr(0)
 			p.consumeSemi()
-			return ast.AssignStmt{Target: left, Value: value, Op: op}
+			stmt = ast.AssignStmt{Target: left, Value: value, Op: op}
+			break
 		}
 		p.consumeSemi()
-		return ast.ExprStmt{Expr: left}
+		stmt = ast.ExprStmt{Expr: left}
+	}
+	p.place(&stmt, start)
+	return stmt
+}
+
+// place puts a statement at the place it began.
+//
+// A statement is any of the kinds, and asking each in turn is a type switch
+// rather than a change to every case above: the position is where the statement
+// started, which reading it has already moved past.
+func (p *Parser) place(stmt *ast.Stmt, at ast.Position) {
+	switch n := (*stmt).(type) {
+	case ast.LetStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.ReturnStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.IfStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.WhileStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.BreakStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.AssignStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.ExprStmt:
+		n.Pos = at
+		*stmt = n
 	}
 }
 
@@ -422,7 +524,13 @@ func (p *Parser) parseExpr(minPrecedence int) ast.Expr {
 	return left
 }
 
+// parsePrefix reads the first thing in an expression.
+//
+// The position is taken before anything is read, and applied on the way out, so
+// that an expression carries where it began rather than where the parser had
+// reached by the time it was finished.
 func (p *Parser) parsePrefix() ast.Expr {
+	start := p.position()
 	var expression ast.Expr
 	switch p.current.Kind {
 	case lexer.TokenNumber:
@@ -478,7 +586,58 @@ func (p *Parser) parsePrefix() ast.Expr {
 	default:
 		panic(fmt.Sprintf("expected expression, got %q", p.current.Lex))
 	}
-	return p.parsePostfix(expression)
+	// Postfix calls and field accesses extend what was read, so they are applied
+	// before the position is: `a.b()` is one expression that begins at `a`.
+	return p.placeExpr(p.parsePostfix(expression), start)
+}
+
+// placeExpr puts an expression at the place it began.
+//
+// An expression is any of the kinds, and asking each in turn is a type switch
+// rather than a change to every case in parsePrefix.
+func (p *Parser) placeExpr(expr ast.Expr, at ast.Position) ast.Expr {
+	switch e := expr.(type) {
+	case ast.IdentifierExpr:
+		e.Pos = at
+		return e
+	case ast.NumberExpr:
+		e.Pos = at
+		return e
+	case ast.StringExpr:
+		e.Pos = at
+		return e
+	case ast.BoolExpr:
+		e.Pos = at
+		return e
+	case ast.UnaryExpr:
+		e.Pos = at
+		return e
+	case ast.BinaryExpr:
+		e.Pos = at
+		return e
+	case ast.CallExpr:
+		e.Pos = at
+		return e
+	case ast.MemberExpr:
+		e.Pos = at
+		return e
+	case ast.IndexExpr:
+		e.Pos = at
+		return e
+	case ast.CastExpr:
+		e.Pos = at
+		return e
+	case ast.StructLiteralExpr:
+		e.Pos = at
+		return e
+	case ast.ArrayLiteralExpr:
+		e.Pos = at
+		return e
+	case ast.IfExpr:
+		e.Pos = at
+		return e
+	}
+	return expr
 }
 
 func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {

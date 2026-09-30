@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -67,8 +68,38 @@ type Workspace struct {
 	URIMap          map[string]string    // Key: Normalized Path -> Value: Original VS Code URI
 	GlobalSymbols   *GlobalSymbolTable
 	ExternalSymbols *GlobalSymbolTable
-	SemanticTokens  map[string][]uint32
-	Roots           []string
+	// SemanticTokens is the last result for a document, kept so that a request
+	// for the same text twice is not computed twice. It is read and written
+	// through the workspace's own lock, like everything else here: a cache is
+	// exactly the kind of thing two requests touch at once, and an
+	// unsynchronised map on a locked struct is worse than no lock at all, because
+	// it looks correct.
+	SemanticTokens map[string][]uint32
+	Roots          []string
+}
+
+// SemanticTokensFor is the last tokens computed for a document.
+func (ws *Workspace) SemanticTokensFor(path string) ([]uint32, bool) {
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+	tokens, found := ws.SemanticTokens[path]
+	return tokens, found
+}
+
+// SetSemanticTokens records the tokens computed for a document.
+func (ws *Workspace) SetSemanticTokens(path string, tokens []uint32) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	ws.SemanticTokens[path] = tokens
+}
+
+// ForgetSemanticTokens drops what was computed for a document, which is what a
+// close has to do: a cache that outlives its document is a document's tokens
+// answered to a file that no longer has any.
+func (ws *Workspace) ForgetSemanticTokens(path string) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	delete(ws.SemanticTokens, path)
 }
 
 func NewWorkspace() *Workspace {
@@ -91,6 +122,12 @@ func (ws *Workspace) OpenDocument(uri, text string) {
 	normURI := NormalizeURI(uri)
 	ws.URIMap[normURI] = uri // Remember original URI for LSP responses
 
+	// Whatever the global table already holds is kept aside, because the table is
+	// rebuilt from the open documents below and a rebuild would otherwise drop
+	// every name that did not come from one. A symbol the server was given some
+	// other way — a caller that seeded the workspace, a scan that has not run
+	// yet — is a symbol a person is still typing, and losing it because they
+	// opened a file is the one failure completion cannot recover from.
 	if len(ws.Documents) == 0 && ws.GlobalSymbols != nil {
 		ws.ExternalSymbols = ws.GlobalSymbols
 	}
@@ -246,6 +283,9 @@ func (ws *Workspace) Recompute(uri string) []any {
 
 func (ws *Workspace) updateGlobalSymbols() {
 	ws.GlobalSymbols = NewGlobalSymbolTable()
+
+	// The names the open documents declare, so a document's own declaration wins
+	// over one that was only ever in the table that was kept aside.
 	currentNames := map[string]bool{}
 	for _, doc := range ws.Documents {
 		for name := range doc.Symbols.Local {
@@ -284,4 +324,45 @@ func (ws *Workspace) updateGlobalSymbols() {
 			ws.GlobalSymbols.References[name] = append(ws.GlobalSymbols.References[name], refs...)
 		}
 	}
+}
+
+// MemberField is a struct field the workspace knows about, and the struct it
+// came from.
+type MemberField struct {
+	Struct string
+	Name   string
+	Line   int
+	Column int
+}
+
+// MemberFields is every struct field declared in the documents the server has
+// been given.
+//
+// It walks the open documents rather than the workspace on disk, because this
+// server reads what a client sends it and nothing else: a project it has not been
+// shown is a project it has no opinion about.
+func (ws *Workspace) MemberFields() []MemberField {
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+	out := []MemberField{}
+	for _, doc := range ws.Documents {
+		if doc == nil {
+			continue
+		}
+		for _, field := range doc.Fields {
+			out = append(out, MemberField{
+				Struct: field.Struct,
+				Name:   field.Name,
+				Line:   field.Line,
+				Column: field.Column,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Struct < out[j].Struct
+	})
+	return out
 }

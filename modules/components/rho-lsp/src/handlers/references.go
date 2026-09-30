@@ -40,34 +40,39 @@ func HandleReferences(req protocol.Request, ws *state.Workspace) *protocol.Respo
 	}
 
 	// Find AST node at cursor
-	node := doc.NodeAt(pos.Line, pos.Character)
-	if node == nil {
+	node, found := doc.NodeAt(pos.Line, pos.Character)
+	if !found {
 		return emptyReferences(req)
 	}
 
-	name := node.Name()
+	name := node.Name
 	if name == "" {
 		return emptyReferences(req)
 	}
 
 	// Collect references
 	refs := []protocol.Location{}
-	roleKey := node.Role() + ":" + name
+	roleKey := string(node.Role) + ":" + name
 	if roleRefs := doc.Symbols.RoleRefs[roleKey]; len(roleRefs) > 0 {
 		refs = append(refs, roleRefs...)
 	}
 
-	// Local references
-	for _, loc := range doc.Symbols.LocalRefs[name] {
-		if len(refs) == 0 {
-			refs = append(refs, loc)
-		}
-	}
+	// Local references.
+	//
+	// Every one of them: a guard here that stopped after the first made "find
+	// references" answer with one reference, which is a number that looks like an
+	// answer and is not one.
+	refs = append(refs, doc.Symbols.LocalRefs[name]...)
 
 	// Global references
 	for _, loc := range ws.GlobalSymbols.References[roleKey] {
 		refs = append(refs, loc)
 	}
+
+	// A declaration is recorded as a declaration and as a reference to itself,
+	// which is how the symbol table knows both. Asked for references, that means
+	// every one of them is answered twice.
+	refs = dedupeLocations(refs)
 	if len(refs) == 0 {
 		for _, loc := range ws.GlobalSymbols.References[name] {
 			refs = append(refs, loc)
@@ -91,4 +96,18 @@ func emptyReferences(req protocol.Request) *protocol.Response {
 		ID:      req.ID,
 		Result:  []protocol.Location{},
 	}
+}
+
+// dedupeLocations is the same place once.
+func dedupeLocations(locations []protocol.Location) []protocol.Location {
+	seen := make(map[protocol.Location]bool, len(locations))
+	out := make([]protocol.Location, 0, len(locations))
+	for _, location := range locations {
+		if seen[location] {
+			continue
+		}
+		seen[location] = true
+		out = append(out, location)
+	}
+	return out
 }

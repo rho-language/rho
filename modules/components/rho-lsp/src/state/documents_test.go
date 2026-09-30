@@ -50,11 +50,14 @@ func TestDocumentTokens(t *testing.T) {
 	}
 }
 
-func TestDocumentAST(t *testing.T) {
-	doc := NewDocument("file:///test.rho", "module x")
+func TestDocumentIndex(t *testing.T) {
+	doc := NewDocument("file:///test.rho", "module x\n\nfn test() void {\n  let a: i32 = 1;\n  return;\n}\n")
 
-	if doc.AST == nil {
-		t.Fatalf("expected AST, got nil")
+	if doc.Index == nil {
+		t.Fatal("a well-formed file was not indexed")
+	}
+	if !doc.Symbols.Local["test"] {
+		t.Error("a declared function was not indexed")
 	}
 }
 
@@ -81,8 +84,11 @@ func TestDocumentDoesNotFlagOrdinaryIdentifiersAsUndefined(t *testing.T) {
 func TestDocumentNodeAt(t *testing.T) {
 	doc := NewDocument("file:///test.rho", "module x\nfn test() void {}")
 
-	node := doc.NodeAt(1, 4)
-	if node == nil {
-		t.Fatalf("expected node at position, got nil")
+	node, found := doc.NodeAt(1, 4)
+	if !found {
+		t.Fatal("expected something at the position, got nothing")
+	}
+	if node.Name != "test" {
+		t.Errorf("found %q, want test", node.Name)
 	}
 }

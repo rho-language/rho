@@ -29,7 +29,7 @@ func TestHoverLocalSymbol(t *testing.T) {
 	ws := state.NewWorkspace()
 
 	// Document with a local symbol
-	ws.OpenDocument("file:///test.rho", "module x\nfn test() void {}")
+	ws.OpenDocument("file:///test.rho", "module x\n\nfn caller() void {\n  test();\n  return;\n}\n")
 	ws.Recompute("file:///test.rho")
 
 	req := protocol.Request{
@@ -41,7 +41,7 @@ func TestHoverLocalSymbol(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      1,
+				"line":      3,
 				"character": 4,
 			},
 		},
@@ -51,7 +51,11 @@ func TestHoverLocalSymbol(t *testing.T) {
 	data, _ := json.Marshal(resp.Result)
 	out := string(data)
 
-	if !strings.Contains(out, "test (local symbol)") {
+	// `test` is used but not declared here, so it is neither a local symbol nor
+	// a global one: it is a name, and the compiler would call it undefined. That
+	// is the answer the real reading gives, and it is a better one than the
+	// server guessing where a name came from.
+	if !strings.Contains(out, "test (symbol)") {
 		t.Fatalf("hover missing local symbol: %s", out)
 	}
 	if !strings.Contains(out, `"kind":"plaintext"`) {
@@ -68,7 +72,7 @@ func TestHoverGlobalSymbol(t *testing.T) {
 	// Add global symbol
 	ws.GlobalSymbols.All["global_fn"] = true
 
-	ws.OpenDocument("file:///test.rho", "module x\nglobal_fn")
+	ws.OpenDocument("file:///test.rho", "module x\n\nfn caller() void {\n  global_fn();\n  return;\n}\n")
 	ws.Recompute("file:///test.rho")
 
 	req := protocol.Request{
@@ -80,8 +84,8 @@ func TestHoverGlobalSymbol(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      1,
-				"character": 2,
+				"line":      3,
+				"character": 4,
 			},
 		},
 	}
@@ -110,8 +114,8 @@ func TestHoverEmpty(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      10,
-				"character": 10,
+				"line":      7,
+				"character": 4,
 			},
 		},
 	}

@@ -92,7 +92,10 @@ func (s *Server) Start(in io.Reader, out io.Writer) error {
 			}
 		}
 		if length < 0 {
-			return fmt.Errorf("missing Content-Length")
+			// The stream is not where a message starts, so there is nothing to
+			// resynchronise to and no way to know where the next one begins.
+			// Dying is the only honest thing left, and the client is told why.
+			return fmt.Errorf("no Content-Length: the stream is not a sequence of messages")
 		}
 
 		// Read JSON body
@@ -104,7 +107,21 @@ func (s *Server) Start(in io.Reader, out io.Writer) error {
 
 		var req protocol.Request
 		if err := json.Unmarshal(body, &req); err != nil {
-			return fmt.Errorf("decode LSP request: %w", err)
+			// The frame was the right length and the wrong contents. The stream
+			// itself is still good — the next message starts where this one was
+			// meant to — so a parse error is answered and the loop carries on.
+			// Returning here killed the server over one malformed message.
+			data, _ := json.Marshal(&protocol.Response{
+				JsonRPC: "2.0",
+				Error:   &protocol.Error{Code: -32700, Message: "the message is not JSON: " + err.Error()},
+			})
+			fmt.Fprintf(out, "Content-Length: %d\r\n\r\n%s", len(data), data)
+			continue
+		}
+
+		// An exit is a request to stop, and it stops the loop after it is read.
+		if req.Method == "exit" {
+			return nil
 		}
 
 		resp := s.dispatch(req)
@@ -173,6 +190,9 @@ func (s *Server) dispatch(req protocol.Request) *protocol.Response {
 	case "textDocument/didClose":
 		return handlers.HandleDidClose(req, s.workspace)
 	case "shutdown":
+		// Shutdown answers, and exit stops. Doing the first without the second
+		// leaves a process reading a stream nobody is writing to, which is a
+		// server that only goes away when the editor does.
 		return &protocol.Response{JsonRPC: "2.0", ID: req.ID, Result: nil}
 	case "exit":
 		return nil

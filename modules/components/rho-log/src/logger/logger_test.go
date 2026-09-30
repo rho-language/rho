@@ -29,7 +29,7 @@ func capture(level logfmt.Level) (*Logger, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
 	return New("rho-test", Options{
 		Level: level,
-		Sinks: []Sink{WriterSink{Writer: buf}},
+		Sinks: []Sink{&WriterSink{Writer: buf}},
 	}), buf
 }
 

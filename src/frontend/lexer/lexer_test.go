@@ -175,3 +175,70 @@ func TestLexerSymbols(t *testing.T) {
 		}
 	}
 }
+
+// A token says where it is. Everything downstream — a parser, a type checker, a
+// language server — needs a line and a column to point at, and a byte offset
+// alone makes every one of them count newlines for itself.
+func TestATokenSaysWhereItIs(t *testing.T) {
+	source := "module shop\n\nfn run() void {\n    let x: i32 = 1;\n}\n"
+	tokens, err := Lex(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		lex       string
+		line, col int
+	}{
+		{"module", 1, 1},
+		{"shop", 1, 8},
+		{"fn", 3, 2},
+		{"run", 3, 5},
+		{"let", 4, 6},
+		{"x", 4, 10},
+		{";", 4, 20},
+	}
+	seen := 0
+	for _, token := range tokens {
+		if token.Kind == TokenEOF {
+			break
+		}
+		// Only the tokens this test names, so a change elsewhere in the language
+		// does not fail a test about positions.
+		found := false
+		for _, w := range want {
+			if token.Lex == w.lex {
+				found = true
+				if token.Line != w.line || token.Column != w.col {
+					t.Errorf("%q is at %d:%d, want %d:%d", token.Lex, token.Line, token.Column, w.line, w.col)
+				}
+			}
+		}
+		if found {
+			seen++
+		}
+	}
+	if seen < len(want) {
+		t.Errorf("only %d of the %d tokens this test names were produced", seen, len(want))
+	}
+}
+
+// A column counts characters, not bytes. One that counted bytes would put
+// everything after a character with an accent in it in the wrong place, and an
+// editor that highlights the wrong character is worse than one that highlights
+// nothing.
+func TestAColumnCountsCharactersNotBytes(t *testing.T) {
+	source := "module café\n"
+	tokens, err := Lex(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range tokens {
+		if token.Lex == "café" {
+			if token.Line != 1 || token.Column != 8 {
+				t.Errorf("%q is at %d:%d, want 1:8", token.Lex, token.Line, token.Column)
+			}
+			return
+		}
+	}
+	t.Fatal("the accented name was not lexed as one token")
+}

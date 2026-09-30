@@ -23,10 +23,11 @@ package types
 
 import (
 	"fmt"
-	"rho/src/frontend/ast"
-	"rho/src/ir"
 	"strconv"
 	"strings"
+
+	"rho/src/frontend/ast"
+	"rho/src/ir"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -162,11 +163,26 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			if len(fn.TypeParams) > 0 {
 				tc.genericFuncs[fn.Name] = fn
 			}
+			// A written type in a signature is resolved the way one anywhere else
+			// is, so a generic application mangles to the specialisation it is
+			// built from. Going straight to typeFor left a signature naming
+			// `Result[u8, i32]` while the struct emitted for it is
+			// `Result_u8_i32`, and the backend was handed a type it had never
+			// heard of.
+			//
+			// A template is the exception. Its own signature still names its
+			// parameters — `Box[T]` is `Box_T` until something is substituted for
+			// T — and mangling it here would fix the name before the
+			// specialisation that needs it.
+			signatureType := tc.declaredType
+			if len(fn.TypeParams) > 0 {
+				signatureType = tc.typeFor
+			}
 			params := make([]ir.Type, len(fn.Params))
 			for i, param := range fn.Params {
-				params[i] = tc.typeFor(param.Type)
+				params[i] = signatureType(param.Type)
 			}
-			entry := functionType{params: params, result: tc.typeFor(fn.ReturnType), cName: qualifiedCName(fn.Owner, fn.Name)}
+			entry := functionType{params: params, result: signatureType(fn.ReturnType), cName: qualifiedCName(fn.Owner, fn.Name)}
 			if fn.Owner != "" {
 				tc.funcs[fn.Owner+"."+fn.Name] = entry
 			}
@@ -216,18 +232,18 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 		switch d := decl.(type) {
 		case ast.StructDecl:
 			if err := tc.checkStruct(d); err != nil {
-				return err
+				return locate(err, d.Pos, "struct "+d.Name)
 			}
 		case ast.FuncDecl:
 			if standaloneStdlib || strings.HasPrefix(d.Owner, "std.") {
 				continue
 			}
 			if err := tc.checkFunc(d); err != nil {
-				return err
+				return locate(err, d.Pos, "function "+d.Name)
 			}
 		case ast.RouteDecl:
 			if err := tc.checkRoute(d); err != nil {
-				return err
+				return locate(err, d.Pos, "route "+d.Method+" "+d.Path)
 			}
 		case ast.TypeDecl:
 			// An alias was registered in the pass above, before anything was
@@ -299,110 +315,12 @@ func (tc *TypeChecker) checkStatements(statements []ast.Stmt, scope map[string]i
 		if terminates {
 			return true, fmt.Errorf("unreachable statement")
 		}
-		var statementTerminates bool
-		switch stmt := statement.(type) {
-		case ast.LetStmt:
-			if _, exists := scope[stmt.Name]; exists {
-				return false, fmt.Errorf("duplicate local %q", stmt.Name)
-			}
-			if stmt.Type.Name == "" && stmt.Type.String() == "" {
-				// A type-less binding takes its type from the value.
-				if stmt.Value == nil {
-					return false, fmt.Errorf("cannot infer a type for %q without a value", stmt.Name)
-				}
-				inferred, err := tc.exprType(stmt.Value, scope)
-				if err != nil {
-					return false, err
-				}
-				scope[stmt.Name] = inferred
-				break
-			}
-			declared := tc.declaredType(stmt.Type.String())
-			if stmt.Value != nil {
-				// The declared type is passed down as the expected type, so a
-				// generic literal can be deduced from it rather than guessed.
-				actual, err := tc.exprTypeExpected(stmt.Value, scope, tc.expectedHint(stmt.Type.String(), declared))
-				if err != nil {
-					return false, err
-				}
-				if !assignable(declared, actual) {
-					return false, fmt.Errorf("cannot assign %s to %s", typeName(actual), typeName(declared))
-				}
-			}
-			scope[stmt.Name] = declared
-		case ast.AssignStmt:
-			actual, err := tc.exprType(stmt.Target, scope)
-			if err != nil {
-				return false, err
-			}
-			value, err := tc.exprType(stmt.Value, scope)
-			if err != nil {
-				return false, err
-			}
-			if !assignable(actual, value) {
-				return false, fmt.Errorf("cannot assign %s to %s", typeName(value), typeName(actual))
-			}
-		case ast.ExprStmt:
-			if _, err := tc.exprType(stmt.Expr, scope); err != nil {
-				return false, err
-			}
-		case ast.ReturnStmt:
-			if stmt.Value == nil {
-				if result.Kind != ir.TypeVoid {
-					return false, fmt.Errorf("missing return value")
-				}
-			} else {
-				// The declared return type is the deduction hint, so
-				// `return Ok(7)` can supply a type the argument cannot.
-				actual, err := tc.exprTypeExpected(stmt.Value, scope, result)
-				if err != nil {
-					return false, err
-				}
-				if !assignable(result, actual) {
-					return false, fmt.Errorf("returning %s from %s function", typeName(actual), typeName(result))
-				}
-			}
-			statementTerminates = true
-		case ast.IfStmt:
-			condition, err := tc.exprType(stmt.Condition, scope)
-			if err != nil {
-				return false, err
-			}
-			if condition.Kind != ir.TypeBool {
-				return false, fmt.Errorf("if condition must be bool")
-			}
-			thenScope := cloneScope(scope)
-			thenEnds, err := tc.checkStatements(stmt.Then, thenScope, result, inLoop)
-			if err != nil {
-				return false, err
-			}
-			elseEnds := false
-			if len(stmt.Else) > 0 {
-				elseScope := cloneScope(scope)
-				elseEnds, err = tc.checkStatements(stmt.Else, elseScope, result, inLoop)
-				if err != nil {
-					return false, err
-				}
-			}
-			statementTerminates = thenEnds && elseEnds
-		case ast.WhileStmt:
-			condition, err := tc.exprType(stmt.Condition, scope)
-			if err != nil {
-				return false, err
-			}
-			if condition.Kind != ir.TypeBool {
-				return false, fmt.Errorf("while condition must be bool")
-			}
-			if _, err := tc.checkStatements(stmt.Body, cloneScope(scope), result, true); err != nil {
-				return false, err
-			}
-		case ast.BreakStmt:
-			if !inLoop {
-				return false, fmt.Errorf("break outside loop")
-			}
-			statementTerminates = true
-		default:
-			return false, fmt.Errorf("unsupported statement %T", statement)
+		statementTerminates, err := tc.checkStatement(statement, scope, result, inLoop)
+		if err != nil {
+			// The statement's own place, which is what a report points at. A
+			// check that knows better — one about an expression, or a name that
+			// resolved — carries its own position, and locate keeps that one.
+			return false, locate(err, statement.Position(), "")
 		}
 		terminates = statementTerminates
 	}
@@ -417,8 +335,19 @@ func cloneScope(scope map[string]ir.Type) map[string]ir.Type {
 	return copy
 }
 
+// exprType types an expression.
+//
+// Every expression is typed through here, so it is where an error about one is
+// attributed to the expression rather than to the statement containing it: a
+// name that does not resolve points at the name, not at the line the statement
+// began on. A check that reports about a sub-expression overrides this, and this
+// is the fallback for the ones that do not.
 func (tc *TypeChecker) exprType(expr ast.Expr, scope map[string]ir.Type) (ir.Type, error) {
-	return tc.exprTypeExpected(expr, scope, ir.Type{})
+	typ, err := tc.exprTypeExpected(expr, scope, ir.Type{})
+	if err != nil {
+		return typ, locate(err, expr.Position(), "")
+	}
+	return typ, nil
 }
 
 // exprTypeExpected types an expression with a known expected type. The
@@ -970,9 +899,23 @@ func (tc *TypeChecker) structToIR(s ast.StructDecl) ir.StructIR {
 }
 
 func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
+	// A written type in a signature is resolved the way one anywhere else is, so
+	// a generic application mangles to the specialisation that was emitted for
+	// it. Resolving a parameter from its expression left the name as written —
+	// `Result[u8, i32]` — while the struct emitted for it is `Result_u8_i32`, and
+	// the backend was handed a type it had never heard of.
+	//
+	// A template is the exception: its own signature still names its parameters,
+	// and substituting into them needs the name as written.
+	resolve := tc.declaredType
+	if len(fn.TypeParams) > 0 {
+		resolve = func(written string) ir.Type {
+			return tc.typeFromExpr(fn.Params[0].TypeExpr, fn.TypeParams)
+		}
+	}
 	params := make([]ir.ParamIR, len(fn.Params))
 	for i, p := range fn.Params {
-		paramType := tc.typeFromExpr(p.TypeExpr, fn.TypeParams)
+		paramType := resolve(p.Type)
 		if p.TypeExpr.Name == "" {
 			paramType = tc.typeFor(p.Type)
 		}
@@ -1794,4 +1737,119 @@ func (tc *TypeChecker) resolveTypeBounded(name string, depth int) (ir.Type, bool
 		return ir.Type{Kind: ir.TypeStruct, Name: name}, true
 	}
 	return ir.Type{}, false
+}
+
+// checkStatement reads one statement and reports whether it always returns.
+//
+// It is a function of its own so that checkStatements can attribute whatever it
+// reports to the statement it came from, in one place rather than at each of
+// the many places a statement can go wrong.
+func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Type, result ir.Type, inLoop bool) (bool, error) {
+	var statementTerminates bool
+	switch stmt := statement.(type) {
+	case ast.LetStmt:
+		if _, exists := scope[stmt.Name]; exists {
+			return false, fmt.Errorf("duplicate local %q", stmt.Name)
+		}
+		if stmt.Type.Name == "" && stmt.Type.String() == "" {
+			// A type-less binding takes its type from the value.
+			if stmt.Value == nil {
+				return false, fmt.Errorf("cannot infer a type for %q without a value", stmt.Name)
+			}
+			inferred, err := tc.exprType(stmt.Value, scope)
+			if err != nil {
+				return false, err
+			}
+			scope[stmt.Name] = inferred
+			break
+		}
+		declared := tc.declaredType(stmt.Type.String())
+		if stmt.Value != nil {
+			// The declared type is passed down as the expected type, so a
+			// generic literal can be deduced from it rather than guessed.
+			actual, err := tc.exprTypeExpected(stmt.Value, scope, tc.expectedHint(stmt.Type.String(), declared))
+			if err != nil {
+				return false, err
+			}
+			if !assignable(declared, actual) {
+				return false, fmt.Errorf("cannot assign %s to %s", typeName(actual), typeName(declared))
+			}
+		}
+		scope[stmt.Name] = declared
+	case ast.AssignStmt:
+		actual, err := tc.exprType(stmt.Target, scope)
+		if err != nil {
+			return false, err
+		}
+		value, err := tc.exprType(stmt.Value, scope)
+		if err != nil {
+			return false, err
+		}
+		if !assignable(actual, value) {
+			return false, fmt.Errorf("cannot assign %s to %s", typeName(value), typeName(actual))
+		}
+	case ast.ExprStmt:
+		if _, err := tc.exprType(stmt.Expr, scope); err != nil {
+			return false, err
+		}
+	case ast.ReturnStmt:
+		if stmt.Value == nil {
+			if result.Kind != ir.TypeVoid {
+				return false, fmt.Errorf("missing return value")
+			}
+		} else {
+			// The declared return type is the deduction hint, so
+			// `return Ok(7)` can supply a type the argument cannot.
+			actual, err := tc.exprTypeExpected(stmt.Value, scope, result)
+			if err != nil {
+				return false, err
+			}
+			if !assignable(result, actual) {
+				return false, fmt.Errorf("returning %s from %s function", typeName(actual), typeName(result))
+			}
+		}
+		statementTerminates = true
+	case ast.IfStmt:
+		condition, err := tc.exprType(stmt.Condition, scope)
+		if err != nil {
+			return false, err
+		}
+		if condition.Kind != ir.TypeBool {
+			return false, fmt.Errorf("if condition must be bool")
+		}
+		thenScope := cloneScope(scope)
+		thenEnds, err := tc.checkStatements(stmt.Then, thenScope, result, inLoop)
+		if err != nil {
+			return false, err
+		}
+		elseEnds := false
+		if len(stmt.Else) > 0 {
+			elseScope := cloneScope(scope)
+			elseEnds, err = tc.checkStatements(stmt.Else, elseScope, result, inLoop)
+			if err != nil {
+				return false, err
+			}
+		}
+		statementTerminates = thenEnds && elseEnds
+	case ast.WhileStmt:
+		condition, err := tc.exprType(stmt.Condition, scope)
+		if err != nil {
+			return false, err
+		}
+		if condition.Kind != ir.TypeBool {
+			return false, fmt.Errorf("while condition must be bool")
+		}
+		if _, err := tc.checkStatements(stmt.Body, cloneScope(scope), result, true); err != nil {
+			return false, err
+		}
+	case ast.BreakStmt:
+		if !inLoop {
+			return false, fmt.Errorf("break outside loop")
+		}
+		statementTerminates = true
+	default:
+		return false, fmt.Errorf("unsupported statement %T", statement)
+	}
+
+	return statementTerminates, nil
 }

@@ -28,8 +28,12 @@ type Request struct {
 type Response struct {
 	JsonRPC string      `json:"jsonrpc"`
 	ID      interface{} `json:"id"`
-	Result  any         `json:"result,omitempty"`
-	Error   *Error      `json:"error,omitempty"`
+	// Result is always sent, even when it is null. A response with no result key
+	// is not a response: the specification says a result is null when there is
+	// none, and clients that asked to shut down read that null as the answer they
+	// were waiting for.
+	Result any    `json:"result"`
+	Error  *Error `json:"error,omitempty"`
 }
 
 type Error struct {

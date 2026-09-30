@@ -17,7 +17,6 @@ package handlers
 import (
 	"encoding/json"
 
-	"github.com/rho/rho-lsp/src/analysis"
 	"github.com/rho/rho-lsp/src/protocol"
 	"github.com/rho/rho-lsp/src/state"
 )
@@ -41,13 +40,13 @@ func HandleHover(req protocol.Request, ws *state.Workspace) *protocol.Response {
 	}
 
 	// Find AST node at position
-	node := doc.NodeAt(pos.Line, pos.Character)
-	if node == nil {
+	node, found := doc.NodeAt(pos.Line, pos.Character)
+	if !found {
 		return emptyHover(req)
 	}
 
 	// Extract symbol name
-	name := node.Name()
+	name := node.Name
 	if name == "" {
 		return emptyHover(req)
 	}
@@ -78,15 +77,15 @@ func emptyHover(req protocol.Request) *protocol.Response {
 	}
 }
 
-func hoverResponse(req protocol.Request, node analysis.Node, detail string) *protocol.Response {
-	name := node.Name()
+func hoverResponse(req protocol.Request, node state.NamedPosition, detail string) *protocol.Response {
+	name := node.Name
 	// MarkupContent requires "kind"; without it clients silently drop the hover.
 	contents := map[string]any{
 		"kind":  "plaintext",
 		"value": name + " (" + detail + ")",
 	}
-	start := protocol.Position{Line: node.Line(), Character: node.Column()}
-	end := protocol.Position{Line: node.Line(), Character: node.Column() + len([]rune(name))}
+	start := protocol.Position{Line: node.Line, Character: node.Column}
+	end := protocol.Position{Line: node.Line, Character: node.Column + len([]rune(name))}
 
 	return &protocol.Response{
 		JsonRPC: "2.0",

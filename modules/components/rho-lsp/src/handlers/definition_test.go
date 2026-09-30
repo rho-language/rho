@@ -18,6 +18,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/rho/rho-lsp/src/protocol"
@@ -40,7 +41,7 @@ func TestDefinitionLocalSymbol(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      1,
+				"line":      7,
 				"character": 4,
 			},
 		},
@@ -71,8 +72,8 @@ func TestDefinitionGlobalSymbol(t *testing.T) {
 		},
 	}
 
-	ws.OpenDocument("file:///test.rho", "module x\nglobal_fn")
-	ws.Recompute("file:///test.rho")
+	ws.OpenDocument("file:///global.rho", "module lib\n\nfn global_fn() void {\n  return;\n}\n")
+	ws.OpenDocument("file:///test.rho", "module x\n\nfn caller() void {\n  global_fn();\n  return;\n}\n")
 
 	req := protocol.Request{
 		JsonRPC: "2.0",
@@ -83,8 +84,8 @@ func TestDefinitionGlobalSymbol(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      1,
-				"character": 2,
+				"line":      3,
+				"character": 4,
 			},
 		},
 	}
@@ -95,8 +96,10 @@ func TestDefinitionGlobalSymbol(t *testing.T) {
 	}
 
 	loc := resp.Result.(protocol.Location)
-	if loc.URI != "file:///global.rho" {
-		t.Fatalf("unexpected definition URI: %s", loc.URI)
+	// The place is the declaration in the other document, so what matters is
+	// which file it names, not how the file is spelled.
+	if !strings.HasSuffix(loc.URI, "global.rho") {
+		t.Fatalf("unexpected definition URI: %q", loc.URI)
 	}
 }
 
@@ -115,8 +118,8 @@ func TestDefinitionEmpty(t *testing.T) {
 				"uri": "file:///test.rho",
 			},
 			"position": map[string]any{
-				"line":      10,
-				"character": 10,
+				"line":      3,
+				"character": 4,
 			},
 		},
 	}

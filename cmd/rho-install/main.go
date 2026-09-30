@@ -68,6 +68,13 @@ func runInstall() {
 			// Binaries are expected to be in ./bin relative to rho-install
 			return install.InstallAllBinaries("./bin")
 		}},
+		{"Installing standard library", func() error {
+			return install.InstallStd(".")
+		}},
+		{"Installing documentation", func() error {
+			return install.InstallDocs(".")
+		}},
+		{"Registering built-in components", func() error { return install.RegisterBuiltinComponents(".") }},
 		{"Initializing registry", install.InitLocalRegistry},
 		{"Initializing cache", install.InitCache},
 		{"Initializing config", install.InitConfig},

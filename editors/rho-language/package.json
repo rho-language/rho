@@ -1,59 +1,141 @@
 {
-  "name": "rho",
-  "displayName": "Rho",
-  "description": "Language support for Rho (syntax highlighting, LSP client).",
-  "version": "0.2.0",
-  "publisher": "robohubplatform",
-  "engines": {
-    "vscode": "^1.80.0"
-  },
-  "categories": ["Programming Languages"],
-  "main": "./out/extension.js",
-  "activationEvents": [
-    "onLanguage:rho"
-  ],
-  "contributes": {
-    "languages": [
-      {
-        "id": "rho",
-        "aliases": ["Rho", "rho"],
-        "extensions": [".rho"],
-        "configuration": "./language-configuration.json"
-      }
+    "name": "rho",
+    "displayName": "Rho",
+    "description": "Language support for Rho (syntax highlighting, LSP client).",
+    "version": "0.3.0",
+    "publisher": "robohubplatform",
+    "engines": {
+        "vscode": "^1.82.0"
+    },
+    "categories": [
+        "Programming Languages"
     ],
-    "grammars": [
-      {
-        "language": "rho",
-        "scopeName": "source.rho",
-        "path": "./syntaxes/rho.tmLanguage.json"
-      }
-    ],
-    "configuration": {
-      "type": "object",
-      "title": "Rho",
-      "properties": {
-        "rho.lsp.serverPath": {
-          "type": "string",
-          "default": "bin/rho",
-          "description": "Path to the rho binary (relative to workspace root). The LSP server is started with 'rho lsp'."
-        }
-      }
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "rho",
+                "aliases": [
+                    "Rho",
+                    "rho"
+                ],
+                "extensions": [
+                    ".rho"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "rho",
+                "scopeName": "source.rho",
+                "path": "./syntaxes/rho.tmLanguage.json"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "Rho",
+            "properties": {
+                "rho.lsp.serverPath": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Where the `rho` toolchain is, **only when it is not where the extension finds it by itself**. The extension checks (1) this setting, (2) `RHO_BIN`, (3) the Rho home (`~/.rho`/`RHO_HOME`), and (4) `PATH`, so a deployed toolchain is found with nothing configured. Set an absolute path here when it is somewhere unusual; a relative path is read from the Rho home."
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "rho.showStatus",
+                "title": "Show Toolchain Status",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.cliReference",
+                "title": "CLI Reference",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.build",
+                "title": "Build Project",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.run",
+                "title": "Run File",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.test",
+                "title": "Run Tests",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.doc",
+                "title": "Generate Documentation",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.modules",
+                "title": "Manage Modules",
+                "category": "Rho"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "rho.build",
+                    "when": "editorLangId == rho",
+                    "group": "navigation"
+                }
+            ],
+            "editor/context": [
+                {
+                    "command": "rho.run",
+                    "when": "editorLangId == rho",
+                    "group": "navigation"
+                },
+                {
+                    "command": "rho.test",
+                    "when": "editorLangId == rho"
+                },
+                {
+                    "command": "rho.doc",
+                    "when": "editorLangId == rho"
+                },
+                {
+                    "command": "rho.modules",
+                    "when": "editorLangId == rho"
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "command": "rho.build",
+                "key": "ctrl+alt+b",
+                "mac": "cmd+alt+b",
+                "when": "editorLangId == rho"
+            },
+            {
+                "command": "rho.run",
+                "key": "f5",
+                "when": "editorLangId == rho"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "package": "vsce package"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.80.0",
+        "@types/node": "^18.0.0",
+        "typescript": "^5.0.0",
+        "vsce": "^2.15.0"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.0",
+        "vscode-languageserver-protocol": "^3.17.0"
     }
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "vsce package"
-  },
-  "devDependencies": {
-    "@types/vscode": "^1.80.0",
-    "@types/node": "^18.0.0",
-    "typescript": "^5.0.0",
-    "vsce": "^2.15.0"
-  },
-  "dependencies": {
-    "vscode-languageclient": "^9.0.0",
-    "vscode-languageserver-protocol": "^3.17.0"
-  }
 }

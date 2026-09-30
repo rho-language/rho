@@ -40,12 +40,12 @@ func HandleDefinition(req protocol.Request, ws *state.Workspace) *protocol.Respo
 	}
 
 	// Find AST node at cursor
-	node := doc.NodeAt(pos.Line, pos.Character)
-	if node == nil {
+	node, found := doc.NodeAt(pos.Line, pos.Character)
+	if !found {
 		return emptyDefinition(req)
 	}
 
-	name := node.Name()
+	name := node.Name
 	if name == "" {
 		return emptyDefinition(req)
 	}

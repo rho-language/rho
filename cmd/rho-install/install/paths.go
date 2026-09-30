@@ -89,6 +89,8 @@ func EnsurePaths() error {
 		filepath.Join(rhoHome, "registry", "local"),
 		filepath.Join(rhoHome, "cache"),
 		filepath.Join(rhoHome, "config"),
+		filepath.Join(rhoHome, "auth"),
+		filepath.Join(rhoHome, "pkg", "mod"),
 	}
 
 	for _, d := range dirs {

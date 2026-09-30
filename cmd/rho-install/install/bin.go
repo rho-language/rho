@@ -94,37 +94,59 @@ func installBinary(src string, replace bool) error {
 	return nil
 }
 
-// InstallAllBinaries installs all Rho executables.
+// toolchainBinaries are the executables an install puts in ~/.rho/bin.
+//
+// cmd/rho-pkg is a library with no main package, so there is no binary to
+// install for it. The formatter, the test runner and the documentation
+// generator are components rather than core tools: they are installed from a
+// registry and dispatched to, so building them here would put them back in the
+// core and defeat the point of late binding.
+//
+// rho-lsp is a component too, but it is built and installed with the toolchain
+// rather than fetched, because an editor with no language server cannot tell
+// whether the code in front of it compiles. It is the one binary here whose
+// absence is not fatal, so that a package built without it still installs.
+var toolchainBinaries = []struct {
+	name string
+	// required is whether an install without it is still a toolchain.
+	required bool
+}{
+	{"rho", true},
+	{"rho-deps", true},
+	{"rho-lsp", false},
+}
+
 // UpdateBinaries replaces the toolchain's binaries, in place.
 //
 // It is `InstallAllBinaries` for the case where there is a toolchain to update,
 // which is the case a developer is in after changing the source in front of it.
 func UpdateBinaries(srcDir string) error {
-	for _, b := range []string{"rho", "rho-deps"} {
-		src := filepath.Join(srcDir, b)
+	for _, b := range toolchainBinaries {
+		src := filepath.Join(srcDir, b.name)
+		if _, err := os.Stat(src); err != nil && !b.required {
+			continue
+		}
 		if err := ReplaceBinary(src); err != nil {
-			return fmt.Errorf("failed to install %s: %w", b, err)
+			return fmt.Errorf("failed to install %s: %w", b.name, err)
 		}
 	}
 	return nil
 }
 
+// InstallAllBinaries installs the toolchain's executables.
 func InstallAllBinaries(srcDir string) error {
-	// The same set the installation check verifies. cmd/rho-pkg is a library
-	// with no main package, so there is no binary to install for it. The
-	// formatter, the test runner and the documentation generator are
-	// components rather than core tools: they are installed from a registry
-	// and dispatched to, so building them here would put them back in the core
-	// and defeat the point of late binding.
-	binaries := []string{
-		"rho",
-		"rho-deps",
-	}
-
-	for _, b := range binaries {
-		src := filepath.Join(srcDir, b)
+	for _, b := range toolchainBinaries {
+		src := filepath.Join(srcDir, b.name)
+		if _, err := os.Stat(src); err != nil && !b.required {
+			// Reported rather than silently passed over: a language server that
+			// is not installed is an editor that silently stops reporting
+			// errors, and a person has to be able to tell that from a server
+			// that is working and has nothing to say.
+			fmt.Printf("   note: %s was not built, so `rho lsp` will not be available\n", b.name)
+			continue
+		}
 		if err := InstallBinary(src); err != nil {
-			return fmt.Errorf("failed to install %s: %w", b, err)
+			return fmt.Errorf("failed to install %s: %w", b.name, err)
 		}
 	}
 

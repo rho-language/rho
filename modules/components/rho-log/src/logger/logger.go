@@ -89,7 +89,7 @@ func New(subject string, options Options) *Logger {
 func Default(subject string) *Logger {
 	return New(subject, Options{
 		Level: logfmt.LevelInfo,
-		Sinks: []Sink{WriterSink{Writer: os.Stdout}},
+		Sinks: []Sink{&WriterSink{Writer: os.Stdout}},
 	})
 }
 
