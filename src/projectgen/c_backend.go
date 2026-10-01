@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"rho/src/codegen"
@@ -121,6 +122,16 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		artifacts.Extra = extra
 	}
 
+	// Which symbols were set, for a dependency whose own build file compiles its
+	// own sources.
+	//
+	// Those sources are listed in that module's CMakeLists, which this generator
+	// does not write and cannot add to. So rather than rewriting a list it does not
+	// own, it is told the answer and the module filters with it.
+	if content, ok := emitEnabledConfig(ctx); ok {
+		artifacts.Extra[filepath.ToSlash(filepath.Join("cmake", "robo-config.cmake"))] = content
+	}
+
 	return artifacts, nil
 }
 
@@ -150,9 +161,19 @@ func emitConfigArtifacts(ctx Context) (map[string]string, error) {
 	b.WriteString("set(RHO_CONFIG_DIR ${CMAKE_CURRENT_SOURCE_DIR})\n")
 	b.WriteString("set(RHO_CONFIG_OUT ${CMAKE_CURRENT_SOURCE_DIR})\n")
 
+	// Absolute paths, and the reason is that the merge resolves a relative one
+	// against its own installed fragments rather than against the project it was
+	// given. A project that copied a fragment in beside itself was reading it
+	// from somewhere else entirely, and every symbol in it was undeclared — which
+	// is what a project's own configuration looks like when nothing it set is
+	// recognised.
 	var fragments strings.Builder
 	for _, fragment := range config.Fragments {
-		fragments.WriteString("  " + cmakeString(fragment) + "\n")
+		absolute := fragment
+		if !filepath.IsAbs(absolute) && config.OutputDir != "" {
+			absolute = filepath.Join(config.OutputDir, filepath.FromSlash(fragment))
+		}
+		fragments.WriteString("  " + cmakeString(filepath.ToSlash(absolute)) + "\n")
 	}
 	b.WriteString("set(RHO_CONFIG_FRAGMENTS\n" + fragments.String() + ")\n")
 	if config.Defconfig != "" {
@@ -168,7 +189,14 @@ func emitConfigArtifacts(ctx Context) (map[string]string, error) {
 	b.WriteString("          --root ${RHO_CONFIG_DIR}\n")
 	b.WriteString("          --out ${RHO_CONFIG_OUT}\n")
 	if config.Defconfig != "" {
-		b.WriteString("          --defconfig ${RHO_CONFIG_DEFCONFIG}\n")
+		// The value is joined to the flag rather than following it.
+		//
+		// The merge is run as a separate process, and this program re-reads the
+		// arguments before passing them on. A value that arrives as its own
+		// argument does not survive that; one attached to the flag does. The
+		// failure said only that the flag needed an argument, which named the
+		// command line and not the reason.
+		b.WriteString("          --defconfig=${RHO_CONFIG_DEFCONFIG}\n")
 	}
 	b.WriteString("          ${RHO_CONFIG_FRAGMENTS}\n")
 	b.WriteString("  COMMENT \"Resolving the Kconfig bridge with rho-kconfig\"\n")
@@ -296,6 +324,16 @@ func emitCMakeLists(ctx Context) string {
 
 	dependencyRoots := cDependencyRoots(ctx.ProjectRoot)
 	for index, root := range dependencyRoots {
+		// Where this build's resolved configuration is, for the dependencies whose own build
+		// files compile their own sources and so cannot be given a source list here.
+		//
+		// Written down *before* they are added, because they are subdirectories: a variable
+		// set after an `add_subdirectory` has not reached it, and a dependency looking for
+		// this file beside its own CMakeLists would not find it either.
+		b.WriteString("# Where this build's resolved configuration is. The dependencies below compile\n")
+		b.WriteString("# their own sources, so a source list cannot be handed to them here; they read\n")
+		b.WriteString("# this to leave out whatever a symbol says the program did not ask for.\n")
+		b.WriteString("set(RHO_ROBO_CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/cmake/robo-config.cmake)\n\n")
 		fmt.Fprintf(&b, "add_subdirectory(%s %s-dep%d)\n",
 			cmakePath(root), strings.ToLower(name), index)
 	}
@@ -316,10 +354,11 @@ func emitCMakeLists(ctx Context) string {
 	}
 	// The generated shim is part of what this project compiles: it is the C the
 	// foreign interface calls, and it belongs to the build that generated it.
-	if ctx.ShimSources != nil {
-		for _, source := range ctx.ShimSources {
-			fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(source))
+	for _, source := range ctx.ShimSources {
+		if ctx.excludes(source) {
+			continue
 		}
+		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(source))
 	}
 	b.WriteString(")\n\n")
 
@@ -496,6 +535,10 @@ func connectionCMake(ctx Context, name string) (link string, includes []string) 
 	libraries = append(libraries, variant.LinkLibraries()...)
 
 	var b strings.Builder
+	// Where the resolved configuration is written, handed to the dependencies
+	// that compile their own sources.
+	//
+	// They are added as subdirectories, so a path relative to this file means
 	for _, define := range defines {
 		fmt.Fprintf(&b, "add_compile_definitions(%s=%s)\n", define, cMakeValue(define))
 	}
@@ -597,4 +640,56 @@ func hasAssembly(ctx Context) bool {
 		}
 	}
 	return false
+}
+
+// excludes reports whether a source is governed by a symbol that is not set.
+//
+// A driver belongs to a peripheral, and whether a program uses that peripheral is
+// the program's answer. Honouring it is the difference between a driver that is
+// switched off and one that is merely unused: a driver left in the image is code
+// nobody asked for, in flash nobody is using.
+func (ctx Context) excludes(source string) bool {
+	if len(ctx.GuardedSources) == 0 || len(ctx.EnabledConfigs) == 0 {
+		return false
+	}
+	symbol, guarded := ctx.GuardedSources[filepath.Base(source)]
+	if !guarded {
+		return false
+	}
+	return !ctx.EnabledConfigs[symbol]
+}
+
+// emitEnabledConfig writes which configuration symbols ended up set, for a
+// dependency's own build to read.
+//
+// A module's sources are compiled by that module's build file, which this
+// generator does not write and cannot add to. So rather than rewrite a list it
+// does not own, it is told the answer and the module filters with it: which
+// symbols were set, written once beside the target's other files.
+func emitEnabledConfig(ctx Context) (string, bool) {
+	if len(ctx.EnabledConfigs) == 0 || len(ctx.GuardedSources) == 0 {
+		return "", false
+	}
+
+	var b strings.Builder
+	b.WriteString(cmakeBanner(ctx.ModuleName, "cmake/robo-config.cmake", "The configuration this build resolved to."))
+	b.WriteString("# Written by rho build from the symbols the project's configuration set.\n")
+	b.WriteString("#\n")
+	b.WriteString("# A module whose sources are compiled by its own build file includes this and\n")
+	b.WriteString("# leaves out whatever a symbol here says was not asked for. Generated, so it\n")
+	b.WriteString("# is written from the merge rather than from a list kept beside it.\n\n")
+
+	names := make([]string, 0, len(ctx.EnabledConfigs))
+	for name := range ctx.EnabledConfigs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if ctx.EnabledConfigs[name] {
+			fmt.Fprintf(&b, "set(RHO_CONFIG_%s ON)\n", name)
+		} else {
+			fmt.Fprintf(&b, "set(RHO_CONFIG_%s OFF)\n", name)
+		}
+	}
+	return b.String(), true
 }

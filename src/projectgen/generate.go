@@ -303,6 +303,12 @@ type Context struct {
 	// project's own sources rather than a dependency's, because they belong to
 	// this build and are regenerated with it.
 	ShimSources []string
+	// EnabledConfigs are the configuration symbols that ended up set, by name
+	// without the `CONFIG_` prefix.
+	EnabledConfigs map[string]bool
+	// GuardedSources maps a source file's name to the symbol that governs it, from
+	// the manifests of everything the project depends on.
+	GuardedSources map[string]string
 	// Config is the Kconfig bridge a project declared, or nil when it declared
 	// none. A backend that generates a build file runs the merge and includes
 	// what it wrote, so the configuration a project declares is resolved by the
