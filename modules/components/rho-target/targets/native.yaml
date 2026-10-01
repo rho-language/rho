@@ -1,0 +1,40 @@
+# The host, as a target.
+#
+# `native` is not a special case in the build: it is this spec, and it says the
+# same things every other target says — which compiler, which flags, how the
+# program is linked. The host happens to be a target whose compiler is already
+# installed and whose memory map is whatever the kernel gives the process, so
+# the spec has no memory map and no linker script, and the build does without
+# them.
+#
+# That is the point of writing it down. A build that had a separate path for the
+# host had two places where a compiler was named and two places where a flag was
+# added, and a project that worked on one machine did not on the next. One spec
+# per target means there is one place.
+#
+# Override it by writing ~/.rho/targets/native.yaml: a target declared in the
+# Rho home is read before the one this component ships, so a machine whose host
+# compiler is not the one this names can say so without patching anything.
+
+kind: arch
+name: native
+comment: >-
+  The host platform: the compiler already installed, building for the machine
+  the build runs on. No memory map and no linker script, because a hosted program
+  is given its stack and its heap by whatever started it.
+
+toolchain:
+  # The GNU C compiler, which is what a Linux or macOS machine has. A machine
+  # with clang, or with MSVC on Windows, overrides this in its own Rho home —
+  # the name is here so that the default is stated rather than implied.
+  compiler: gcc
+  linker: gcc
+  size: size
+  flags:
+    - -O2
+    - -Wall
+    - -ffunction-sections
+    - -fdata-sections
+
+flags:
+  - -Wl,--gc-sections

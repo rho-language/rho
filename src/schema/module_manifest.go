@@ -29,7 +29,10 @@ import (
 )
 
 // ValidModuleTypes lists all allowed module.type values.
-var ValidModuleTypes = []string{"rho", "module", "component", "plugin", "interfaces"}
+var ValidModuleTypes = []string{
+	"rho", "module", "component", "plugin",
+	"interfaces", "platform", "platform-board",
+}
 
 // ValidVisibilities lists the visibilities a module may be published under.
 //
@@ -39,13 +42,70 @@ var ValidModuleTypes = []string{"rho", "module", "component", "plugin", "interfa
 var ValidVisibilities = []string{"public", "private"}
 
 // RhoSourceModuleTypes are the module types written in Rho. They declare a
-// main entry point, unlike `interfaces` modules which are native libraries
-// consumed through the build section.
+// main entry point.
 var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
+
+// NativeModuleTypes are the module types that are native code rather than Rho:
+// they are compiled and linked through a project's build section, and they
+// declare no Rho entry point.
+//
+// The three of them are the layers of a hardware platform, and each says
+// something the other two do not:
+//
+//   - `interfaces` declares the abstractions. A module that only declares
+//     interfaces has nothing to compile; it is headers, error codes and
+//     contracts, and it is shared by every platform.
+//   - `platform` implements those abstractions against one family of hardware.
+//     It is the code that drives a peripheral, and it knows nothing about any
+//     particular board.
+//   - `platform-board` is one board's support package: the pin map, the clock
+//     configuration and the startup that make a platform usable on the piece of
+//     hardware it is fitted to. It depends on a platform; a platform never
+//     depends on a board.
+//
+// They are kept apart because they are not the same thing, and a module that
+// implements a platform while claiming to be its interfaces — or a board that
+// claims to be a platform — describes itself as something it is not, in the
+// one place a reader looks to find out what a module is.
+//
+// None of them declares `main`: each is native code a project links rather than
+// something it runs.
+var NativeModuleTypes = []string{"interfaces", "platform", "platform-board"}
 
 // IsRhoSourceType reports whether a module type is written in Rho.
 func IsRhoSourceType(moduleType string) bool {
 	for _, candidate := range RhoSourceModuleTypes {
+		if candidate == moduleType {
+			return true
+		}
+	}
+	return false
+}
+
+// IsNativeType reports whether a module type is native code consumed through a
+// project's build section rather than a Rho entry point.
+func IsNativeType(moduleType string) bool {
+	for _, candidate := range NativeModuleTypes {
+		if candidate == moduleType {
+			return true
+		}
+	}
+	return false
+}
+
+// RhoLibraryModuleTypes are the module types whose main is a Rho source file
+// that is part of the module, as opposed to a binary built while packing it
+// (`component`, `plugin`) or to nothing at all (the native types).
+//
+// It is the set whose main has to be on disk before the module means anything,
+// which is why it is not the same set as RhoSourceModuleTypes: a component is
+// written in Rho too, and its entry point is a program rather than a file.
+var RhoLibraryModuleTypes = []string{"rho", "module"}
+
+// IsRhoLibraryType reports whether a module type's main is a Rho source file
+// belonging to the module.
+func IsRhoLibraryType(moduleType string) bool {
+	for _, candidate := range RhoLibraryModuleTypes {
 		if candidate == moduleType {
 			return true
 		}
@@ -331,6 +391,24 @@ func ModuleSchema() Schema {
 					{Name: "source_dirs", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "sources", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "headers", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// `toolchain` names the target a project builds for, as a
+					// rho-target spec: an architecture, an MCU or a board. It is
+					// the one thing in a manifest that decides which compiler
+					// runs, so a project that names it cannot be built for the
+					// host by accident.
+					//
+					// It is not the compiler itself. The compiler, the memory
+					// map, the linker script and how the board is programmed are
+					// one another's business, and a manifest that spelled them out
+					// would have to be edited for every board it was reused on.
+					// Naming a spec keeps the facts in one place.
+					//
+					// The values are not checked here. A spec is a name the
+					// rho-target component knows, and this toolchain does not
+					// carry that list; a project naming one that does not exist
+					// is told so by the build, which is the component that can
+					// say what there is.
+					{Name: "toolchain", Required: false, Kind: KindString},
 				},
 			},
 			{

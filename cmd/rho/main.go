@@ -34,6 +34,7 @@ import (
 	src "rho/src" // compiler orchestrator v3
 	clicore "rho/src/cli"
 	deps "rho/src/deps" // dependency system
+	"rho/src/schema"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -709,7 +710,16 @@ func buildCLI(args []string) int {
 	// The descriptor decides where generated projects live, and which targets
 	// were actually produced. Generation runs first so the native compile step
 	// can follow the targets the project asked for.
-	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, *target)
+	// The target is resolved before anything is generated, because it decides
+	// two separate things: which generated projects to emit, and what to build
+	// them for. Generation is only interested in the first.
+	targetName, descriptorTarget, err := resolveBuildTarget(*target, manifest)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho build:", err)
+		return 2
+	}
+
+	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, descriptorTarget)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
@@ -751,7 +761,7 @@ func buildCLI(args []string) int {
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/*  7. Compile the native target                                           */
+	/*  7. Build the native target                                              */
 	/* ---------------------------------------------------------------------- */
 
 	// A project that only asks for a Go or server target has no native build
@@ -760,34 +770,114 @@ func buildCLI(args []string) int {
 		return 0
 	}
 
+	// The generated C project is a real CMake project, and it is built as one.
+	// It used to be compiled by invoking gcc here over the transpiled module and
+	// whatever the dependencies contributed, which meant two builds of the same
+	// program: this one, and the CMake project sitting next to it. They disagreed
+	// the moment a target was named — this one had no cross compiler, no memory
+	// map and no linker script, and the other had all three. The CMake project is
+	// the one that can be told which hardware to build for, so it is the one that
+	// is built.
 	if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
 
-	exe := outC + "_bin"
-
-	argsGCC := []string{"-O2", "-o", exe, outC}
-
-	for _, inc := range includePaths {
-		argsGCC = append(argsGCC, "-I"+inc)
+	// The target was resolved above, before generation, because it decides what
+	// gets generated as well as what it is built for. A value that named a
+	// backend rather than hardware is already accounted for: generation filtered
+	// by it, and there is nothing left to build for.
+	if descriptorTarget != "" {
+		return 0
 	}
 
-	for _, csrc := range sourceFiles {
-		argsGCC = append(argsGCC, csrc)
+	// Where the transpiled module went, for the message, and where the build
+	// that was actually run is: the generated project's directory, because that
+	// is the project that is compiled.
+	generatedDir := ""
+	for _, t := range targets {
+		if t.ID == "c" {
+			generatedDir = t.Dir
+			break
+		}
+	}
+	if generatedDir == "" {
+		fmt.Fprintln(os.Stderr, "rho build: the project generated no C project to build")
+		return 1
 	}
 
-	cmd := commandRunner("gcc", argsGCC...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := buildTarget(generatedDir, targetName); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
 
-	fmt.Println("Build successful:", exe)
+	fmt.Println("Build successful:", filepath.Join(generatedDir, "build", targetName))
 	return 0
+}
+
+// resolveBuildTarget decides what a `-target` value means.
+//
+// The flag carries two kinds of name and they have to be told apart, because
+// both are already in use: a descriptor backend (`c`, `go`) says which
+// generated project to emit, and a target (`native`, `stm32f4`, a board) says
+// what to build it for. The descriptor's backends are a closed list this file
+// knows; a target's names belong to rho-target, which is a component and not
+// something this toolchain carries a list of.
+//
+// So the backends win the ones that are theirs, and anything else is a target.
+// That is not a guess about which was meant: `c` and `go` are the only names
+// that can be a backend, and a target that happens to be called `go` would have
+// to be reached by its manifest declaration instead.
+func resolveBuildTarget(flagValue string, manifest *deps.Manifest) (target string, descriptor string, err error) {
+	if flagValue != "" {
+		if isDescriptorBackend(flagValue) {
+			return "", flagValue, nil
+		}
+		return flagValue, "", nil
+	}
+	// A manifest may declare the target, which is what makes a project built for
+	// a board be built for it without anything being passed.
+	if manifest != nil && manifest.BuildToolchain != "" {
+		return manifest.BuildToolchain, "", nil
+	}
+	// Nothing named a target: the host. It is named rather than assumed, so that
+	// the default is a target somebody can see and override.
+	return "native", "", nil
+}
+
+// isDescriptorBackend reports whether a name is one of the backends the
+// descriptor can emit.
+func isDescriptorBackend(name string) bool {
+	for _, candidate := range schema.ValidBuildTargets {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
+}
+
+// buildTarget builds a generated project for a target, by handing the work to
+// the component that knows what targets are.
+//
+// It is a component call rather than a library call on purpose. Which compiler
+// runs, where a program's memory is and how it is written to a board are
+// rho-target's facts and are extended by its plugins, so reaching into it from
+// here would make this toolchain carry a copy of a list that a plugin is meant
+// to be able to add to. The component is located the same way every other
+// command locates one, which also means a target nobody enabled is refused here
+// for the same reason it is refused everywhere else.
+func buildTarget(generatedDir, target string) error {
+	module, err := modcore.LoadInstalledModule("rho-target")
+	if err != nil {
+		return fmt.Errorf("this build needs the rho-target component: %w", err)
+	}
+	entry := module.Entry()
+	if entry == nil {
+		return fmt.Errorf("the rho-target component has no entry point")
+	}
+	// Its output is the build's output, so it goes where this process's output
+	// goes rather than being captured and re-printed.
+	return entry.Run([]string{"build", "--target", target, "--project", generatedDir}, os.Stdin, os.Stdout)
 }
 
 /* -------------------------------------------------------------------------- */

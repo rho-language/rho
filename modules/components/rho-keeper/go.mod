@@ -26,7 +26,3 @@ require (
 	github.com/rho/rho-doc v0.0.0
 	rho v0.0.0
 )
-
-replace rho => ../../..
-
-replace github.com/rho/rho-doc => ../rho-doc

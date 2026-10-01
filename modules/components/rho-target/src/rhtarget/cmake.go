@@ -207,17 +207,63 @@ func LinkerScript(spec Spec) string {
 		fmt.Fprintf(&b, "_estack = ORIGIN(%s) + LENGTH(%s);\n", ram.Name, ram.Name)
 		fmt.Fprintf(&b, "ENTRY(Reset_Handler)\n\n")
 	}
+	if hasRAM {
+		// The stack and the heap share what is left of RAM after the static data,
+		// and these are how much of it each takes. They are defined here rather
+		// than inside SECTIONS, because an assignment there is a section-local
+		// symbol and the linker rejects one that is not inside a section — which
+		// is a syntax error in the generated script rather than anything to do
+		// with the memory map.
+		fmt.Fprintf(&b, "_Min_Heap_Size  = 0x200;\n_Min_Stack_Size = 0x400;\n\n")
+	}
 
 	b.WriteString("SECTIONS\n{\n")
 	if hasFlash {
 		fmt.Fprintf(&b, "    .isr_vector :\n    {\n        KEEP(*(.isr_vector))\n        . = ALIGN(4);\n    } > %s\n\n", flash.Name)
-		fmt.Fprintf(&b, "    .text :\n    {\n        *(.text*)\n        *(.rodata*)\n        . = ALIGN(4);\n        _etext = .;\n    } > %s\n\n", flash.Name)
+		fmt.Fprintf(&b, "    .text :\n    {\n        KEEP(*(.init))\n        KEEP(*(.fini))\n        *(.text*)\n        *(.glue_7*)\n        *(.glue_7t*)\n        *(.eh_frame*)\n        *(.rodata*)\n        . = ALIGN(4);\n        _etext = .;\n    } > %s\n\n", flash.Name)
+		// The C runtime walks four tables of function pointers, and a script that
+		// does not place them leaves the linker to scatter them wherever it
+		// likes: __libc_init_array then calls through whatever it finds, which is
+		// how a program ends up jumping into an address no section covers. They
+		// are placed here with the bounds the runtime is given, and the glue
+		// sections the ARM toolchain emits beside .text go with them.
+		b.WriteString("    .preinit_array :\n    {\n        PROVIDE_HIDDEN(__preinit_array_start = .);\n        KEEP(*(.preinit_array*))\n        PROVIDE_HIDDEN(__preinit_array_end = .);\n    } > " + flash.Name + "\n")
+		b.WriteString("    .init_array :\n    {\n        PROVIDE_HIDDEN(__init_array_start = .);\n        KEEP(*(SORT(.init_array.*)))\n        KEEP(*(.init_array*))\n        PROVIDE_HIDDEN(__init_array_end = .);\n    } > " + flash.Name + "\n")
+		b.WriteString("    .fini_array :\n    {\n        PROVIDE_HIDDEN(__fini_array_start = .);\n        KEEP(*(SORT(.fini_array.*)))\n        KEEP(*(.fini_array*))\n        PROVIDE_HIDDEN(__fini_array_end = .);\n    } > " + flash.Name + "\n\n")
+		fmt.Fprintf(&b, "    .ARM.extab :\n    { *(.ARM.extab* .gnu.linkonce.armextab.*) } > %s\n", flash.Name)
+		fmt.Fprintf(&b, "    .ARM.exidx :\n    { __exidx_start = .; *(.ARM.exidx* .gnu.linkonce.armexidx.*) __exidx_end = .; } > %s\n\n", flash.Name)
 	}
 	if hasFlash && hasRAM {
 		// Initialised data lives in RAM and is copied out of the flash before
 		// `main` runs, which is what the load address is for.
-		fmt.Fprintf(&b, "    .data : AT(_etext)\n    {\n        . = ALIGN(4);\n        _sdata = .;\n        *(.data*)\n        . = ALIGN(4);\n        _edata = .;\n    } > %s\n\n", ram.Name)
-		b.WriteString("    .bss :\n    {\n        . = ALIGN(4);\n        _sbss = .;\n        *(.bss*)\n        *(COMMON)\n        . = ALIGN(4);\n        _ebss = .;\n    } > " + ram.Name + "\n\n")
+		//
+		// `_sidata` is the symbol that load address, and every CMSIS startup
+		// assembly references it — the vector table carries it as a word, and
+		// Reset_Handler loads it to perform the copy. A script that omits it
+		// links everything else and then fails on one undefined reference, which
+		// is the point at which the generated project stops building for want of
+		// a symbol the vendor's own startup cannot do without.
+		fmt.Fprintf(&b, "    .data :\n    {\n        . = ALIGN(4);\n        _sdata = .;\n        *(.data*)\n        . = ALIGN(4);\n        _edata = .;\n    } > %s AT> %s\n\n", ram.Name, flash.Name)
+		fmt.Fprintf(&b, "    /* The address in flash the initialised data is copied from. */\n    _sidata = LOADADDR(.data);\n\n")
+
+		// Zeroed data is cleared between _sbss and _ebss. The double-underscore
+		// names are the same two addresses: some CMSIS startups use one spelling
+		// and some the other, and defining both costs nothing and saves a link
+		// failure on whichever family turns out to want the other.
+		fmt.Fprintf(&b, "    .bss :\n    {\n        . = ALIGN(4);\n        _sbss = .;\n        __bss_start__ = _sbss;\n        *(.bss*)\n        *(COMMON)\n        . = ALIGN(4);\n        _ebss = .;\n        __bss_end__ = _ebss;\n    } > %s\n\n", ram.Name)
+
+		// A stack and a heap need somewhere to grow, and the stack is only as big
+		// as the region left after the heap. ST's own scripts reserve both after
+		// the static data; a script that does not lets the stack collide with
+		// the heap, which is a fault that only appears once the program is big
+		// enough to reach it.
+		//
+		// Both `end` and `_end`, with `=` and not a comma. newlib's `_sbrk` looks
+		// for `end` and the C library's own allocator for `_end`, so a script
+		// that provides only one of them links a firmware whose `malloc` cannot
+		// find the heap. A comma there is a syntax error in the generated file
+		// rather than anything to do with the memory map.
+		fmt.Fprintf(&b, "    ._user_heap_stack :\n    {\n        . = ALIGN(8);\n        PROVIDE(end = .);\n        PROVIDE(_end = .);\n        . = . + _Min_Heap_Size;\n        . = . + _Min_Stack_Size;\n        . = ALIGN(8);\n    } > %s\n\n", ram.Name)
 	}
 	b.WriteString("}\n")
 	return b.String()

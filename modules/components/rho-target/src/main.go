@@ -64,6 +64,8 @@ func run(args []string) int {
 		return pins(args[1:])
 	case "generate":
 		return generate(args[1:])
+	case "build":
+		return build(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return 0
@@ -79,12 +81,21 @@ func usage() {
   list       print every target this component knows
   show       print one resolved target spec
   pins       print the pin map of a board
-  generate   write the CMake and the linker script of a target into a project`)
+  generate   write the CMake and the linker script of a target into a project
+  build      build a generated project for a target: write its CMake, then compile it`)
 }
 
 /* -------------------------------------------------------------------------- */
 /*  The specs this component carries                                           */
 /* -------------------------------------------------------------------------- */
+
+// extraSpecDirs are directories of specs a build was handed, added by --specs.
+//
+// A platform carries the target specs for the hardware it supports, because the
+// memory map and the flash command of a part belong to whoever ships that part.
+// This component therefore does not have them, and reading only its own
+// directory would leave a target a platform provides unreachable.
+var extraSpecDirs []string
 
 // library reads the specs a run can see: the ones this component carries, and the
 // ones a plugin supplies.
@@ -96,10 +107,17 @@ func usage() {
 func library(trust bool) *rhtarget.Library {
 	root := specRoot()
 	found := plugins.Source{Tree: root, RhoHome: deps.RhoHome(), TrustTree: trust}.Discover(ComponentName)
-	return rhtarget.LoadWith(root, found)
+
+	// Specs a build was handed come first, so that a platform's spec for a board
+	// shadows a shipped one of the same name rather than the other way round: a
+	// build told where the hardware is should build for the hardware it was told
+	// about. `native` and the Cortex-M architecture are still read alongside them,
+	// so a build that needs one is not left without it.
+	roots := append([]string{}, extraSpecDirs...)
+	return rhtarget.LoadWith(append(roots, specRoots()...), found)
 }
 
-// specRoot is the directory the specs are read from.
+// specRoot is the directory the specs this component ships are read from.
 func specRoot() string {
 	if executable, err := os.Executable(); err == nil {
 		if dir := filepath.Join(filepath.Dir(executable), "targets"); isDir(dir) {
@@ -107,6 +125,26 @@ func specRoot() string {
 		}
 	}
 	return "targets"
+}
+
+// specRoots are the directories target specs are read from, most significant
+// first.
+//
+// The Rho home comes first, so a target declared in it wins over the one this
+// component ships. That is what makes ~/.rho/targets an override rather than a
+// second opinion: a machine whose host compiler is not the one the shipped
+// `native` names, or whose board needs a memory map this component does not
+// have, says so in its own directory and is not argued with.
+//
+// The first tree to declare a name is the one that stands, so the order here is
+// the whole of what decides a target — a plugin cannot override a shipped spec
+// either, and for the same reason.
+func specRoots() []string {
+	roots := []string{}
+	if home := deps.RhoHome(); home != "" {
+		roots = append(roots, filepath.Join(home, "targets"))
+	}
+	return append(roots, specRoot())
 }
 
 func isDir(path string) bool {
@@ -219,10 +257,16 @@ func generate(args []string) int {
 	force := fs.Bool("force", false, "write over a file that is already there")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
 	treePlugins := fs.Bool("tree-plugins", false, "also read the plugins the tree carries")
+	specs := fs.String("specs", "", "colon-separated directories of target specs to read, such as a platform's")
 	// Flags are read wherever they appear, because `rho target generate <project>
 	// --target pico` is what a person types first.
-	flagArgs, rest := splitArgs(args, map[string]bool{"target": true, "dir": true})
+	flagArgs, rest := splitArgs(args, map[string]bool{"target": true, "dir": true, "specs": true})
 	if err := fs.Parse(flagArgs); err != nil {
+		return 2
+	}
+	_ = specs
+	if err := addSpecDirs(fs, rest); err != nil {
+		fmt.Fprintln(os.Stderr, "rho target generate:", err)
 		return 2
 	}
 	if *target == "" {
@@ -327,4 +371,48 @@ func inside(dir, path string) bool {
 		return false
 	}
 	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Handed-in specs                                                            */
+/* -------------------------------------------------------------------------- */
+
+// addSpecDirs records the directories a build was given.
+//
+// It is a separate pass because the flags are read by each command and the
+// directories are wanted by all of them, and a value a reader has to set before
+// parsing is a value a reader can forget.
+func addSpecDirs(fs *flag.FlagSet, args []string) error {
+	values := specDirValues(fs, args)
+	for _, dir := range values {
+		if dir == "" {
+			continue
+		}
+		if !isDir(dir) {
+			return fmt.Errorf("no target specs in %s", dir)
+		}
+		extraSpecDirs = append(extraSpecDirs, dir)
+	}
+	return nil
+}
+
+// specDirValues finds --specs whether it is declared on the set or only present
+// in the arguments, so that a command which does not declare the flag still
+// honours one that was typed.
+func specDirValues(fs *flag.FlagSet, args []string) []string {
+	if declared := fs.Lookup("specs"); declared != nil {
+		if value, ok := declared.Value.(flag.Getter); ok {
+			if text, ok := value.Get().(string); ok && text != "" {
+				return filepath.SplitList(text)
+			}
+		}
+	}
+	values := []string{}
+	for index := 0; index+1 < len(args); index++ {
+		switch args[index] {
+		case "--specs", "-specs":
+			values = append(values, filepath.SplitList(args[index+1])...)
+		}
+	}
+	return values
 }

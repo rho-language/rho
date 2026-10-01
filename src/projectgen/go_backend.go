@@ -84,5 +84,17 @@ func EmitGoProject(ctx Context) (Artifacts, error) {
 
 	artifacts.Build = codegen.EmitGoModWithRequirements(ctx.IR, modulePath, requires)
 
+	// A go.work naming only this project, so the go tool stops looking upwards
+	// for a workspace that does not list it. A generated project is written into
+	// somebody else's checkout often enough — a monorepo, this toolchain's own
+	// examples — that a go.work above it would otherwise own the build and refuse
+	// the packages. It goes in Extra rather than in the descriptor's file list
+	// because no role names it: it is the backend's own addition, and the
+	// descriptor describes the files a target is made of.
+	if artifacts.Extra == nil {
+		artifacts.Extra = map[string]string{}
+	}
+	artifacts.Extra["go.work"] = codegen.EmitGoWork(ctx.IR)
+
 	return artifacts, nil
 }

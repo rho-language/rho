@@ -120,8 +120,17 @@ func GetRegistryPath() (string, error) {
 	return filepath.Join(home, "registry", "local"), nil
 }
 
-// GetCachePath returns ~/.rho/cache.
-func GetCachePath() (string, error) {
+// GetMetadataCachePath returns ~/.rho/cache, which is the install's own cache
+// of registry and module metadata: the JSON records the toolchain reads to know
+// what it has installed.
+//
+// It is named for which cache it is because there are two, and they are not the
+// same thing. This one is written by an install and read by the toolchain. The
+// other, ~/.rho/pkg/mod, is the module download cache that dependencies are
+// cloned into, and `rho deps purge` removes it. A function called
+// `GetCachePath` that named one of them invited the other to be used where it
+// was meant, which is a wrong answer rather than a compile error.
+func GetMetadataCachePath() (string, error) {
 	home, err := GetRhoHome()
 	if err != nil {
 		return "", err

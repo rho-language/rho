@@ -34,6 +34,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"rho/src/yaml"
 )
 
 // Kind is what a spec describes.
@@ -195,14 +197,78 @@ func (d Diagnostic) String() string {
 	return d.Path + ": " + d.Message
 }
 
+// isSpecFile reports whether a path names a target spec.
+//
+// Both JSON and YAML are read. They say the same thing, and a target a person
+// writes by hand is far more often written as YAML: a spec is mostly comments
+// saying what a board is, and YAML lets those be written as YAML comments
+// rather than as a quoted block that a JSON parser will not keep.
+func isSpecFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json", ".yaml", ".yml":
+		return true
+	}
+	return false
+}
+
+// decodeSpec reads a spec, in whichever of the two formats it was written.
+func decodeSpec(data []byte, path string, spec *Spec) error {
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		return json.Unmarshal(data, spec)
+	}
+	// YAML is parsed and then handed to the same JSON decoder the JSON specs go
+	// through, rather than being decoded field by field here. One decoder means
+	// one set of rules about what a field is called and how it is spelled, so a
+	// field cannot mean one thing in a .json spec and another in a .yaml one.
+	document, err := yaml.Load(string(data))
+	if err != nil {
+		return err
+	}
+	converted, err := json.Marshal(yaml.ToAny(document))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(converted, spec)
+}
+
 // Load reads every spec in a directory tree.
 //
 // A spec that cannot be read is reported and the rest are read: one board with a
 // mistake in it must not cost a project the boards that are right.
 func Load(root string) *Library {
-	library := &Library{Root: root, specs: map[string]Spec{}}
+	return LoadFrom([]string{root})
+}
+
+// LoadFrom reads every spec in each of several directory trees, in order.
+//
+// The first tree to declare a name is the one that stands. That is what makes an
+// override an override: a target declared in the Rho home is read before the one
+// the component ships, so a machine that needs a different compiler or a
+// different memory map says so in its own directory and the shipped spec is
+// reported as shadowed rather than silently fighting it.
+//
+// One tree is the ordinary case, and a project that keeps its own targets needs
+// nothing else: it puts them in its own directory and names them.
+func LoadFrom(roots []string) *Library {
+	library := &Library{specs: map[string]Spec{}}
+	seenRoot := false
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		if !seenRoot {
+			library.Root = root
+			seenRoot = true
+		}
+		readInto(library, root)
+	}
+	return library
+}
+
+// readInto reads one tree into a library, reporting what it finds.
+func readInto(library *Library, root string) {
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".json") {
+		if err != nil || info.IsDir() || !isSpecFile(path) {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
@@ -211,7 +277,7 @@ func Load(root string) *Library {
 			return nil
 		}
 		spec := Spec{}
-		if unmarshalErr := json.Unmarshal(data, &spec); unmarshalErr != nil {
+		if unmarshalErr := decodeSpec(data, path, &spec); unmarshalErr != nil {
 			library.Diagnostics = append(library.Diagnostics, Diagnostic{Path: path, Message: "cannot read the spec: " + unmarshalErr.Error()})
 			return nil
 		}
@@ -228,7 +294,6 @@ func Load(root string) *Library {
 		library.specs[spec.Name] = spec
 		return nil
 	})
-	return library
 }
 
 // Effective are every spec, resolved, in name order: what a listing shows is

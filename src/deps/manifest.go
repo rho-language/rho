@@ -194,11 +194,20 @@ type Manifest struct {
 	Command string
 	// ImportPath is the dotted name Rho code uses to import this component's
 	// Rho sources. Empty means the component exports no Rho library.
-	ImportPath       string
-	Features         []string
-	Deps             []DepSpec
-	BuildLanguage    string
-	BuildTargets     []string
+	ImportPath    string
+	Features      []string
+	Deps          []DepSpec
+	BuildLanguage string
+	BuildTargets  []string
+	// BuildToolchain names the target a project builds for, as a rho-target
+	// spec: an architecture, an MCU or a board. Empty means the project builds
+	// for the machine it is built on, which is the target named `native`.
+	//
+	// It is parsed here rather than in whichever manager uses it because it is a
+	// statement about the project, not about a dependency: it says what hardware
+	// this is for, and every build of it is for that hardware whatever resolves
+	// its dependencies.
+	BuildToolchain   string
 	BuildIncludeDirs []string
 	BuildSourceDirs  []string
 	BuildSources     []string
@@ -411,6 +420,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	if build.Kind == yaml.KindMap {
 		m.BuildLanguage = yamlString(build, "language")
 		m.BuildTargets = yamlStrings(build.Map["targets"])
+		m.BuildToolchain = yamlString(build, "toolchain")
 		m.BuildIncludeDirs = yamlStrings(build.Map["include_dirs"])
 		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
 		m.BuildSources = yamlStrings(build.Map["sources"])

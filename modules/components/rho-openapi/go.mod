@@ -16,12 +16,5 @@ require (
 // everything else rather than a site of its own.
 //
 // A component is versioned independently, so it depends on the toolchain and on
-// the components it uses rather than being compiled into them. The replaces
-// make an in-tree build use this checkout; a published component pins released
-// versions instead.
-replace (
-	github.com/rho/rho-doc => ../rho-doc
-	github.com/rho/rho-log => ../rho-log
-	github.com/rho/rho-router => ../rho-router
-	rho => ../../..
-)
+// the components it uses rather than being compiled into them. Which checkout
+// those are is the workspace's business, not this module's.

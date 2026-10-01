@@ -47,7 +47,7 @@ var (
 
 // InitCache creates all cache files in ~/.rho/cache.
 func InitCache() error {
-    cachePath, err := GetCachePath()
+    cachePath, err := GetMetadataCachePath()
     if err != nil {
         return err
     }
@@ -81,7 +81,7 @@ func InitCache() error {
 
 // CacheExists checks if all cache files exist.
 func CacheExists() bool {
-    cachePath, err := GetCachePath()
+    cachePath, err := GetMetadataCachePath()
     if err != nil {
         return false
     }

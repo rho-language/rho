@@ -52,8 +52,12 @@ type SpecResponse struct {
 //
 // A plugin that fails is reported and its specs are left out: the targets this
 // component ships are still there, which is what a project builds with.
-func LoadWith(root string, found []plugins.Plugin) *Library {
-	library := Load(root)
+// LoadWith reads the specs in every root and then asks any plugin for more.
+//
+// The roots are read in order and the first to declare a name is the one that
+// stands, so a caller puts the roots it wants to win first.
+func LoadWith(roots []string, found []plugins.Plugin) *Library {
+	library := LoadFrom(roots)
 	if len(found) == 0 {
 		return library
 	}
