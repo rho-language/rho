@@ -25,6 +25,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -55,6 +56,12 @@ func run(args []string) int {
 		usage()
 		return 2
 	}
+
+	if len(args) == 0 {
+		usage()
+		return 2
+	}
+
 	switch args[0] {
 	case "list":
 		return list(args[1:])
@@ -89,21 +96,152 @@ func usage() {
 /*  The specs this component carries                                           */
 /* -------------------------------------------------------------------------- */
 
-// extraSpecDirs are directories of specs a build was handed, added by --specs.
+// extraSpecDirs are directories of specs a run was handed or found, most
+// significant first.
 //
 // A platform carries the target specs for the hardware it supports, because the
 // memory map and the flash command of a part belong to whoever ships that part.
 // This component therefore does not have them, and reading only its own
 // directory would leave a target a platform provides unreachable.
+//
+// They are found rather than told, wherever that is possible. `--specs` still
+// says where they are, for a directory that is neither beside a project nor this
+// component's own; but a build of a project that depends on a platform already
+// knows where that platform's targets are, and being made to repeat the path is
+// how the same board ends up described in two places and one of them drifts.
 var extraSpecDirs []string
 
-// library reads the specs a run can see: the ones this component carries, and the
-// ones a plugin supplies.
+// declaredSpecFiles are the spec files a dependency named one by one, read as
+// themselves rather than searched for.
 //
-// The specs travel with the component, so they are read from beside the binary
-// when it has been installed and from the working tree when it is being built:
-// a component that could only find its own data once published would be one that
-// cannot be run from a checkout.
+// A directory of specs and a named file are different contracts: a platform keeps
+// every part's spec in one place and names the directory, while a board carries
+// its own and names the file. Reading a named file by looking around its directory
+// reads whatever else is in there as well.
+var declaredSpecFiles []string
+
+// declaredSpecDirs returns the target spec directories a project's dependencies
+// declare they keep their specs in.
+//
+// The path comes from the module's own manifest, never from its shape on disk. A
+// directory called `targets` beside a dependency is a guess that reads as a
+// contract and is not one: it stops being right the moment a platform keeps its
+// specs somewhere else, and it was never a promise that it would go on being
+// there. A module that has hardware says so in a `hardware:` block, and this
+// reads what it said.
+//
+// A dependency reached by git rather than by path has not been fetched yet, and
+// what it declares is read by whoever fetches it.
+// declaredSpecDirs returns the directories of specs a project's dependencies
+// declare they keep their specs in.
+//
+// A platform keeps every *part's* spec in one place and names that directory. A
+// board carries its own and names the file; those come from `boardSpecFiles`,
+// which is a different contract and is not searched for here.
+func declaredSpecDirs(projectRoot string) []string {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil {
+		return nil
+	}
+	dirs := []string{}
+	for _, dep := range manifest.Deps {
+		if dep.Type != deps.DepTypeC || dep.Path == "" {
+			continue
+		}
+		root := dep.Path
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(projectRoot, root)
+		}
+		platform, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || !platform.Hardware.Declared() || platform.Hardware.Targets == "" {
+			continue
+		}
+		targets := platform.Hardware.Targets
+		if !filepath.IsAbs(targets) {
+			targets = filepath.Join(root, targets)
+		}
+		if isDir(targets) {
+			dirs = append(dirs, targets)
+		}
+	}
+	return dirs
+}
+
+// boardSpecFiles returns the spec file each board a project's platform declares
+// names, read as that file.
+//
+// The chain is the contract and nothing is searched for: the platform names its
+// boards folder, each board names its own spec file, and that file is the spec.
+// The board's folder also holds its manifest, its presets and its support
+// package, so searching it reads a manifest as if it described hardware.
+func boardSpecFiles(projectRoot string) []string {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil {
+		return nil
+	}
+	files := []string{}
+	seen := map[string]bool{}
+	for _, dep := range manifest.Deps {
+		if dep.Type != deps.DepTypeC || dep.Path == "" {
+			continue
+		}
+		root := dep.Path
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(projectRoot, root)
+		}
+		platform, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || !platform.Hardware.Declared() || platform.Hardware.Boards == "" {
+			continue
+		}
+		boards := platform.Hardware.Boards
+		if !filepath.IsAbs(boards) {
+			boards = filepath.Join(root, boards)
+		}
+		entries, err := os.ReadDir(boards)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			boardRoot := filepath.Join(boards, entry.Name())
+			board, err := deps.LoadManifest(deps.ManifestPath(boardRoot))
+			if err != nil || board == nil || board.Hardware == nil || board.Hardware.Target == "" {
+				continue
+			}
+			file := board.Hardware.Target
+			if !filepath.IsAbs(file) {
+				file = filepath.Join(boardRoot, file)
+			}
+			if info, err := os.Stat(file); err != nil || info.IsDir() {
+				continue
+			}
+			if seen[file] {
+				continue
+			}
+			seen[file] = true
+			files = append(files, file)
+		}
+	}
+	return files
+}
+
+// withDeclaredSpecs adds the spec directories a project's dependencies declare
+// they keep their specs in, ahead of anything else this run was handed.
+//
+// Every command that reads a target does this, because a target that is declared
+// and cannot be found is not a target, and it is not right for `show`, `build`
+// and `list` to disagree about which targets exist.
+func withDeclaredSpecs(projectRoot string) {
+	for _, dir := range declaredSpecDirs(projectRoot) {
+		extraSpecDirs = append([]string{dir}, extraSpecDirs...)
+	}
+	for _, file := range boardSpecFiles(projectRoot) {
+		declaredSpecFiles = append([]string{file}, declaredSpecFiles...)
+	}
+}
+
 func library(trust bool) *rhtarget.Library {
 	root := specRoot()
 	found := plugins.Source{Tree: root, RhoHome: deps.RhoHome(), TrustTree: trust}.Discover(ComponentName)
@@ -114,7 +252,18 @@ func library(trust bool) *rhtarget.Library {
 	// about. `native` and the Cortex-M architecture are still read alongside them,
 	// so a build that needs one is not left without it.
 	roots := append([]string{}, extraSpecDirs...)
-	return rhtarget.LoadWith(append(roots, specRoots()...), found)
+
+	// Specs a dependency named as a file are read as those files.
+	//
+	// A board names the spec file it carries, because its memory map and how it is
+	// reached are that board's. Handing its *directory* to a reader that searches
+	// directories would instead read its manifest, its presets and its support
+	// package as if they were hardware.
+	library := rhtarget.LoadWith(append(roots, specRoots()...), found)
+	for _, path := range declaredSpecFiles {
+		library.AddFile(path)
+	}
+	return library
 }
 
 // specRoot is the directory the specs this component ships are read from.
@@ -157,6 +306,9 @@ func isDir(path string) bool {
 /* -------------------------------------------------------------------------- */
 
 func list(args []string) int {
+	if root, project := projectFlag(args); project {
+		withDeclaredSpecs(root)
+	}
 	fs := flag.NewFlagSet("rho target list", flag.ExitOnError)
 	boardsOnly := fs.Bool("boards", false, "list only the boards")
 	if err := fs.Parse(args); err != nil {
@@ -206,18 +358,37 @@ func list(args []string) int {
 
 func show(args []string) int {
 	fs := flag.NewFlagSet("rho target show", flag.ExitOnError)
-	if err := fs.Parse(args); err != nil {
+	// JSON is how a program reads a target rather than a person. It carries the
+	// resolved spec and nothing else, so a consumer — a flasher, most of all —
+	// gets the board's own words for how it is reached rather than a second
+	// opinion compiled into it.
+	asJSON := fs.Bool("json", false, "print the resolved spec as JSON")
+	project := fs.String("project", ".", "the project whose platform declares the target")
+	// Flags are read wherever they appear, because `rho target show pico -json`
+	// is what a person types first.
+	flagArgs, rest := splitArgs(args, map[string]bool{"project": true})
+	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rho target show <name>")
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: rho target show [-json] [-project dir] <name>")
 		return 2
 	}
-	library := library(false)
-	spec, diagnostics := library.Resolve(fs.Arg(0))
-	report(append(library.Diagnostics, diagnostics...))
+	withDeclaredSpecs(*project)
+	lib := library(false)
+	spec, diagnostics := lib.Resolve(rest[0])
+	report(append(lib.Diagnostics, diagnostics...))
 	if spec.Name == "" {
 		return 1
+	}
+	if *asJSON {
+		encoded, err := json.MarshalIndent(spec, "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "rho target show:", err)
+			return 1
+		}
+		fmt.Println(string(encoded))
+		return 0
 	}
 	fmt.Print(rhtarget.Describe(spec))
 	return 0
@@ -228,6 +399,9 @@ func show(args []string) int {
 /* -------------------------------------------------------------------------- */
 
 func pins(args []string) int {
+	if root, project := projectFlag(args); project {
+		withDeclaredSpecs(root)
+	}
 	fs := flag.NewFlagSet("rho target pins", flag.ExitOnError)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -283,6 +457,11 @@ func generate(args []string) int {
 		return 1
 	}
 
+	// The project is where the platform's specs are declared, so it is read for
+	// them before the library is built. A target a dependency declares is a
+	// target, and a build that could not see it would report the board as one
+	// that does not exist.
+	withDeclaredSpecs(absolute)
 	library := library(*treePlugins)
 	spec, diagnostics := library.Resolve(*target)
 	report(append(library.Diagnostics, diagnostics...))
@@ -415,4 +594,27 @@ func specDirValues(fs *flag.FlagSet, args []string) []string {
 		}
 	}
 	return values
+}
+
+// projectFlag reads a project out of an argument list, and whether one was named
+// at all.
+//
+// A command that takes a project declares it as a flag like any other, so this
+// only has to answer whether the caller said one: an absent project means the
+// current directory is the project, which is what running a command inside a
+// checkout means.
+func projectFlag(args []string) (string, bool) {
+	for i, arg := range args {
+		switch {
+		case arg == "-project" || arg == "--project":
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+		case strings.HasPrefix(arg, "-project="):
+			return strings.TrimPrefix(arg, "-project="), true
+		case strings.HasPrefix(arg, "--project="):
+			return strings.TrimPrefix(arg, "--project="), true
+		}
+	}
+	return "", false
 }

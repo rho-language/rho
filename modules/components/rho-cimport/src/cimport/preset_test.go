@@ -224,9 +224,47 @@ func TestAPresetWithNoDependenciesIsRefused(t *testing.T) {
 
 // A dependency that says where it comes from nowhere cannot be fetched, and the
 // error names it.
-func TestADependencyWithNoSourceIsRefused(t *testing.T) {
-	if err := (CDep{Name: "hal"}).Validate(); err == nil {
-		t.Errorf("a dependency with no source was accepted")
+// A dependency need not name a git URL or a path of its own: the board says
+// where each of its vendor repositories lives. What must still be refused is a
+// dependency that names nothing at all, because then there is nowhere for a build
+// to look — which is decided where it is used, since only there is the board that
+// might have said.
+func TestADependencyWithNoSourceIsResolvedOrRefused(t *testing.T) {
+	dependency := CDep{Name: "sdk"}
+
+	// No source and nowhere to look: refused.
+	resolver := &Resolver{ProjectRoot: t.TempDir(), Cache: t.TempDir()}
+	if _, err := resolver.Resolve(Preset{Name: "p", Dependencies: []CDep{dependency}}); err == nil {
+		t.Error("expected a report: nothing says where this dependency is")
+	}
+
+	// No source of its own, but the board says where it is: resolved, not refused.
+	//
+	// The board is reached the way it really is: through the platform the project
+	// depends on. A board is not a dependency of the program — the platform
+	// implements every board of the family at once.
+	root := t.TempDir()
+	writeFile(t, root, "module.yml", "module:\n  name: platform\n  type: platform\n  version: 0.1.0\n")
+	project := t.TempDir()
+	writeFile(t, project, "module.yml",
+		"module:\n  name: app\n  type: module\n  version: 0.1.0\ndepends:\n  - name: platform\n    type: c\n    path: "+root+"\n")
+	vendor := filepath.Join(root, "vendor", "sdk")
+	if err := os.MkdirAll(filepath.Join(vendor, "Inc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	board := filepath.Join(root, "boards", "b")
+	if err := os.MkdirAll(board, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, board, "module.yml",
+		"module:\n  name: b\n  type: platform-board\n  version: 0.1.0\nvendor:\n  dir: ../../vendor\n  repos:\n    - name: sdk\n      path: sdk\n")
+
+	found := &Resolver{ProjectRoot: project, Cache: t.TempDir(), BoardName: "b"}
+	if _, err := found.Resolve(Preset{
+		Name:         "p",
+		Dependencies: []CDep{dependency},
+	}); err != nil {
+		t.Errorf("a dependency the board places should resolve, got: %v", err)
 	}
 }
 

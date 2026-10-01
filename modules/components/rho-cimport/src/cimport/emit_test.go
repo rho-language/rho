@@ -105,8 +105,13 @@ func TestTheCShimForwardsToTheTable(t *testing.T) {
 	if !strings.Contains(header, "#include <robohub/hal/gpio.h>") {
 		t.Fatalf("expected the declared header to be included, got:\n%s", header)
 	}
-	if !strings.Contains(header, "int32_t rho_robohubgpio_write(RoboHubGPIO* self, rh_u32 pin, rh_u32 value);") {
-		t.Fatalf("expected the declaration, got:\n%s", header)
+	// The shim is declared under exactly the name it is called by. It is a C
+	// function the header of this generated interface declares, so a call to it
+	// carries that name; defining it under anything else is an undefined reference
+	// at the link step.
+	declared := "int32_t rho_robohubgpio_write(RoboHubGPIO* self, rh_u32 pin, rh_u32 value);"
+	if !strings.Contains(header, declared) {
+		t.Fatalf("expected %q, got:\n%s", declared, header)
 	}
 
 	source := binding.ShimSource()

@@ -35,6 +35,10 @@ import (
 // Codegen is the main C backend for the Rho compiler.
 type Codegen struct {
 	b strings.Builder
+	// foreign maps a qualified function name to the symbol its C header declares.
+	// A call site is lowered once for every backend and says the qualified name;
+	// this is where C reads it as the name that exists.
+	foreign map[string]string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -53,6 +57,20 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	cg.b.Reset()
 
 	cg.emitHeader(m)
+	// A call site is lowered once, for every backend, and carries the qualified
+	// name. Go wants that — every module of a program compiles into one package,
+	// where two same-named functions would collide. C cannot use it, because an
+	// extern's symbol is whatever its header's compiler agreed on.
+	//
+	// The rename is done over the whole program before anything is written,
+	// rather than at each place an expression is emitted. Every instruction that
+	// carries lowered text would otherwise have to remember: a call in a `let`, in
+	// a bare statement, in an `if` condition, in a `while`, in a return. Missing
+	// one produces an undefined reference to a name that looks like a typo rather
+	// than a missing binding, which is a hard thing to read back to this.
+	cg.foreign = foreignCallNames(m.Funcs)
+	m.Funcs = cg.renameForeignInFuncs(m.Funcs)
+
 	cg.emitStructs(m.Structs)
 	cg.emitFuncPrototypes(m.Funcs)
 	cg.emitFuncs(m.Funcs)
@@ -62,6 +80,15 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 
 func (cg *Codegen) emitFuncPrototypes(funcs []ir.FuncIR) {
 	for _, fn := range funcs {
+		// An extern is declared by its header, and that header is included by
+		// the generated interface. A prototype here would be the same function
+		// declared twice — and declared in two languages, because this one is
+		// written in the types Rho mapped the C ones to. Any C type spelled
+		// differently in the two, which is every enum and every typedef, makes
+		// the pair a compile error over a signature that was already correct.
+		if fn.Extern {
+			continue
+		}
 		cg.emitFunctionSignature(fn)
 		cg.b.WriteString(";\n")
 	}
@@ -94,6 +121,27 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 	if len(m.Features) > 0 {
 		cg.b.WriteString("\n")
 	}
+	// `_init` and `_fini` are the C library's hooks for code that runs before and
+	// after everything else. A board's startup assembly calls the library's
+	// initializer, which calls them, and a build with `-nostartfiles` — which a
+	// bare-metal build has, so that its own startup is the entry point rather than
+	// the compiler's — has excluded the two files that define them.
+	//
+	// Weak, because the same generated project is also what a hosted target
+	// builds, and there the C library defines them properly. A strong definition
+	// would collide with it; a weak one yields to it and is used only where
+	// nothing else provides them, which is exactly the bare-metal case and exactly
+	// when they are needed.
+	//
+	// Empty, which is what they are for on a board: there is nothing to do before
+	// a program's own initializers, and the library's own work is done by
+	// `__libc_init_array`, which the startup calls separately.
+	cg.b.WriteString("// Weak: -nostartfiles excludes the C library's own definitions of these, and a\n")
+	cg.b.WriteString("// hosted C library defines them itself. Used only where nothing else does,\n")
+	cg.b.WriteString("// which is a board, where the startup assembly reaches them through the\n")
+	cg.b.WriteString("// library's initializer.\n")
+	cg.b.WriteString("__attribute__((weak)) void _init(void);\n__attribute__((weak)) void _init(void) {}\n")
+	cg.b.WriteString("__attribute__((weak)) void _fini(void);\n__attribute__((weak)) void _fini(void) {}\n\n")
 	cg.b.WriteString("static char* rho_concat(const char* a, const char* b);\n")
 	cg.b.WriteString("static char* rho_yaml_load(const char* path);\n\n")
 	cg.b.WriteString("static char* rho_string_from_i32(int32_t value);\n\n")
@@ -118,6 +166,18 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 
 func (cg *Codegen) emitStructs(structs []ir.StructIR) {
 	for _, s := range structs {
+		// An optional pointer is the pointer. It is declared as the C type it
+		// is represented as rather than as a struct with a tag and a payload,
+		// because that is what makes a value returned by a C library usable
+		// without a translation step in either direction.
+		if payload, ok := optionalPointerCType(s.Name); ok {
+			cg.b.WriteString("typedef ")
+			cg.b.WriteString(payload)
+			cg.b.WriteString(" ")
+			cg.b.WriteString(s.Name)
+			cg.b.WriteString(";\n\n")
+			continue
+		}
 		cg.b.WriteString("typedef struct {\n")
 		for _, f := range s.Fields {
 			cg.b.WriteString("    ")
@@ -139,8 +199,16 @@ func (cg *Codegen) emitStructs(structs []ir.StructIR) {
 func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 	for _, fn := range funcs {
 		if fn.Extern {
-			cg.emitFunctionSignature(fn)
-			cg.b.WriteString(";\n\n")
+			// An extern is declared by the header it came from, and that header
+			// is included by the generated interface. Restating it here would be
+			// redundant at best and wrong at worst: the declaration here is in
+			// terms of the types Rho mapped the C ones to, and any C type that is
+			// not spelled the same way in both — an enum, a typedef, anything
+			// whose width was inferred — makes the two declarations conflict and
+			// fails the compile over a signature that was already correct.
+			//
+			// So nothing is emitted. The name it is called by is decided at the
+			// call site, and the declaration is the header's.
 			continue
 		}
 		// signature
@@ -152,10 +220,7 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 			cg.b.WriteString(cTypeFor(returnType))
 		}
 		cg.b.WriteString(" ")
-		name := fn.CName
-		if name == "" {
-			name = fn.Name
-		}
+		name := cSymbolFor(fn)
 		cg.b.WriteString(name)
 		cg.b.WriteString("(")
 
@@ -315,10 +380,7 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 }
 
 func (cg *Codegen) emitFunctionSignature(fn ir.FuncIR) {
-	name := fn.CName
-	if name == "" {
-		name = fn.Name
-	}
+	name := cSymbolFor(fn)
 	if fn.Name == "main" && fn.ReturnType.Kind == ir.TypeVoid {
 		cg.b.WriteString("int")
 	} else {
@@ -385,14 +447,14 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 		cg.b.WriteString(instr.Dest)
 		if len(instr.Args) == 1 && instr.Args[0] != "" {
 			cg.b.WriteString(" = ")
-			cg.b.WriteString(instr.Args[0])
+			cg.b.WriteString(cg.rewriteForeign(instr.Args[0]))
 		}
 		cg.b.WriteString(";\n")
 
 	case ir.OpExpr:
 		if len(instr.Args) == 1 {
 			cg.b.WriteString("    ")
-			cg.b.WriteString(instr.Args[0])
+			cg.b.WriteString(cg.rewriteForeign(instr.Args[0]))
 			cg.b.WriteString(";\n")
 		}
 	case ir.OpIf:
@@ -525,4 +587,146 @@ func (cg *Codegen) Dump() string {
 // EmitModuleToStdout is a convenience helper for quick experiments.
 func (cg *Codegen) EmitModuleToStdout(m ir.ModuleIR) {
 	fmt.Println(cg.EmitModule(m))
+}
+
+// renameForeignInFuncs returns the functions with every lowered expression
+// renamed to the C symbols that exist.
+func (cg *Codegen) renameForeignInFuncs(funcs []ir.FuncIR) []ir.FuncIR {
+	if len(cg.foreign) == 0 {
+		return funcs
+	}
+	out := make([]ir.FuncIR, len(funcs))
+	copy(out, funcs)
+	for index := range out {
+		body := make([]ir.Instr, len(out[index].Body))
+		copy(body, out[index].Body)
+		for i := range body {
+			cg.renameForeignInInstr(&body[i])
+		}
+		out[index].Body = body
+	}
+	return out
+}
+
+// renameForeignInInstr renames every piece of lowered text one instruction
+// carries.
+func (cg *Codegen) renameForeignInInstr(instr *ir.Instr) {
+	for i := range instr.Args {
+		instr.Args[i] = cg.rewriteForeign(instr.Args[i])
+	}
+	instr.Condition = cg.rewriteForeign(instr.Condition)
+	for i := range instr.Then {
+		inner := instr.Then[i]
+		cg.renameForeignInInstr(&inner)
+		instr.Then[i] = inner
+	}
+	for i := range instr.Else {
+		inner := instr.Else[i]
+		cg.renameForeignInInstr(&inner)
+		instr.Else[i] = inner
+	}
+}
+
+// rewriteForeign reads a lowered expression as C.
+//
+// A call site is lowered once, for every backend, and carries the qualified name
+// that tells two same-named functions apart — which Go needs and C cannot use,
+// because an extern's symbol is whatever its header's compiler agreed on. This is
+// where a C expression says the name that exists.
+//
+// Only a whole word is replaced. The text is not parsed, and a shorter name that
+// happens to be a prefix of a longer one must not rewrite the longer one.
+func (cg *Codegen) rewriteForeign(text string) string {
+	if len(cg.foreign) == 0 || !strings.Contains(text, "_") {
+		return text
+	}
+	for qualified, foreign := range cg.foreign {
+		text = replaceWord(text, qualified, foreign)
+	}
+	return text
+}
+
+// replaceWord replaces whole-word occurrences, delimited by anything that cannot
+// be part of an identifier.
+func replaceWord(text, from, to string) string {
+	var out strings.Builder
+	for {
+		at := strings.Index(text, from)
+		if at < 0 {
+			out.WriteString(text)
+			return out.String()
+		}
+		out.WriteString(text[:at])
+		before := byte(' ')
+		if at > 0 {
+			before = text[at-1]
+		}
+		after := byte(' ')
+		if at+len(from) < len(text) {
+			after = text[at+len(from)]
+		}
+		if isIdentifierByte(before) || isIdentifierByte(after) {
+			out.WriteString(text[at : at+len(from)])
+		} else {
+			out.WriteString(to)
+		}
+		text = text[at+len(from):]
+	}
+}
+
+func isIdentifierByte(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+// foreignCallNames maps each extern's qualified name to the name its header gave
+// it.
+//
+// A call site is lowered once, for every backend, and carries the qualified name
+// because that is what distinguishes two functions of the same name — which Go
+// needs, since every module of a program compiles into one package. C does not
+// need it and cannot use it: an extern's symbol is whatever its header's
+// compiler agreed on, and the header knows nothing about this language.
+//
+// So the qualified name is what the call site says, and this is where C turns it
+// back into the symbol that exists.
+func foreignCallNames(funcs []ir.FuncIR) map[string]string {
+	if len(funcs) == 0 {
+		return nil
+	}
+	names := map[string]string{}
+	for _, fn := range funcs {
+		if !fn.Extern || fn.CName == "" || fn.CName == fn.Name {
+			continue
+		}
+		names[fn.CName] = fn.Name
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
+}
+
+// cSymbolFor is the name a function has in C.
+//
+// It is the name a header gave it when the function is an extern, and a name Rho
+// chose — carrying its module — when it is not.
+//
+// The difference is the whole of a foreign binding. An extern is a function some
+// C header already declared, and its symbol is whatever that header's compiler
+// agreed on; the header does not know this language exists and could not have
+// avoided the name. Prefixing it produces a call to a function that was never
+// defined, and the error names a symbol that looks like a typo rather than a
+// missing binding.
+//
+// Qualification is not redundant where it is applied. Every module of a Rho
+// program is emitted into one C file, so two modules declaring their own `init`
+// would otherwise collide, and a name Rho chose is one Rho may namespace.
+func cSymbolFor(fn ir.FuncIR) string {
+	if fn.Extern {
+		return fn.Name
+	}
+	if fn.CName != "" {
+		return fn.CName
+	}
+	return fn.Name
 }

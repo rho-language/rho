@@ -81,6 +81,11 @@ type functionType struct {
 	// concrete declaration is what an unqualified call means, and a generic one
 	// only wins where nothing concrete was declared.
 	genericParams []string
+	// extern says the declaration is a foreign function rather than one Rho is
+	// emitting. It decides the name the call site uses: a foreign function is
+	// called by the name its header gave it, and a function Rho emits is called
+	// by the name Rho chose for it.
+	extern bool
 }
 
 /* -------------------------------------------------------------------------- */
@@ -182,9 +187,25 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			for i, param := range fn.Params {
 				params[i] = signatureType(param.Type)
 			}
-			entry := functionType{params: params, result: signatureType(fn.ReturnType), cName: qualifiedCName(fn.Owner, fn.Name)}
+			entry := functionType{
+				params: params,
+				result: signatureType(fn.ReturnType),
+				cName:  qualifiedCName(fn.Owner, fn.Name),
+				extern: fn.Extern,
+			}
 			if fn.Owner != "" {
 				tc.funcs[fn.Owner+"."+fn.Name] = entry
+			}
+			// Recorded here, where declarations are read, rather than where the
+			// module is lowered. A call is checked before the module is lowered,
+			// so a rule that asks whether a call crosses into C has to know by
+			// then — and the declarations it asks about are the ones sitting in
+			// this module, which is where they have just been read.
+			if fn.Extern {
+				tc.externNames[fn.Name] = true
+				if fn.Owner != "" {
+					tc.externNames[fn.Owner+"."+fn.Name] = true
+				}
 			}
 			// A name declared once is that declaration, and a second one does
 			// not replace it. The exception is a generic: a call written
@@ -497,8 +518,15 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			}
 			return ir.Type{Kind: ir.TypeStruct, Name: typeName}, nil
 		}
+		// Whether this call crosses into C decides whether a Rho string may
+		// stand in for a C pointer, which is a question only a foreign boundary
+		// can answer.
+		foreign := false
 		if identifier, ok := value.Callee.(ast.IdentifierExpr); ok {
 			var exists bool
+			if tc.isExternName(identifier.Name) {
+				foreign = true
+			}
 			signature, exists = tc.funcs[identifier.Name]
 			if !exists && identifier.Name != "print" && !isCallableBuiltin(identifier.Name, tc.types) && !isExternalBuiltin(identifier.Name) && !tc.isTypeName(identifier.Name) {
 				// A call to a type is a construction, not a call to something
@@ -579,7 +607,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			if subs != nil {
 				want = tc.substituteType(want, subs)
 			}
-			if !assignable(want, actual) {
+			if !assignable(want, actual) && !(foreign && stringToC(actual, want)) {
 				return ir.Type{}, fmt.Errorf("argument %d has type %s, want %s", i+1, typeName(actual), typeName(want))
 			}
 		}
@@ -651,6 +679,18 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 func (tc *TypeChecker) memberType(object ir.Type, name string) (ir.Type, error) {
 	if object.Kind != ir.TypeStruct {
 		return ir.Type{}, fmt.Errorf("member access requires a struct")
+	}
+	// An optional pointer has no fields, because it is a pointer. It answers the
+	// two fields the Option interface is written in terms of anyway, so that code
+	// written against `Option` works unchanged against the cheaper
+	// representation: `is_some` is the null test and `value` is the pointer.
+	if IsOptionalPointer(object.Name) {
+		switch name {
+		case "is_some":
+			return ir.Type{Kind: ir.TypeBool, Name: "bool"}, nil
+		case "value":
+			return ir.Type{Kind: ir.TypePtr, Name: "Ptr[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}}, nil
+		}
 	}
 	fields, ok := tc.fields[baseTypeName(object.Name)]
 	if !ok {
@@ -794,8 +834,64 @@ func numeric(value ir.Type) bool {
 }
 func comparable(left, right ir.Type) bool { return assignable(left, right) || assignable(right, left) }
 
+// stringToC reports whether a Rho string may be passed where a C pointer is
+// wanted at a foreign call.
+//
+// It is the whole of how a Rho program passes text to C, and it costs nothing:
+// the string is already the pointer. A literal is written into the program's
+// read-only data with a terminating byte after it, and a string that was built
+// at run time is the same thing — a `const char*` that C strings are. So
+// `robohub_get_gpio("user_led")` passes the address of the literal, not a copy
+// and not a buffer.
+//
+// The alternative was refusing, and refusing is what produced
+// `robohub_get_gpio(name.something())` in the first place: a program with a
+// string to give had nothing to give it with. Every header written afterwards
+// would have carried the same workaround, which is the shape of a missing
+// language rule rather than of a missing function.
+//
+// Only at a foreign boundary, and only outward. Inside Rho a string is not a
+// pointer, because a Rho string knows its length and a C one does not, and
+// pretending otherwise in Rho's own code would hide the difference that C
+// callers rely on.
+func stringToC(got, want ir.Type) bool {
+	if got.Kind != ir.TypeString || !pointsAtBytes(want) {
+		return false
+	}
+	// Only where the pointer is to a byte, which is what a C string is. A
+	// pointer to a struct is not text, and a string is not a struct.
+	return len(want.Args) == 0 || want.Args[0].Kind == ir.TypeU8
+}
+
+// pointsAtBytes reports whether a type is a pointer to a byte.
+//
+// A pointer arrives here in one of two spellings, because it is resolved on two
+// paths: as the type of a thing, which is a `TypePtr`, and as a type written in
+// a declaration, which is the concrete specialisation a generic application
+// mangles to. `Ptr[u8]` and `Ptr_u8` are the same pointer; accepting only one of
+// them would make the rule depend on which of the two paths a signature was read
+// by, which is not a distinction a program can see and so should not be one the
+// language makes.
+func pointsAtBytes(want ir.Type) bool {
+	if want.Kind == ir.TypePtr {
+		return true
+	}
+	return strings.HasPrefix(want.Name, "Ptr_")
+}
+
 func assignable(want, got ir.Type) bool {
 	if want.Kind == ir.TypeInvalid || got.Kind == ir.TypeInvalid {
+		return true
+	}
+	// A pointer is usable where an optional pointer is wanted. They are the same
+	// representation, so the conversion is the identity; what it means is that a
+	// value returned by a C library can be held in an `Option[Ptr[T]]` without
+	// the program writing a conversion at every call.
+	//
+	// A null still means absent, because that is what a null is in the
+	// representation. The conversion loses nothing: `robohub_get_gpio` answering
+	// NULL still arrives as `None`.
+	if IsOptionalPointer(want.Name) && got.Kind == ir.TypePtr {
 		return true
 	}
 	return want.Kind == got.Kind || (numeric(want) && numeric(got))
@@ -952,6 +1048,20 @@ func (tc *TypeChecker) lowerFunctionBody(fn ast.FuncDecl, scope map[string]ir.Ty
 	return body
 }
 
+// qualifiedCName is the C symbol a declaration is emitted as.
+//
+// A name is qualified because Rho is free to choose it. Two modules may each
+// declare an `init`, and the generated code has to tell them apart, so a
+// declaration carries its module: `logger_init`, `store_init`.
+//
+// Whether that qualification is the right name in the target language is a
+// separate question, and the two backends answer it differently. Go compiles
+// every module of a program into one package, where two unprefixed `init`s would
+// collide, so the qualified name is what Go wants. C does not: an extern is a
+// function a header already declared, and its symbol is whatever that header's
+// compiler agreed on — the header does not know this language exists and could
+// not have avoided the name. The C backend reads `Extern` and emits the plain
+// name for exactly that reason.
 func qualifiedCName(owner, name string) string {
 	if owner == "" {
 		return name
@@ -1177,6 +1287,20 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		if isIdentifier && object.Name == "string" && expr.Name == "from_i32" {
 			return "rho_string_from_i32"
 		}
+		// An optional pointer is a pointer, so the two fields the Option
+		// interface is written in terms of are the null test and the pointer
+		// itself. Answering them here rather than emitting a field access is what
+		// lets code written against `Option` work against the cheaper
+		// representation.
+		if receiverType, typeErr := tc.exprType(expr.Object, scope); typeErr == nil && IsOptionalPointer(receiverType.Name) {
+			receiver := tc.lowerExpr(expr.Object, scope)
+			switch expr.Name {
+			case "is_some":
+				return "((" + receiver + ") != NULL)"
+			case "value":
+				return "(" + receiver + ")"
+			}
+		}
 		return tc.lowerExpr(expr.Object, scope) + "." + expr.Name
 	case ast.IndexExpr:
 		return tc.lowerExpr(expr.Object, scope) + "[" + tc.lowerExpr(expr.Index, scope) + "]"
@@ -1268,6 +1392,13 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				// one is documenting it rather than defining it.
 				_, isIntrinsic := intrinsicSignatures[identifier.Name]
 				if signature, found := tc.funcs[identifier.Name]; found && signature.cName != "" && !isIntrinsic {
+					// A foreign function is called by the name its header gave
+					// it. The qualified name is what the language uses to tell two
+					// of its own declarations apart, and applying it here would
+					// call a symbol no C compiler ever heard of — the header does
+					// not know this language exists and could not have avoided
+					// the name. A function Rho emits is still emitted under the
+					// qualified name, and must be called the same way.
 					callee = signature.cName
 				}
 			}
@@ -1295,6 +1426,13 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			} else {
 				name = decl.Name
 			}
+		}
+		// An optional pointer is written as the pointer: `Some(p)` is `p` and
+		// `None` is `NULL`. Building the struct that a general Option uses would
+		// mean constructing a tagged pair that the representation does not have,
+		// and the C emitted here would not match the C emitted for the type.
+		if IsOptionalPointer(mangleTypeName(name)) {
+			return tc.lowerOptionalPointerLiteral(expr, name, scope)
 		}
 		for _, value := range expr.Values {
 			values = append(values, tc.lowerExpr(value, scope))

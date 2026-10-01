@@ -70,10 +70,13 @@ func TestCLIBuildDefault(t *testing.T) {
 	in := "cli_build_default.rho"
 	// Compiled artefacts belong under the descriptor's build_dir, never next
 	// to the source file.
-	outC := filepath.Join("build", "cli_build_default.c")
+	// The output of a project build is the generated project, not a translation
+	// unit written beside it. Two `main.c` files — one the generator wrote and one
+	// the build left — meant two answers to what the build was, and only one of
+	// them was compiled.
+	outC := filepath.Join("build", "generated", "c", "app.c")
 
 	defer os.Remove(in)
-	defer os.Remove(outC)
 	defer os.Remove("rho.mod")
 	defer os.Remove("rho.lock")
 	defer os.RemoveAll(".rho-deps")
@@ -106,10 +109,13 @@ func TestCLIBuildCustomOut(t *testing.T) {
 	writeMinimalManifest(t)
 
 	in := "cli_custom.rho"
-	outC := "cli_custom_out.c"
+	// Into the project's build tree rather than beside this file. A test that
+	// writes into the package it is testing leaves a stray C source there, and the
+	// next run of any test in the package then refuses to load: "C source files not
+	// allowed when not using cgo".
+	outC := filepath.Join("build", "cli_custom_out.c")
 
 	defer os.Remove(in)
-	defer os.Remove(outC)
 	defer os.Remove("rho.mod")
 	defer os.Remove("rho.lock")
 	defer os.RemoveAll(".rho-deps")
@@ -254,7 +260,7 @@ fn main() void {
 
 	buildCLI([]string{"test.rho"})
 
-	outC := filepath.Join("build", "test.c")
+	outC := filepath.Join("build", "generated", "c", "app.c")
 
 	defer os.Remove(outC)
 	defer os.Remove("test.rho")
@@ -263,7 +269,7 @@ fn main() void {
 	defer os.RemoveAll(".rho-deps")
 
 	/* ---------------------------------------------------------------------- */
-	/* 5. Verify C file exists                                                 */
+	/* 5. Verify the generated application source exists                        */
 	/* ---------------------------------------------------------------------- */
 
 	if _, err := os.Stat(outC); err != nil {
@@ -309,22 +315,41 @@ fn main() void {
 // target rather than a file named after the module. Walking for it keeps the
 // tests honest about what they are checking — that a binary was produced for the
 // target — without restating the layout.
+// builtBinary finds what a build produced.
+//
+// It looks in the project's output directory, which is where a project's manifest
+// says its binaries go, rather than in the generated project's build tree: the
+// output directory is the contract, and a test that found the binary somewhere
+// else would keep passing if the contract were ignored.
 func builtBinary(target string) string {
-	root := filepath.Join("build", "generated", "c", "build", target)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
+	// A binary lands in the project's output directory when a target spec built it
+	// — that is what `output_dir` is for — and in the generated project's own
+	// build tree when the project's own CMake built it. Both are places a build
+	// legitimately puts its result, so both are searched; which one applies is the
+	// target's business, not this test's.
+	for _, root := range []string{
+		filepath.Join("build", "output"),
+		filepath.Join("build", "generated", "c", "build", target),
+		// The project's own name at the root of the build directory, which is
+		// where a native target's binary is written: it is the target's only
+		// output, so it is named rather than left in the CMake tree.
+		"build",
+	} {
+		entries, err := os.ReadDir(root)
 		if err != nil {
 			continue
 		}
-		if info.Mode()&0o111 != 0 {
-			return filepath.Join(root, entry.Name())
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			if info.Mode()&0o111 != 0 {
+				return filepath.Join(root, entry.Name())
+			}
 		}
 	}
 	return ""

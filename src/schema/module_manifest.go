@@ -383,6 +383,16 @@ func ModuleSchema() Schema {
 				Required: false,
 				Kind:     KindMap,
 				Fields: []FieldSchema{
+					// `defines` are the compile definitions a build of this module needs.
+					//
+					// As much a contract as the include directories: a vendor HAL's
+					// umbrella header includes a driver's header only when that driver is
+					// enabled, so a module that supports a driver says which ones.
+					{Name: "defines", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// `output_dir` is where this project's built binaries are put, inside
+					// the build directory: a binary is a build output, and a project with
+					// several targets keeps them side by side.
+					{Name: "output_dir", Required: false, Kind: KindString},
 					{Name: "language", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidBuildLanguages},
 					// targets lists the generated-project backends to emit for
 					// this application (for example c and go).
@@ -430,6 +440,97 @@ func ModuleSchema() Schema {
 					// source and nothing a user could edit.
 					{Name: "interface", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "require", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
+				// Where a platform keeps the declarations of the hardware it supports.
+				//
+				// Declared rather than found. A directory called `targets` beside a
+				// dependency is a guess that reads as a contract and is not one.
+				Name:     "hardware",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "boards", Required: false, Kind: KindString},
+					{Name: "presets", Required: false, Kind: KindString},
+					{Name: "targets", Required: false, Kind: KindString},
+					{Name: "target", Required: false, Kind: KindString},
+					{Name: "kconfig", Required: false, Kind: KindString},
+				},
+			},
+			{
+				// Where this module keeps its vendor sources.
+				//
+				// A path that already holds a repository is used as it is; a path that holds
+				// nothing is where the repository is cloned. Declared rather than always
+				// fetched, because a repository somebody put there on purpose — to patch it,
+				// to work offline, to avoid a second copy of a large tree — should be used
+				// rather than fetched over.
+				Name:     "vendor",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "dir", Required: false, Kind: KindString},
+					// Each vendor repository this module builds against, and the
+					// folder inside `dir` it lives in.
+					//
+					// `name` is how a preset's dependency is matched to this one, so
+					// the two are joined by a name rather than by a path either of
+					// them happened to write. `path` is relative to `dir`; a
+					// repository already there is used as it is, and one that is
+					// absent is fetched into it from `git` at `branch`.
+					//
+					// Declared per repository rather than one directory for all of
+					// them, because "where the SDK is" is a question with a
+					// per-answer: three repositories of different sizes and revisions
+					// do not share a folder, and a person keeping a patched copy of
+					// one of them needs to say which.
+					{Name: "repos", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "name", Required: true, Kind: KindString},
+							{Name: "path", Required: true, Kind: KindString},
+							{Name: "git", Required: false, Kind: KindString},
+							{Name: "branch", Required: false, Kind: KindString},
+						},
+					}},
+				},
+			},
+			{
+				// The modules that implement a set of interfaces.
+				//
+				// A project declares what it depends on and that is where a build looks
+				// first. This is the backup for a program written against the interfaces
+				// alone, which named the interfaces and not the platform.
+				Name:     "platforms",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{Kind: KindMap, Fields: []FieldSchema{
+					{Name: "name", Required: true, Kind: KindString},
+					{Name: "path", Required: false, Kind: KindString},
+					{Name: "git", Required: false, Kind: KindString},
+					{Name: "branch", Required: false, Kind: KindString},
+				}},
+			},
+			{
+				// When this module's tests are eligible to be built.
+				//
+				// A unit test that runs on the host links a hosted C library, and a library
+				// built for a microcontroller has no syscalls for it to resolve against.
+				// So the module says which kind of target its tests are for, and a build for
+				// another kind does not register them.
+				Name:     "testing",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "host_tests", Required: false, Kind: KindMap, Fields: []FieldSchema{
+						{Name: "enabled", Required: false, Kind: KindBool},
+						{Name: "target_constraint", Required: false, Kind: KindString},
+					}},
+					{Name: "target_tests", Required: false, Kind: KindMap, Fields: []FieldSchema{
+						{Name: "enabled", Required: false, Kind: KindBool},
+						{Name: "target_constraint", Required: false, Kind: KindString},
+					}},
 				},
 			},
 			{

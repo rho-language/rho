@@ -35,6 +35,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"rho/src/deps"
+	"rho/src/yaml"
 )
 
 // CDep is one C dependency a project declares.
@@ -46,28 +49,27 @@ import (
 // author tested. The revision is a branch, a tag, or whatever the repository's
 // default is.
 type CDep struct {
-	// Name is how the dependency is referred to in a report. It is not a
-	// module path, because nothing resolves it as one.
-	Name string
-	// Git is the repository the sources are fetched from.
-	Git string
-	// Branch and Tag pin the revision. At most one is used; a dependency that
-	// names both is refused rather than resolved by preferring one, because
-	// which one was meant is a question only its author can answer.
-	Branch string
-	Tag    string
-	// Path is a directory the sources are already in, which is how a project
-	// works against a checkout rather than a remote. A dependency with a path
-	// is never fetched.
-	Path string
-	// Include names the directories that go on the include path, relative to
-	// the dependency's root. A pattern is allowed and each match is taken.
-	Include []string
-	// Src names the sources: a file is compiled, a directory contributes the C
-	// files in it.
-	Src []string
-	// Where the dependency was read from, for a report.
-	Source string
+	// Name is what the dependency is called, and what an override narrows it by.
+	Name string `json:"name" yaml:"name"`
+	// Git is where it is fetched from when it is not already checked out.
+	Git string `json:"git,omitempty" yaml:"git,omitempty"`
+	// Branch and Tag are the revision, and a build takes whichever is declared.
+	Branch string `json:"branch,omitempty" yaml:"branch,omitempty"`
+	Tag    string `json:"tag,omitempty" yaml:"tag,omitempty"`
+	// Include are the directories of this repository that are headers, and Src
+	// the ones that are code. They are separate because a build adds one to the
+	// include path and compiles the other, and a directory that is both would be
+	// added and compiled wholesale.
+	Include []string `json:"include,omitempty" yaml:"include,omitempty"`
+	Src     []string `json:"src,omitempty" yaml:"src,omitempty"`
+	// Path is where the dependency is checked out, for a build that is told rather
+	// than asked. It is how a vendor source is resolved inside a tree the platform
+	// already has, rather than fetched.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// Source is which repository of a platform this came from — which preset
+	// directory, in practice — so a report can say where a dependency was found
+	// without walking the tree again.
+	Source string `json:"-" yaml:"-"`
 }
 
 // Revision is what a report calls this dependency's revision.
@@ -89,9 +91,15 @@ func (d CDep) Validate() error {
 	if d.Tag != "" && d.Branch != "" {
 		return fmt.Errorf("dependency %s names both a tag and a branch; one of them is meant", d.Name)
 	}
-	if d.Git == "" && d.Path == "" {
-		return fmt.Errorf("dependency %s says where it comes from nowhere: it needs a git URL or a path", d.Name)
-	}
+	// A dependency need not name a git URL or a path of its own. A board declares
+	// where each of its vendor repositories lives — a folder in the project's
+	// vendor tree, used when it is there and fetched when it is not — and that is
+	// where most of them come from. Requiring the name here as well would make the
+	// same fact be written twice, and the copy in the preset is the one that
+	// cannot know where the project keeps its vendor tree.
+	//
+	// Whether it can actually be resolved is decided where it is used, because
+	// only there is the board that might say.
 	if d.Git != "" && d.Path != "" {
 		return fmt.Errorf("dependency %s names both a repository and a path; it is one or the other", d.Name)
 	}
@@ -126,6 +134,11 @@ type Resolution struct {
 // taking four arguments where two of them are configuration is a function whose
 // calls cannot be read.
 type Resolver struct {
+	// BoardName is the board the selected preset names. It is how the board's own
+	// contract — including where its vendor repositories live — is reached, since
+	// a board is not a dependency of the project that builds for it.
+	BoardName string
+
 	// ProjectRoot is the project whose dependencies these are.
 	ProjectRoot string
 	// Cache is where fetched dependencies are kept. It is a directory this
@@ -176,8 +189,29 @@ func (r *Resolver) Resolve(preset Preset) (Resolution, error) {
 				return resolution, err
 			}
 			if root == "" {
+				// A dependency nothing placed. Reported rather than skipped: a
+				// build that silently omits the HAL a preset names produces a
+				// program that fails later with a missing header, which says
+				// nothing about the decision that left it out.
 				resolution.Missing = append(resolution.Missing, one.Name)
 				continue
+			}
+
+			// What the dependency's own manifest says a consumer needs on its
+			// include path.
+			//
+			// A preset says where to fetch the vendor SDKs; the library in front
+			// of them is a Rho module with a manifest, and that manifest already
+			// declares its include directories so a consumer reads them rather
+			// than being told them. Without this a program restates them, and a
+			// restated path is one that only means something on the machine that
+			// wrote it — which is the whole of what a dependency exists to avoid.
+			for _, dir := range manifestIncludeDirs(root) {
+				for _, match := range expand(filepath.Join(root, dir)) {
+					if info, statErr := os.Stat(match); statErr == nil && info.IsDir() {
+						addInclude(match)
+					}
+				}
 			}
 
 			for _, pattern := range one.Include {
@@ -194,12 +228,18 @@ func (r *Resolver) Resolve(preset Preset) (Resolution, error) {
 						continue
 					}
 					if info.IsDir() {
-						for _, file := range cFilesIn(match) {
+						for _, file := range sourceFilesIn(match) {
 							addSource(file)
 						}
 						continue
 					}
-					if filepath.Ext(match) == ".c" {
+					// Assembly as well as C, because the one source a board
+					// preset most often exists to declare is the startup file —
+					// and a build that dropped it would link without an entry
+					// point, and say so by defaulting the entry to the base
+					// address rather than by naming the file it wanted.
+					switch strings.ToLower(filepath.Ext(match)) {
+					case ".c", ".s", ".S":
 						addSource(match)
 					}
 				}
@@ -215,6 +255,10 @@ func (r *Resolver) Resolve(preset Preset) (Resolution, error) {
 	// output rather than by the order a map happened to be walked in.
 	sort.Strings(resolution.IncludeDirs)
 	sort.Strings(resolution.SourceFiles)
+	if len(resolution.Missing) > 0 {
+		return resolution, fmt.Errorf("nothing says where %s is: a preset names it as a dependency, and neither it nor the board it belongs to gives a git URL or a folder",
+			strings.Join(resolution.Missing, ", "))
+	}
 	return resolution, nil
 }
 
@@ -231,13 +275,25 @@ func (r *Resolver) rootOf(dep CDep) (string, error) {
 		}
 		return root, nil
 	}
-	if dep.Git == "" {
-		return "", nil
+	// Where the module said its vendor repositories are, if it said. That is the
+	// contract: a repository already in that folder is used as it is, and one that
+	// is absent is fetched into it — so a vendor tree somebody patched, or fetched
+	// once to work offline, is kept rather than fetched over, and it is beside the
+	// project that builds against it rather than in a shared cache where two
+	// projects on two revisions of the same SDK could not both be right.
+	dest := filepath.Join(r.Cache, r.directoryFor(dep))
+	if declared := r.declaredVendorPath(dep.Name); declared != "" {
+		dest = declared
 	}
 
-	dest := filepath.Join(r.Cache, r.directoryFor(dep))
 	if info, err := os.Stat(dest); err == nil && info.IsDir() {
 		return dest, nil
+	}
+	if dep.Git == "" {
+		// Nothing here and nowhere to fetch it from. Left to the caller to
+		// report, which can name the dependency; a fetch with no URL would fail
+		// less clearly.
+		return "", nil
 	}
 	if err := r.fetch(dep, dest); err != nil {
 		return "", err
@@ -369,15 +425,73 @@ func expand(path string) []string {
 	return matches
 }
 
-// cFilesIn lists the C files directly in a directory.
-func cFilesIn(dir string) []string {
+// manifestIncludeDirs reads the include directories a dependency's own manifest
+// declares for its consumers.
+//
+// A path carrying a build-tool variable is left out rather than half-resolved. A
+// platform declares things like `${CMAKE_BINARY_DIR}/generated/`, which is
+// correct in a CMake build and unresolvable here; passing the unexpanded form to
+// the compiler produces an include path that does not exist and a diagnostic
+// naming a path nobody can find, whereas leaving it out produces a build that
+// either works or fails on a header that is genuinely missing.
+func manifestIncludeDirs(root string) []string {
+	for _, name := range []string{"module.yml", "rho.mod"} {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			continue
+		}
+		document, err := yaml.Load(string(data))
+		if err != nil || document.Kind != yaml.KindMap {
+			continue
+		}
+		build, ok := document.Map["build"]
+		if !ok || build.Kind != yaml.KindMap {
+			continue
+		}
+		dirs, ok := build.Map["include_dirs"]
+		if !ok {
+			continue
+		}
+		kept := make([]string, 0, len(dirs.List))
+		for _, dir := range readStrings(dirs) {
+			if !strings.Contains(dir, "${") {
+				kept = append(kept, dir)
+			}
+		}
+		return kept
+	}
+	return nil
+}
+
+// sourceFilesIn lists the C and assembly a directory holds.
+//
+// Assembly counts, because a directory of startup files is what a board preset
+// narrows to, and a reader that only understood C would find a directory full of
+// sources it had no name for and report nothing about it.
+func sourceFilesIn(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
 	files := []string{}
 	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".c" {
+		if entry.IsDir() {
+			continue
+		}
+		// ST ships some of its drivers as templates: a file that shows how to
+		// use a peripheral rather than implementing it. The vendor names those
+		// `*_template.c` precisely so they are not compiled, and compiling one
+		// fails on the type the template was asking the reader to supply.
+		//
+		// That is the vendor's convention rather than one of ours, which is why
+		// it is named here rather than left to a preset to list around: a preset
+		// that said `src: [Src]` and also had to remember which files in there are
+		// examples would be a second place for the vendor's layout to be wrong.
+		if strings.HasSuffix(entry.Name(), "_template.c") {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(entry.Name())) {
+		case ".c", ".s":
 			files = append(files, filepath.Join(dir, entry.Name()))
 		}
 	}
@@ -392,7 +506,29 @@ func cFilesIn(dir string) []string {
 // reading it: the Rho module cache next to it belongs to rho-deps, and a
 // dependency manager that shared a cache with another would eventually find
 // something the other had decided was stale.
-func CacheDir() (string, error) {
+// CacheDir returns where vendor sources are kept, given the module that
+// declared where they go.
+//
+// A module that declares a `vendor.dir` gets that directory, resolved against its
+// own root. That is the case that matters: a board's vendor tree is part of the
+// project, beside the code that builds against it, so it is versioned with it,
+// patched with it, and deleted with it.
+//
+// The Rho home is only the fallback, for a module that says nothing. Sharing one
+// cache across every project on a machine means two projects on two revisions of
+// the same SDK cannot both be right, and means a checkout carries no record of
+// what it was built against — which is the thing a vendor tree in the project is
+// for.
+func CacheDir(declaringRoot string) (string, error) {
+	if declaringRoot != "" {
+		if manifest, err := deps.LoadManifest(deps.ManifestPath(declaringRoot)); err == nil && manifest != nil && manifest.VendorDir != "" {
+			directory := manifest.VendorDir
+			if !filepath.IsAbs(directory) {
+				directory = filepath.Join(declaringRoot, directory)
+			}
+			return filepath.Join(directory, "pkg"), nil
+		}
+	}
 	home, err := RhoHome()
 	if err != nil {
 		return "", err
@@ -411,4 +547,123 @@ func RhoHome() (string, error) {
 		return "", fmt.Errorf("cannot determine the home directory: %w", err)
 	}
 	return filepath.Join(home, ".rho"), nil
+}
+
+// declaredVendorPath returns where a module said a named vendor repository is, or
+// "" when it said nothing about that one.
+//
+// It asks every module in the project's dependency chain, because the repository
+// a build needs is usually declared by the board and the vendor directory that
+// holds it belongs to the platform — so the name is looked for in both rather than
+// in whichever happened to be nearer.
+func (r *Resolver) declaredVendorPath(name string) string {
+	// The board the selected preset names is where a board's vendor tree is
+	// declared, and the board is not a dependency of the project: a project
+	// depends on the platform, and the platform implements every board of the
+	// family at once. So it has to be reached through the preset, which is what
+	// names it.
+	for _, base := range r.platformRoots() {
+		for _, boardRoot := range boardRootsFor(base, r.BoardName) {
+			if path, ok := vendorPathIn(boardRoot, name); ok {
+				return path
+			}
+		}
+	}
+
+	for _, base := range append([]string{r.ProjectRoot}, r.platformRoots()...) {
+		if path, ok := vendorPathIn(base, name); ok {
+			return path
+		}
+	}
+	return ""
+}
+
+// vendorPathIn returns where a module says a named repository is, or false.
+func vendorPathIn(base, name string) (string, bool) {
+	module, err := deps.LoadManifest(deps.ManifestPath(base))
+	if err != nil || module == nil || module.VendorDir == "" {
+		return "", false
+	}
+	for _, repo := range module.VendorRepos {
+		if repo.Name != name || repo.Path == "" {
+			continue
+		}
+		directory := module.VendorDir
+		if !filepath.IsAbs(directory) {
+			directory = filepath.Join(base, directory)
+		}
+		return filepath.Join(directory, repo.Path), true
+	}
+	return "", false
+}
+
+// boardRootsFor returns the module roots of the boards a name may refer to.
+//
+// A board is named by its designation in a preset and by its module name in a
+// dependency, and the two are written in different cases by the two people who
+// wrote them. Both are tried rather than requiring one spelling of a thing that
+// exists in two.
+func boardRootsFor(platformRoot, board string) []string {
+	if platformRoot == "" || board == "" {
+		return nil
+	}
+	roots := []string{}
+	for _, candidate := range []string{board, strings.ToLower(board)} {
+		root := filepath.Join(platformRoot, "boards", candidate)
+		if _, err := deps.LoadManifest(deps.ManifestPath(root)); err == nil {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
+// platformRoots returns the roots of the C dependencies a project declares.
+func (r *Resolver) platformRoots() []string {
+	return r.projectDependencies()
+}
+
+// projectDependencies returns the roots of this project's C dependencies.
+func (r *Resolver) projectDependencies() []string {
+	roots := []string{}
+	seen := map[string]bool{}
+	// Read from the document rather than through `deps.Manifest`.
+	//
+	// The two read `depends:` differently, and a manifest writes the list form:
+	// a dependency carries a type and a path, not a version constraint. Asking the
+	// other reader would find nothing here, and "no dependencies" looks exactly
+	// like "this project depends on nothing".
+	var walk func(base string, depth int)
+	walk = func(base string, depth int) {
+		if depth > 8 {
+			return
+		}
+		document, err := loadDocument(base)
+		if err != nil {
+			return
+		}
+		for _, item := range document.Map["depends"].List {
+			if item.Kind != yaml.KindMap {
+				continue
+			}
+			if readString(item.Map["type"]) != string(deps.DepTypeC) {
+				continue
+			}
+			path := readString(item.Map["path"])
+			if path == "" {
+				continue
+			}
+			root := path
+			if !filepath.IsAbs(root) {
+				root = filepath.Join(base, root)
+			}
+			if seen[root] {
+				continue
+			}
+			seen[root] = true
+			roots = append(roots, root)
+			walk(root, depth+1)
+		}
+	}
+	walk(r.ProjectRoot, 0)
+	return roots
 }

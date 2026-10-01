@@ -2,8 +2,9 @@
 // @file flash_test.go
 // @brief Rho Flash tests.
 //
-// Tests deterministic behavior of rho flash without touching real hardware.
-// exec.Command is mocked to avoid calling elf2uf2 or st-flash.
+// How a command from a target spec is rendered, and what is refused. No
+// hardware is involved: the flashing itself is whatever the spec named, and a
+// test that reached for a board would be testing the board.
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -15,71 +16,142 @@
 package main
 
 import (
-	"os"
+	"reflect"
 	"testing"
 )
 
-/* -------------------------------------------------------------------------- */
-/*  Mock mode                                                                 */
-/* -------------------------------------------------------------------------- */
-
-var mockExec = true
-
-/* -------------------------------------------------------------------------- */
-/*  Tests: Pico Flash                                                          */
-/* -------------------------------------------------------------------------- */
-
-func TestFlashPico(t *testing.T) {
-	if mockExec {
-		t.Skip("external elf2uf2 and mounted Pico are not available in unit tests")
+// A command names the program and its arguments, and the binary goes where the
+// command said it does. This is the whole of what the flasher contributes: the
+// board said how it is reached, and this runs it.
+func TestInvocationSubstitutesTheBinary(t *testing.T) {
+	flash := Flash{
+		Command: `openocd -f interface/stlink.cfg -f target/stm32h7x.cfg -c "program {binary} verify reset exit"`,
 	}
-	bin := "test_pico.bin"
-	uf2 := "test_pico.uf2"
 
-	defer os.Remove(bin)
-	defer os.Remove(uf2)
-
-	os.WriteFile(bin, []byte("dummy"), 0644)
-
-	if mockExec {
-		// Simulate successful flash
-		err := FlashFile(bin, MCU_PICO)
-		if err != nil {
-			t.Fatalf("FlashFile(PICO) failed in mock mode: %v", err)
-		}
-		return
+	program, args, err := flash.invocation("build/firmware.elf")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	if program != "openocd" {
+		t.Errorf("expected openocd, got %q", program)
+	}
+	want := []string{
+		"-f", "interface/stlink.cfg",
+		"-f", "target/stm32h7x.cfg",
+		"-c", "program build/firmware.elf verify reset exit",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("expected\n  %q\ngot\n  %q", want, args)
 	}
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Tests: STM32 Flash                                                         */
-/* -------------------------------------------------------------------------- */
+// A quoted argument stays one argument. A path with a space in it is a path, and
+// a flasher that split it would report a file that does not exist.
+func TestInvocationKeepsQuotedArgumentWhole(t *testing.T) {
+	flash := Flash{Command: `st-flash write "{binary}" {offset}`}
 
-func TestFlashSTM32(t *testing.T) {
-	if mockExec {
-		t.Skip("external st-flash hardware tool is not available in unit tests")
+	_, args, err := flash.invocation("build/my firmware.bin")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
 	}
-	bin := "test_stm32.bin"
-	defer os.Remove(bin)
-
-	os.WriteFile(bin, []byte("dummy"), 0644)
-
-	if mockExec {
-		err := FlashFile(bin, MCU_STM32)
-		if err != nil {
-			t.Fatalf("FlashFile(STM32) failed in mock mode: %v", err)
+	whole := false
+	for _, arg := range args {
+		if arg == "build/my firmware.bin" {
+			whole = true
 		}
-		return
+	}
+	if !whole {
+		t.Errorf("expected the binary path kept whole, got %q", args)
 	}
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Tests: Missing File                                                        */
-/* -------------------------------------------------------------------------- */
+// A command that never says where the file goes has it appended, because a tool
+// left to its own default will write whatever that default is rather than the
+// binary that was just built.
+func TestInvocationAppendsBinaryWhenCommandOmitsIt(t *testing.T) {
+	flash := Flash{Command: "st-flash write"}
 
-func TestFlashMissingFile(t *testing.T) {
-	err := FlashFile("does_not_exist.bin", MCU_PICO)
-	if err == nil {
-		t.Fatalf("expected error for missing file")
+	_, args, err := flash.invocation("firmware.bin")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	if args[len(args)-1] != "firmware.bin" {
+		t.Errorf("expected the binary appended, got %q", args)
+	}
+}
+
+// The offset belongs where the target spec says it goes, and a tool that takes
+// the address after the file gets it there.
+func TestInvocationPlacesOffsetFromTheSpec(t *testing.T) {
+	flash := Flash{Command: "st-flash write", Offset: "0x08000000", PostArgs: []string{"{offset}"}}
+
+	_, args, err := flash.invocation("firmware.bin")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	if args[len(args)-1] != "0x08000000" {
+		t.Errorf("expected the spec's offset last, got %q", args)
+	}
+}
+
+// A platform may give the invocation as a list rather than a string, for a board
+// whose command has nothing in it needing quoting.
+func TestInvocationAcceptsArgumentList(t *testing.T) {
+	flash := Flash{Arguments: []string{"picotool", "load", "{binary}"}}
+
+	program, args, err := flash.invocation("firmware.uf2")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	if program != "picotool" {
+		t.Errorf("expected picotool, got %q", program)
+	}
+	if !reflect.DeepEqual(args, []string{"load", "firmware.uf2"}) {
+		t.Errorf("expected load and the binary, got %q", args)
+	}
+}
+
+// A target that says nothing about reaching a board is a target this program
+// cannot flash, and it is told so. Guessing would be worse than refusing: the
+// old answer was a guessed address, and a wrong one is a part that no longer
+// works.
+func TestInvocationRefusesAnUndeclaredCommand(t *testing.T) {
+	flash := Flash{}
+	if flash.declared() {
+		t.Fatal("a flash block with neither command nor arguments declares nothing")
+	}
+	if _, _, err := flash.invocation("firmware.bin"); err == nil {
+		t.Error("expected a refusal, got an invocation")
+	}
+}
+
+// The command is split, not handed to a shell. A spec is data a platform ships,
+// and one that could name a pipeline would be one that could run whatever a
+// machine could be talked into.
+//
+// What the splitter does with a separator is the test: it arrives as an ordinary
+// argument to the program that was named. Nothing runs `rm`, and nothing runs at
+// all except the one program, which decides for itself what to do with a word
+// that looks like punctuation.
+func TestInvocationDoesNotInterpretShellSyntax(t *testing.T) {
+	flash := Flash{Command: "flasher --file {binary} ; rm -rf /"}
+
+	program, args, err := flash.invocation("firmware.bin")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	if program != "flasher" {
+		t.Errorf("expected the named program, got %q", program)
+	}
+	if len(args) == 0 || args[0] != "--file" {
+		t.Fatalf("expected the program's own arguments, got %q", args)
+	}
+	if args[1] != "firmware.bin" {
+		t.Errorf("expected the binary as the program's argument, got %q", args)
+	}
+	// The separator is passed through rather than acted on: it is the last thing
+	// that shows a shell was not involved.
+	if args[len(args)-1] != "/" {
+		t.Errorf("expected the trailing words passed through as arguments, got %q", args)
 	}
 }
