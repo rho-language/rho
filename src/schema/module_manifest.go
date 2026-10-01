@@ -389,6 +389,25 @@ func ModuleSchema() Schema {
 					// umbrella header includes a driver's header only when that driver is
 					// enabled, so a module that supports a driver says which ones.
 					{Name: "defines", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// Sources compiled only when a symbol is set.
+					//
+					// A driver belongs to a peripheral, and whether a program uses
+					// that peripheral is the program's answer to set, not the
+					// platform's to assume. Naming the pairing here is what lets a
+					// platform support a driver and a program leave it out: the
+					// symbol says whether, and the symbol is the same one that
+					// decides whether the interface exists at all.
+					//
+					// Matched by file name, because the sources live in a vendor
+					// repository the platform does not own, and a rule that had to
+					// be written against a path would break when the repository moved.
+					{Name: "guarded_sources", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "config", Required: true, Kind: KindString},
+							{Name: "sources", Required: true, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+						},
+					}},
 					// `output_dir` is where this project's built binaries are put, inside
 					// the build directory: a binary is a build output, and a project with
 					// several targets keeps them side by side.
@@ -563,6 +582,11 @@ func ModuleSchema() Schema {
 				Kind:     KindMap,
 				Fields: []FieldSchema{
 					{Name: "kconfig_fragments", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// `values_file` is the file a project writes the symbols it
+					// sets in. Declared rather than found: a build that looked for a
+					// file called `project.conf` would be guessing at a name, and a
+					// rename would silently stop applying every value in it.
+					{Name: "values_file", Required: false, Kind: KindString},
 					{Name: "dialect", Required: false, Kind: KindString, AllowedValues: []string{"linux", "espidf", "freertos"}},
 					{Name: "module", Required: false, Kind: KindString},
 					{Name: "values", Required: false, Kind: KindMap},

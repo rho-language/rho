@@ -202,7 +202,7 @@ func readText(text, path string, out *Fragment, seen map[string]bool, diagnostic
 				pending.Consume()
 			}
 			out.Symbols = append(out.Symbols, Symbol{
-				Name:     name,
+				Name:     symbolName(name),
 				Type:     kind,
 				InChoice: choice,
 				Line:     line,
@@ -407,4 +407,19 @@ func fragmentLibrary() string {
 		return "kconfig"
 	}
 	return filepath.Join(home, ".rho", "kconfig", "fragments")
+}
+
+// symbolName is the name a symbol is known by everywhere outside a fragment.
+//
+// A fragment writes `config RH_HAL_UART` — that is how Kconfig spells it, and
+// every fragment in every project does. Everything else spells it the way the
+// resulting header defines it: `CONFIG_RH_HAL_UART`, in a defconfig, in a Rho
+// module of constants, in a driver's own `#if`.
+//
+// Storing what was written made those two spellings different symbols. A project
+// that set a symbol got told nothing declared it, while the same symbol resolved
+// from its default — so the value was found, and it was not the value that was
+// asked for.
+func symbolName(written string) string {
+	return "CONFIG_" + strings.TrimPrefix(written, "CONFIG_")
 }
