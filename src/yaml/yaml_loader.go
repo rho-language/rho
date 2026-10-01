@@ -151,7 +151,12 @@ func Load(src string) (Value, error) {
 				return Value{}, fmt.Errorf("list item without a list: %q", line)
 			}
 			item := strings.TrimSpace(line[1:])
-			if strings.Contains(item, ":") {
+			// A quoted item is a string, whatever it contains. A target name
+			// like `rho::robohub-common` is quoted precisely because of its
+			// colons, and reading that as a key and a value turned a declared name
+			// into a one-entry map — which then failed a schema that had said it
+			// expected a string.
+			if strings.Contains(item, ":") && !isQuoted(item) {
 				parts := strings.SplitN(item, ":", 2)
 				key := strings.TrimSpace(parts[0])
 				value := strings.TrimSpace(parts[1])
@@ -264,7 +269,7 @@ func inlineSequence(val string) (Value, bool) {
 		if item == "" {
 			continue
 		}
-		if strings.Contains(item, ":") {
+		if strings.Contains(item, ":") && !isQuoted(item) {
 			// A flow entry written as `key: value` becomes a single-entry map
 			// so the shape matches the block form.
 			parts := strings.SplitN(item, ":", 2)
@@ -330,4 +335,18 @@ func kindName(kind Kind) string {
 	default:
 		return "value"
 	}
+}
+
+// isQuoted reports whether a scalar is quoted, and therefore a string whatever
+// it contains.
+//
+// Quoting is how a value says what it is. A colon inside quotes is a character,
+// not a mapping, and a value whose whole purpose is to contain one — a CMake
+// target name, a URL, a timestamp — is quoted for that reason alone.
+func isQuoted(value string) bool {
+	if len(value) < 2 {
+		return false
+	}
+	first := value[0]
+	return (first == '"' || first == '\'') && value[len(value)-1] == first
 }

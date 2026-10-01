@@ -79,6 +79,18 @@ func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir
 		return tc.substituteType(tc.typeFor(name), subs)
 	}
 	base := name[:open]
+	// A pointer is not a generic struct that happens to be called Ptr. It is the
+	// pointer type, and it has to be resolved as one here as well as on the path
+	// that reads a type used in an expression, or the same `Ptr[u8]` becomes two
+	// different things depending on where it was written.
+	//
+	// Mangling it produced `Ptr_u8` in a parameter and return position, which a
+	// backend then emitted as a struct — so an extern declared to take a C string
+	// pointer declared a function taking a struct, and no call of it could
+	// compile however the argument was written.
+	if base == "Ptr" {
+		return tc.substituteType(tc.typeFor(name), subs)
+	}
 	if _, ok := tc.genericStructs[base]; !ok {
 		return tc.substituteType(tc.typeFor(name), subs)
 	}
@@ -138,6 +150,13 @@ func (tc *TypeChecker) cTypeForTypeName(name string) string {
 		return cTypeForName(name)
 	}
 	base := name[:open]
+	// A pointer is spelled as a C pointer, by `cTypeForName` below, which knows
+	// to do it. Mangling it first wrote `Ptr_u8`, which is a name a C compiler
+	// has never heard of, so a local declared to hold what a foreign function
+	// returned could not be declared at all.
+	if base == "Ptr" {
+		return cTypeForName(name)
+	}
 	if _, ok := tc.genericStructs[base]; !ok {
 		return cTypeForName(name)
 	}
@@ -359,6 +378,20 @@ func (tc *TypeChecker) unifyTypeArgs(typeParams []string, declared, actual ir.Ty
 	// `Result[T, E]`, so the supplied type's arguments are matched by position.
 	declBase, declArgs, declGeneric := splitApplication(declared.Name)
 	actualBase, actualArgs, actualGeneric := splitApplication(actual.Name)
+
+	// An optional pointer is matched by what it is rather than by what it is
+	// called. `Option[Ptr[T]]` and the mangled `Option_Ptr_X` are the same type,
+	// and a generic function taking `Option[T]` has to be able to deduce its
+	// argument from one — otherwise `is_some(handle)` needs the caller to spell
+	// out the type the value already has.
+	if declBase == "Option" && IsOptionalPointer(actual.Name) && len(declArgs) == 1 {
+		tc.unifyTypeArgs(typeParams, declArgs[0],
+			ir.Type{Kind: ir.TypePtr, Name: actual.Name[len("Option_Ptr_"):],
+				Args: []ir.Type{{Kind: ir.TypeStruct, Name: actual.Name[len("Option_Ptr_"):]}}},
+			subs)
+		return
+	}
+
 	if declGeneric && actualGeneric && declBase == actualBase {
 		// A partial application omits defaulted parameters, so match the
 		// prefix both sides share.
@@ -430,7 +463,12 @@ func (tc *TypeChecker) substituteType(typ ir.Type, subs map[string]ir.Type) ir.T
 		return typ
 	}
 	if replacement, ok := subs[typ.Name]; ok {
-		return replacement
+		// The replacement may itself be an application that was carried as a
+		// name rather than as a type. A pointer is the case that matters: a
+		// generic function returning its argument, specialised at a pointer,
+		// would otherwise return a name the backend has never heard of, and every
+		// call of it would be declared against a type that does not exist.
+		return tc.resolveApplied(replacement)
 	}
 	open := strings.IndexByte(typ.Name, '[')
 	if open < 0 {
@@ -1093,4 +1131,20 @@ func isGenericCallee(tc *TypeChecker, name string) bool {
 		return false
 	}
 	return tc.isGenericName(name)
+}
+
+// resolveApplied turns a carried-as-a-name application back into a type, when it
+// is one.
+//
+// A generic application reaches the backends mangled, because that is what it
+// has to be called. A pointer does not have to be: it is a primitive with an
+// element, and rendering it as a name produced a declaration no compiler knows.
+func (tc *TypeChecker) resolveApplied(typ ir.Type) ir.Type {
+	if typ.Kind != ir.TypeStruct || !strings.Contains(typ.Name, "[") {
+		return typ
+	}
+	if resolved, ok := tc.resolveType(typ.Name); ok {
+		return resolved
+	}
+	return typ
 }

@@ -102,18 +102,23 @@ func Describe(spec Spec) string {
 		fmt.Fprintf(&b, "\n%s\n", wrap(spec.Comment, 78))
 	}
 
-	chain := []string{spec.Name}
-	if spec.MCU != "" {
-		chain = append(chain, spec.MCU)
+	// Only the specs this was actually resolved from. A part and an architecture
+	// are what a spec is *for*, not what it was resolved from, and listing them
+	// reads as though a spec were consulted for them.
+	// The specs this was actually resolved from, when it has been resolved. A spec
+	// handed to a report without being resolved falls back to what it names, since
+	// there is nothing else to say.
+	chain := spec.ResolvedFrom
+	if len(chain) == 0 {
+		chain = []string{spec.Name}
+		if spec.MCU != "" && spec.MCU != spec.Name {
+			chain = append(chain, spec.MCU)
+		}
+		if spec.Arch != "" && (len(chain) == 0 || chain[len(chain)-1] != spec.Arch) {
+			chain = append(chain, spec.Arch)
+		}
 	}
-	if spec.Arch != "" {
-		chain = append(chain, spec.Arch)
-	}
-	if len(chain) > 1 {
-		fmt.Fprintf(&b, "\nResolved from: %s\n", strings.Join(chain, " -> "))
-	} else {
-		fmt.Fprintf(&b, "\nResolved from: %s\n", spec.Name)
-	}
+	fmt.Fprintf(&b, "\nResolved from: %s\n", strings.Join(chain, " -> "))
 
 	if spec.Core != "" {
 		fmt.Fprintf(&b, "\ncore:      %s\n", spec.Core)

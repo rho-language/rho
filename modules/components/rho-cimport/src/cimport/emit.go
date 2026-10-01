@@ -211,6 +211,20 @@ func (i *Interface) writeEnum(b *strings.Builder, decl Decl) {
 }
 
 // writeFunction renders a function declaration as a foreign one.
+// optionalReturn makes a returned pointer optional.
+//
+// Only a return. A pointer a caller passes is the caller's promise that it is
+// there, and making that optional would move a check onto every call to say
+// nothing a call to C could not already do. What the library hands back is
+// different: it is the library saying "here, or nothing", and Rho has to be able
+// to see the nothing.
+func optionalReturn(rhoType string) string {
+	if strings.HasPrefix(rhoType, "Ptr[") && strings.HasSuffix(rhoType, "]") {
+		return "Option[" + rhoType + "]"
+	}
+	return rhoType
+}
+
 func (i *Interface) writeFunction(b *strings.Builder, decl Decl) {
 	if decl.Comment != "" {
 		fmt.Fprintf(b, "// %s\n", decl.Comment)
@@ -219,6 +233,12 @@ func (i *Interface) writeFunction(b *strings.Builder, decl Decl) {
 	if result == "Unit" {
 		result = "void"
 	}
+	// A pointer the library returns may be null. C says so by convention and every
+	// real library does it, so a returned pointer becomes `Option[Ptr[T]]`: a
+	// pointer, with the absence being the null the library already returned. A
+	// program that ignores the result can still hold it as a plain pointer,
+	// because the two are the same representation.
+	result = optionalReturn(result)
 	fmt.Fprintf(b, "extern fn %s(%s) %s\n\n", decl.Name, i.params(decl.Params), result)
 }
 

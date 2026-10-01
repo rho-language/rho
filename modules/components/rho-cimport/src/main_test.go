@@ -78,7 +78,7 @@ func TestHeadersNamesWhatAProjectLinks(t *testing.T) {
 	if code := run([]string{"headers", root}); code != 0 {
 		t.Fatalf("expected headers to answer, got %d", code)
 	}
-	if _, err := os.Stat(filepath.Join(root, "src", "ffi.rho")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, "build", "generated", "modules", "ffi.rho")); err == nil {
 		t.Fatal("expected headers to write nothing")
 	}
 }
@@ -88,13 +88,24 @@ func TestGenerateWritesTheInterfaceAndTheShim(t *testing.T) {
 	if code := run([]string{"generate", root, "--force"}); code != 0 {
 		t.Fatalf("expected the generation to answer, got %d", code)
 	}
+	// The Rho interface and the C shim are written to different places, because
+	// they are different things: the interface is Rho the compiler reads, and the
+	// shim is C the generated project compiles. Neither belongs in `src/`.
+	for _, name := range []string{"ffi_shim.h", "ffi_shim.c"} {
+		if _, err := os.Stat(filepath.Join(root, "build", "generated", "c", name)); err != nil {
+			t.Errorf("expected the shim %s in the generated C project: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "build", "generated", "modules", "ffi.rho")); err != nil {
+		t.Errorf("expected the interface under the build directory: %v", err)
+	}
 	for _, name := range []string{"ffi.rho", "ffi_shim.h", "ffi_shim.c"} {
-		if _, err := os.Stat(filepath.Join(root, "src", name)); err != nil {
-			t.Errorf("expected %s: %v", name, err)
+		if _, err := os.Stat(filepath.Join(root, "src", name)); err == nil {
+			t.Errorf("generated file %s was written into src/", name)
 		}
 	}
 	// Flags come after the path, which is what a person types first.
-	source, err := os.ReadFile(filepath.Join(root, "src", "ffi.rho"))
+	source, err := os.ReadFile(filepath.Join(root, "build", "generated", "modules", "ffi.rho"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +119,7 @@ func TestCheckWritesNothingAndSaysWhatItWouldWrite(t *testing.T) {
 	if code := run([]string{"check", root}); code != 0 {
 		t.Fatalf("expected check to answer, got %d", code)
 	}
-	if _, err := os.Stat(filepath.Join(root, "src", "ffi.rho")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, "build", "generated", "modules", "ffi.rho")); err == nil {
 		t.Fatal("expected check to write nothing")
 	}
 }

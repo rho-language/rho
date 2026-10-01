@@ -298,6 +298,11 @@ type Context struct {
 	// IncludePaths and SourceFiles carry C dependency inputs.
 	IncludePaths []string
 	SourceFiles  []string
+	// ShimSources are the generated C a foreign interface calls through: the shim
+	// rho-cimport wrote alongside the Rho declarations. They are listed with the
+	// project's own sources rather than a dependency's, because they belong to
+	// this build and are regenerated with it.
+	ShimSources []string
 	// Config is the Kconfig bridge a project declared, or nil when it declared
 	// none. A backend that generates a build file runs the merge and includes
 	// what it wrote, so the configuration a project declares is resolved by the

@@ -130,6 +130,10 @@ const (
 	KindString = "string"
 	KindMap    = "map"
 	KindList   = "list"
+	// KindBool is a flag rather than a value. It exists so that a field which is
+	// a decision can say so, and a manifest that writes a word where a decision
+	// belongs is told rather than read as one.
+	KindBool = "bool"
 )
 
 // FieldSchema describes a single field in a YAML document.
@@ -248,7 +252,10 @@ func validateValue(val yaml.Value, field FieldSchema, path string, result *Valid
 	}
 
 	// Check kind
-	if field.Kind != "" {
+	if field.Kind != "" && field.Kind != KindBool {
+		// A boolean is checked separately, below: the loader keeps `true` and
+		// `false` as text, so a strict kind comparison would reject every
+		// well-formed flag in a manifest.
 		actualKind := valueKind(val)
 		if actualKind != field.Kind {
 			result.Errors = append(result.Errors, ValidationError{
@@ -257,6 +264,16 @@ func validateValue(val yaml.Value, field FieldSchema, path string, result *Valid
 				Severity: SeverityError,
 			})
 			return
+		}
+	}
+
+	if field.Kind == KindBool && val.Kind == yaml.KindString {
+		if val.Str != "true" && val.Str != "false" {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:     path,
+				Message:  fmt.Sprintf("expected true or false, got '%s'", val.Str),
+				Severity: SeverityError,
+			})
 		}
 	}
 

@@ -105,6 +105,17 @@ func TargetCMake(spec Spec, linkerScript string) string {
 	banner(&b, "target.cmake", spec, "The flags, memory map and flashing of this target.")
 
 	defines := append([]string{}, spec.Defines...)
+	// The family macro, which the spec's own `family` is what names.
+	//
+	// A vendor library that implements many families at once decides between them
+	// at compile time, from macros, and there is no other way for a build to say
+	// which one it is building. Deriving it here means a spec states its family
+	// once and everything downstream — the driver's own conditionals, a report, a
+	// reader of the build file — agrees, rather than each guessing from the part
+	// number or from which sources happen to be present.
+	if macro := familyMacro(spec.Family); macro != "" {
+		defines = append(defines, macro)
+	}
 	sort.Strings(defines)
 	if len(defines) > 0 {
 		b.WriteString("# The macros a program is compiled with: which chip this is, and how\n")
@@ -118,7 +129,19 @@ func TargetCMake(spec Spec, linkerScript string) string {
 	flags := spec.AllFlags()
 	if len(flags) > 0 {
 		b.WriteString("# The flags the core is built with, after the ones the architecture gives.\n")
+		b.WriteString("#\n")
+		b.WriteString("# They are given to the link as well as to the compile, because not every\n")
+		b.WriteString("# flag is only a compile flag. `-specs=nosys.specs` is what replaces the hosted C\n")
+		b.WriteString("# library's syscall calls with ones that return an error rather than call, and\n")
+		b.WriteString("# a build that gave it only to the compiler linked the hosted library anyway\n")
+		b.WriteString("# and failed on `_getpid` — a symbol whose absence says nothing about the flag\n")
+		b.WriteString("# that was in the wrong place.\n")
 		b.WriteString("add_compile_options(\n")
+		for _, flag := range flags {
+			fmt.Fprintf(&b, "    %s\n", flag)
+		}
+		b.WriteString(")\n")
+		b.WriteString("add_link_options(\n")
 		for _, flag := range flags {
 			fmt.Fprintf(&b, "    %s\n", flag)
 		}
@@ -205,6 +228,38 @@ func LinkerScript(spec Spec) string {
 	if hasFlash {
 		fmt.Fprintf(&b, "/* The stack grows down from the end of %s. */\n", ram.Name)
 		fmt.Fprintf(&b, "_estack = ORIGIN(%s) + LENGTH(%s);\n", ram.Name, ram.Name)
+		// The handlers the core may vector to, demanded from the libraries.
+		//
+		// A vendor startup assembly declares each of these weak and assigns the
+		// address of its own default handler — an instruction to spin. That is a
+		// *definition*, so by the time the linker sweeps a static library looking
+		// for a strong one it has no unresolved symbol left to look for, and the
+		// object that implements the handler is discarded whole.
+		//
+		// The symptom is the worst kind: the board boots, runs, and stops a
+		// millisecond later when the first tick arrives, having recorded no fault
+		// of any kind, because none occurred. Naming the symbols here makes them
+		// undefined references, which is what makes the linker look.
+		//
+		// A handler a platform does not implement resolves to the default one,
+		// exactly as before — the demand is not a claim that each one exists.
+		b.WriteString("/* Demand the handlers the core vectors to, so a library that implements one\n")
+		b.WriteString("   is not discarded for looking unnecessary. See the note on each. */\n")
+		for _, handler := range []string{
+			"Reset_Handler",
+			"NMI_Handler",
+			"HardFault_Handler",
+			"MemManage_Handler",
+			"BusFault_Handler",
+			"UsageFault_Handler",
+			"SVC_Handler",
+			"DebugMon_Handler",
+			"PendSV_Handler",
+			"SysTick_Handler",
+		} {
+			fmt.Fprintf(&b, "EXTERN(%s)\n", handler)
+		}
+		b.WriteString("\n")
 		fmt.Fprintf(&b, "ENTRY(Reset_Handler)\n\n")
 	}
 	if hasRAM {
@@ -324,4 +379,25 @@ func firstSentence(text string) string {
 		return trimmed[:index+1]
 	}
 	return trimmed
+}
+
+// familyMacro is the macro that says which family a build is for.
+//
+// It is derived from the name the spec already carries rather than declared
+// alongside it, because a spec that said `family: STM32H7` and
+// `ROBOHUB_STM32_FAMILY_H7` separately would have two names for one fact, and
+// they would eventually disagree — which is the failure this exists to prevent.
+func familyMacro(family string) string {
+	family = strings.TrimSpace(family)
+	if family == "" {
+		return ""
+	}
+	// `STM32H7` reads as `ROBOHUB_STM32_FAMILY_H7`: the vendor's own prefix
+	// without its `STM32`, which is what the vendor's driver sources test for.
+	trimmed := strings.TrimPrefix(strings.ToUpper(family), "STM32")
+	if trimmed == "" || trimmed == strings.ToUpper(family) {
+		// Not a family this naming knows; better nothing than a wrong name.
+		return ""
+	}
+	return "ROBOHUB_STM32_FAMILY_" + trimmed + "=1"
 }

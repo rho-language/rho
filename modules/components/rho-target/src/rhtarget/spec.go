@@ -61,6 +61,15 @@ type Spec struct {
 	Arch string `json:"arch,omitempty"`
 	// MCU is the chip a board carries.
 	MCU string `json:"mcu,omitempty"`
+	// ResolvedFrom names the specs this one was resolved from, nearest first, so
+	// a report can say what a value actually came from.
+	ResolvedFrom []string `json:"-"`
+
+	// Family is the family of parts this spec is for, as the vendor names it —
+	// `STM32H7`. It is what the family macro is derived from, so a spec states
+	// which family it is once and everything downstream agrees rather than each
+	// working it out from the part number.
+	Family string `json:"family,omitempty"`
 	// Core is the processor core, which is a fact about the chip that a program
 	// may want to know.
 	Core string `json:"core,omitempty"`
@@ -167,6 +176,101 @@ type Flash struct {
 	Offset string `json:"offset,omitempty"`
 	// Comment says what has to be true for flashing to work, such as a boot mode.
 	Comment string `json:"comment,omitempty"`
+	// Arguments is the invocation as a list, for a platform that would rather
+	// not write a command string with quoting inside it. It is the same thing:
+	// a command is used when there is one, and arguments when there is not.
+	Arguments []string `json:"arguments,omitempty"`
+	// PostArgs are the arguments the offset goes between, for a tool that takes
+	// the address after the file rather than before it. Written out, because a
+	// tool's argument order is the one thing about flashing that is not
+	// interchangeable, and a reader guessing it would flash to the wrong place.
+	PostArgs []string `json:"post_args,omitempty"`
+}
+
+// Declared reports whether the target says anything about reaching a board.
+func (f Flash) Declared() bool {
+	return strings.TrimSpace(f.Command) != "" || len(f.Arguments) > 0
+}
+
+// Invocation renders the flash command for a binary, as the program to run and
+// the arguments to run it with.
+//
+// The command is split on whitespace rather than handed to a shell. A spec is
+// data that a platform ships, and a spec that could name a pipeline would be a
+// spec that could run whatever a machine could be talked into; the tools that
+// need quoting are served by honouring quotes here instead. `{binary}` is where
+// the file goes, and a command that never says so has it appended — otherwise a
+// tool with a default would flash whatever that default is rather than the file
+// that was just built.
+func (f Flash) Invocation(binary string) (string, []string, error) {
+	argv := []string{}
+	switch {
+	case strings.TrimSpace(f.Command) != "":
+		argv = SplitCommand(f.Command)
+	case len(f.Arguments) > 0:
+		argv = append(argv, f.Arguments...)
+	default:
+		return "", nil, fmt.Errorf("the target declares no way to reach the board: neither a command nor a list of arguments")
+	}
+	if len(argv) == 0 {
+		return "", nil, fmt.Errorf("the target's flash command is empty")
+	}
+
+	out := make([]string, 0, len(argv)+len(f.PostArgs)+1)
+	named := false
+	for _, arg := range argv {
+		if strings.Contains(arg, "{binary}") {
+			arg = strings.ReplaceAll(arg, "{binary}", binary)
+			named = true
+		}
+		out = append(out, arg)
+	}
+	if !named {
+		out = append(out, binary)
+	}
+	for _, arg := range f.PostArgs {
+		if arg == "{offset}" && f.Offset != "" {
+			arg = f.Offset
+		}
+		out = append(out, arg)
+	}
+	return out[0], out[1:], nil
+}
+
+// SplitCommand splits a command into arguments, honouring quotes so that a path
+// containing a space survives as one argument.
+func SplitCommand(command string) []string {
+	var (
+		args    []string
+		current strings.Builder
+		quote   rune
+		started bool
+	)
+	for _, r := range command {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+				continue
+			}
+			current.WriteRune(r)
+		case r == '\'' || r == '"':
+			quote = r
+			started = true
+		case r == ' ' || r == '\t' || r == '\n':
+			if started || current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+				started = false
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if started || current.Len() > 0 {
+		args = append(args, current.String())
+	}
+	return args
 }
 
 /* -------------------------------------------------------------------------- */
@@ -265,33 +369,52 @@ func LoadFrom(roots []string) *Library {
 	return library
 }
 
-// readInto reads one tree into a library, reporting what it finds.
+// AddFile reads one declared spec file into the library.
+//
+// A module names the spec file it carries — a board names its own, because its
+// memory map and how it is reached are that board's — and that one file is read.
+//
+// Its directory is not searched. A board's folder also holds the board's
+// manifest, its presets and its support package, and walking one reads all of
+// them: the manifest arrives as a spec that has no compiler flags in it and is
+// reported as naming nothing, which names neither the file nor the contract that
+// put it there.
+func (l *Library) AddFile(path string) {
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		l.Diagnostics = append(l.Diagnostics, Diagnostic{Path: path, Message: err.Error()})
+		return
+	}
+	spec := Spec{}
+	if err := decodeSpec(data, path, &spec); err != nil {
+		l.Diagnostics = append(l.Diagnostics, Diagnostic{Path: path, Message: "cannot read the spec: " + err.Error()})
+		return
+	}
+	if spec.Name == "" {
+		l.Diagnostics = append(l.Diagnostics, Diagnostic{Path: path, Message: "a spec names nothing"})
+		return
+	}
+	spec.Source = path
+	if existing, seen := l.specs[spec.Name]; seen && existing.Source != path {
+		l.Diagnostics = append(l.Diagnostics, Diagnostic{
+			Path:    existing.Source,
+			Message: fmt.Sprintf("a spec named %q is already declared; the first one is used", spec.Name),
+		})
+		return
+	}
+	l.specs[spec.Name] = spec
+}
+
+// readInto reads one declared directory of specs into a library.
 func readInto(library *Library, root string) {
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !isSpecFile(path) {
 			return nil
 		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			library.Diagnostics = append(library.Diagnostics, Diagnostic{Path: path, Message: readErr.Error()})
-			return nil
-		}
-		spec := Spec{}
-		if unmarshalErr := decodeSpec(data, path, &spec); unmarshalErr != nil {
-			library.Diagnostics = append(library.Diagnostics, Diagnostic{Path: path, Message: "cannot read the spec: " + unmarshalErr.Error()})
-			return nil
-		}
-		if spec.Name == "" {
-			library.Diagnostics = append(library.Diagnostics, Diagnostic{Path: path, Message: "a spec names nothing"})
-			return nil
-		}
-		spec.Source = path
-		if _, seen := library.specs[spec.Name]; seen {
-			library.Diagnostics = append(library.Diagnostics, Diagnostic{
-				Path: path, Message: fmt.Sprintf("a spec named %q is already declared; the first one is used", spec.Name)})
-			return nil
-		}
-		library.specs[spec.Name] = spec
+		library.AddFile(path)
 		return nil
 	})
 }
@@ -376,10 +499,24 @@ func (l *Library) Resolve(name string) (Spec, []Diagnostic) {
 		}
 		parent, parentFound := l.Get(next)
 		if !parentFound {
-			diagnostics = append(diagnostics, Diagnostic{
-				Path:    current.Source,
-				Message: fmt.Sprintf("%q names %q, which no spec declares", current.Name, next),
-			})
+			// The chain names the part a spec is for, and no spec is named after
+			// a part: a board is `nucleo-h753zi` and carries an `STM32H753ZI`, and
+			// `STM32H753ZI` is the chip, not another spec. So the chain usually
+			// ends here, which is not a problem.
+			//
+			// A spec that stops there has to be able to stand on its own. A board
+			// spec does — it carries its own toolchain, memory map and flash
+			// command — so it is left alone. One that cannot is incomplete, and
+			// saying so names the spec that is short rather than the part it
+			// mentioned.
+			if !specIsSelfContained(current) {
+				diagnostics = append(diagnostics, Diagnostic{
+					Path: current.Source,
+					Message: fmt.Sprintf("%q is for %q, which no spec declares, and it does not "+
+						"carry a toolchain and memory map of its own to stand without one",
+						current.Name, next),
+				})
+			}
 			break
 		}
 		current = parent
@@ -391,6 +528,10 @@ func (l *Library) Resolve(name string) (Spec, []Diagnostic) {
 	resolved := chain[0]
 	for _, parent := range chain[1:] {
 		resolved = merge(parent, resolved)
+	}
+	resolved.ResolvedFrom = nil
+	for _, one := range chain {
+		resolved.ResolvedFrom = append(resolved.ResolvedFrom, one.Name)
 	}
 	resolved.Kind = spec.Kind
 	resolved.Name = spec.Name
@@ -542,4 +683,10 @@ func (s Spec) Pin(role string) (Pin, bool) {
 		}
 	}
 	return Pin{}, false
+}
+
+// specIsSelfContained reports whether a spec carries what a build needs without a
+// parent: how to compile it, and where it lives in memory.
+func specIsSelfContained(spec Spec) bool {
+	return spec.Toolchain.Compiler != "" && spec.Memory.RAM.Origin != "" && spec.Memory.Flash.Origin != ""
 }

@@ -88,7 +88,7 @@ func GenerateProjectWithDependencies(path, outputDir string, includePaths, sourc
 
 // GenerateTarget emits one generated project for a descriptor target id.
 // The compiled module may be supplied to avoid re-running the front end.
-func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles, dependencyRoots []string, compiled *ast.Module) error {
+func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles, dependencyRoots []string, compiled *ast.Module, shim ...[]string) error {
 	irModule, err := compileToIR(compiled, path, dependencyRoots)
 	if err != nil {
 		return err
@@ -104,6 +104,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 	ctx := projectgen.Context{
 		ModuleName:   irModule.Name,
 		ProjectRoot:  ProjectRoot(path),
+		ShimSources:  firstOf(shim),
 		OutputDir:    outputDir,
 		IR:           irModule,
 		IncludePaths: includePaths,
@@ -150,7 +151,7 @@ type GeneratedTarget struct {
 // GenerateAllTargetsDetailed generates one project per requested target and
 // reports how each is built. An only value restricts the build to that single
 // target, which is how a test module asks for the backend it can run.
-func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only string) ([]GeneratedTarget, error) {
+func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only string, shim ...[]string) ([]GeneratedTarget, error) {
 	projectRoot := ProjectRoot(path)
 	// A project that declared SQL gets its statements generated before anything
 	// is compiled, because the generated Rho is an input to the compile: a
@@ -220,6 +221,7 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 		ctx := projectgen.Context{
 			ModuleName:   irModule.Name,
 			ProjectRoot:  projectRoot,
+			ShimSources:  firstOf(shim),
 			OutputDir:    dir,
 			IR:           irModule,
 			IncludePaths: includePaths,
@@ -1401,4 +1403,13 @@ func loadStdModuleFor(module *ast.Module, name, from, projectRoot string, depend
 	markModuleOwnership(imported, imported.Name)
 	module.Decls = append(module.Decls, imported.Decls...)
 	module.Features = append(module.Features, imported.Features...)
+}
+
+// firstOf returns the first of an optional list, which is how a caller that does
+// not have one says so without every other caller having to pass an empty slice.
+func firstOf(values [][]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return values[0]
 }
