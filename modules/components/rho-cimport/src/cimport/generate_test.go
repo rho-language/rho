@@ -82,7 +82,7 @@ func TestTheThreeFilesAreWritten(t *testing.T) {
 	if len(result.Files) != 3 {
 		t.Fatalf("expected the interface, the shim and its header, got %+v", result.Files)
 	}
-	for _, name := range []string{"src/ffi.rho", "src/ffi_shim.h", "src/ffi_shim.c"} {
+	for _, name := range []string{"build/generated/modules/ffi.rho", "build/generated/c/ffi_shim.h", "build/generated/c/ffi_shim.c"} {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); err != nil {
 			t.Errorf("expected %s: %v", name, err)
 		}
@@ -102,7 +102,7 @@ func TestTheInterfaceIsReadableByTheLanguageItWasWrittenFor(t *testing.T) {
 	if _, err := Generate(Options{Root: root, Headers: []string{"robot.h"}, IncludeDirs: []string{"include"}, Library: "robot", Force: true}); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	source, err := os.ReadFile(filepath.Join(root, "src", "ffi.rho"))
+	source, err := os.ReadFile(filepath.Join(root, DefaultSourceDir, "ffi.rho"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestAGeneratedFileThatIsAlreadyThereIsKept(t *testing.T) {
 	if _, err := Generate(Options{Root: root, Headers: []string{"robot.h"}, IncludeDirs: []string{"include"}, Library: "robot"}); err != nil {
 		t.Fatalf("first Generate: %v", err)
 	}
-	written := filepath.Join(root, "src", "ffi.rho")
+	written := filepath.Join(root, DefaultSourceDir, "ffi.rho")
 	if err := os.WriteFile(written, []byte("// edited by a person\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestCheckWritesNothing(t *testing.T) {
 	if len(result.Files) != 3 {
 		t.Fatalf("expected the files to be named, got %+v", result.Files)
 	}
-	if _, err := os.Stat(filepath.Join(root, "src", "ffi.rho")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, DefaultSourceDir, "ffi.rho")); err == nil {
 		t.Fatal("expected nothing to be written")
 	}
 }
@@ -283,7 +283,7 @@ int32_t robot_init(vendor_handle_t handle);
 	if _, err := Generate(options); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	source, err := os.ReadFile(filepath.Join(root, "src", "ffi.rho"))
+	source, err := os.ReadFile(filepath.Join(root, DefaultSourceDir, "ffi.rho"))
 	if err != nil {
 		t.Fatal(err)
 	}

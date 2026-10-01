@@ -46,7 +46,7 @@ func TestTheReportNamesTheChainTheFactsCameFrom(t *testing.T) {
 	// A board's compiler comes from its chip's architecture, and a person reading
 	// the report should be able to see that rather than guess it.
 	report := Describe(reportedSpec())
-	if !strings.Contains(report, "Resolved from: chip -> chip -> arm-cortex-m") {
+	if !strings.Contains(report, "Resolved from: chip -> arm-cortex-m") {
 		t.Fatalf("expected the chain, got:\n%s", report)
 	}
 	for _, want := range []string{

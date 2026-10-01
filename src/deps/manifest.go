@@ -36,6 +36,63 @@ type DepSpec struct {
 	Src       string
 }
 
+// CMakeExports is what a module exports to CMake, declared by the module itself.
+//
+// The target is the primary export: linking it carries the include directories,
+// the definitions and any further libraries transitively, so a consumer names
+// nothing but the target. The variables exist for a build file that predates the
+// target and asks for a path by name — declared here rather than guessed by
+// whoever reads them, because a guessed variable name is a name that will be
+// wrong for the next dependency.
+type CMakeExports struct {
+	// Target is the imported target a consumer links, such as
+	// `rho::robohub-common`.
+	Target string
+	// IncludeDirs are relative to the exporting module's root.
+	IncludeDirs []string
+	// Defines are compiled into every consumer, such as `ROBOHUB_ENABLE_VCP=1`.
+	Defines []string
+	// LinkLibraries are further targets a consumer of this one also links.
+	LinkLibraries []string
+	// Vars are CMake variables to set, such as a header path a legacy build file
+	// asks for. A value may contain `${PACKAGE_DIR}`, which stands for the
+	// exporting module's own directory.
+	Vars map[string]string
+}
+
+// PackageDirToken is what a declared CMake variable may use to mean "where the
+// module that declared me is". It is written rather than produced by the module,
+// so a value can be stated once and resolved wherever the module is checked out.
+const PackageDirToken = "${PACKAGE_DIR}"
+
+// HardwareManifest is where a platform keeps the declarations of the hardware it
+// supports. Each path is relative to the module's own root, which is what makes
+// them a contract rather than a discovery: nothing has to sit at a conventional
+// place for a build to find it.
+type HardwareManifest struct {
+	// Boards is the directory of this module's boards. Each is read through its
+	// own manifest rather than enumerated here, because a board may have several
+	// presets and a list here would cap it at one.
+	Boards string
+	// Presets is the directory of build presets: where a family's sources and a
+	// board's overrides are declared.
+	Presets string
+	// Targets is the directory of target specs: the memory map, the toolchain,
+	// and how the board is reached. A spec for a part rather than a board.
+	Targets string
+	// Target is one board's own spec. A spec that names a board describes that
+	// board, so it belongs to the board rather than to the platform that
+	// implements every board of the family at once.
+	Target string
+	// Kconfig is the directory of configuration fragments.
+	Kconfig string
+}
+
+// Declared reports whether the module declared any hardware at all.
+func (h *HardwareManifest) Declared() bool {
+	return h != nil && (h.Presets != "" || h.Targets != "" || h.Kconfig != "")
+}
+
 // DocManifest is the doc-as-code a module carries: where its documentation is
 // written, and where the pages belong in a site.
 //
@@ -199,6 +256,11 @@ type Manifest struct {
 	Deps          []DepSpec
 	BuildLanguage string
 	BuildTargets  []string
+	// BuildDir is where this project keeps everything a build generates. Empty
+	// means `build`, which is the convention rather than a rule.
+	BuildDir string
+	// BuildOutputDir is where built binaries are written, inside BuildDir.
+	BuildOutputDir string
 	// BuildToolchain names the target a project builds for, as a rho-target
 	// spec: an architecture, an MCU or a board. Empty means the project builds
 	// for the machine it is built on, which is the target named `native`.
@@ -208,6 +270,7 @@ type Manifest struct {
 	// this is for, and every build of it is for that hardware whatever resolves
 	// its dependencies.
 	BuildToolchain   string
+	BuildDefines     []string
 	BuildIncludeDirs []string
 	BuildSourceDirs  []string
 	BuildSources     []string
@@ -228,6 +291,32 @@ type Manifest struct {
 	// project that generated code calling into a package it never named, which
 	// is a build that works on the machine that generated it and nowhere else.
 	Requires []string
+	// Hardware is what a platform declares about the parts it supports and
+	// where those declarations are, or nil when it declared none.
+	//
+	// It is a contract rather than a convention. Reading a directory called
+	// `targets` beside a dependency is a guess that reads as a promise; this is
+	// the module saying which of its own directories a build should read.
+	Hardware *HardwareManifest
+	// Exports is what this module exports to a build system, or nil when it
+	// declares none. A C dependency that declares it is telling a consumer where
+	// its headers are instead of leaving a consumer to work it out.
+	Exports *ExportsManifest
+	// VendorDir is where this module keeps its vendor sources, or empty when it
+	// declares none.
+	VendorDir string
+	// VendorRepos are the vendor repositories this module builds against, each
+	// with the folder inside VendorDir it lives in.
+	VendorRepos []VendorRef
+	// Platforms are the modules that implement this module's interfaces, or nil
+	// when it declares none. A build looks at what the project declared first and
+	// falls back to here, which is how a program written against the interfaces
+	// alone finds a platform without being told which one to use.
+	Platforms []PlatformRef
+	// Testing is when this module's tests are eligible to be built, or nil when
+	// it declared nothing. A module that declares no tests has none built, which
+	// is why a build never has to guess whether a target it finds is meant to run.
+	Testing *TestManifest
 	// SQL is the database a project declares, or nil when it declared none.
 	//
 	// It is read here rather than in the component that generates from it,
@@ -251,6 +340,44 @@ type Manifest struct {
 	Provides *Provides
 	// Extends is what this module plugs into. Only a plugin extends something.
 	Extends *Extends
+}
+
+// DefaultBuildDir is where a project keeps generated files when its manifest does
+// not say otherwise. It is a default rather than a rule: `build.dir` declares
+// otherwise, because a project may want its build somewhere this toolchain has
+// no opinion about.
+const DefaultBuildDir = "build"
+
+// DefaultOutputDir is where built binaries go when a project does not say.
+const DefaultOutputDir = "output"
+
+// OutputDirectory returns where this project's built binaries are written.
+//
+// Always inside the build directory: a binary is a build output, and a project
+// that has several targets keeps them side by side rather than overwriting each
+// other.
+func (m *Manifest) OutputDirectory() string {
+	directory := DefaultOutputDir
+	if m != nil && m.BuildOutputDir != "" {
+		directory = m.BuildOutputDir
+	}
+	// Inside the build directory, not beside it. A binary is a build output, and
+	// the two are the same kind of thing: a project that kept its binaries beside
+	// the folder it generates them into would have to clean two folders to start
+	// again, and a `clean` that removed one would leave the other looking current.
+	return filepath.Join(m.BuildDirectory(), directory)
+}
+
+// BuildDirectory returns where this project's generated files live.
+//
+// A declared path is absolute, or relative to the project. A relative one that
+// climbs out was refused when the manifest was read, so what reaches here is
+// either the project's own folder or a path of its own choosing.
+func (m *Manifest) BuildDirectory() string {
+	if m == nil || m.BuildDir == "" {
+		return DefaultBuildDir
+	}
+	return m.BuildDir
 }
 
 func ManifestPath(projectRoot string) string {
@@ -419,17 +546,69 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	build := doc.Map["build"]
 	if build.Kind == yaml.KindMap {
 		m.BuildLanguage = yamlString(build, "language")
+		m.BuildDir = yamlString(build, "dir")
+		m.BuildOutputDir = yamlString(build, "output_dir")
+		if err := escape("build.dir", m.BuildDir); err != nil {
+			return nil, fmt.Errorf("%s: %w", m.ModuleName, err)
+		}
 		m.BuildTargets = yamlStrings(build.Map["targets"])
 		m.BuildToolchain = yamlString(build, "toolchain")
 		m.BuildIncludeDirs = yamlStrings(build.Map["include_dirs"])
 		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
 		m.BuildSources = yamlStrings(build.Map["sources"])
+		m.BuildDefines = yamlStrings(build.Map["defines"])
+	}
+
+	m.Exports = parseExports(doc.Map["exports"])
+	m.Testing = parseTesting(doc.Map["testing"])
+	m.Platforms = parsePlatforms(doc.Map["platforms"])
+
+	if vendor, ok := doc.Map["vendor"]; ok && vendor.Kind == yaml.KindMap {
+		m.VendorDir = yamlString(vendor, "dir")
+		m.VendorRepos = parseVendorRepos(vendor.Map["repos"])
+	}
+
+	// Where a platform keeps its hardware declarations, if it declares any.
+	if hardware, ok := doc.Map["hardware"]; ok && hardware.Kind == yaml.KindMap {
+		declared := &HardwareManifest{
+			Boards:  yamlString(hardware, "boards"),
+			Presets: yamlString(hardware, "presets"),
+			Target:  yamlString(hardware, "target"),
+			Targets: yamlString(hardware, "targets"),
+			Kconfig: yamlString(hardware, "kconfig"),
+		}
+		for _, one := range []struct {
+			kind string
+			path string
+		}{
+			{"hardware.presets", declared.Presets},
+			{"hardware.targets", declared.Targets},
+			{"hardware.kconfig", declared.Kconfig},
+		} {
+			if err := escape(one.kind, one.path); err != nil {
+				return nil, fmt.Errorf("%s: %w", m.ModuleName, err)
+			}
+		}
+		m.Hardware = declared
 	}
 	// The configuration bridge is a top-level section, so it is read here
 	// rather than with the build fields: a project that declares a build and one
 	// that only declares a configuration are both possible, and a section read
 	// inside another would be read only when that other is there.
 	m.Connection = parseCConnection(doc.Map["c_connection"])
+	if m.Connection != nil {
+		// A library the project links is the platform's, and the platform says
+		// where it put it. A project reaching out of itself to say so is naming
+		// this checkout rather than the platform.
+		if err := escape("c_connection.path", m.Connection.Path); err != nil {
+			return nil, fmt.Errorf("%s: %w", m.ModuleName, err)
+		}
+		for _, dir := range m.Connection.IncludeDirs {
+			if err := escape("c_connection.include_dirs entry", dir); err != nil {
+				return nil, fmt.Errorf("%s: %w", m.ModuleName, err)
+			}
+		}
+	}
 	m.Requires = parseRequires(doc.Map["requires"])
 	m.Settings = parseSettingsManifest(doc.Map["settings"])
 	m.Config = parseConfigManifest(doc.Map["config"])
@@ -477,6 +656,29 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	m.Provides = parseProvides(doc.Map["provides"])
 	m.Extends = parseExtends(doc)
 	return m, nil
+}
+
+// escape reports whether a declared path reaches outside the module that
+// declared it, and says so in terms a reader can act on.
+//
+// A path a module names about its own tree is absolute or a child of where the
+// module is. `../../` is not: it is a statement about where the module happened
+// to be put on one machine, and it stops being true the moment the module moves,
+// is fetched, or is published. A path like that reads as a declaration of what a
+// dependency is when it is a statement about this checkout, which is how an
+// application ends up naming `../../../platform/build/lib.a` and breaking on
+// everyone else's machine. What belongs to a dependency is declared by that
+// dependency; what belongs to a project is inside the project.
+func escape(kind, path string) error {
+	if path == "" || filepath.IsAbs(path) {
+		return nil
+	}
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return fmt.Errorf("%s %q reaches outside the module that declared it; name an absolute path, or a folder inside the module, or let the dependency that owns it declare it", kind, path)
+		}
+	}
+	return nil
 }
 
 // CConnection is the link between a Rho project and a native library.
@@ -910,4 +1112,199 @@ func parseDepField(dep *DepSpec, ln string) {
 
 func unquote(s string) string {
 	return strings.Trim(strings.TrimSpace(s), "\"")
+}
+
+// TestManifest says when this module's tests are eligible to be built.
+//
+// The two kinds are separate because they are different programs against
+// different runtimes: a host test links a hosted C library and runs on the
+// machine doing the building, and an on-device test links the bare-metal one and
+// runs on the hardware. A module that has both has to be able to say that a build
+// for one target gets one of them and not the other.
+type TestManifest struct {
+	// HostTests run on the machine doing the building.
+	HostTests TestKind
+	// TargetTests run on the device the build is for.
+	TargetTests TestKind
+}
+
+// TestKind is one kind of test and the target it is for.
+type TestKind struct {
+	// Enabled says the module declares this kind at all. A kind that is not
+	// declared is not built, whatever the target.
+	Enabled bool
+	// TargetConstraint names the target the tests are for, as the name a target
+	// is asked for by. Empty means the kind applies to any target.
+	TargetConstraint string
+}
+
+// AppliesTo reports whether this kind of test is built for a named target.
+//
+// A constraint names one target rather than describing a class of them, so that
+// "the host" is `native` because that is what the host is called, and a module
+// that wants its tests on two targets says so with two entries rather than
+// inventing a category a build would then have to know how to interpret.
+func (k TestKind) AppliesTo(targetName string) bool {
+	if !k.Enabled {
+		return false
+	}
+	if k.TargetConstraint == "" {
+		return true
+	}
+	return k.TargetConstraint == targetName
+}
+
+// Declared reports whether this module declared anything about its tests.
+func (t *TestManifest) Declared() bool {
+	return t != nil && (t.HostTests.Enabled || t.TargetTests.Enabled)
+}
+
+// ExportsManifest is what a module exports, by build system.
+type ExportsManifest struct {
+	Cmake *CMakeExports
+}
+
+// parseExports reads a module's export declarations.
+func parseExports(node yaml.Value) *ExportsManifest {
+	if node.Kind != yaml.KindMap {
+		return nil
+	}
+	exports := &ExportsManifest{}
+	if cmake, ok := node.Map["cmake"]; ok && cmake.Kind == yaml.KindMap {
+		declared := &CMakeExports{
+			Target:        yamlString(cmake, "target"),
+			IncludeDirs:   yamlStrings(cmake.Map["include_dirs"]),
+			Defines:       yamlStrings(cmake.Map["defines"]),
+			LinkLibraries: yamlStrings(cmake.Map["link_libraries"]),
+			Vars:          map[string]string{},
+		}
+		if vars, ok := cmake.Map["vars"]; ok && vars.Kind == yaml.KindMap {
+			for name, value := range vars.Map {
+				if value.Kind == yaml.KindString {
+					declared.Vars[name] = value.Str
+				}
+			}
+		}
+		if declared.Target != "" || len(declared.IncludeDirs) > 0 || len(declared.Defines) > 0 ||
+			len(declared.LinkLibraries) > 0 || len(declared.Vars) > 0 {
+			exports.Cmake = declared
+		}
+	}
+	if exports.Cmake == nil {
+		return nil
+	}
+	return exports
+}
+
+// parseTesting reads what a module declared about its tests.
+func parseTesting(node yaml.Value) *TestManifest {
+	if node.Kind != yaml.KindMap {
+		return nil
+	}
+	testing := &TestManifest{
+		HostTests:   parseTestKind(node.Map["host_tests"]),
+		TargetTests: parseTestKind(node.Map["target_tests"]),
+	}
+	if !testing.Declared() {
+		return nil
+	}
+	return testing
+}
+
+// parseTestKind reads one kind of test declaration.
+func parseTestKind(node yaml.Value) TestKind {
+	if node.Kind != yaml.KindMap {
+		return TestKind{}
+	}
+	return TestKind{
+		Enabled:          node.Map["enabled"].Str == "true",
+		TargetConstraint: yamlString(node, "target_constraint"),
+	}
+}
+
+// PlatformRef is a module that implements a set of interfaces.
+type PlatformRef struct {
+	// Name is the module's name, which is what a report calls it.
+	Name string
+	// Path is where it is checked out, relative to the module that names it.
+	Path string
+	// Git and Branch are where it is fetched from when it is not checked out.
+	Git    string
+	Branch string
+}
+
+// parsePlatforms reads the platforms a module enumerates.
+func parsePlatforms(node yaml.Value) []PlatformRef {
+	if node.Kind != yaml.KindList {
+		return nil
+	}
+	platforms := []PlatformRef{}
+	for _, item := range node.List {
+		if item.Kind != yaml.KindMap {
+			continue
+		}
+		platforms = append(platforms, PlatformRef{
+			Name:   yamlString(item, "name"),
+			Path:   yamlString(item, "path"),
+			Git:    yamlString(item, "git"),
+			Branch: yamlString(item, "branch"),
+		})
+	}
+	return platforms
+}
+
+// VendorRef is one vendor repository a module builds against, and where it is.
+type VendorRef struct {
+	// Name is what a preset's dependency calls this repository. The two are
+	// joined by this name rather than by a path either of them wrote, so that
+	// moving a checkout does not change the contract.
+	Name string
+	// Path is the folder inside the vendor directory, relative to it.
+	Path string
+	// Git and Branch are where it is fetched from when it is not already there.
+	Git    string
+	Branch string
+}
+
+// RepositoryPath returns where a named repository is, in this module.
+func (h *VendorManifest) RepositoryPath(name string) (string, bool) {
+	for _, repo := range h.Repos {
+		if repo.Name == name {
+			return repo.Path, true
+		}
+	}
+	return "", false
+}
+
+// VendorManifest is where a module keeps its vendor sources.
+type VendorManifest struct {
+	// Dir is where they are kept, relative to the module.
+	Dir string
+	// Repos are the individual repositories, each with its own folder in Dir.
+	Repos []VendorRef
+}
+
+// Declared reports whether this module says anything about its vendor sources.
+func (h *VendorManifest) Declared() bool {
+	return h != nil && (h.Dir != "" || len(h.Repos) > 0)
+}
+
+// parseVendorRepos reads the repositories a module declares.
+func parseVendorRepos(node yaml.Value) []VendorRef {
+	if node.Kind != yaml.KindList {
+		return nil
+	}
+	repos := []VendorRef{}
+	for _, item := range node.List {
+		if item.Kind != yaml.KindMap {
+			continue
+		}
+		repos = append(repos, VendorRef{
+			Name:   yamlString(item, "name"),
+			Path:   yamlString(item, "path"),
+			Git:    yamlString(item, "git"),
+			Branch: yamlString(item, "branch"),
+		})
+	}
+	return repos
 }

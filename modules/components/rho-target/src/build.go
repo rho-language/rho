@@ -29,6 +29,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"rho/src/deps"
 
 	"github.com/rho/rho-target/src/rhtarget"
 )
@@ -44,13 +47,22 @@ func build(args []string) int {
 	fs := flag.NewFlagSet("rho target build", flag.ExitOnError)
 	target := fs.String("target", "", "the target to build for")
 	project := fs.String("project", "", "the generated project to build")
+	// `for` is the project whose dependencies are read for the targets they
+	// declare. It is a different directory from the generated project: a board is
+	// declared by the platform the application depends on, and that dependency is
+	// named in the application's manifest, which is not in the generated tree.
+	//
+	// Defaulting it to the generated project's parent would be a guess about the
+	// directory layout, and a build that found a target by walking upwards would
+	// be reading a relationship it had not been told.
+	forProject := fs.String("for", "", "the project whose dependencies declare the target (default: the generated project)")
 	buildDir := fs.String("build-dir", "", "where the build tree goes (default: <project>/build/<target>)")
 	kind := fs.String("type", "Release", "the CMake build type")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
 	treePlugins := fs.Bool("tree-plugins", false, "also read the plugins the tree carries")
 	// Flags are read wherever they appear, because `rho target build --target pico`
 	// is what a person types first.
-	flagArgs, rest := splitArgs(args, map[string]bool{"target": true, "project": true, "build-dir": true})
+	flagArgs, rest := splitArgs(args, map[string]bool{"target": true, "project": true, "for": true, "build-dir": true})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
@@ -71,6 +83,17 @@ func build(args []string) int {
 		return 1
 	}
 
+	// The project's own dependencies are where the platform's specs are declared,
+	// so that project is read for them before the library is built. A target a
+	// dependency declares is a target, and a build that could not see it would
+	// report the board as one that does not exist.
+	specSource := absolute
+	if *forProject != "" {
+		if declared, absErr := filepath.Abs(*forProject); absErr == nil {
+			specSource = declared
+		}
+	}
+	withDeclaredSpecs(specSource)
 	library := library(*treePlugins)
 	spec, diagnostics := library.Resolve(*target)
 	report(append(library.Diagnostics, diagnostics...))
@@ -93,7 +116,64 @@ func build(args []string) int {
 	// written every time rather than only when missing: a spec can change under a
 	// checkout, and a build that used the previous flags would produce a binary
 	// that does not match the spec it was built from.
+	// Where the finished binary goes, taken from the project's own manifest.
+	//
+	// It is a contract rather than a fixed place because a project keeps its
+	// binaries somewhere it chose, and a build that decided would either ignore
+	// that or overwrite one target's binary with another's. Inside the build
+	// directory either way: a binary is a build output.
+	output := ""
+	if project, manifestErr := deps.LoadManifest(deps.ManifestPath(specSource)); manifestErr == nil && project != nil {
+		output = project.OutputDirectory()
+		if !filepath.IsAbs(output) {
+			output = filepath.Join(specSource, output)
+		}
+	}
+
+	// Where the finished binary is written, told to CMake rather than moved
+	// afterwards.
+	//
+	// CMake's own output directory is the right mechanism because it is the one
+	// that survives: a file copied after the build is a second copy of something
+	// that already exists somewhere else, and the first one is the one a
+	// subsequent incremental build would still consider current.
+	if output != "" {
+		if err := os.MkdirAll(output, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "rho target build:", err)
+			return 1
+		}
+	}
+
+	// The dependency declarations go in before the target's own files, because
+	// both have to be on disk before CMake configures and the order they are
+	// written in has no other meaning.
+	//
+	// It is written from the application's manifest, which is where its
+	// dependencies are named — not from the generated directory, which is a
+	// build output and says nothing about what this build depends on.
+	if err := writeDepsFiles(specSource, filepath.Join(absolute, depsFileName)); err != nil {
+		fmt.Fprintln(os.Stderr, "rho target build:", err)
+		return 1
+	}
+
 	if err := writeTargetFiles(absolute, spec); err != nil {
+		fmt.Fprintln(os.Stderr, "rho target build:", err)
+		return 1
+	}
+
+	// The flags are also written into the project, beside the target's own
+	// files, for two reasons.
+	//
+	// A definition passed only on the command line is invisible to anything that
+	// reads the project rather than building it, and CMake reports one that no
+	// file mentions as unused — which for a flag that decides whether a test is
+	// registered is a confusing way to say that nobody looked at it.
+	//
+	// And they belong with the target's own declarations. The compiler, the flags
+	// and the memory map are what this target is; so is the fact that this build
+	// is for a microcontroller, and where it says that it should say in the same
+	// place and the same way.
+	if err := writeBuildFlags(absolute, specSource, *target, output); err != nil {
 		fmt.Fprintln(os.Stderr, "rho target build:", err)
 		return 1
 	}
@@ -103,7 +183,12 @@ func build(args []string) int {
 		tree = filepath.Join(absolute, "build", *target)
 	}
 
-	if err := configureAndBuild(absolute, tree, *kind, *quiet); err != nil {
+	// What this build may register is decided before CMake is asked anything,
+	// from what the project's dependencies declared about their own tests. The
+	// answer is passed as definitions rather than inferred by a build file, so a
+	// build file that registers a test for a target that cannot run it is a
+	// build file that was not told.
+	if err := configureAndBuild(absolute, tree, output, specSource, *target, *kind, *quiet); err != nil {
 		fmt.Fprintln(os.Stderr, "rho target build:", err)
 		return 1
 	}
@@ -135,13 +220,15 @@ func writeTargetFiles(project string, spec rhtarget.Spec) error {
 // process's, because a failure needs the output in the error — the line the
 // compiler complained about is the useful part. Captured output is echoed as it
 // arrives rather than held until the end, so a long build still shows progress.
-func configureAndBuild(project, tree, buildType string, quiet bool) error {
+func configureAndBuild(project, tree, output, specSource, targetName, buildType string, quiet bool) error {
 	if _, err := exec.LookPath("cmake"); err != nil {
 		return fmt.Errorf("cmake is required to build a target: %w", err)
 	}
 
-	configure := exec.Command("cmake", "-S", project, "-B", tree,
-		"-DCMAKE_BUILD_TYPE="+buildType)
+	arguments := []string{"-S", project, "-B", tree, "-DCMAKE_BUILD_TYPE=" + buildType}
+	arguments = append(arguments, testFlagsFor(specSource, targetName)...)
+
+	configure := exec.Command("cmake", arguments...)
 	if out, err := configure.CombinedOutput(); err != nil {
 		if !quiet {
 			os.Stderr.Write(out)
@@ -184,4 +271,51 @@ func toolchainIsAvailable(spec rhtarget.Spec) error {
 			compiler, err)
 	}
 	return nil
+}
+
+// writeBuildFlags records what this build may register, in the project's own
+// CMake.
+//
+// The command line says it to CMake; this says it to the project. A build file
+// reads a variable rather than an argument list, so a project that has never
+// seen the command line — opened in an editor, configured by hand — can still
+// tell what kind of build it is.
+func writeBuildFlags(project, specSource, targetName, output string) error {
+	path := filepath.Join(project, "cmake", "rho-build-flags.cmake")
+
+	var b strings.Builder
+	b.WriteString("# @file cmake/rho-build-flags.cmake\n")
+	b.WriteString("# @brief What this build may register.\n")
+	b.WriteString("#\n")
+	b.WriteString("# @project rho-target\n")
+	b.WriteString("# @version 0.1\n")
+	b.WriteString("# @date 2026\n")
+	b.WriteString("#\n")
+	b.WriteString("# SPDX-License-Identifier: MIT\n\n")
+	b.WriteString("# Written by rho-target from the target spec and from what this project's\n")
+	b.WriteString("# dependencies declared about their tests. Included by the generated\n")
+	b.WriteString("# CMakeLists, and set on the command line as well so that a value given\n")
+	b.WriteString("# explicitly still wins.\n\n")
+	for _, flag := range testFlagsFor(specSource, targetName) {
+		name, value, found := strings.Cut(strings.TrimPrefix(flag, "-D"), "=")
+		if !found {
+			continue
+		}
+		fmt.Fprintf(&b, "set(%s %s CACHE BOOL %q)\n", name, value,
+			"declared by rho-target for this target")
+	}
+
+	if output != "" {
+		b.WriteString("\n# Where this project's built binary is written, from the project's own\n")
+		b.WriteString("# manifest. Said here as well as on the command line so that anything\n")
+		b.WriteString("# reading the project sees it too, and so that an incremental build is\n")
+		b.WriteString("# written where the last one was rather than beside it.\n")
+		fmt.Fprintf(&b, "set(CMAKE_RUNTIME_OUTPUT_DIRECTORY %s CACHE PATH \"the project's output directory\")\n",
+			cmakeString(output))
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o644)
 }

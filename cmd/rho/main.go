@@ -28,6 +28,7 @@ import (
 	modcli "rho/cmd/rho-module/cli"
 	modcore "rho/cmd/rho-module/core"
 	pkgcli "rho/cmd/rho-pkg/cli"
+	"strings"
 	"time"
 
 	modremote "rho/cmd/rho-module/remote"
@@ -606,6 +607,12 @@ func buildCLI(args []string) int {
 	// target restricts the build to a single descriptor target, which is how
 	// a test module asks for exactly the backend it can run.
 	target := fs.String("target", "", "build only this target (c, go, ...)")
+	// Everything a build generates is disposable by construction, so removing it
+	// is always safe. That is worth a command rather than `rm -rf build`: a
+	// generated tree holds CMake caches with absolute paths in them, and a build
+	// directory half-removed by hand fails in ways that read like the toolchain is
+	// at fault.
+	clean := fs.Bool("clean", false, "remove this project's build directory and stop")
 	fs.Parse(args)
 
 	if fs.NArg() > 1 {
@@ -641,7 +648,22 @@ func buildCLI(args []string) int {
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/*  2. Resolve dependencies                                               */
+	/*  2. Remove the previous build, when asked                              */
+	/* ---------------------------------------------------------------------- */
+
+	if *clean {
+		buildDir := filepath.Join(projectRoot, manifest.BuildDirectory())
+		if err := os.RemoveAll(buildDir); err != nil {
+			fmt.Fprintln(os.Stderr, "rho build --clean:", err)
+			return 1
+		}
+		fmt.Println("Removed:", filepath.ToSlash(buildDir))
+		return 0
+	}
+
+	/* ---------------------------------------------------------------------- */
+	/* ---------------------------------------------------------------------- */
+	/*  3. Resolve dependencies                                               */
 	/* ---------------------------------------------------------------------- */
 
 	locator := &deps.DefaultLocator{
@@ -658,7 +680,7 @@ func buildCLI(args []string) int {
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/*  3. Write lockfile                                                     */
+	/*  4. Write lockfile                                                     */
 	/* ---------------------------------------------------------------------- */
 
 	lockPath := filepath.Join(projectRoot, "rho.lock")
@@ -668,7 +690,7 @@ func buildCLI(args []string) int {
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/*  4. Collect C include paths + C sources from dependencies              */
+	/*  5. Collect C include paths + C sources from dependencies              */
 	/* ---------------------------------------------------------------------- */
 
 	var includePaths []string
@@ -695,31 +717,79 @@ func buildCLI(args []string) int {
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/*  5. Compile Rho → C                                                    */
+	/*  6. Resolve the target, then generate what it declares                 */
 	/* ---------------------------------------------------------------------- */
 
-	var outC string
-	if *out != "" {
-		outC, _ = filepath.Abs(*out)
-	} else {
-		// A project keeps every generated artefact under build/; only a
-		// standalone source file is compiled next to itself.
-		outC = src.ProjectOutputPath(absIn)
-	}
-
-	// The descriptor decides where generated projects live, and which targets
-	// were actually produced. Generation runs first so the native compile step
-	// can follow the targets the project asked for.
 	// The target is resolved before anything is generated, because it decides
-	// two separate things: which generated projects to emit, and what to build
-	// them for. Generation is only interested in the first.
+	// two separate things: what the foreign interface is generated against, and
+	// which generated projects to emit. The interface has to know which board it
+	// is for — the sources a preset declares differ between two of them — so this
+	// cannot wait until the generation step.
 	targetName, descriptorTarget, err := resolveBuildTarget(*target, manifest)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 2
 	}
 
-	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, descriptorTarget)
+	// Before anything is compiled, because a project that imports an interface
+	// this step has yet to write cannot be parsed far enough to say what is
+	// missing.
+	if err := generateForeignInterface(projectRoot, targetName); err != nil {
+		fmt.Fprintln(os.Stderr, "rho build:", err)
+		return 1
+	}
+	// The interface was just written there, and a project that imports it is
+	// asking for a module the compiler has to be able to find. It is a
+	// dependency root for this build only: it holds generated code, so it is
+	// read as a module and nothing else is expected of it.
+	//
+	// Absolute, because a dependency root is joined onto a module name and
+	// stat'ed, and a relative one would be read against the working directory —
+	// which is the directory a person happened to run `rho build` from, not the
+	// project being built.
+	generatedModules := filepath.Join(manifest.BuildDirectory(), "generated", "modules")
+	if !filepath.IsAbs(generatedModules) {
+		generatedModules = filepath.Join(projectRoot, generatedModules)
+	}
+	rhoDependencyRoots = append(rhoDependencyRoots, generatedModules)
+
+	/* ---------------------------------------------------------------------- */
+	/*  7. Compile Rho → C                                                    */
+	/* ---------------------------------------------------------------------- */
+
+	// What this project compiles beyond its own sources: the shim the foreign
+	// declarations call through, and the vendor sources the selected preset
+	// declares — the startup assembly and the system file, for a board.
+	//
+	// Both were written by steps that have already run, so they are read from
+	// where those put them rather than worked out again.
+	generatedTree := filepath.Join(projectRoot, manifest.BuildDirectory(), "generated")
+	shimSources := []string{}
+	for _, candidate := range []string{
+		filepath.Join(generatedTree, "c", "ffi_shim.c"),
+		filepath.Join(generatedTree, "modules", "preset-sources.txt"),
+	} {
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			shimSources = append(shimSources, candidate)
+		}
+	}
+	shimSources = append(shimSources, readLines(filepath.Join(generatedTree, "modules", "preset-sources.txt"))...)
+	// The board's own sources, for the same reason: they were declared by the board
+	// and read by the step that resolved the board, and nothing compiled them.
+	shimSources = append(shimSources, readLines(filepath.Join(generatedTree, "modules", "preset-sources-board-sources.txt"))...)
+
+	// The include directories the selected preset declares, read from where the
+	// step that resolved the preset recorded them. A vendor source compiled
+	// without the headers it includes cannot be built, and the preset is what says
+	// which directories of which repository are headers.
+	includePaths = append(includePaths, readLines(filepath.Join(generatedTree, "modules", "preset-sources-includes.txt"))...)
+	// The directory the vendor's own configuration header was produced in. The
+	// vendor's headers include that header by name, so a build that compiled them
+	// without its directory fails on a line that says nothing about the build that
+	// could have produced it.
+	includePaths = append(includePaths, readLines(filepath.Join(generatedTree, "modules", "preset-sources-config-includes.txt"))...)
+
+	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, descriptorTarget, shimSources)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
@@ -737,7 +807,7 @@ func buildCLI(args []string) int {
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/*  6. Build each generated project                                        */
+	/*  8. Build each generated project                                        */
 	/* ---------------------------------------------------------------------- */
 
 	// A Go target is a self-contained project, so it is compiled with its own
@@ -761,7 +831,7 @@ func buildCLI(args []string) int {
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/*  7. Build the native target                                              */
+	/*  9. Build the native target                                              */
 	/* ---------------------------------------------------------------------- */
 
 	// A project that only asks for a Go or server target has no native build
@@ -771,16 +841,20 @@ func buildCLI(args []string) int {
 	}
 
 	// The generated C project is a real CMake project, and it is built as one.
-	// It used to be compiled by invoking gcc here over the transpiled module and
-	// whatever the dependencies contributed, which meant two builds of the same
-	// program: this one, and the CMake project sitting next to it. They disagreed
-	// the moment a target was named — this one had no cross compiler, no memory
-	// map and no linker script, and the other had all three. The CMake project is
-	// the one that can be told which hardware to build for, so it is the one that
-	// is built.
-	if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
-		return 1
+	// The transpiled module is not written here. It used to be, next to the CMake
+	// project that generates the same thing as its application source, which gave
+	// every project two `main.c` files and two answers to what the build is: one
+	// written by the generator and one left beside it by this step.
+	//
+	// What `-o` names is still honoured — a caller that asked for a translation
+	// unit in a particular place gets one there — but a build that generates a
+	// project writes the project, and nothing beside it.
+	if *out != "" {
+		outC, _ := filepath.Abs(*out)
+		if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
+			fmt.Fprintln(os.Stderr, "rho build:", err)
+			return 1
+		}
 	}
 
 	// The target was resolved above, before generation, because it decides what
@@ -806,7 +880,7 @@ func buildCLI(args []string) int {
 		return 1
 	}
 
-	if err := buildTarget(generatedDir, targetName); err != nil {
+	if err := buildTarget(generatedDir, projectRoot, targetName); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
@@ -866,7 +940,7 @@ func isDescriptorBackend(name string) bool {
 // to be able to add to. The component is located the same way every other
 // command locates one, which also means a target nobody enabled is refused here
 // for the same reason it is refused everywhere else.
-func buildTarget(generatedDir, target string) error {
+func buildTarget(generatedDir, projectRoot, target string) error {
 	module, err := modcore.LoadInstalledModule("rho-target")
 	if err != nil {
 		return fmt.Errorf("this build needs the rho-target component: %w", err)
@@ -877,7 +951,60 @@ func buildTarget(generatedDir, target string) error {
 	}
 	// Its output is the build's output, so it goes where this process's output
 	// goes rather than being captured and re-printed.
-	return entry.Run([]string{"build", "--target", target, "--project", generatedDir}, os.Stdin, os.Stdout)
+	// `--project` is the generated tree that gets built; `--for` is the
+	// application, whose manifest is where the platform that declares the target
+	// is named. Passing only the first is what made a platform's own board look
+	// like a board that did not exist.
+	return entry.Run([]string{
+		"build",
+		"--target", target,
+		"--project", generatedDir,
+		"--for", projectRoot,
+	}, os.Stdin, os.Stdout)
+}
+
+// generateForeignInterface produces the Rho side of a project's C connection
+// before anything that imports it is compiled.
+//
+// A project says it has one by declaring a `c_connection` naming the headers it
+// may call. That declaration is the whole of the trigger: there is no feature to
+// enable and nothing to be found on disk, so a project either asks for a
+// foreign interface or it has none.
+//
+// It is the cimport component rather than a call into its library, for the same
+// reason rho-target is: what a foreign interface is made of is cimport's to
+// change and its plugins' to extend, and a copy of it inside this command would
+// be a second one that nobody extends.
+func generateForeignInterface(projectRoot, preset string) error {
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil {
+		// A project with an unreadable manifest was already reported, and it is
+		// not this step's to report again.
+		return nil
+	}
+	if manifest.Connection == nil || len(manifest.Connection.Headers) == 0 {
+		return nil
+	}
+
+	module, err := modcore.LoadInstalledModule("rho-cimport")
+	if err != nil {
+		return fmt.Errorf("this project declares a C connection, so the build needs the rho-cimport component: %w", err)
+	}
+	entry := module.Entry()
+	if entry == nil {
+		return fmt.Errorf("the rho-cimport component has no entry point")
+	}
+	// The sources the selected preset declares are recorded beside the interface.
+	// They are what makes the image runnable — the startup assembly is the entry
+	// point — and this is the only step that has read the preset, so this is where
+	// the build learns what to compile.
+	recorded := filepath.Join(projectRoot, manifest.BuildDirectory(), "generated", "modules", "preset-sources.txt")
+	arguments := []string{"generate", "--force", "--record-sources", recorded}
+	if preset != "" {
+		arguments = append(arguments, "--preset", preset)
+	}
+	arguments = append(arguments, projectRoot)
+	return entry.Run(arguments, os.Stdin, os.Stdout)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -920,4 +1047,24 @@ func printHelp() {
 	for _, command := range components {
 		fmt.Printf("  %-*s  %s\n", width, "rho "+command.Invocation, command.Description)
 	}
+}
+
+// readLines reads a file written as one path per line, ignoring a file that is
+// not there.
+//
+// Absent rather than fatal, because the file is written by a step that reports
+// its own problems: a build with nothing to list simply has nothing to list, and
+// a project that compiles none of them is not a project that failed.
+func readLines(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	lines := []string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return lines
 }

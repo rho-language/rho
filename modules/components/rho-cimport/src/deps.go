@@ -126,7 +126,7 @@ func depsCmd(args []string) int {
 		return 1
 	}
 
-	cache, err := cimport.CacheDir()
+	cache, err := cimport.CacheDir(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho cimport deps:", err)
 		return 1

@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"rho/src/codegen"
+	"rho/src/deps"
 	"rho/src/ir"
 )
 
@@ -134,7 +135,7 @@ func emitConfigArtifacts(ctx Context) (map[string]string, error) {
 	// The merge is one custom command, run before anything is compiled, and
 	// every source depends on its output so a changed symbol rebuilds.
 	var b strings.Builder
-	b.WriteString(cBanner(ctx.ModuleName, "rho-config.cmake", "Kconfig bridge for a Rho project."))
+	b.WriteString(cmakeBanner(ctx.ModuleName, "rho-config.cmake", "Kconfig bridge for a Rho project."))
 	b.WriteString("# The configuration a project declared is resolved by the rho-kconfig\n")
 	b.WriteString("# component, which is run here rather than at generation time: a value may\n")
 	b.WriteString("# change without regenerating the project.\n\n")
@@ -225,9 +226,24 @@ func emitCMakeLists(ctx Context) string {
 	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/toolchain.cmake)\n")
 	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/toolchain.cmake)\n")
 	b.WriteString("endif()\n\n")
+	// Assembly is enabled when the project has any, which is what a board build
+	// does: the startup assembly is what the linker enters through.
+	//
+	// Declared rather than assumed because the presence of assembly is a fact
+	// about the project, and CMake needs to be told before it classifies the file.
+	// A `.s` file in a project with no assembler configured is not compiled and
+	// not reported — it is skipped, and the failure arrives one step later as a
+	// link with no entry symbol, which names the linker and not the file.
+	if hasAssembly(ctx) {
+		b.WriteString("enable_language(ASM)\n")
+	}
+
 	fmt.Fprintf(&b, "project(%s C)\n\n", name)
 	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/target.cmake)\n")
 	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/target.cmake)\n")
+	b.WriteString("endif()\n\n")
+	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rho-build-flags.cmake)\n")
+	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rho-build-flags.cmake)\n")
 	b.WriteString("endif()\n\n")
 	b.WriteString("set(CMAKE_C_STANDARD 11)\nset(CMAKE_C_STANDARD_REQUIRED ON)\n\n")
 
@@ -240,18 +256,85 @@ func emitCMakeLists(ctx Context) string {
 		b.WriteString("include(${CMAKE_CURRENT_SOURCE_DIR}/rho-config.cmake)\n\n")
 	}
 
+	// What the dependencies exported is consumed before any of them is descended
+	// into.
+	//
+	// It has to be here rather than inside a dependency's own build file: the
+	// declarations are the top-level project's to include, because a dependency
+	// cannot know which other dependencies the project that pulls it in also
+	// has. The imported targets are declared global, and the variables are cache
+	// entries, so both are visible to the subdirectories included below.
+	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps.cmake)\n")
+	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/deps.cmake)\n")
+	b.WriteString("endif()\n\n")
+
+	// A C dependency is linked, not absorbed. Its sources belong to the module
+	// that declares them, and that module is where they are compiled — a CMake
+	// target cannot even be given a source outside its own tree, so listing them
+	// here would produce a project that quietly compiles less than it says.
+	//
+	// The dependency is found through the project's manifest, the same way every
+	// other dependency is, and contributed by its own build definition. A
+	// dependency that has no build definition has nothing to contribute and is
+	// skipped rather than half-added.
+	// The directories the selected preset declares, added to the directory scope
+	// rather than to one target.
+	//
+	// The platform's own sources include the vendor's headers, and those are
+	// compiled by the platform's library — a target this file does not build and
+	// cannot attach include paths to after the fact. A path given only to the
+	// program would leave the library unable to compile a line of itself, and the
+	// error would name a header in a vendor repository that the build was told
+	// about, one target too late.
+	if len(ctx.IncludePaths) > 0 {
+		b.WriteString("include_directories(\n")
+		for _, include := range ctx.IncludePaths {
+			fmt.Fprintf(&b, "    %s\n", cmakeString(include))
+		}
+		b.WriteString(")\n\n")
+	}
+
+	dependencyRoots := cDependencyRoots(ctx.ProjectRoot)
+	for index, root := range dependencyRoots {
+		fmt.Fprintf(&b, "add_subdirectory(%s %s-dep%d)\n",
+			cmakePath(root), strings.ToLower(name), index)
+	}
+	// After them, because a dependency that builds itself defines its target only
+	// once it has been added, and the file below bridges the target it defined to
+	// the name its manifest says to link it by. An alias made before the target
+	// exists is an error, which is the one thing CMake is clear about here.
+	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps-aliases.cmake)\n")
+	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/deps-aliases.cmake)\n")
+	b.WriteString("endif()\n\n")
+
 	fmt.Fprintf(&b, "add_executable(%s main.c app.c\n    runtime.c\n", name)
 	for _, source := range ctx.SourceFiles {
+		if ownedBy(source, dependencyRoots) {
+			continue
+		}
 		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(source))
+	}
+	// The generated shim is part of what this project compiles: it is the C the
+	// foreign interface calls, and it belongs to the build that generated it.
+	if ctx.ShimSources != nil {
+		for _, source := range ctx.ShimSources {
+			fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(source))
+		}
 	}
 	b.WriteString(")\n\n")
 
 	if configured {
-		// The generated configuration is a source every file depends on, so a
-		// changed symbol rebuilds rather than being compiled against the header
-		// that was there when the project was generated.
-		fmt.Fprintf(&b, "set_source_files_properties(${RHO_CONFIG_VALUES} PROPERTIES GENERATED TRUE)\n")
-		fmt.Fprintf(&b, "add_dependencies(%s ${CMAKE_CURRENT_SOURCE_DIR}/${RHO_CONFIG_VALUES})\n", name)
+		// The generated configuration is built before the sources that include
+		// it, and rebuilt when a symbol changes.
+		//
+		// It is arranged as a source of the target rather than as a dependency
+		// of it: `add_dependencies` names a *target*, and the output of the
+		// merge is a file. Naming the file as a source is what tells CMake to
+		// run the command that produces it first, and the ordering comes from
+		// the custom command's own OUTPUT rather than from anything stated here.
+		fmt.Fprintf(&b, "add_custom_target(%s-config ALL DEPENDS ${RHO_CONFIG_VALUES})\n", name)
+		fmt.Fprintf(&b, "add_dependencies(%s %s-config)\n", name, name)
+		b.WriteString("set_source_files_properties(${RHO_CONFIG_VALUES} PROPERTIES GENERATED TRUE)\n")
 		b.WriteString("set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/main.c ${CMAKE_CURRENT_SOURCE_DIR}/app.c\n")
 		b.WriteString("             ${CMAKE_CURRENT_SOURCE_DIR}/runtime.c\n")
 		b.WriteString("             APPEND PROPERTY OBJECT_DEPENDS ${RHO_CONFIG_VALUES})\n\n")
@@ -322,6 +405,70 @@ func copyProjectSources(ctx Context) (map[string]string, error) {
 // connection to the vendor target robohub_stm32, and the generated project links
 // that. Without a variant the project links the library it declared, which is
 // what a host build of the same project does.
+// cDependencyRoots returns the roots of the C dependencies a project declares,
+// and of the ones those declare.
+//
+// It reads the project's own manifest rather than looking for CMakeLists.txt
+// beside something that looks like a dependency. A dependency that declares a
+// build definition is contributing it; one that does not is not, and the
+// difference is a statement in a manifest rather than a directory listing.
+func cDependencyRoots(projectRoot string) []string {
+	if projectRoot == "" {
+		return nil
+	}
+	roots := []string{}
+	seen := map[string]bool{}
+
+	var walk func(base string, manifest *deps.Manifest, depth int)
+	walk = func(base string, manifest *deps.Manifest, depth int) {
+		if depth > 16 || seen[base] {
+			return
+		}
+		seen[base] = true
+		for _, dep := range manifest.Deps {
+			if dep.Type != deps.DepTypeC || dep.Path == "" {
+				continue
+			}
+			root := dep.Path
+			if !filepath.IsAbs(root) {
+				root = filepath.Join(base, root)
+			}
+			if _, err := os.Stat(filepath.Join(root, "CMakeLists.txt")); err != nil {
+				continue
+			}
+			roots = append(roots, root)
+			if child, err := deps.LoadManifest(deps.ManifestPath(root)); err == nil {
+				walk(root, child, depth+1)
+			}
+		}
+	}
+
+	if manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot)); err == nil && manifest != nil {
+		walk(projectRoot, manifest, 0)
+	}
+	return roots
+}
+
+// ownedBy reports whether a source belongs to one of the roots — that is,
+// whether a dependency declared it and the dependency's own build compiles it.
+func ownedBy(source string, roots []string) bool {
+	absolute, err := filepath.Abs(source)
+	if err != nil {
+		absolute = source
+	}
+	for _, root := range roots {
+		if strings.HasPrefix(absolute, filepath.Clean(root)+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// cmakePath writes an absolute path as a CMake string literal.
+func cmakePath(path string) string {
+	return `"` + filepath.ToSlash(path) + `"`
+}
+
 func connectionCMake(ctx Context, name string) (link string, includes []string) {
 	if ctx.Connection == nil {
 		return "", nil
@@ -353,7 +500,27 @@ func connectionCMake(ctx Context, name string) (link string, includes []string) 
 		fmt.Fprintf(&b, "add_compile_definitions(%s=%s)\n", define, cMakeValue(define))
 	}
 	if len(libraries) > 0 {
-		fmt.Fprintf(&b, "target_link_libraries(%s PRIVATE %s)\n", name, strings.Join(libraries, " "))
+		// A C dependency is a static library, and an archive is loaded strictly on
+		// demand: a member is pulled only when it resolves something still
+		// undefined. A vendor startup assembly declares each handler weak and
+		// assigns it the address of its own default — an instruction to spin — and
+		// that is a *definition*. By the time the linker sweeps the archive there
+		// is nothing undefined to resolve, so the object implementing the handler
+		// is discarded whole.
+		//
+		// The symptom is silent and total: the board boots, runs, and stops a
+		// millisecond later when the first tick arrives, with no fault recorded
+		// anywhere, because none occurred. The console never opens, because opening
+		// it happens after that tick.
+		//
+		// So the whole archive is linked. Its cost is a few kilobytes of driver
+		// code the program never calls; the alternative is a board that stops.
+		fmt.Fprintf(&b, "target_link_libraries(%s PRIVATE\n", name)
+		b.WriteString("    -Wl,--whole-archive\n")
+		for _, library := range libraries {
+			fmt.Fprintf(&b, "    %s\n", library)
+		}
+		b.WriteString("    -Wl,--no-whole-archive\n)\n")
 	}
 	// The include paths are returned rather than written here, because they
 	// belong with the other include directories the target already carries.
@@ -406,4 +573,28 @@ func hasRhoInit(m ir.ModuleIR) bool {
 func cBanner(project, file, brief string) string {
 	return fmt.Sprintf("/*\n * @file %s\n * @brief %s\n *\n * @project %s\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n",
 		file, brief, project)
+}
+
+// cmakeBanner is the same header in a form CMake can read.
+//
+// A `.cmake` file is not C, and the comment that makes a C file readable is a
+// syntax error in a CMake one: CMake has no block comment, so a file opened with
+// `/*` fails to parse before it reaches anything it was saying. The header is
+// the same either way, and it is written with the file's own comment syntax
+// rather than a fixed one.
+func cmakeBanner(project, file, brief string) string {
+	return fmt.Sprintf("# @file %s\n# @brief %s\n#\n# @project %s\n# @version 0.1\n# @date 2026\n#\n# SPDX-License-Identifier: MIT\n\n",
+		file, brief, project)
+}
+
+// hasAssembly reports whether this project compiles any assembly.
+func hasAssembly(ctx Context) bool {
+	all := append(append([]string{}, ctx.SourceFiles...), ctx.ShimSources...)
+	for _, source := range all {
+		switch strings.ToLower(filepath.Ext(source)) {
+		case ".s":
+			return true
+		}
+	}
+	return false
 }

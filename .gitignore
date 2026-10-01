@@ -56,3 +56,6 @@ coverage/
 !.vscode/tasks.json
 .idea/
 .DS_Store
+
+# Built binaries written where the project declares.
+output/

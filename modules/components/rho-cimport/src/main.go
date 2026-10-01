@@ -114,7 +114,14 @@ func usage() {
 func generate(args []string, check bool) int {
 	fs := flag.NewFlagSet("rho cimport", flag.ExitOnError)
 	module := fs.String("module", cimport.DefaultModule, "the Rho module to generate the interface as")
-	sourceDir := fs.String("src", cimport.DefaultSourceDir, "where the generated files are written, relative to the project")
+	sourceDir := fs.String("src", "", "where the generated Rho interface is written (default: <build dir>/generated/modules)")
+	shimDir := fs.String("shim-dir", "", "where the generated C shim is written (default: <build dir>/generated/c)")
+	// Where the sources the selected preset declares are recorded, for the build
+	// to compile. It is a file rather than a flag because the build reads it after
+	// this command has finished, and a build that had to ask would be asking a
+	// different question than the one this answered.
+	record := fs.String("record-sources", "", "write the preset's declared sources here, one per line")
+	presetName := fs.String("preset", "", "the preset this build selected; its declared sources are what gets compiled")
 	force := fs.Bool("force", false, "write over a generated file that is already there")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
 	usePlugins := fs.Bool("plugins", true, "run the plugins that extend this run")
@@ -123,7 +130,7 @@ func generate(args []string, check bool) int {
 	// Flags are read wherever they appear, because `rho cimport generate <path>
 	// --force` is what a person types first and a parser that stops at the path
 	// would silently ignore the rest.
-	flagArgs, rest := splitArgs(args, map[string]bool{"module": true, "src": true, "library": true})
+	flagArgs, rest := splitArgs(args, map[string]bool{"module": true, "src": true, "shim-dir": true, "record-sources": true, "preset": true, "library": true})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
@@ -155,12 +162,27 @@ func generate(args []string, check bool) int {
 	if *noPlugins {
 		*usePlugins = false
 	}
+	// Where generated files go is the project's decision, taken from the build
+	// directory its manifest declares. A flag overrides it, because a person
+	// asking for somewhere else is entitled to be there for this one run.
+	buildDir := "build"
+	if manifest, manifestErr := deps.LoadManifest(deps.ManifestPath(absolute)); manifestErr == nil && manifest != nil {
+		buildDir = manifest.BuildDirectory()
+	}
+	if *sourceDir == "" {
+		*sourceDir = filepath.Join(buildDir, "generated", "modules")
+	}
+	if *shimDir == "" {
+		*shimDir = filepath.Join(buildDir, "generated", "c")
+	}
+
 	options := cimport.Options{
 		Root:        absolute,
 		Headers:     connection.Headers,
 		IncludeDirs: connection.IncludeDirs,
 		Library:     connection.Library,
 		SourceDir:   *sourceDir,
+		ShimDir:     *shimDir,
 		Module:      *module,
 		Force:       *force,
 		Check:       check,
@@ -170,6 +192,19 @@ func generate(args []string, check bool) int {
 		// at, and a plugin from that tree is code from whoever wrote it.
 		options.Plugins = plugins.Source{RhoHome: deps.RhoHome()}.Discover(cimport.ComponentName)
 	}
+	// The preset declares which vendor sources belong to this build — the startup
+	// assembly and the system file, for a board preset, and the family's own
+	// sources for an architecture one. A binding generator is the only thing in a
+	// build that has read the preset, so it is also the only thing that can say
+	// what to compile: a build that worked it out separately would be reading the
+	// preset twice and could easily disagree with itself about which board it is.
+	if *record != "" {
+		if err := cimport.RecordPresetSources(absolute, *record, *presetName); err != nil {
+			fmt.Fprintln(os.Stderr, "rho cimport:", err)
+			return 1
+		}
+	}
+
 	result, err := cimport.Generate(options)
 	report(result, check)
 	if err != nil {
@@ -206,7 +241,77 @@ func readConnection(root, library string) (deps.CConnection, error) {
 	if library != "" {
 		connection.Library = library
 	}
+	// Where the headers are is the platform's to say. A project names the
+	// headers it may call and the library it links; the directories holding them
+	// belong to whoever owns the headers, and a project that restated them would
+	// be keeping a second copy of a list that changes when the platform does.
+	//
+	// A project that declares its own include directories keeps them, and they
+	// are searched first: a project is allowed to add a directory of its own,
+	// and to place one ahead of the platform's.
+	if len(connection.IncludeDirs) == 0 {
+		connection.IncludeDirs = declaredIncludeDirs(root, manifest)
+	}
 	return connection, nil
+}
+
+// declaredIncludeDirs returns the include directories the project's C
+// dependencies declare for their consumers, and those of the dependencies those
+// dependencies have.
+//
+// It walks the chain rather than only the project's own, because a platform is
+// usually not where its headers are: it declares the board it supports and
+// depends on the library that implements it, and the headers a program calls
+// belong to that library. A project depending on the platform does not name the
+// library, and making it name the library is what this replaces.
+//
+// Each directory is read from the manifest that declares it, resolved against
+// that manifest's own module. A path a dependency publishes is the promise; a
+// directory beside it is a guess.
+func declaredIncludeDirs(root string, manifest *deps.Manifest) []string {
+	dirs := []string{}
+	seen := map[string]bool{}
+	visited := map[string]bool{}
+
+	var walk func(base string, m *deps.Manifest, depth int)
+	walk = func(base string, m *deps.Manifest, depth int) {
+		// A cycle in a dependency graph would otherwise be a loop, and a cycle
+		// is a broken graph rather than a reason to read fewer of it.
+		if depth > 16 || visited[base] {
+			return
+		}
+		visited[base] = true
+
+		for _, dir := range m.BuildIncludeDirs {
+			resolved := dir
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(base, resolved)
+			}
+			if seen[resolved] {
+				continue
+			}
+			seen[resolved] = true
+			dirs = append(dirs, resolved)
+		}
+
+		for _, dep := range m.Deps {
+			if dep.Type != deps.DepTypeC || dep.Path == "" {
+				continue
+			}
+			dependencyRoot := dep.Path
+			if !filepath.IsAbs(dependencyRoot) {
+				dependencyRoot = filepath.Join(base, dependencyRoot)
+			}
+			dependency, err := deps.LoadManifest(deps.ManifestPath(dependencyRoot))
+			if err != nil {
+				continue
+			}
+			walk(dependencyRoot, dependency, depth+1)
+		}
+	}
+
+	walk(root, manifest, 0)
+	return dirs
 }
 
 // report prints what the generator read and what it could not.

@@ -42,6 +42,7 @@ import (
 	"sort"
 	"strings"
 
+	"rho/src/deps"
 	"rho/src/yaml"
 )
 
@@ -148,7 +149,7 @@ func (r *PresetResolver) Resolve(name string) (PresetResolution, error) {
 	}
 
 	available := []string{}
-	for _, root := range r.dependencyRoots() {
+	for _, root := range r.presetRoots() {
 		presets, err := presetsDeclaredBy(root)
 		if err != nil {
 			return PresetResolution{}, err
@@ -304,19 +305,48 @@ func specDirOf(root string) string {
 }
 
 // loadInherited reads the preset a board preset inherits its sources from.
+// loadInherited follows a preset's `inherits` chain and returns the
+// dependencies it ends at.
+//
+// A board preset says what makes it that board — the startup file for its part —
+// and leaves the rest to its family. Reading the board's own dependency list and
+// finding it empty says nothing about what the board builds against: it says the
+// board did not repeat its family, which is the whole point of having one.
+//
+// The chain is followed rather than read once because a family may itself inherit,
+// and a preset that names a preset which in turn names one is still a statement
+// about what the board builds.
 func loadInherited(root string, preset Preset) ([]CDep, error) {
-	file := preset.File
-	if file == "" {
-		file = filepath.Join("presets", preset.Name+".json")
-	}
-	if !filepath.IsAbs(file) {
-		file = filepath.Join(root, file)
-	}
-	loaded, err := LoadPreset(file)
+	index, err := presetsDeclaredBy(root)
 	if err != nil {
 		return nil, err
 	}
-	return loaded.Dependencies, nil
+	declared := map[string]bool{}
+	for _, one := range index {
+		declared[one.Name] = true
+	}
+
+	current := preset
+	for depth := 0; depth < 16; depth++ {
+		if current.Inherits == "" {
+			break
+		}
+		if !declared[current.Inherits] {
+			return nil, fmt.Errorf("preset %q inherits %q, which is not one of this platform's presets",
+				preset.Name, current.Inherits)
+		}
+		// The index says which presets exist; the file says what one of them is.
+		// Following the chain through the index would arrive at a name with no
+		// dependencies, which is what a board preset inherits its dependencies
+		// from — so the family would report itself as empty and a board would
+		// report that it had nothing to build against.
+		parent, loadErr := loadPresetIn(root, current.Inherits, current.File)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		current = parent
+	}
+	return current.Dependencies, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -346,24 +376,64 @@ func (r *PresetResolver) declaredPresets() ([]string, error) {
 // the graph first and then asks what those resolved directories declare, so that
 // the answer is about the dependencies the build actually has rather than about
 // whatever happens to be lying beside the project.
+// dependencyRoots are the modules a build may find a preset in.
+//
+// The project's own dependencies come first, because that is what the project
+// asked for and nothing else should take precedence over it. After them come the
+// platforms the interfaces themselves enumerate, which is the case of a program
+// written against the interfaces and not against a platform: it said what it
+// calls and did not say what implements it, and somewhere has to say which
+// implementations exist.
+//
+// Paths come from the manifests. A root that is not there is not a dependency
+// that failed to resolve — it is a dependency reached by git that this build has
+// not fetched, and what it would provide is read by whoever fetches it.
 func (r *PresetResolver) dependencyRoots() []string {
 	document, err := loadDocument(r.ProjectRoot)
 	if err != nil {
 		return nil
 	}
 	roots := []string{}
-	for _, item := range document.Map["depends"].List {
-		if item.Kind != yaml.KindMap {
-			continue
-		}
-		path := readString(item.Map["path"])
+	seen := map[string]bool{}
+	add := func(path string) {
 		if path == "" {
-			continue
+			return
 		}
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(r.ProjectRoot, path)
 		}
+		if seen[path] {
+			return
+		}
+		seen[path] = true
 		roots = append(roots, path)
+	}
+
+	for _, item := range document.Map["depends"].List {
+		if item.Kind != yaml.KindMap {
+			continue
+		}
+		add(readString(item.Map["path"]))
+	}
+
+	// The platforms the interfaces enumerate, which is where a build looks when
+	// the project named the interfaces but not a platform. Resolved from the
+	// interface module's own root, because that is the module that lists them.
+	for _, root := range append([]string{}, roots...) {
+		manifest, loadErr := deps.LoadManifest(deps.ManifestPath(root))
+		if loadErr != nil || manifest == nil || len(manifest.Platforms) == 0 {
+			continue
+		}
+		for _, platform := range manifest.Platforms {
+			if platform.Path == "" {
+				continue
+			}
+			path := platform.Path
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(root, path)
+			}
+			add(path)
+		}
 	}
 	return roots
 }
@@ -396,7 +466,48 @@ func presetsDeclaredBy(root string) ([]Preset, error) {
 	if document.Kind != yaml.KindMap {
 		return nil, nil
 	}
+	// A platform declares where its presets are, under `hardware`, and that is
+	// read first because it is the contract.
+	//
+	// It is read first because a manifest also has a top-level `presets`, and
+	// reading that one instead finds nothing useful: a platform writes it as a
+	// nested block, which parses as a map whose only key is the directory name,
+	// and a preset described by a key is not a preset. Reading the declared
+	// directory avoids depending on the shape of the older key at all.
+	if hardware, ok := document.Map["hardware"]; ok && hardware.Kind == yaml.KindMap {
+		own := []Preset{}
+		if directory := readString(hardware.Map["presets"]); directory != "" {
+			declared, err := presetsInDirectory(filepath.Join(root, directory))
+			if err != nil {
+				return nil, err
+			}
+			own = declared
+		}
+		// Then every board it declares, read through that board's own manifest.
+		//
+		// A board may have several presets, and the platform does not list them:
+		// a list there would be a second thing to keep in step with the board, and
+		// it would cap a board at one. So the boards are declared as a folder and
+		// each one answers for itself.
+		if boards := readString(hardware.Map["boards"]); boards != "" {
+			for _, boardRoot := range boardModulesIn(filepath.Join(root, boards)) {
+				declared, err := presetsDeclaredBy(boardRoot)
+				if err != nil {
+					return nil, err
+				}
+				own = append(own, declared...)
+			}
+		}
+		return own, nil
+	}
+
+	// A manifest that inlines its presets, or lists them, is still read: both say
+	// the same thing, and refusing one would make a platform change its layout and
+	// its consumers at once.
 	section := document.Map["presets"]
+	if section.Kind == yaml.KindString && section.Str != "" {
+		return presetsInDirectory(filepath.Join(root, section.Str))
+	}
 	if section.Kind != yaml.KindMap && section.Kind != yaml.KindList {
 		return nil, nil
 	}
@@ -484,4 +595,217 @@ func sortedUnique(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// LookupPreset returns the preset a program is being built for, by name.
+//
+// This is the same search `Resolve` performs, without the description it
+// produces for a report. A caller that wants to *act* on a preset — to resolve
+// the sources it declares, say — needs the preset itself, and reading the
+// manifest a second time to get it would be a second reading of the same
+// decision.
+func (r *PresetResolver) LookupPreset(name string) (Preset, error) {
+	if name == "" {
+		return Preset{}, &ResolveError{Reason: "no preset was named"}
+	}
+	declared, err := r.declaredPresets()
+	if err != nil {
+		return Preset{}, err
+	}
+	if !listed(declared, name) {
+		return Preset{}, &ResolveError{
+			Preset:   name,
+			Reason:   "this program does not declare that it is written for it",
+			Declared: declared,
+		}
+	}
+	for _, root := range r.dependencyRoots() {
+		presets, err := presetsDeclaredBy(root)
+		if err != nil {
+			return Preset{}, err
+		}
+		for _, entry := range presets {
+			if entry.Name != name {
+				continue
+			}
+			// The index says which presets exist; the file says what one of them
+			// is. Returning the index entry would return a preset with a name and
+			// nothing else — and the dependencies, the sources and the overrides
+			// are all in the file.
+			preset, loadErr := loadPresetIn(root, entry.Name, entry.File)
+			if loadErr != nil {
+				return Preset{}, loadErr
+			}
+			// A board preset inherits its family's dependencies, so one that lists
+			// none is not one that has none: it is one that says what makes it that
+			// board and leaves the rest to its family.
+			if len(preset.Dependencies) == 0 {
+				inherited, inheritErr := loadInherited(root, preset)
+				if inheritErr != nil {
+					return Preset{}, inheritErr
+				}
+				preset.Dependencies = inherited
+			}
+			// The override is applied here rather than at each use, so that
+			// everything downstream reads one dependency list: the sources that get
+			// compiled, the include paths that get added, and the report that says
+			// what the build is made of. A board narrows a family to the startup
+			// file for its part; a build that compiled the family's whole
+			// directory of them would compile a startup for every part in the
+			// family, and they all define the same symbols.
+			for i := range preset.Dependencies {
+				if override, ok := preset.Override[preset.Dependencies[i].Name]; ok && len(override.Src) > 0 {
+					preset.Dependencies[i].Src = override.Src
+				}
+			}
+			return preset, nil
+		}
+	}
+	return Preset{}, &ResolveError{
+		Preset:   name,
+		Reason:   "no dependency of this program provides it",
+		Declared: declared,
+	}
+}
+
+// loadPresetIn reads the preset a platform's index names.
+//
+// The index is a table of contents and the file is the text, and a caller that
+// wants to know what a preset *is* has to read the file. The file is taken from
+// the index where it says one, and by name otherwise, because a platform may
+// name its presets for what they are — `board_nucleo-h753zi.json` — while the
+// preset inside is called `nucleo-h753zi`.
+func loadPresetIn(root, name, file string) (Preset, error) {
+	if file == "" {
+		return LoadPresetByName(filepath.Join(root, "presets"), name)
+	}
+	path := file
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	preset, err := LoadPreset(path)
+	if err != nil {
+		return Preset{}, err
+	}
+	if preset.Name == "" {
+		preset.Name = name
+	}
+	preset.Root = root
+	return preset, nil
+}
+
+// presetsInDirectory reads every preset a declared directory holds.
+//
+// The file name is not the preset's name: files are named for what they are
+// (`board_nucleo-h753zi.json`) and the name is inside, because a preset inherits
+// and refers to its family by name and the two have to be the same string.
+func presetsInDirectory(dir string) ([]Preset, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// A directory that is not there is not a platform with no presets; it is a
+		// platform that has not been laid out yet, and the caller reports that
+		// when it looks for something by name.
+		return nil, nil
+	}
+	presets := []Preset{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(entry.Name())) {
+		case ".json", ".yaml", ".yml":
+		default:
+			continue
+		}
+		preset, loadErr := LoadPreset(filepath.Join(dir, entry.Name()))
+		if loadErr != nil || preset.Name == "" {
+			continue
+		}
+		if preset.File == "" {
+			preset.File = filepath.Join(dir, entry.Name())
+		}
+		presets = append(presets, preset)
+	}
+	return presets, nil
+}
+
+// RootOf returns the dependency root that provides a named preset.
+//
+// The root matters as much as the preset: a preset says what to build against,
+// and the module that provides it is what that applies to. A board's support
+// package belongs to the platform, so looking for it beside the *project* would
+// look in a tree that has no boards in it, and looking for it by walking
+// upwards would be guessing where the platform was checked out.
+func (r *PresetResolver) RootOf(name string) (string, error) {
+	index, err := r.declaredPresets()
+	if err != nil {
+		return "", err
+	}
+	if !listed(index, name) {
+		return "", &ResolveError{
+			Preset:   name,
+			Reason:   "this program does not declare that it is written for it",
+			Declared: index,
+		}
+	}
+	for _, root := range r.presetRoots() {
+		presets, err := presetsDeclaredBy(root)
+		if err != nil {
+			return "", err
+		}
+		for _, preset := range presets {
+			if preset.Name == name {
+				return root, nil
+			}
+		}
+	}
+	return "", &ResolveError{
+		Preset:   name,
+		Reason:   "no dependency of this program provides it",
+		Declared: index,
+	}
+}
+
+// presetRoots returns every place a preset may be declared: the platform's own,
+// and the `presets` each of its boards carries.
+//
+// A preset that says which board it is for belongs to that board, and the board
+// is not a dependency of the program: a program depends on the platform, and the
+// platform implements every board of the family at once. So a board's presets are
+// found through the platform that owns the boards, not through a dependency graph
+// that does not contain them.
+func (r *PresetResolver) presetRoots() []string {
+	roots := []string{}
+	seen := map[string]bool{}
+	for _, root := range r.dependencyRoots() {
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		roots = append(roots, root)
+	}
+	return roots
+}
+
+// boardModulesIn returns the module root of every board in a declared directory.
+//
+// A directory entry counts as a board when it carries a manifest, which is what
+// separates a board from anything else that happens to be a folder beside it.
+func boardModulesIn(boardsDir string) []string {
+	entries, err := os.ReadDir(boardsDir)
+	if err != nil {
+		return nil
+	}
+	roots := []string{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		boardRoot := filepath.Join(boardsDir, entry.Name())
+		if _, err := deps.LoadManifest(deps.ManifestPath(boardRoot)); err != nil {
+			continue
+		}
+		roots = append(roots, boardRoot)
+	}
+	return roots
 }
