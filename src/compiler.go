@@ -38,6 +38,7 @@ import (
 	"rho/src/ir"
 	"rho/src/projectgen"
 	"rho/src/types"
+	"rho/src/yaml"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -101,16 +102,19 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 	if err != nil {
 		return err
 	}
+	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots)
 	ctx := projectgen.Context{
-		ModuleName:   irModule.Name,
-		ProjectRoot:  ProjectRoot(path),
-		ShimSources:  firstOf(shim),
-		OutputDir:    outputDir,
-		IR:           irModule,
-		IncludePaths: includePaths,
-		SourceFiles:  sourceFiles,
-		Config:       configBridge(path, outputDir),
-		SQL:          sqlBridge(ProjectRoot(path)),
+		ModuleName:     irModule.Name,
+		ProjectRoot:    ProjectRoot(path),
+		ShimSources:    firstOf(shim),
+		OutputDir:      outputDir,
+		IR:             irModule,
+		IncludePaths:   includePaths,
+		SourceFiles:    sourceFiles,
+		Config:         configBridge(path, outputDir, dependencyRoots...),
+		EnabledConfigs: enabledConfigs,
+		GuardedSources: guardedSources,
+		SQL:            sqlBridge(ProjectRoot(path)),
 	}
 	for _, target := range targets {
 		if _, err := projectgen.Generate(ctx, target); err != nil {
@@ -152,6 +156,7 @@ type GeneratedTarget struct {
 // reports how each is built. An only value restricts the build to that single
 // target, which is how a test module asks for the backend it can run.
 func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only string, shim ...[]string) ([]GeneratedTarget, error) {
+	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots)
 	projectRoot := ProjectRoot(path)
 	// A project that declared SQL gets its statements generated before anything
 	// is compiled, because the generated Rho is an input to the compile: a
@@ -219,17 +224,19 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 	for _, target := range targets {
 		dir := filepath.Join(root, target.ID)
 		ctx := projectgen.Context{
-			ModuleName:   irModule.Name,
-			ProjectRoot:  projectRoot,
-			ShimSources:  firstOf(shim),
-			OutputDir:    dir,
-			IR:           irModule,
-			IncludePaths: includePaths,
-			SourceFiles:  sourceFiles,
-			Config:       configBridge(projectRoot, dir),
-			SQL:          sqlBridge(projectRoot),
-			Connection:   connection,
-			Variant:      variants[target.ID],
+			ModuleName:     irModule.Name,
+			ProjectRoot:    projectRoot,
+			ShimSources:    firstOf(shim),
+			OutputDir:      dir,
+			IR:             irModule,
+			IncludePaths:   includePaths,
+			SourceFiles:    sourceFiles,
+			Config:         configBridge(projectRoot, dir, dependencyRoots...),
+			EnabledConfigs: enabledConfigs,
+			GuardedSources: guardedSources,
+			SQL:            sqlBridge(projectRoot),
+			Connection:     connection,
+			Variant:        variants[target.ID],
 		}
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err
@@ -431,7 +438,7 @@ func cConnection(projectRoot string) *deps.CConnection {
 // place, because a generated project is a directory someone may build on its own
 // and move: it has to carry what it needs. A project that declared no bridge
 // gets none, and its build is what it was.
-func configBridge(projectRoot, outputDir string) *projectgen.Config {
+func configBridge(projectRoot, outputDir string, dependencyRoots ...string) *projectgen.Config {
 	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
 	if err != nil || manifest == nil || manifest.Config == nil {
 		return nil
@@ -468,6 +475,58 @@ func configBridge(projectRoot, outputDir string) *projectgen.Config {
 			return nil
 		}
 		fragments = append(fragments, filepath.Join("kconfig", name))
+	}
+
+	// Then the fragments the dependencies declare, because a symbol a project sets
+	// has to be declared by whoever owns it. The application's `CONFIG_RH_HAL_UART`
+	// means nothing unless robohub-common is the one that declares `RH_HAL_UART`,
+	// and a merge that saw only the project's own fragment would not know the
+	// symbol existed — let alone whether it were set.
+	for _, root := range cDependencyChain(projectRoot, dependencyRoots) {
+		dependency, depErr := deps.LoadManifest(deps.ManifestPath(root))
+		if depErr != nil || dependency == nil {
+			continue
+		}
+		for _, fragment := range kconfigFragmentsOf(root, dependency.Config) {
+			data, readErr := os.ReadFile(fragment.path)
+			if readErr != nil {
+				continue
+			}
+			if os.MkdirAll(copied, 0o755) != nil {
+				return nil
+			}
+			// Named after the module that declared it, not after the file.
+			//
+			// Every module writes its own `Kconfig`, and copying them under the
+			// name each already had meant one silently overwrote another: the
+			// application's own fragment was the one that survived, and the
+			// platform's symbols were absent rather than missing, which is the
+			// harder of the two to notice.
+			name := dependency.ModuleName + "-" + strings.ReplaceAll(fragment.name, "/", "_")
+			if os.WriteFile(filepath.Join(copied, name), data, 0o644) != nil {
+				return nil
+			}
+			fragments = append(fragments, filepath.Join("kconfig", name))
+		}
+	}
+
+	// A file the project writes its symbols in is read where it is.
+	//
+	// Not copied, unlike the fragments above. A fragment is part of what the
+	// program can be built against — it declares symbols — so a generated project
+	// that was handed to somebody has to carry them. The values are this project's
+	// own choices, and the project they belong to is right here: naming the file is
+	// how the build finds it, and copying it would be a second copy of a list that
+	// has to be kept in step with the first.
+	if declared.ValuesFile != "" {
+		path := filepath.Join(projectRoot, filepath.FromSlash(declared.ValuesFile))
+		if _, statErr := os.Stat(path); statErr == nil {
+			absolute, absErr := filepath.Abs(path)
+			if absErr != nil {
+				absolute = path
+			}
+			bridge.Defconfig = filepath.ToSlash(absolute)
+		}
 	}
 
 	// The values a project sets are written as a defconfig, which is the format
@@ -1412,4 +1471,174 @@ func firstOf(values [][]string) []string {
 		return nil
 	}
 	return values[0]
+}
+
+// namedFragment is a Kconfig file found in a dependency, with the name it should
+// be copied under.
+type namedFragment struct {
+	path string
+	name string
+}
+
+// kconfigFragmentsOf returns the Kconfig files a module declares, found under its
+// own `kconfig` directory.
+//
+// A module declares where its fragments are; a directory of them named by
+// convention would be a second thing to keep right, and a dependency that kept
+// its symbols somewhere else would simply have none.
+func kconfigFragmentsOf(root string, config *deps.ConfigManifest) []namedFragment {
+	if config == nil || len(config.Fragments) == 0 {
+		return nil
+	}
+	found := []namedFragment{}
+	for _, fragment := range config.Fragments {
+		path := filepath.Join(root, filepath.FromSlash(fragment))
+		if info, err := os.Stat(path); err != nil || info.IsDir() {
+			continue
+		}
+		found = append(found, namedFragment{path: path, name: filepath.Base(filepath.FromSlash(fragment))})
+	}
+	return found
+}
+
+// CDependencyChain returns every C module reachable from a project, the ones it
+// declares first and then theirs.
+//
+// Exported because a build needs it outside this package: which sources a
+// configuration governs is decided from the manifests of the whole chain, not the
+// project's alone.
+func CDependencyChain(projectRoot string, roots []string) []string {
+	return cDependencyChain(projectRoot, roots)
+}
+
+// cDependencyChain returns every C module reachable from a project, the ones it
+// declares first and then theirs.
+//
+// Transitive because the module that owns the symbols is usually not the one the
+// project depends on. A program depends on a platform, and the platform depends
+// on the library whose headers declare `RH_HAL_UART` — so a merge that saw only
+// the project's own fragment would not know the symbol existed, and a program that
+// set it would be told it had set nothing.
+//
+// Read from the document rather than through `deps.Manifest`, because a manifest
+// writes `depends:` as a list carrying a type and a path, and that reader expects
+// the older form where each entry was a version constraint. Asking the other one
+// finds no dependencies at all, which looks exactly like a project that has none.
+func cDependencyChain(projectRoot string, roots []string) []string {
+	ordered := []string{}
+	seen := map[string]bool{}
+
+	var walk func(base string, depth int)
+	walk = func(base string, depth int) {
+		if depth > 16 {
+			return
+		}
+		document, err := yaml.Load(readTextOrEmpty(filepath.Join(base, "module.yml")))
+		if err != nil {
+			document, err = yaml.Load(readTextOrEmpty(filepath.Join(base, "rho.mod")))
+			if err != nil {
+				return
+			}
+		}
+		for _, item := range document.Map["depends"].List {
+			if item.Kind != yaml.KindMap {
+				continue
+			}
+			if readText(item.Map["type"]) != "c" {
+				continue
+			}
+			path := readText(item.Map["path"])
+			if path == "" {
+				continue
+			}
+			root := path
+			if !filepath.IsAbs(root) {
+				root = filepath.Join(base, root)
+			}
+			if seen[root] {
+				continue
+			}
+			seen[root] = true
+			ordered = append(ordered, root)
+			walk(root, depth+1)
+		}
+	}
+
+	walk(projectRoot, 0)
+	for _, root := range roots {
+		if seen[root] || !filepath.IsAbs(root) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, "module.yml")); err != nil {
+			continue
+		}
+		seen[root] = true
+		ordered = append(ordered, root)
+		walk(root, 0)
+	}
+	return ordered
+}
+
+// readTextOrEmpty reads a file, treating an unreadable one as empty: a module
+// with no manifest has no fragments to contribute, which is not a failure.
+func readTextOrEmpty(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// readText is the text of a mapping's scalar value, or "".
+func readText(value yaml.Value) string {
+	if value.Str == "" {
+		return ""
+	}
+	return value.Str
+}
+
+// resolutionOf returns the configuration symbols a project resolved to and the
+// map from a source file to the symbol that governs it.
+//
+// It is resolved here as well as in the command, because generation has to know:
+// a driver that is switched off is not a driver that is unused, and the only
+// moment a source can still be left out is before the target is written.
+func resolutionOf(entryPath string, dependencyRoots []string) (map[string]bool, map[string]string) {
+	// The manifest and the dependencies belong to the project, not to the file the
+	// build was pointed at. Handed a `.rho` path, both look inside a folder that
+	// does not exist, which is not an error — there is simply nothing to read, so
+	// a module silently loses its guards.
+	projectRoot := ProjectRoot(entryPath)
+
+	configured := map[string]bool{}
+	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err == nil && manifest != nil && manifest.Config != nil {
+		out := filepath.Join(projectRoot, manifest.BuildDirectory(), "config-check")
+		if data, readErr := os.ReadFile(filepath.Join(out, ".config")); readErr == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+				if !found {
+					continue
+				}
+				key = strings.TrimPrefix(strings.TrimSpace(key), "CONFIG_")
+				configured[key] = strings.TrimSpace(value) == "y"
+			}
+		}
+	}
+	guarded := map[string]string{}
+	for _, root := range CDependencyChain(projectRoot, dependencyRoots) {
+		module, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || module == nil {
+			continue
+		}
+		for _, guard := range module.BuildGuardedSources {
+			for _, name := range guard.Sources {
+				guarded[filepath.Base(name)] = guard.Config
+			}
+		}
+	}
+	if len(guarded) == 0 {
+		return configured, nil
+	}
+	return configured, guarded
 }

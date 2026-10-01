@@ -269,11 +269,13 @@ type Manifest struct {
 	// statement about the project, not about a dependency: it says what hardware
 	// this is for, and every build of it is for that hardware whatever resolves
 	// its dependencies.
-	BuildToolchain   string
-	BuildDefines     []string
-	BuildIncludeDirs []string
-	BuildSourceDirs  []string
-	BuildSources     []string
+	BuildToolchain string
+	BuildDefines   []string
+	// BuildGuardedSources are sources compiled only when a symbol is set.
+	BuildGuardedSources []GuardedSource
+	BuildIncludeDirs    []string
+	BuildSourceDirs     []string
+	BuildSources        []string
 	// Connection is the native library a project links, and the headers it may
 	// call. Nil means the project generates nothing that needs one.
 	Connection *CConnection
@@ -557,6 +559,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
 		m.BuildSources = yamlStrings(build.Map["sources"])
 		m.BuildDefines = yamlStrings(build.Map["defines"])
+		m.BuildGuardedSources = parseGuardedSources(build.Map["guarded_sources"])
 	}
 
 	m.Exports = parseExports(doc.Map["exports"])
@@ -753,6 +756,9 @@ type ConfigManifest struct {
 	// Fragments are the Kconfig files that define the symbols, relative to the
 	// project root.
 	Fragments []string
+	// ValuesFile is the file this project writes the symbols it sets in,
+	// relative to the project root.
+	ValuesFile string
 	// Values are the symbols this project sets, as text: a bool is true or
 	// false, an int or hex is its digits, a string is the string.
 	Values map[string]string
@@ -916,9 +922,10 @@ func parseConfigManifest(node yaml.Value) *ConfigManifest {
 		return nil
 	}
 	config := &ConfigManifest{
-		Fragments: yamlStrings(node.Map["kconfig_fragments"]),
-		Dialect:   yamlString(node, "dialect"),
-		Module:    yamlString(node, "module"),
+		Fragments:  yamlStrings(node.Map["kconfig_fragments"]),
+		ValuesFile: yamlString(node, "values_file"),
+		Dialect:    yamlString(node, "dialect"),
+		Module:     yamlString(node, "module"),
 	}
 	if values, ok := node.Map["values"]; ok && values.Kind == yaml.KindMap {
 		config.Values = map[string]string{}
@@ -1307,4 +1314,42 @@ func parseVendorRepos(node yaml.Value) []VendorRef {
 		})
 	}
 	return repos
+}
+
+// GuardedSource is a set of sources compiled only when a symbol is set.
+type GuardedSource struct {
+	// Config is the symbol, without the CONFIG_ prefix.
+	Config string
+	// Sources are the files, by name, that the symbol governs.
+	Sources []string
+}
+
+// parseGuardedSources reads the sources a module guards on a symbol.
+func parseGuardedSources(node yaml.Value) []GuardedSource {
+	if node.Kind != yaml.KindList {
+		return nil
+	}
+	guarded := []GuardedSource{}
+	for _, item := range node.List {
+		if item.Kind != yaml.KindMap {
+			continue
+		}
+		symbol := strings.TrimPrefix(readScalar(item.Map["config"]), "CONFIG_")
+		if symbol == "" {
+			continue
+		}
+		guarded = append(guarded, GuardedSource{
+			Config:  symbol,
+			Sources: yamlStrings(item.Map["sources"]),
+		})
+	}
+	return guarded
+}
+
+// readScalar is a mapping value's text, or "" when it is not a scalar.
+func readScalar(value yaml.Value) string {
+	if value.Kind != yaml.KindString {
+		return ""
+	}
+	return value.Str
 }

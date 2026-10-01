@@ -764,6 +764,22 @@ func buildCLI(args []string) int {
 	// Both were written by steps that have already run, so they are read from
 	// where those put them rather than worked out again.
 	generatedTree := filepath.Join(projectRoot, manifest.BuildDirectory(), "generated")
+	// What the configuration resolved to, resolved here rather than at build time.
+	//
+	// A driver belongs to a peripheral, and whether a program uses it is the
+	// program's answer. That answer has to be known before the sources are chosen,
+	// so the merge runs here: a build that decided it later would have a source
+	// list already written. The merge still runs again in the build, because a
+	// header that can change without regenerating the project is worth having.
+	configured, configErr := resolvedConfiguration(projectRoot, manifest, targetName)
+	if configErr != nil {
+		fmt.Fprintln(os.Stderr, "rho build:", configErr)
+		return 1
+	}
+	// The configuration is resolved here so that the sources can be chosen; the
+	// generator reads the result from the same place.
+	_ = configured
+
 	shimSources := []string{}
 	for _, candidate := range []string{
 		filepath.Join(generatedTree, "c", "ffi_shim.c"),
@@ -1067,4 +1083,156 @@ func readLines(path string) []string {
 		}
 	}
 	return lines
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Configuration deciding what gets compiled                                   */
+/* -------------------------------------------------------------------------- */
+
+// resolvedConfiguration runs the project's configuration merge and returns the
+// symbols that ended up set.
+//
+// It runs here, before the sources are chosen, because that is the only point at
+// which a decision can still be made. The generated project runs the merge again
+// when it builds, so the header a program is compiled against stays current
+// without regenerating anything; what it cannot do there is remove a source from
+// a target that already exists.
+func resolvedConfiguration(projectRoot string, manifest *deps.Manifest, targetName string) (map[string]bool, error) {
+	if manifest == nil || manifest.Config == nil {
+		return nil, nil
+	}
+	buildDir := filepath.Join(projectRoot, manifest.BuildDirectory())
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return nil, err
+	}
+	out := filepath.Join(buildDir, "config-check")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return nil, err
+	}
+	merge := exec.Command("rho", "kconfig", "merge", "--quiet",
+		"--dialect", manifest.Config.Dialect,
+		"--root", projectRoot,
+		"--out", out,
+		"--force")
+	if manifest.Config.ValuesFile != "" {
+		// Attached to the flag rather than following it.
+		//
+		// This program re-reads its own arguments before dispatching, and a value
+		// that arrives as its own argument does not survive that. The failure
+		// names the flag and not the reason, so it reads as a typo.
+		merge.Args = append(merge.Args, "--defconfig="+
+			filepath.Join(projectRoot, filepath.FromSlash(manifest.Config.ValuesFile)))
+	}
+	fragments := configFragments(projectRoot, manifest)
+	for _, fragment := range fragments {
+		merge.Args = append(merge.Args, fragment)
+	}
+	if output, err := merge.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("the configuration could not be resolved: %w\n%s", err, output)
+	}
+
+	set := map[string]bool{}
+	data, err := os.ReadFile(filepath.Join(out, ".config"))
+	if err != nil {
+		return set, nil
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		key = strings.TrimPrefix(strings.TrimSpace(key), "CONFIG_")
+		set[key] = strings.TrimSpace(value) == "y"
+	}
+	_ = targetName
+	return set, nil
+}
+
+// configFragments is every Kconfig file a project and its dependencies declare.
+func configFragments(projectRoot string, manifest *deps.Manifest) []string {
+	fragments := []string{}
+	for _, fragment := range manifest.Config.Fragments {
+		path := filepath.Join(projectRoot, filepath.FromSlash(fragment))
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			fragments = append(fragments, path)
+		}
+	}
+	for _, root := range src.CDependencyChain(projectRoot, nil) {
+		dependency, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || dependency == nil || dependency.Config == nil {
+			continue
+		}
+		for _, fragment := range dependency.Config.Fragments {
+			path := filepath.Join(root, filepath.FromSlash(fragment))
+			if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
+				fragments = append(fragments, path)
+			}
+		}
+	}
+	return fragments
+}
+
+// guardSources removes the sources a module said belong to a symbol that is not
+// set.
+//
+// The rule lives with the module that owns the sources, because only that module
+// knows which file implements which driver, and it is matched by file name
+// because those files live in a vendor repository that moves.
+//
+// A driver left out of the configuration is not merely switched off: its
+// implementation is not compiled, so it is not in the image. A program that
+// wanted it would fail to link, which is the honest outcome — better than a
+// binary that carried a driver it never asked for.
+func guardSources(sources []string, configured map[string]bool, roots []string) []string {
+	guarded := map[string]string{} // file name -> symbol
+	for _, root := range roots {
+		module, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || module == nil {
+			continue
+		}
+		for _, guard := range module.BuildGuardedSources {
+			for _, name := range guard.Sources {
+				guarded[filepath.Base(name)] = guard.Config
+			}
+		}
+	}
+	if len(guarded) == 0 {
+		return sources
+	}
+
+	kept := make([]string, 0, len(sources))
+	for _, source := range sources {
+		symbol, isGuarded := guarded[filepath.Base(source)]
+		if isGuarded && !configured[symbol] {
+			continue
+		}
+		kept = append(kept, source)
+	}
+	return kept
+}
+
+// guardedSources collects which symbol governs which source file, from the
+// manifests of everything the project depends on.
+//
+// The rule lives with the module that owns the source, because only that module
+// knows which file implements which driver. It is keyed by file name because
+// those files live in a vendor repository that moves, and a rule written against
+// a path would break the first time it did.
+func guardedSources(roots []string) map[string]string {
+	guarded := map[string]string{}
+	for _, root := range roots {
+		module, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || module == nil {
+			continue
+		}
+		for _, guard := range module.BuildGuardedSources {
+			for _, name := range guard.Sources {
+				guarded[filepath.Base(name)] = guard.Config
+			}
+		}
+	}
+	if len(guarded) == 0 {
+		return nil
+	}
+	return guarded
 }
