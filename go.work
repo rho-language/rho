@@ -20,3 +20,33 @@ use (
 	./modules/plugins/rho-sql-sqlite
 	./modules/plugins/rho-test-junit
 )
+
+// The in-tree wiring lives here rather than in each module's go.mod. A component
+// names what it depends on; this workspace says which checkout that is, so no
+// module's manifest has to carry a path that only means anything on the machine
+// it was written on.
+//
+// Versioned rather than bare, because a bare replace in a workspace is rejected
+// for a module the workspace already uses — and naming v0.0.0 is what every one
+// of these requirements asks for, so this resolves them to the checkout instead
+// of sending Go to the network for a version that has never existed.
+replace (
+	github.com/rho/rho-auth v0.0.0 => ./modules/components/rho-auth
+	github.com/rho/rho-cimport v0.0.0 => ./modules/components/rho-cimport
+	github.com/rho/rho-doc v0.0.0 => ./modules/components/rho-doc
+	github.com/rho/rho-fmt v0.0.0 => ./modules/components/rho-fmt
+	github.com/rho/rho-kconfig v0.0.0 => ./modules/components/rho-kconfig
+	github.com/rho/rho-keeper v0.0.0 => ./modules/components/rho-keeper
+	github.com/rho/rho-log v0.0.0 => ./modules/components/rho-log
+	github.com/rho/rho-lsp v0.0.0 => ./modules/components/rho-lsp
+	github.com/rho/rho-openapi v0.0.0 => ./modules/components/rho-openapi
+	github.com/rho/rho-router v0.0.0 => ./modules/components/rho-router
+	github.com/rho/rho-sql v0.0.0 => ./modules/components/rho-sql
+	github.com/rho/rho-target v0.0.0 => ./modules/components/rho-target
+	github.com/rho/rho-test v0.0.0 => ./modules/components/rho-test
+	github.com/rho/rho-doc-api v0.0.0 => ./modules/plugins/rho-doc-api
+	github.com/rho/rho-doc-toc v0.0.0 => ./modules/plugins/rho-doc-toc
+	github.com/rho/rho-sql-sqlite v0.0.0 => ./modules/plugins/rho-sql-sqlite
+	github.com/rho/rho-test-junit v0.0.0 => ./modules/plugins/rho-test-junit
+	rho v0.0.0 => ./
+)

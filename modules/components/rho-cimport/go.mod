@@ -12,7 +12,3 @@ require (
 // every tool reads it, and the sources it writes are parsed by the same parser
 // that will compile them, so a generated file that does not compile is caught
 // here rather than in a build.
-replace (
-	github.com/rho/rho-log => ../rho-log
-	rho => ../../..
-)

@@ -233,7 +233,9 @@ func ValidateModuleYAML(m ModuleYAML) error {
 	if m.Module.Version == "" {
 		return errors.New("module.version is required")
 	}
-	if m.Main == "" {
+	// A native module declares no main: it is linked into a project rather than
+	// run, so there is no entry point to require.
+	if m.Main == "" && schema.IsRhoSourceType(m.Module.Type) {
 		return errors.New("main is required")
 	}
 	return nil

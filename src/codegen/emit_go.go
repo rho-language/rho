@@ -130,7 +130,7 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	// unused import.
 	imports := []string{}
 	if strings.Contains(body.String(), "fmt.") {
-		imports = append(imports, "fmt")
+		imports = addGoImport(imports, "fmt")
 	}
 	// A pointer is carried as an unsafe.Pointer, because a Rho pointer is a raw
 	// address rather than a Go reference: it may point into memory a foreign
@@ -143,7 +143,7 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	// A module that only ever names a pointer's element would otherwise carry
 	// an import nothing uses, and an unused import does not compile.
 	if moduleHasPointer(m) && goBodyUsesUnsafe(body.String()) {
-		imports = append(imports, "unsafe")
+		imports = addGoImport(imports, "unsafe")
 	}
 	if len(imports) == 1 {
 		// A single import is written on one line, because a block around one
@@ -593,7 +593,7 @@ func EmitGoRuntime(implementation string) string {
 	body.WriteString("func abort() {\n\tprintln(\"rho: aborted\")\n\tos.Exit(1)\n}\n\n")
 	body.WriteString("// panicf ends the program with a message, backing Rho's panic().\n")
 	body.WriteString("func panicf(msg string) {\n\tprintln(\"rho: \" + msg)\n\tos.Exit(1)\n}\n\n")
-	imports = append(imports, "os")
+	imports = addGoImport(imports, "os")
 
 	// String and environment intrinsics, so the same Rho code builds and
 	// behaves the same for every Go target.
@@ -630,8 +630,8 @@ func EmitGoRuntime(implementation string) string {
 	body.WriteString("func rhoEnvOr(name, fallback string) string {\n")
 	body.WriteString("\tif value, ok := os.LookupEnv(name); ok {\n\t\treturn value\n\t}\n")
 	body.WriteString("\treturn fallback\n}\n\n")
-	imports = append(imports, "strconv")
-	imports = append(imports, "strings")
+	imports = addGoImport(imports, "strconv")
+	imports = addGoImport(imports, "strings")
 
 	needed := []struct {
 		call    string
@@ -669,7 +669,9 @@ func EmitGoRuntime(implementation string) string {
 		}
 		body.WriteString(helper.define)
 		body.WriteString("\n")
-		imports = append(imports, helper.imports...)
+		for _, name := range helper.imports {
+			imports = addGoImport(imports, name)
+		}
 	}
 
 	var b strings.Builder
@@ -689,10 +691,46 @@ func EmitGoRuntime(implementation string) string {
 	return b.String()
 }
 
+// addGoImport adds a package to a generated file's import list, and leaves the
+// list alone if the package is already on it.
+//
+// The list is built from more than one place — what the runtime body always
+// needs, plus what each intrinsic a program happens to call pulls in — so the
+// same package can be asked for twice. That is not a cosmetic duplicate: Go
+// rejects a file that imports the same package under one name twice, so a
+// program using two of these intrinsics produced a runtime that would not
+// compile, and the failure named a duplicate import rather than the program that
+// caused it.
+func addGoImport(imports []string, name string) []string {
+	for _, existing := range imports {
+		if existing == name {
+			return imports
+		}
+	}
+	return append(imports, name)
+}
+
 // EmitGoMod returns the go.mod file for a generated Go project.
 func EmitGoMod(m ir.ModuleIR) string {
 	name := goModulePath(m.Name)
 	return fmt.Sprintf("module %s\n\ngo 1.22\n", name)
+}
+
+// EmitGoWork returns the go.work file for a generated Go project.
+//
+// A generated project is a project of its own, and it is generated into a
+// directory that is often inside somebody else's checkout — a repository, a
+// monorepo, this toolchain's own examples. If a go.work exists anywhere above
+// it, that workspace owns the build, and the go tool refuses packages the
+// workspace does not list: "main module does not contain package ...". So the
+// documented way to run a generated project, `cd build/generated/go && go run .`,
+// fails for a reason that has nothing to do with the project.
+//
+// A go.work naming only the project itself ends that. Go stops at the nearest
+// go.work going up, so the generated project becomes its own workspace and is
+// built by its own go.mod, wherever it was written.
+func EmitGoWork(m ir.ModuleIR) string {
+	return fmt.Sprintf("go 1.22\n\nuse .\n")
 }
 
 // goModulePath turns a Rho module name into a valid Go module path.

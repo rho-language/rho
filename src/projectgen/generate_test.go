@@ -151,6 +151,37 @@ func TestEmitGoProjectCLIRole(t *testing.T) {
 	}
 }
 
+// A generated Go project carries a go.work naming only itself, so the go tool
+// stops looking upwards for a workspace that does not list it. A generated
+// project is written into somebody else's checkout often enough that a go.work
+// above it would otherwise own the build and refuse its packages — which makes
+// the documented `cd build/generated/go && go run .` fail for a reason that has
+// nothing to do with the project.
+func TestEmitGoProjectIsItsOwnWorkspace(t *testing.T) {
+	for _, target := range []Target{
+		{ID: "go", Emitter: "go", Kind: "cli"},
+		{ID: "go-server", Emitter: "go", Kind: "server"},
+	} {
+		ctx := newContext(t)
+		ctx.Target = target
+		artifacts, err := EmitGoProject(ctx)
+		if err != nil {
+			t.Fatalf("%s: %v", target.ID, err)
+		}
+
+		work, ok := artifacts.Extra["go.work"]
+		if !ok {
+			t.Fatalf("%s: expected a go.work, got extras %v", target.ID, artifacts.Extra)
+		}
+		if !strings.Contains(work, "use .") {
+			t.Errorf("%s: go.work should use the project itself, got: %s", target.ID, work)
+		}
+		if strings.Contains(work, "=>") || strings.Contains(work, "replace") {
+			t.Errorf("%s: go.work should carry no replacements, got: %s", target.ID, work)
+		}
+	}
+}
+
 func TestEmitGoProjectServerRole(t *testing.T) {
 	ctx := newContext(t)
 	ctx.Target = Target{ID: "go-server", Emitter: "go", Kind: "server"}

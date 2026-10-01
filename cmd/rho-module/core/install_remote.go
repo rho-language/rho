@@ -152,7 +152,9 @@ func archiveKind(archive []byte) (string, error) {
 		// A Rho application is installed as a module, which is what the
 		// toolchain resolves a dependency against.
 		return KindModule, nil
-	case "interfaces":
+	case "interfaces", "platform", "platform-board":
+		// All three are native code a project links rather than something it
+		// runs, so all three install as a library.
 		return KindLibrary, nil
 	}
 	return "", fmt.Errorf("a module of type %q has nowhere to install to", kind)

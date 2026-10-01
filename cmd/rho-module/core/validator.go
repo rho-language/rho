@@ -70,8 +70,10 @@ func ValidateModule(dir string) error {
 		return fmt.Errorf("invalid semantic version: %s", manifest.Module.Version)
 	}
 
-	// Step 4: Validate main file (skip for component/plugin - binary is built during pack)
-	if manifest.Module.Type != "component" && manifest.Module.Type != "plugin" {
+	// Step 4: Validate main file. Only a Rho library names a source file that
+	// has to be there: a component's and a plugin's main is a binary built while
+	// packing, and a native module has no main at all.
+	if schema.IsRhoLibraryType(manifest.Module.Type) {
 		mainPath := filepath.Join(dir, manifest.Main)
 		if _, err := os.Stat(mainPath); err != nil {
 			return fmt.Errorf("main file not found: %s", manifest.Main)

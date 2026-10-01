@@ -286,6 +286,23 @@ func TestEmitGoRuntimeAlwaysCarriesIntrinsics(t *testing.T) {
 	}
 }
 
+// A package the runtime always imports, and that an intrinsic also asks for, is
+// one import rather than two. Go rejects a file that imports the same package
+// under one name twice, so a duplicate here is a generated project that does not
+// compile — and the error names the duplicate, not the program that caused it.
+func TestEmitGoRuntimeImportsEachPackageOnce(t *testing.T) {
+	// rhoYamlLoad pulls in strings and rhoStringFromI32 pulls in strconv, both of
+	// which the intrinsics already need.
+	out := EmitGoRuntime("package main\n\nfunc appMain() {\n\t_ = rhoYamlLoad(\"a.yml\")\n\t_ = rhoStringFromI32(1)\n}\n")
+
+	for _, name := range []string{"os", "strconv", "strings"} {
+		count := strings.Count(out, "\t\""+name+"\"\n")
+		if count != 1 {
+			t.Errorf("expected exactly one %q import, found %d", name, count)
+		}
+	}
+}
+
 // The optional helpers are only emitted when the program calls them, so a
 // generated project does not carry code it never uses.
 func TestEmitGoRuntimeKeepsOnlyReferencedHelpers(t *testing.T) {
