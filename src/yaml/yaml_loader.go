@@ -80,6 +80,22 @@ func Load(src string) (Value, error) {
 
 		current := stack[len(stack)-1].node
 
+		// A `key:` line only means something under a mapping. Reaching one with
+		// a scalar or a list on top of the stack means the document's
+		// indentation does not describe the shape it claims — a continuation line
+		// left behind under a block scalar, most often, which is what a mangled
+		// manifest looks like.
+		//
+		// This used to write into a nil map and crash. A loader that panics on a
+		// file it cannot read takes the process with it, so the caller gets an
+		// error naming the line instead: a person can act on that, and a build
+		// can report it.
+		if strings.Contains(line, ":") && !strings.HasPrefix(line, "-") &&
+			current.Kind != KindMap {
+			return Value{}, fmt.Errorf("YAML line %d: %q is indented as content of a %s, but is a key",
+				i+1, strings.TrimSpace(line), kindName(current.Kind))
+		}
+
 		// key: value
 		if strings.Contains(line, ":") && !strings.HasPrefix(line, "-") {
 			parts := strings.SplitN(line, ":", 2)
@@ -299,4 +315,19 @@ func unquote(val string) string {
 		}
 	}
 	return val[1 : len(val)-1]
+}
+
+// kindName is a node's kind as a word, for a message that says what a line
+// landed under.
+func kindName(kind Kind) string {
+	switch kind {
+	case KindMap:
+		return "mapping"
+	case KindList:
+		return "list"
+	case KindNull:
+		return "key with no value"
+	default:
+		return "value"
+	}
 }

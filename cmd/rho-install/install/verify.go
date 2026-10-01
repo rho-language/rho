@@ -77,6 +77,12 @@ func pathsExist() bool {
 		return false
 	}
 
+	// A toolchain is the binaries and the places it keeps its own state, and
+	// what it keeps is the registry and the configuration. The module cache is
+	// deliberately not here: it is a cache, `rho deps purge` removes it by
+	// design, and a check that required it would make a purge leave a machine
+	// where every command refuses to run — including the `rho deps sync` that
+	// purge tells the reader to run in order to recover.
 	dirs := []string{
 		filepath.Join(home, "bin"),
 		filepath.Join(home, "modules", "installed"),
@@ -84,7 +90,6 @@ func pathsExist() bool {
 		filepath.Join(home, "cache"),
 		filepath.Join(home, "config"),
 		filepath.Join(home, "auth"),
-		filepath.Join(home, "pkg", "mod"),
 	}
 
 	for _, d := range dirs {

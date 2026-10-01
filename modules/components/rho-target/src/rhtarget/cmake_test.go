@@ -113,11 +113,26 @@ func TestALinkerScriptIsGeneratedFromTheMemoryMap(t *testing.T) {
 		"ENTRY(Reset_Handler)",
 		".isr_vector",
 		"> FLASH",
-		".data : AT(_etext)",
 		"_ebss",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected %q, got:\n%s", want, content)
+		}
+	}
+
+	// Every CMSIS startup assembly copies the initialised data from flash to RAM
+	// before `main`, and it finds the flash address through `_sidata`. A script
+	// that omits it produces a link that fails on one undefined reference, so the
+	// symbol is asserted here rather than discovered on a board.
+	for _, want := range []string{
+		"AT> FLASH",
+		"_sidata = LOADADDR(.data);",
+		"__bss_start__",
+		"__bss_end__",
+		"_Min_Stack_Size",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("a CMSIS startup needs %q, and the script does not define it:\n%s", want, content)
 		}
 	}
 	// A region that is a window onto another region is not somewhere a section

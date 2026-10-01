@@ -206,7 +206,14 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 	if mod.Module.Version == "" {
 		return ModuleYAML{}, fmt.Errorf("module.version missing")
 	}
-	if mod.Main == "" {
+	// A module written in Rho is entered through a main, so one is required.
+	// A native module is not: it is compiled and linked into a project rather
+	// than run, and requiring an entry point of it would mean naming a file
+	// that is not one. The schema has said so since `interfaces` was added, and
+	// the requirement here said otherwise — so a perfectly good native library
+	// was refused with "main missing", and the only way to publish one was to
+	// name a build file as its entry point.
+	if mod.Main == "" && schema.IsRhoSourceType(mod.Module.Type) {
 		return ModuleYAML{}, fmt.Errorf("main missing")
 	}
 

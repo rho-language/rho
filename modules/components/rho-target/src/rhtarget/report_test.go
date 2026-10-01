@@ -133,7 +133,7 @@ func TestAPluginCanDeclareATarget(t *testing.T) {
 	library := libraryOf(t, map[string]string{"arch.json": archSpec})
 	found := pluginAnswering(t, `{"version":1,"payload":{"specs":[{"kind":"board","name":"teensy","core":"cortex-m7"}]}}`)
 
-	loaded := LoadWith(library.Root, found)
+	loaded := LoadWith([]string{library.Root}, found)
 	spec, ok := loaded.Get("teensy")
 	if !ok {
 		t.Fatalf("expected the plugin's target, got %v (%+v)", loaded.Names(), loaded.Diagnostics)
@@ -149,7 +149,7 @@ func TestAPluginDoesNotReplaceATargetThisComponentCarries(t *testing.T) {
 	library := libraryOf(t, map[string]string{"arch.json": archSpec})
 	found := pluginAnswering(t, `{"version":1,"payload":{"specs":[{"kind":"arch","name":"arm-cortex-m","core":"invented"}]}}`)
 
-	loaded := LoadWith(library.Root, found)
+	loaded := LoadWith([]string{library.Root}, found)
 	spec, _ := loaded.Get("arm-cortex-m")
 	if spec.Core == "invented" {
 		t.Fatal("expected the component's own target to win")
@@ -163,7 +163,7 @@ func TestAPluginAnsweringNonsenseIsReported(t *testing.T) {
 	library := libraryOf(t, map[string]string{"arch.json": archSpec})
 	found := pluginAnswering(t, `{"version":1,"payload":{"specs":[{"kind":"board"}]}}`)
 
-	loaded := LoadWith(library.Root, found)
+	loaded := LoadWith([]string{library.Root}, found)
 	if len(loaded.Diagnostics) == 0 {
 		t.Fatal("expected a target that names nothing to be reported")
 	}

@@ -175,7 +175,18 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 		for _, instr := range fn.Body {
 			cg.emitInstr(instr)
 		}
-		if len(fn.Body) == 0 && (fn.ReturnType.Kind != ir.TypeVoid || hostMain) {
+		if hostMain {
+			// A void `main` is emitted as `int` so that a real entry point can
+			// call it, which means the C compiler expects a value back. Rho's
+			// `main` cannot return one — it is declared void — so falling off the
+			// end means it ran to completion, which is success.
+			//
+			// Without this the function returns whatever happened to be in the
+			// return register, and that becomes the process's exit status: a
+			// program that printed exactly what it should have still reported
+			// failure to whatever ran it.
+			cg.b.WriteString("    return 0;\n")
+		} else if len(fn.Body) == 0 && fn.ReturnType.Kind != ir.TypeVoid {
 			cg.b.WriteString("    return ")
 			cg.b.WriteString(defaultValueFor(returnType))
 			cg.b.WriteString(";\n")

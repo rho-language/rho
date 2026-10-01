@@ -71,11 +71,9 @@ func TestCLIBuildDefault(t *testing.T) {
 	// Compiled artefacts belong under the descriptor's build_dir, never next
 	// to the source file.
 	outC := filepath.Join("build", "cli_build_default.c")
-	outBin := outC + "_bin"
 
 	defer os.Remove(in)
 	defer os.Remove(outC)
-	defer os.Remove(outBin)
 	defer os.Remove("rho.mod")
 	defer os.Remove("rho.lock")
 	defer os.RemoveAll(".rho-deps")
@@ -86,8 +84,12 @@ func TestCLIBuildDefault(t *testing.T) {
 		t.Fatalf("expected %s to exist", outC)
 	}
 
-	if _, err := os.Stat(outBin); err != nil {
-		t.Fatalf("expected binary %s to exist", outBin)
+	// The binary is named after the CMake project and lives in the build tree of
+	// the target it was built for, so it is found rather than spelled out: a test
+	// that hard-coded the path would break on the project's naming rules rather
+	// than on anything about the build.
+	if built := builtBinary("native"); built == "" {
+		t.Fatalf("expected a binary to be built for the native target, found none under build/generated/c/build/native")
 	}
 
 	if _, err := os.Stat("cli_build_default.c"); err == nil {
@@ -105,11 +107,9 @@ func TestCLIBuildCustomOut(t *testing.T) {
 
 	in := "cli_custom.rho"
 	outC := "cli_custom_out.c"
-	outBin := outC + "_bin"
 
 	defer os.Remove(in)
 	defer os.Remove(outC)
-	defer os.Remove(outBin)
 	defer os.Remove("rho.mod")
 	defer os.Remove("rho.lock")
 	defer os.RemoveAll(".rho-deps")
@@ -120,8 +120,12 @@ func TestCLIBuildCustomOut(t *testing.T) {
 		t.Fatalf("expected custom output %s to exist", outC)
 	}
 
-	if _, err := os.Stat(outBin); err != nil {
-		t.Fatalf("expected binary %s to exist", outBin)
+	// The binary is named after the CMake project and lives in the build tree of
+	// the target it was built for, so it is found rather than spelled out: a test
+	// that hard-coded the path would break on the project's naming rules rather
+	// than on anything about the build.
+	if built := builtBinary("native"); built == "" {
+		t.Fatalf("expected a binary to be built for the native target, found none under build/generated/c/build/native")
 	}
 }
 
@@ -251,10 +255,8 @@ fn main() void {
 	buildCLI([]string{"test.rho"})
 
 	outC := filepath.Join("build", "test.c")
-	outBin := outC + "_bin"
 
 	defer os.Remove(outC)
-	defer os.Remove(outBin)
 	defer os.Remove("test.rho")
 	defer os.Remove("rho.mod")
 	defer os.Remove("rho.lock")
@@ -272,15 +274,19 @@ fn main() void {
 	/* 6. Verify binary exists                                                 */
 	/* ---------------------------------------------------------------------- */
 
-	if _, err := os.Stat(outBin); err != nil {
-		t.Fatalf("expected %s to exist", outBin)
+	binary := builtBinary("native")
+	if binary == "" {
+		t.Fatalf("expected a binary to be built for the native target, found none")
 	}
 
 	/* ---------------------------------------------------------------------- */
 	/* 7. Run binary and check output                                          */
 	/* ---------------------------------------------------------------------- */
 
-	cmd := exec.Command("./" + outBin)
+	// Run what the build produced, at the path it produced it, rather than a
+	// path this test assembles: a test that runs a file it constructed is a test
+	// of the construction.
+	cmd := exec.Command("./" + binary)
 	outBytes, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("binary failed: %v", err)
@@ -290,4 +296,36 @@ fn main() void {
 	if !strings.Contains(out, "Result: 5") {
 		t.Fatalf("unexpected output: %s", out)
 	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Finding what a build produced                                              */
+/* -------------------------------------------------------------------------- */
+
+// builtBinary returns the first executable file in the build tree of a target,
+// or "" when there is none.
+//
+// A build writes its output where CMake puts it, which is a tree named after the
+// target rather than a file named after the module. Walking for it keeps the
+// tests honest about what they are checking — that a binary was produced for the
+// target — without restating the layout.
+func builtBinary(target string) string {
+	root := filepath.Join("build", "generated", "c", "build", target)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.Mode()&0o111 != 0 {
+			return filepath.Join(root, entry.Name())
+		}
+	}
+	return ""
 }

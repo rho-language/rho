@@ -32,7 +32,7 @@ func TestInitCache(t *testing.T) {
         t.Fatalf("InitCache failed: %v", err)
     }
 
-    cachePath, _ := GetCachePath()
+    cachePath, _ := GetMetadataCachePath()
 
     expected := []string{
         "registry.json",

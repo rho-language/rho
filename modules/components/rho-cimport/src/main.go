@@ -56,6 +56,12 @@ func run(args []string) int {
 		return generate(args[1:], true)
 	case "headers":
 		return headers(args[1:])
+	case "resolve":
+		return resolveCmd(args[1:])
+	case "deps":
+		return depsCmd(args[1:])
+	case "preset":
+		return presetCmd(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return 0
@@ -95,7 +101,10 @@ func usage() {
 
   generate   read the C headers a project links and write its foreign interface
   check      report what would be generated, writing nothing
-  headers    list the declarations that were read from the C headers`)
+  headers    list the declarations that were read from the C headers
+  preset     print the preset a project builds against
+  resolve    find the preset a build names, and report what it needs
+  deps       fetch and report the C dependencies a project builds against`)
 }
 
 /* -------------------------------------------------------------------------- */
