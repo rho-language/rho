@@ -19,6 +19,7 @@ use (
 	./modules/plugins/rho-doc-api
 	./modules/plugins/rho-doc-toc
 	./modules/plugins/rho-sql-sqlite
+	./modules/plugins/rho-test-gtest
 	./modules/plugins/rho-test-junit
 )
 
@@ -49,6 +50,7 @@ replace (
 	github.com/rho/rho-doc-api v0.0.0 => ./modules/plugins/rho-doc-api
 	github.com/rho/rho-doc-toc v0.0.0 => ./modules/plugins/rho-doc-toc
 	github.com/rho/rho-sql-sqlite v0.0.0 => ./modules/plugins/rho-sql-sqlite
+	github.com/rho/rho-test-gtest v0.0.0 => ./modules/plugins/rho-test-gtest
 	github.com/rho/rho-test-junit v0.0.0 => ./modules/plugins/rho-test-junit
 	rho v0.0.0 => ./
 )

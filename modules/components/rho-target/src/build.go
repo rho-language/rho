@@ -156,6 +156,27 @@ func build(args []string) int {
 		return 1
 	}
 
+	// The HAL's configuration header, written into the platform's vendor tree if
+	// it is not already there.
+	//
+	// Here rather than in `writeTargetFiles`, because that one writes what a target
+	// spec *declares* into the generated project, and this is what a vendor's headers
+	// *require* and ST does not ship: the umbrella header includes a configuration
+	// header by a bare name, and the only version of that file anywhere is the
+	// vendor's template and whatever somebody derived from it by hand. It goes with
+	// the vendor tree rather than into the generated project because it is a
+	// property of the family, and two projects of different families should not each
+	// end up with their own copy of the same file.
+	//
+	// Both halves of this are part of a build for the same reason: a project should
+	// be able to be built from a checkout that contains nothing but sources, with
+	// every vendor repository fetched and every file a vendor needs but does not
+	// ship produced along the way.
+	if err := writeHalConf(specSource, spec.Defines); err != nil {
+		fmt.Fprintln(os.Stderr, "rho target build:", err)
+		return 1
+	}
+
 	if err := writeTargetFiles(absolute, spec); err != nil {
 		fmt.Fprintln(os.Stderr, "rho target build:", err)
 		return 1

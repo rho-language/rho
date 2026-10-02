@@ -31,9 +31,9 @@ package ir
 // SliceIR represents a deterministic, immutable slice view in IR.
 // It is a low-level memory view used by the Rho runtime and backend C.
 type SliceIR struct {
-    Data     string // raw Go string used as byte storage (compiler-side)
-    Length   uint64 // number of elements
-    Capacity uint64 // total available elements
+	Data     string // raw Go string used as byte storage (compiler-side)
+	Length   uint64 // number of elements
+	Capacity uint64 // total available elements
 }
 
 /* -------------------------------------------------------------------------- */
@@ -43,20 +43,20 @@ type SliceIR struct {
 // NewSliceIR creates a new IR slice from a Go string.
 // Capacity is equal to Length for immutable slices.
 func NewSliceIR(data string) SliceIR {
-    return SliceIR{
-        Data:     data,
-        Length:   uint64(len(data)),
-        Capacity: uint64(len(data)),
-    }
+	return SliceIR{
+		Data:     data,
+		Length:   uint64(len(data)),
+		Capacity: uint64(len(data)),
+	}
 }
 
 // NewEmptySliceIR creates an empty IR slice.
 func NewEmptySliceIR() SliceIR {
-    return SliceIR{
-        Data:     "",
-        Length:   0,
-        Capacity: 0,
-    }
+	return SliceIR{
+		Data:     "",
+		Length:   0,
+		Capacity: 0,
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -65,19 +65,19 @@ func NewEmptySliceIR() SliceIR {
 
 // IsEmpty reports whether the slice has zero length.
 func (s SliceIR) IsEmpty() bool {
-    return s.Length == 0
+	return s.Length == 0
 }
 
 // Equals performs deterministic slice comparison.
 // IR-level comparison is always byte-by-byte.
 func (s SliceIR) Equals(other SliceIR) bool {
-    if s.Length != other.Length {
-        return false
-    }
-    return s.Data == other.Data
+	if s.Length != other.Length {
+		return false
+	}
+	return s.Data == other.Data
 }
 
 // HasCapacity reports whether the slice has at least n elements of capacity.
 func (s SliceIR) HasCapacity(n uint64) bool {
-    return s.Capacity >= n
+	return s.Capacity >= n
 }

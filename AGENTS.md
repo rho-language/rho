@@ -2,24 +2,31 @@
 
 ## Test Commands
 
-```sh
-# Run all Go tests in the core module
-go test ./...
+The order matters. A component is a separate Go module that the toolchain runs as
+a program, so a test that builds a program needs rho-target, rho-cimport and
+rho-kconfig installed in the local registry and enabled. Running the tests before
+that fails with `this build needs the rho-target component: module not installed`,
+which is true of the environment and says nothing about the code.
 
-# Run a module's tests: components and plugins are separate Go modules
+```sh
+# The whole procedure, in the order it has to happen. This is what CI runs and
+# what a new machine runs: build, publish, install, test.
+./check.sh
+
+# Or one module at a time, once the toolchain is installed
 cd modules/components/rho-doc && go test ./...
 
-# Build every module in the repository, core included
-for m in modules/components/*/ modules/plugins/*/; do
-  [ -f "$m/go.mod" ] && (cd "$m" && go build ./... && go test ./...)
-done
-
-# Build the rho CLI
-go build -o ./bin/rho ./cmd/rho
+# Just the core module
+go test ./...
 
 # Build and install the core toolchain
-./bin/rho install --force
+go build -o ./bin/rho ./cmd/rho
+./bin/rho install --update     # refresh; --force empties the registry first
 ```
+
+`check.sh` publishes every module the tree carries, at the version its own
+manifest declares, so there is no list of versions to keep and nothing to replace
+by hand.
 
 ## Project Structure
 
@@ -36,7 +43,7 @@ go build -o ./bin/rho ./cmd/rho
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
 - `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-doc`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
-- `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-junit`
+- `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-gtest`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
 `modules/components/` is a component: published, installed and dispatched to by
