@@ -1316,10 +1316,20 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			return tc.zeroValueFor(typeName)
 		}
 		if callee, ok := expr.Callee.(ast.IdentifierExpr); ok && callee.Name == "print" {
+			// Exactly what was given, with nothing added.
+			//
+			// A newline appended here would appear in a program's output whether
+			// it was asked for or not: a string that already ends in one gets two,
+			// and a number printed on a line of its own splits into three. Worse,
+			// the two backends disagreed — this appended one and Go's own `print`
+			// did not, so the same program printed differently depending on what it
+			// was built for.
+			//
+			// A program that wants a line ending writes one.
 			if len(expr.Args) == 1 {
-				return "printf(\"%s\\n\", " + tc.lowerExpr(expr.Args[0], scope) + ")"
+				return "printf(\"%s\", " + tc.lowerExpr(expr.Args[0], scope) + ")"
 			}
-			return "printf(\"%s\\n\", \"\")"
+			return "printf(\"%s\", \"\")"
 		}
 		callee := tc.lowerExpr(expr.Callee, scope)
 		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok {

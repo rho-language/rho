@@ -656,10 +656,17 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 	case "rho", "module":
 		mainVal, hasMain := data.Map["main"]
 		if hasMain && mainVal.Kind == yaml.KindString {
-			if !strings.HasSuffix(mainVal.Str, ".rho") {
+			// A Rho project is transpiled; a C project is used as it stands.
+			//
+			// The second is not a lesser kind of project — it is the same program
+			// written a language earlier, and everything the build does for it is
+			// the same except that there is nothing to translate. Refusing the
+			// extension would mean the toolchain only works for programs written in
+			// it, which is not the same as working for programs it builds.
+			if !strings.HasSuffix(mainVal.Str, ".rho") && !strings.HasSuffix(mainVal.Str, ".c") {
 				errs = append(errs, ValidationError{
 					Path:     "main",
-					Message:  fmt.Sprintf("main for type '%s' should reference a .rho source file, got '%s'", moduleType, mainVal.Str),
+					Message:  fmt.Sprintf("main for type '%s' should reference a .rho or .c source file, got '%s'", moduleType, mainVal.Str),
 					Severity: SeverityError,
 				})
 			}

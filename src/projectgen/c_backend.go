@@ -29,6 +29,23 @@ import (
 	"rho/src/ir"
 )
 
+// shimInclude is what the application's own source needs to see about the foreign
+// interface it calls.
+//
+// The declarations are not in the application's interface header: those are the
+// library's own headers, which describe the C the library exports, while the
+// functions a Rho program calls are the generated wrappers rho-cimport wrote for
+// the declarations Rho cannot make itself. Without this a call to one compiles as
+// an implicit declaration, which the compiler accepts and the linker then resolves
+// to whatever the symbol happens to be — so a signature that changed still builds,
+// and fails at run time instead.
+func shimInclude(ctx Context) string {
+	if ctx.ShimHeader == "" {
+		return ""
+	}
+	return "#include \"" + ctx.ShimHeader + "\"\n"
+}
+
 // EmitCProject renders the C artifacts for a generated project.
 func EmitCProject(ctx Context) (Artifacts, error) {
 	artifacts := Artifacts{}
@@ -36,7 +53,7 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 	appC := codegen.EmitC(ctx.IR)
 	appC = strings.ReplaceAll(appC, "int main(", "int app_main(")
 	appC = cBanner(ctx.ModuleName, "app.c", "Generated Rho application implementation.") +
-		"#define _POSIX_C_SOURCE 200809L\n#include \"app.h\"\n\n" + appC
+		"#define _POSIX_C_SOURCE 200809L\n#include \"app.h\"\n" + shimInclude(ctx) + "\n" + appC
 
 	// A project with a config/ directory gets a generated config.h that the
 	// public interface includes.
@@ -78,6 +95,24 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 	appC = strings.ReplaceAll(appC, "static char* rho_", "char* rho_")
 	runtimeBody = strings.ReplaceAll(runtimeBody, "static char* rho_", "char* rho_")
 
+	// `_init` and `_fini` belong to the runtime file, not to the application.
+	//
+	// A bare-metal build passes `-nostartfiles`, which excludes the two files that
+	// define them, and the startup assembly reaches them through the C library's
+	// initializer. Weak, because the same generated project is also what a hosted
+	// target builds and there the library defines them properly; a strong
+	// definition would collide, a weak one yields.
+	//
+	// Placed here rather than in the code generation that produces them, because
+	// this is where the file is assembled: the section cut out of the application
+	// source and written here as the runtime is not where they were emitted.
+	runtimeBody = "// Weak: a bare-metal build excludes the C library's own definitions of these\n" +
+		"// with -nostartfiles, and the startup reaches them through the library's\n" +
+		"// initializer. A hosted library defines them itself, so these yield to it.\n" +
+		"__attribute__((weak)) void _init(void);\n__attribute__((weak)) void _init(void) {}\n" +
+		"__attribute__((weak)) void _fini(void);\n__attribute__((weak)) void _fini(void) {}\n\n" +
+		runtimeBody
+
 	artifacts.Implementation = appC
 	artifacts.Runtime = cBanner(ctx.ModuleName, "runtime.c", "Generated Rho C runtime support.") +
 		"#define _POSIX_C_SOURCE 200809L\n#include <stdint.h>\n#include <stdbool.h>\n" +
@@ -101,6 +136,7 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		"#include \"app.h\"\n\nint main(void)\n{\n    app_init();\n    return app_main();\n}\n"
 	artifacts.Extra = map[string]string{}
 	artifacts.Build = emitCMakeLists(ctx)
+
 	// A project that declared a Kconfig bridge gets the configuration it
 	// declared: the merge runs as part of the build, and the sources see what it
 	// wrote. The build is the single place the configuration is resolved, which
@@ -119,7 +155,24 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		if err != nil {
 			return artifacts, err
 		}
-		artifacts.Extra = extra
+		// Merged rather than assigned: the configuration is added to what the
+		// project declared, and a project that declares both gets both. Replacing
+		// the map would leave a configured project without the C it wrote.
+		for name, content := range extra {
+			artifacts.Extra[name] = content
+		}
+	}
+
+	if ctx.Native {
+		// A C project brings its own entry point, so nothing is written that
+		// would define a second one. Writing an empty file rather than omitting it
+		// is deliberate: the descriptor lists these, and a target naming a file
+		// that is not there fails at configure with a message about a missing
+		// source rather than about the decision.
+		artifacts.Implementation = cBanner(ctx.ModuleName, "app.c",
+			"Empty: this project is written in C and brings its own entry point.")
+		artifacts.Entrypoint = cBanner(ctx.ModuleName, "main.c",
+			"Empty: this project is written in C and brings its own entry point.")
 	}
 
 	// Which symbols were set, for a dependency whose own build file compiles its
@@ -345,12 +398,52 @@ func emitCMakeLists(ctx Context) string {
 	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/deps-aliases.cmake)\n")
 	b.WriteString("endif()\n\n")
 
-	fmt.Fprintf(&b, "add_executable(%s main.c app.c\n    runtime.c\n", name)
+	// A C project brought its own `main`, so the wrapper that calls into a Rho
+	// program's `app_main` is left out: two entry points would be one too many,
+	// and the one that lost would be reported as a missing symbol rather than as
+	// a program that had already declared its entry point.
+	entry := "main.c app.c\n    "
+	if ctx.Native {
+		entry = ""
+	}
+	fmt.Fprintf(&b, "add_executable(%s %s runtime.c\n", name, entry)
+	if os.Getenv("RHO_DBG_SRC") != "" {
+		fmt.Fprintf(os.Stderr, "[dbg] SourceFiles=%d Shim=%d native=%v\n", len(ctx.SourceFiles), len(ctx.ShimSources), ctx.Native)
+		for _, one := range ctx.SourceFiles {
+			fmt.Fprintf(os.Stderr, "[dbg]   %s\n", one)
+		}
+	}
 	for _, source := range ctx.SourceFiles {
-		if ownedBy(source, dependencyRoots) {
+		// A source is named the way the project named it, which for the project's
+		// own files is relative to the project. Emitted into a generated project
+		// in another directory, that relative name would resolve there instead —
+		// and a missing source is reported as such, or, when a file of that name
+		// happens to exist in the generated tree, compiled instead of the
+		// program's own.
+		//
+		// It is resolved against the project before anything else looks at it,
+		// because the two questions below are both about where the file actually
+		// is, and a relative name resolves against whichever directory the reader
+		// happened to run the build from.
+		resolved := resolveProjectSource(ctx, source)
+
+		// What a dependency provides is compiled by that dependency's own build
+		// file, so it is left out here. A file the project wrote is its own and is
+		// always compiled by this target, which is why being inside a dependency's
+		// directory is not enough to exclude it: a project may live inside the
+		// platform repository it depends on — an example beside the platform it is
+		// written for — and every one of its sources is then under a dependency
+		// root. Asking the question of the resolved path rather than of the name
+		// also keeps a project that is built from somewhere else entirely from
+		// being read against the wrong directory.
+		if within(ctx.ProjectRoot, resolved) {
+			fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(resolved))
 			continue
 		}
-		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(source))
+		if ownedBy(resolved, dependencyRoots) {
+			continue
+		}
+		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(resolved))
 	}
 	// The generated shim is part of what this project compiles: it is the C the
 	// foreign interface calls, and it belongs to the build that generated it.
@@ -374,8 +467,21 @@ func emitCMakeLists(ctx Context) string {
 		fmt.Fprintf(&b, "add_custom_target(%s-config ALL DEPENDS ${RHO_CONFIG_VALUES})\n", name)
 		fmt.Fprintf(&b, "add_dependencies(%s %s-config)\n", name, name)
 		b.WriteString("set_source_files_properties(${RHO_CONFIG_VALUES} PROPERTIES GENERATED TRUE)\n")
-		b.WriteString("set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/main.c ${CMAKE_CURRENT_SOURCE_DIR}/app.c\n")
-		b.WriteString("             ${CMAKE_CURRENT_SOURCE_DIR}/runtime.c\n")
+		// Every source waits for the configuration, so a changed symbol rebuilds
+		// rather than being compiled against the header that was there when the
+		// project was generated.
+		dependents := []string{"${CMAKE_CURRENT_SOURCE_DIR}/runtime.c"}
+		if !ctx.Native {
+			dependents = append([]string{
+				"${CMAKE_CURRENT_SOURCE_DIR}/main.c",
+				"${CMAKE_CURRENT_SOURCE_DIR}/app.c",
+			}, dependents...)
+		}
+		shim := ctx.ShimSources
+		if ctx.Native && len(shim) > 0 {
+			dependents = append(dependents, "${CMAKE_CURRENT_SOURCE_DIR}/"+filepath.Base(shim[len(shim)-1]))
+		}
+		b.WriteString("set_property(SOURCE " + strings.Join(dependents, " ") + "\n")
 		b.WriteString("             APPEND PROPERTY OBJECT_DEPENDS ${RHO_CONFIG_VALUES})\n\n")
 	}
 
@@ -419,10 +525,7 @@ func copyProjectSources(ctx Context) (map[string]string, error) {
 		// A source is named the way the project named it: relative to the
 		// project, or already absolute when it comes from a dependency. Joining
 		// blindly would make an absolute path a path inside the project.
-		from := filepath.FromSlash(source)
-		if !filepath.IsAbs(from) {
-			from = filepath.Join(ctx.ProjectRoot, from)
-		}
+		from := resolveProjectSource(ctx, source)
 		data, err := os.ReadFile(from)
 		if err != nil {
 			// A source a project declares but has not written yet is left to the
@@ -488,15 +591,56 @@ func cDependencyRoots(projectRoot string) []string {
 	return roots
 }
 
+// resolveProjectSource is where a declared source actually is.
+//
+// A source is named relative to the project that declared it, or is already
+// absolute when it came from a dependency. It is resolved against the project
+// rather than against the working directory, because a person is free to run
+// `rho build` from anywhere and the file a manifest names does not move with
+// them.
+func resolveProjectSource(ctx Context, source string) string {
+	from := filepath.FromSlash(source)
+	if filepath.IsAbs(from) {
+		return filepath.Clean(from)
+	}
+	if ctx.ProjectRoot == "" {
+		absolute, err := filepath.Abs(from)
+		if err != nil {
+			return from
+		}
+		return absolute
+	}
+	return filepath.Join(ctx.ProjectRoot, from)
+}
+
+// within reports whether a path is inside a root. A path that is the root
+// itself counts, because a project is inside its own directory and so is every
+// source it declares.
+func within(root, path string) bool {
+	if root == "" {
+		return false
+	}
+	cleanRoot := filepath.Clean(root)
+	cleanPath := filepath.Clean(path)
+	if cleanPath == cleanRoot {
+		return true
+	}
+	return strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
+}
+
 // ownedBy reports whether a source belongs to one of the roots — that is,
 // whether a dependency declared it and the dependency's own build compiles it.
+//
+// It is asked of an already-resolved path. Resolving here as well would make
+// the answer depend on the directory the build was started from, which is not a
+// fact about the project.
 func ownedBy(source string, roots []string) bool {
 	absolute, err := filepath.Abs(source)
 	if err != nil {
 		absolute = source
 	}
 	for _, root := range roots {
-		if strings.HasPrefix(absolute, filepath.Clean(root)+string(filepath.Separator)) {
+		if within(root, absolute) {
 			return true
 		}
 	}
