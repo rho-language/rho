@@ -282,20 +282,48 @@ func (r *Resolver) rootOf(dep CDep) (string, error) {
 	// project that builds against it rather than in a shared cache where two
 	// projects on two revisions of the same SDK could not both be right.
 	dest := filepath.Join(r.Cache, r.directoryFor(dep))
-	if declared := r.declaredVendorPath(dep.Name); declared != "" {
-		dest = declared
+
+	// What the board or the platform said about this repository, if it said
+	// anything.
+	//
+	// A preset names what a board needs and where inside a repository each thing
+	// is. It does not say where the repository comes from, because a preset is
+	// about a family and one repository is shared by every board that uses the
+	// family. That is the board's manifest, which declares `vendor.repos` with a
+	// path, a URL and a branch each.
+	//
+	// Reading all of it here rather than only its path is the whole of this change.
+	// Before, the declared path was used when the checkout was already there, and
+	// the preset's own — always empty, because a preset has no reason to know a
+	// URL — `git` decided whether it could be fetched otherwise. So the URL sitting
+	// in the board's manifest was never read at all, and every board whose vendor
+	// tree had not already been fetched by hand reported its dependencies as
+	// missing, naming a repository the platform had in fact declared.
+	declared := r.declaredVendorRepo(dep.Name)
+	if declared.path != "" {
+		dest = declared.path
 	}
 
 	if info, err := os.Stat(dest); err == nil && info.IsDir() {
 		return dest, nil
 	}
-	if dep.Git == "" {
+
+	// Where it comes from: the preset's own URL if it gave one, and the board's
+	// otherwise.
+	source := dep
+	if source.Git == "" && declared.git != "" {
+		source.Git = declared.git
+		if source.Branch == "" {
+			source.Branch = declared.branch
+		}
+	}
+	if source.Git == "" {
 		// Nothing here and nowhere to fetch it from. Left to the caller to
 		// report, which can name the dependency; a fetch with no URL would fail
 		// less clearly.
 		return "", nil
 	}
-	if err := r.fetch(dep, dest); err != nil {
+	if err := r.fetch(source, dest); err != nil {
 		return "", err
 	}
 	return dest, nil
@@ -557,32 +585,46 @@ func RhoHome() (string, error) {
 // holds it belongs to the platform — so the name is looked for in both rather than
 // in whichever happened to be nearer.
 func (r *Resolver) declaredVendorPath(name string) string {
-	// The board the selected preset names is where a board's vendor tree is
-	// declared, and the board is not a dependency of the project: a project
-	// depends on the platform, and the platform implements every board of the
-	// family at once. So it has to be reached through the preset, which is what
-	// names it.
+	repo := r.declaredVendorRepo(name)
+	return repo.path
+}
+
+// declaredVendorRepo is everything a module said about a named repository: where
+// it lives, and where it comes from when it is not already there.
+func (r *Resolver) declaredVendorRepo(name string) vendorRepo {
 	for _, base := range r.platformRoots() {
 		for _, boardRoot := range boardRootsFor(base, r.BoardName) {
-			if path, ok := vendorPathIn(boardRoot, name); ok {
-				return path
+			if repo, ok := vendorRepoIn(boardRoot, name); ok {
+				return repo
 			}
 		}
 	}
 
 	for _, base := range append([]string{r.ProjectRoot}, r.platformRoots()...) {
-		if path, ok := vendorPathIn(base, name); ok {
-			return path
+		if repo, ok := vendorRepoIn(base, name); ok {
+			return repo
 		}
 	}
-	return ""
+	return vendorRepo{}
 }
 
-// vendorPathIn returns where a module says a named repository is, or false.
-func vendorPathIn(base, name string) (string, bool) {
+// vendorRepo is a repository a module declared.
+type vendorRepo struct {
+	// path is where it lives, absolute once resolved against the module that
+	// declared it.
+	path string
+	// git and branch are where it comes from and at which revision. Empty on a
+	// declaration that says only where a checkout is, which is a tree somebody
+	// fetched for themselves and a build keeps rather than fetching over.
+	git    string
+	branch string
+}
+
+// vendorRepoIn returns what a module said about a named repository, or false.
+func vendorRepoIn(base, name string) (vendorRepo, bool) {
 	module, err := deps.LoadManifest(deps.ManifestPath(base))
 	if err != nil || module == nil || module.VendorDir == "" {
-		return "", false
+		return vendorRepo{}, false
 	}
 	for _, repo := range module.VendorRepos {
 		if repo.Name != name || repo.Path == "" {
@@ -592,9 +634,13 @@ func vendorPathIn(base, name string) (string, bool) {
 		if !filepath.IsAbs(directory) {
 			directory = filepath.Join(base, directory)
 		}
-		return filepath.Join(directory, repo.Path), true
+		return vendorRepo{
+			path:   filepath.Join(directory, repo.Path),
+			git:    repo.Git,
+			branch: repo.Branch,
+		}, true
 	}
-	return "", false
+	return vendorRepo{}, false
 }
 
 // boardRootsFor returns the module roots of the boards a name may refer to.

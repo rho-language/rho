@@ -18,10 +18,10 @@
 package rho
 
 import (
-    "os"
-    "os/exec"
-    "strings"
-    "testing"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -29,7 +29,7 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestCompileFile(t *testing.T) {
-    src := `
+	src := `
 module lighting
 
 struct Light {
@@ -39,39 +39,39 @@ struct Light {
 fn init() void {
 }
 `
-    in := "test_compile_v3.rho"
-    out := "test_compile_v3.c"
+	in := "test_compile_v3.rho"
+	out := "test_compile_v3.c"
 
-    defer os.Remove(in)
-    defer os.Remove(out)
+	defer os.Remove(in)
+	defer os.Remove(out)
 
-    if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-        t.Fatalf("write source failed: %v", err)
-    }
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write source failed: %v", err)
+	}
 
-    if err := CompileFile(in); err != nil {
-        t.Fatalf("CompileFile failed: %v", err)
-    }
+	if err := CompileFile(in); err != nil {
+		t.Fatalf("CompileFile failed: %v", err)
+	}
 
-    data, err := os.ReadFile(out)
-    if err != nil {
-        t.Fatalf("failed to read generated C file: %v", err)
-    }
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("failed to read generated C file: %v", err)
+	}
 
-    outC := string(data)
+	outC := string(data)
 
-    if !strings.Contains(outC, "module lighting") {
-        t.Fatalf("expected module name in C output")
-    }
-    if !strings.Contains(outC, "typedef struct") {
-        t.Fatalf("expected struct definition in C output")
-    }
-    if !strings.Contains(outC, "uint8_t pin;") {
-        t.Fatalf("expected struct field pin in C output")
-    }
-    if !strings.Contains(outC, "void init(") {
-        t.Fatalf("expected init() function in C output")
-    }
+	if !strings.Contains(outC, "module lighting") {
+		t.Fatalf("expected module name in C output")
+	}
+	if !strings.Contains(outC, "typedef struct") {
+		t.Fatalf("expected struct definition in C output")
+	}
+	if !strings.Contains(outC, "uint8_t pin;") {
+		t.Fatalf("expected struct field pin in C output")
+	}
+	if !strings.Contains(outC, "void init(") {
+		t.Fatalf("expected init() function in C output")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -79,47 +79,47 @@ fn init() void {
 /* -------------------------------------------------------------------------- */
 
 func TestRhoPrintString(t *testing.T) {
-    src := `
+	src := `
 module hello
 
 fn main() void {
     print("Hello from Rho");
 }
 `
-    in := "print_string.rho"
-    out := "print_string.c"
-    bin := "print_string_bin"
+	in := "print_string.rho"
+	out := "print_string.c"
+	bin := "print_string_bin"
 
-    defer os.Remove(in)
-    defer os.Remove(out)
-    defer os.Remove(bin)
+	defer os.Remove(in)
+	defer os.Remove(out)
+	defer os.Remove(bin)
 
-    if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-        t.Fatalf("write source failed: %v", err)
-    }
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write source failed: %v", err)
+	}
 
-    if err := CompileFile(in); err != nil {
-        t.Fatalf("CompileFile failed: %v", err)
-    }
+	if err := CompileFile(in); err != nil {
+		t.Fatalf("CompileFile failed: %v", err)
+	}
 
-    binPath := "./" + bin
-    cmd := exec.Command("gcc", "-std=c11", "-o", binPath, out)
-    if out, err := cmd.CombinedOutput(); err != nil {
-        t.Fatalf("gcc failed: %v\n%s", err, out)
-    }
+	binPath := "./" + bin
+	cmd := exec.Command("gcc", "-std=c11", "-o", binPath, out)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("gcc failed: %v\n%s", err, out)
+	}
 
-    cmd = exec.Command(binPath)
-    data, err := cmd.Output()
-    if err != nil {
-        t.Fatalf("running program failed: %v", err)
-    }
+	cmd = exec.Command(binPath)
+	data, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("running program failed: %v", err)
+	}
 
-    // `print` writes exactly what it is given: a newline is in the output only
-    // if the program put one there. Appending one would make what a program
-    // prints depend on the language rather than on the program.
-    if got := string(data); got != "Hello from Rho" {
-        t.Fatalf("unexpected output: got %q, want %q", got, "Hello from Rho")
-    }
+	// `print` writes exactly what it is given: a newline is in the output only
+	// if the program put one there. Appending one would make what a program
+	// prints depend on the language rather than on the program.
+	if got := string(data); got != "Hello from Rho" {
+		t.Fatalf("unexpected output: got %q, want %q", got, "Hello from Rho")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -127,13 +127,13 @@ fn main() void {
 /* -------------------------------------------------------------------------- */
 
 func TestRhoYAMLPrint(t *testing.T) {
-    cfg := "user:\n  name: Alice\n"
-    if err := os.WriteFile("config_test.yml", []byte(cfg), 0644); err != nil {
-        t.Fatalf("write YAML config failed: %v", err)
-    }
-    defer os.Remove("config_test.yml")
+	cfg := "user:\n  name: Alice\n"
+	if err := os.WriteFile("config_test.yml", []byte(cfg), 0644); err != nil {
+		t.Fatalf("write YAML config failed: %v", err)
+	}
+	defer os.Remove("config_test.yml")
 
-    src := `
+	src := `
 module hello
 
 fn main() void {
@@ -141,37 +141,37 @@ fn main() void {
     print(name);
 }
 `
-    in := "yaml_print.rho"
-    out := "yaml_print.c"
-    bin := "yaml_print_bin"
+	in := "yaml_print.rho"
+	out := "yaml_print.c"
+	bin := "yaml_print_bin"
 
-    defer os.Remove(in)
-    defer os.Remove(out)
-    defer os.Remove(bin)
+	defer os.Remove(in)
+	defer os.Remove(out)
+	defer os.Remove(bin)
 
-    if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-        t.Fatalf("write source failed: %v", err)
-    }
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write source failed: %v", err)
+	}
 
-    if err := CompileFile(in); err != nil {
-        t.Fatalf("CompileFile failed: %v", err)
-    }
+	if err := CompileFile(in); err != nil {
+		t.Fatalf("CompileFile failed: %v", err)
+	}
 
-    binPath := "./" + bin
-    cmd := exec.Command("gcc", "-std=c11", "-o", binPath, out)
-    if out, err := cmd.CombinedOutput(); err != nil {
-        t.Fatalf("gcc failed: %v\n%s", err, out)
-    }
+	binPath := "./" + bin
+	cmd := exec.Command("gcc", "-std=c11", "-o", binPath, out)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("gcc failed: %v\n%s", err, out)
+	}
 
-    cmd = exec.Command(binPath)
-    data, err := cmd.Output()
-    if err != nil {
-        t.Fatalf("running program failed: %v", err)
-    }
+	cmd = exec.Command(binPath)
+	data, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("running program failed: %v", err)
+	}
 
-    if got := string(data); got != "Alice" {
-        t.Fatalf("unexpected output: got %q, want %q", got, "Alice")
-    }
+	if got := string(data); got != "Alice" {
+		t.Fatalf("unexpected output: got %q, want %q", got, "Alice")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -179,13 +179,13 @@ fn main() void {
 /* -------------------------------------------------------------------------- */
 
 func TestRhoStringConcat(t *testing.T) {
-    cfg := "user:\n  name: Alice\n"
-    if err := os.WriteFile("concat_test.yml", []byte(cfg), 0644); err != nil {
-        t.Fatalf("write YAML config failed: %v", err)
-    }
-    defer os.Remove("concat_test.yml")
+	cfg := "user:\n  name: Alice\n"
+	if err := os.WriteFile("concat_test.yml", []byte(cfg), 0644); err != nil {
+		t.Fatalf("write YAML config failed: %v", err)
+	}
+	defer os.Remove("concat_test.yml")
 
-    src := `
+	src := `
 module hello
 
 fn main() void {
@@ -193,36 +193,36 @@ fn main() void {
     print("Hello " + name);
 }
 `
-    in := "concat_print.rho"
-    out := "concat_print.c"
-    bin := "concat_print_bin"
+	in := "concat_print.rho"
+	out := "concat_print.c"
+	bin := "concat_print_bin"
 
-    defer os.Remove(in)
-    defer os.Remove(out)
-    defer os.Remove(bin)
+	defer os.Remove(in)
+	defer os.Remove(out)
+	defer os.Remove(bin)
 
-    if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-        t.Fatalf("write source failed: %v", err)
-    }
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write source failed: %v", err)
+	}
 
-    if err := CompileFile(in); err != nil {
-        t.Fatalf("CompileFile failed: %v", err)
-    }
+	if err := CompileFile(in); err != nil {
+		t.Fatalf("CompileFile failed: %v", err)
+	}
 
-    cmd := exec.Command("gcc", "-std=c11", "-o", "./"+bin, out)
-    if out, err := cmd.CombinedOutput(); err != nil {
-        t.Fatalf("gcc failed: %v\n%s", err, out)
-    }
+	cmd := exec.Command("gcc", "-std=c11", "-o", "./"+bin, out)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("gcc failed: %v\n%s", err, out)
+	}
 
-    cmd = exec.Command("./" + bin)
-    data, err := cmd.Output()
-    if err != nil {
-        t.Fatalf("running program failed: %v", err)
-    }
+	cmd = exec.Command("./" + bin)
+	data, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("running program failed: %v", err)
+	}
 
-    if got := string(data); got != "Hello Alice" {
-        t.Fatalf("unexpected output: got %q, want %q", got, "Hello Alice")
-    }
+	if got := string(data); got != "Hello Alice" {
+		t.Fatalf("unexpected output: got %q, want %q", got, "Hello Alice")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -230,30 +230,30 @@ fn main() void {
 /* -------------------------------------------------------------------------- */
 
 func TestRunCLIDefaultOutput(t *testing.T) {
-    src := `
+	src := `
 module cli_test
 
 fn main() void {
 }
 `
-    in := "cli_default.rho"
-    out := "cli_default.c"
+	in := "cli_default.rho"
+	out := "cli_default.c"
 
-    defer os.Remove(in)
-    defer os.Remove(out)
+	defer os.Remove(in)
+	defer os.Remove(out)
 
-    if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-        t.Fatalf("write source failed: %v", err)
-    }
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write source failed: %v", err)
+	}
 
-    code := RunCLI([]string{in})
-    if code != 0 {
-        t.Fatalf("RunCLI returned non-zero exit code: %d", code)
-    }
+	code := RunCLI([]string{in})
+	if code != 0 {
+		t.Fatalf("RunCLI returned non-zero exit code: %d", code)
+	}
 
-    if _, err := os.Stat(out); err != nil {
-        t.Fatalf("expected output file %s to exist", out)
-    }
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("expected output file %s to exist", out)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -261,38 +261,38 @@ fn main() void {
 /* -------------------------------------------------------------------------- */
 
 func TestRunCLICustomOutput(t *testing.T) {
-    src := `
+	src := `
 module cli_custom
 
 fn main() void {
 }
 `
-    in := "cli_custom.rho"
-    out := "custom_output.c"
+	in := "cli_custom.rho"
+	out := "custom_output.c"
 
-    defer os.Remove(in)
-    defer os.Remove(out)
+	defer os.Remove(in)
+	defer os.Remove(out)
 
-    if err := os.WriteFile(in, []byte(src), 0644); err != nil {
-        t.Fatalf("write source failed: %v", err)
-    }
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write source failed: %v", err)
+	}
 
-    code := RunCLI([]string{"-o", out, in})
-    if code != 0 {
-        t.Fatalf("RunCLI returned non-zero exit code: %d", code)
-    }
+	code := RunCLI([]string{"-o", out, in})
+	if code != 0 {
+		t.Fatalf("RunCLI returned non-zero exit code: %d", code)
+	}
 
-    data, err := os.ReadFile(out)
-    if err != nil {
-        t.Fatalf("expected custom output file %s to exist", out)
-    }
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("expected custom output file %s to exist", out)
+	}
 
-    outC := string(data)
+	outC := string(data)
 
-    if !strings.Contains(outC, "module cli_custom") {
-        t.Fatalf("expected module name in custom C output")
-    }
-    if !strings.Contains(outC, "int main(") {
-        t.Fatalf("expected hosted C main() function in custom C output")
-    }
+	if !strings.Contains(outC, "module cli_custom") {
+		t.Fatalf("expected module name in custom C output")
+	}
+	if !strings.Contains(outC, "int main(") {
+		t.Fatalf("expected hosted C main() function in custom C output")
+	}
 }

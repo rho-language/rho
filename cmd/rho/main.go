@@ -17,10 +17,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +30,7 @@ import (
 	modcli "rho/cmd/rho-module/cli"
 	modcore "rho/cmd/rho-module/core"
 	pkgcli "rho/cmd/rho-pkg/cli"
+	"sort"
 	"strings"
 	"time"
 
@@ -332,6 +335,21 @@ func installBinaries() error {
 }
 
 func updateCLI() int {
+	// On a machine with nothing installed this is not an update, and treating it
+	// as one is how it failed: the steps that write files ran, the steps that
+	// create the local registry did not, and the command reported success having
+	// left a toolchain that could not install a module. Every later command then
+	// said "the local registry is not installed", which points at the registry and
+	// not at the command that was supposed to have made it.
+	//
+	// There is nothing to destroy here, so this is the one case where the full
+	// install is safe: --force is destructive because it empties a registry that
+	// holds what somebody fetched, and this machine has no such registry.
+	if !install.IsInstalled() {
+		fmt.Println("Nothing is installed yet, so there is nothing to update. Installing.")
+		return installCLI([]string{"--force"})
+	}
+
 	steps := installSteps()
 	for _, step := range steps {
 		if !step.updates {
@@ -615,6 +633,23 @@ func buildCLI(args []string) int {
 	clean := fs.Bool("clean", false, "remove this project's build directory and stop")
 	fs.Parse(args)
 
+	// The exit code a caller reads, which is why it is written here rather than
+	// implied by which error happened.
+	//
+	// A build can fail for two quite different reasons, and a caller that has to
+	// tell them apart by reading its output is a caller parsing prose. A code that
+	// does not compile is this project's problem; a board whose vendor tree is not
+	// fetched, a target nobody has a spec for, a toolchain that is not installed —
+	// those are this machine's, and on a matrix of fifty-four builds they are the
+	// overwhelmingly common case. So the second is 77, the automake convention for
+	// "skipped", and it carries the reason on standard error.
+	//
+	// It is a contract because smoke tests depend on it. A suite that asks whether
+	// every example builds for every board needs to say "this one cannot be tried
+	// here yet" rather than "this one failed", and the difference is not visible
+	// from an exit code that is 1 for everything.
+	const exitCannotRunHere = 77
+
 	if fs.NArg() > 1 {
 		fmt.Println("Usage: rho build [file.rho|project-dir] [-o out.c] [-target id]")
 		return 2
@@ -675,8 +710,12 @@ func buildCLI(args []string) int {
 	resolver := &deps.Resolver{Locator: locator}
 	graph, lock, err := resolver.Resolve(manifest, projectRoot)
 	if err != nil {
+		// Whether this is the project's fault or the machine's depends on what the
+		// resolver could not find, and it says so: a dependency that names a git
+		// URL that has not been fetched is a checkout that is incomplete, while a
+		// dependency whose sources are named and absent is a manifest that is wrong.
 		fmt.Fprintln(os.Stderr, "rho build:", err)
-		return 1
+		return exitCodeFor(err, exitCannotRunHere)
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -716,6 +755,25 @@ func buildCLI(args []string) int {
 		}
 	}
 
+	// A C dependency whose sources are not there has not been fetched.
+	//
+	// Asked here rather than discovered by a compiler, because the compiler finds
+	// out much later and says something else entirely: a board whose family vendor
+	// tree was never fetched compiles its drivers and reports `GPIO_PIN_SET
+	// undeclared`, which names a HAL macro rather than the missing vendor tree that
+	// would have defined it. Every driver fails, and nothing in the output says
+	// that one `git clone` would have made them all work.
+	//
+	// So it is said here, where the dependency that named the file is still in
+	// hand, and the exit code is CannotRunHere: this machine cannot try this build
+	// yet, which is a different fact from the code being wrong.
+	if missing := missingDeclaredSources(graph); len(missing) > 0 {
+		for _, absence := range missing {
+			fmt.Fprintln(os.Stderr, "rho build:", absence)
+		}
+		return exitCannotRunHere
+	}
+
 	/* ---------------------------------------------------------------------- */
 	/*  6. Resolve the target, then generate what it declares                 */
 	/* ---------------------------------------------------------------------- */
@@ -736,8 +794,16 @@ func buildCLI(args []string) int {
 	// missing.
 	if err := generateForeignInterface(projectRoot, targetName); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
-		return 1
+		// Classified like the resolution failures above, and for the same reason.
+		// The commonest thing this step has to say is that a board's vendor tree is
+		// not fetched — cimport reports it as "nothing says where stm32f4-hal is" —
+		// which is this machine's state and not this project's code. Left as a plain
+		// failure it would be indistinguishable from a program's C not parsing, and a
+		// smoke matrix over several families would report every board it cannot try
+		// as a board that does not build.
+		return exitCodeFor(err, exitCannotRunHere)
 	}
+
 	// The interface was just written there, and a project that imports it is
 	// asking for a module the compiler has to be able to find. It is a
 	// dependency root for this build only: it holds generated code, so it is
@@ -1031,7 +1097,43 @@ func generateForeignInterface(projectRoot, preset string) error {
 		arguments = append(arguments, "--preset", preset)
 	}
 	arguments = append(arguments, projectRoot)
-	return entry.Run(arguments, os.Stdin, os.Stdout)
+
+	// The component's own words are captured as well as shown.
+	//
+	// It writes them to its output rather than to an error value, because it is a
+	// component reporting what it found and does not know it is being called from a
+	// place that wants to classify the failure. The distinction this caller's caller
+	// makes — the board's vendor tree is not fetched, rather than the project's C not
+	// parsing — is only visible in what the component said, so it is carried on the
+	// error rather than only printed.
+	// The component's own words go to its output rather than into the error, so a
+	// caller that wants to tell "this board's vendor tree is not fetched" from "this
+	// project's C does not parse" cannot see the difference from here. Capturing it
+	// needs an `*os.File` to give the component, which is what `Run` takes — so the
+	// capture is done with a pipe, and what the component said is carried on the error
+	// for the exit-code classification below to read.
+	//
+	// Until that is in place the classification fires for a dependency that could not
+	// be located, and not for one whose sources are absent — which is the commoner of
+	// the two on a machine with one family's vendor tree fetched.
+	read, write, err := os.Pipe()
+	if err != nil {
+		return entry.Run(arguments, os.Stdin, os.Stdout)
+	}
+	var said bytes.Buffer
+	copied := make(chan struct{})
+	go func() {
+		defer close(copied)
+		io.Copy(io.MultiWriter(os.Stdout, &said), read)
+	}()
+	runErr := entry.Run(arguments, os.Stdin, write)
+	write.Close()
+	<-copied
+	read.Close()
+	if runErr != nil {
+		return fmt.Errorf("%w: %s", runErr, strings.TrimSpace(said.String()))
+	}
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1280,4 +1382,95 @@ func compilable(paths []string) []string {
 		}
 	}
 	return kept
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Telling the two failures apart                                             */
+/* -------------------------------------------------------------------------- */
+
+// exitCodeFor decides whether a failure is this project's or this machine's.
+//
+// The distinction is not cosmetic. A matrix of builds — every example for every
+// board — is mostly builds that cannot be tried at all: a board with no target
+// spec yet, a family whose vendor tree has not been fetched, a cross toolchain
+// that is not installed. Every one of those is a gap in the machine, and every one
+// of them fails the same way a compile error does if both are 1. A caller that has
+// to tell them apart by reading the output is a caller parsing prose to find out
+// whether anything is actually broken.
+//
+// So the wording decides it, and the wording is what the toolchain says about
+// itself: a message that names something this machine must supply — a vendor tree,
+// a toolchain, a spec — is a skip, and a message that describes the code is a
+// failure. A message that names neither is treated as a failure, because a build
+// that failed for an unstated reason has not been shown to be a gap in the machine,
+// and a gap read as a failure is the safe direction to be wrong in: it costs a
+// look, while the other costs a passing build that tested nothing.
+func exitCodeFor(err error, cannotRunHere int) int {
+	if isMissingSomethingThisMachineNeeds(err) {
+		return cannotRunHere
+	}
+	return 1
+}
+
+// isMissingSomethingThisMachineNeeds reports whether a failure is about something
+// absent from this machine rather than about the project being built.
+func isMissingSomethingThisMachineNeeds(err error) bool {
+	if err == nil {
+		return false
+	}
+	// The resolver's own type, rather than this file's reading of its messages: the
+	// component that knows what it could not find is the one that says so, and a
+	// second list here is a second list to keep in step with it.
+	if deps.IsMissing(err) {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	for _, phrase := range []string{
+		"not found",
+		"no such file",
+		"nothing says where",
+		"is not installed",
+		"cannot be found",
+		"not fetched",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// missingDeclaredSources says which of a dependency's declared sources are not
+// there.
+//
+// Only for a source that was *named* rather than one that was found by walking a
+// directory: a C dependency whose manifest lists its sources has said what it is
+// made of, and one of those files being absent is the whole dependency missing.
+// A source discovered by listing a directory cannot be missing — it was there a
+// moment ago — so nothing here can be false.
+func missingDeclaredSources(graph *deps.DependencyGraph) []string {
+	missing := []string{}
+	for _, node := range graph.Nodes {
+		if node.Type != deps.DepTypeC {
+			continue
+		}
+		absent := []string{}
+		for _, source := range node.SourceFiles {
+			path := source
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(node.Path, source)
+			}
+			if _, err := os.Stat(path); err != nil {
+				absent = append(absent, path)
+			}
+		}
+		if len(absent) > 0 {
+			missing = append(missing, fmt.Sprintf(
+				"%d of %d files %s declares are not there, starting with %s: it has not been fetched",
+				len(absent), len(node.SourceFiles), node.Name, absent[0]))
+			continue
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }

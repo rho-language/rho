@@ -35,12 +35,29 @@ provides:
       one: false
       hooks: [run]
   hooks:
-    # Once, over the test files the run found: a plugin that knows a project's
-    # own test layout, or that generates tests, answers here.
+    # Once, over what the project's manifest declared: a plugin that knows a
+    # framework answers with the suites of that kind, each with the steps that
+    # build and run it. This is how a framework the runner does not implement is
+    # reached — the runner asks, and a plugin that knows gtest says how.
     - discover
-    # Once, over the results of a finished run: a plugin that reports a run
-    # in a form a system reads, such as JUnit XML or a CI summary.
+    # Once, over the results of a finished run, with the suites that were
+    # considered and what was skipped: a plugin that reports a run in a form a
+    # system reads, such as JUnit XML or a CI summary.
     - run
+
+# What a run can do by itself, and what it asks a plugin for.
+#
+# The kinds here are the ones the runner knows how to run, and a kind is what
+# decides who does that — not what class of test a suite is. Which class it is is
+# a tag, and tags are the project's own vocabulary.
+#
+#   rho       a Rho test file, translated, compiled and run
+#   command   a command the project can already run by hand
+#
+# Anything else is a kind somebody else's plugin answers for: gtest is the one
+# the toolchain ships. A kind that is declared and has no runner is skipped with
+# a reason rather than dropped, because a run that passed while a declared test
+# went unrun is the outcome this runner exists to prevent.
 
 # The runner documents itself: what it discovers, and what it reports.
 docs:

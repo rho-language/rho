@@ -23,7 +23,7 @@ package ir
 
 // RangeIR represents a Rho range:
 //
-//     start..end step step
+//	start..end step step
 //
 // It is always half-open [start, end), with a positive step.
 type RangeIR struct {

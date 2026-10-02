@@ -172,7 +172,6 @@ func writeDepsFile(projectRoot, destination string) error {
 			bringsOwnBuild = true
 		}
 
-
 		// A dependency that builds itself compiles its own sources, and those
 		// sources are compiled by a target this file does not own and cannot
 		// attach definitions to. They are therefore added to the directory scope,

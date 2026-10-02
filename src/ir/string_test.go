@@ -21,7 +21,7 @@ package ir
 /* -------------------------------------------------------------------------- */
 
 import (
-    "testing"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -29,25 +29,25 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestNewStringIR(t *testing.T) {
-    s := NewStringIR("rho")
+	s := NewStringIR("rho")
 
-    if s.Data != "rho" {
-        t.Fatalf("expected Data='rho', got %q", s.Data)
-    }
-    if s.Length != 3 {
-        t.Fatalf("expected Length=3, got %d", s.Length)
-    }
+	if s.Data != "rho" {
+		t.Fatalf("expected Data='rho', got %q", s.Data)
+	}
+	if s.Length != 3 {
+		t.Fatalf("expected Length=3, got %d", s.Length)
+	}
 }
 
 func TestNewEmptyStringIR(t *testing.T) {
-    s := NewEmptyStringIR()
+	s := NewEmptyStringIR()
 
-    if s.Data != "" {
-        t.Fatalf("expected empty Data, got %q", s.Data)
-    }
-    if s.Length != 0 {
-        t.Fatalf("expected Length=0, got %d", s.Length)
-    }
+	if s.Data != "" {
+		t.Fatalf("expected empty Data, got %q", s.Data)
+	}
+	if s.Length != 0 {
+		t.Fatalf("expected Length=0, got %d", s.Length)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -55,15 +55,15 @@ func TestNewEmptyStringIR(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestStringIsEmpty(t *testing.T) {
-    s1 := NewStringIR("rho")
-    if s1.IsEmpty() {
-        t.Fatalf("expected non-empty string")
-    }
+	s1 := NewStringIR("rho")
+	if s1.IsEmpty() {
+		t.Fatalf("expected non-empty string")
+	}
 
-    s2 := NewEmptyStringIR()
-    if !s2.IsEmpty() {
-        t.Fatalf("expected empty string")
-    }
+	s2 := NewEmptyStringIR()
+	if !s2.IsEmpty() {
+		t.Fatalf("expected empty string")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -71,20 +71,20 @@ func TestStringIsEmpty(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestStringEquals(t *testing.T) {
-    a := NewStringIR("abc")
-    b := NewStringIR("abc")
-    c := NewStringIR("xyz")
-    d := NewStringIR("abcd")
+	a := NewStringIR("abc")
+	b := NewStringIR("abc")
+	c := NewStringIR("xyz")
+	d := NewStringIR("abcd")
 
-    if !a.Equals(b) {
-        t.Fatalf("expected 'abc' == 'abc'")
-    }
+	if !a.Equals(b) {
+		t.Fatalf("expected 'abc' == 'abc'")
+	}
 
-    if a.Equals(c) {
-        t.Fatalf("expected 'abc' != 'xyz'")
-    }
+	if a.Equals(c) {
+		t.Fatalf("expected 'abc' != 'xyz'")
+	}
 
-    if a.Equals(d) {
-        t.Fatalf("expected 'abc' != 'abcd'")
-    }
+	if a.Equals(d) {
+		t.Fatalf("expected 'abc' != 'abcd'")
+	}
 }

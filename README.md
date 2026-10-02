@@ -240,7 +240,7 @@ The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`,
 ```sh
 ./bin/rho build <project-dir>
 ./bin/rho run <project-dir>
-./bin/rho test <project-dir>
+./bin/rho test [--tag unit] [--kind gtest] [--suite NAME] [--list] [<project-dir>]
 ./bin/rho lsp
 ./bin/rho install [--force]
 ./bin/rho pkg <command> [args]

@@ -20,16 +20,16 @@ import "testing"
 /* -------------------------------------------------------------------------- */
 
 func TestAllocBytes(t *testing.T) {
-    a := NewArena(4)
+	a := NewArena(4)
 
-    b, err := AllocBytes(a, 4)
-    if err != nil {
-        t.Fatalf("unexpected error: %v", err)
-    }
+	b, err := AllocBytes(a, 4)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-    if len(b) != 4 {
-        t.Fatalf("expected 4 bytes")
-    }
+	if len(b) != 4 {
+		t.Fatalf("expected 4 bytes")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -37,16 +37,16 @@ func TestAllocBytes(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestAllocString(t *testing.T) {
-    a := NewArena(16)
+	a := NewArena(16)
 
-    s, err := AllocString(a, "rho")
-    if err != nil {
-        t.Fatalf("unexpected error: %v", err)
-    }
+	s, err := AllocString(a, "rho")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-    if s != "rho" {
-        t.Fatalf("expected string 'rho'")
-    }
+	if s != "rho" {
+		t.Fatalf("expected string 'rho'")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -54,10 +54,10 @@ func TestAllocString(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestAllocStringOutOfMemory(t *testing.T) {
-    a := NewArena(2)
+	a := NewArena(2)
 
-    _, err := AllocString(a, "rho") // needs 3 bytes
-    if err == nil {
-        t.Fatalf("expected out-of-memory error")
-    }
+	_, err := AllocString(a, "rho") // needs 3 bytes
+	if err == nil {
+		t.Fatalf("expected out-of-memory error")
+	}
 }

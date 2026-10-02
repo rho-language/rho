@@ -34,9 +34,15 @@ cp -r "${ROOT}/docs/." "${DOCS}/"
 echo "==> Carrying the manifests of the components that ship with the toolchain..."
 # The manifest travels so `rho install` can register the component; the binary
 # stays in bin/, which is where an install looks for the toolchain's executables.
-for component in rho-lsp rho-flash; do
+#
+# Every module this tree carries, not the two an install happens to build. A list
+# of two is a list that stops agreeing with the tree, and the first component to be
+# added to the deploy package would be the one somebody remembered to write down.
+for manifest in "${ROOT}"/modules/components/*/module.yml "${ROOT}"/modules/plugins/*/module.yml; do
+  [ -f "${manifest}" ] || continue
+  component="$(basename "$(dirname "${manifest}")")"
   mkdir -p "${MODULES}/components/${component}"
-  cp "${ROOT}/modules/components/${component}/module.yml" "${MODULES}/components/${component}/"
+  cp "${manifest}" "${MODULES}/components/${component}/"
 done
 
 echo "==> Creating install manifest..."

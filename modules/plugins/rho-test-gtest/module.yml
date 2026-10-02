@@ -1,0 +1,72 @@
+#
+# rho-test-gtest — run the GoogleTest suites a project declares.
+#
+# A plugin for the test runner, not for the compiler. GoogleTest is a framework
+# somebody else wrote, with its own build and its own idea of what a test result
+# is, so it belongs on this side of the boundary: the runner asks which suites a
+# plugin knows how to run, and this one answers for the ones of kind `gtest`.
+#
+# The manifest says how each one is built and where its binary is, and this plugin
+# passes that on rather than guessing. A project may build its tests with CMake, a
+# Makefile, Bazel or a shell script, and a plugin that knew only about CMake
+# would be a plugin that could only run the projects it happened to suit. So the
+# manifest states the steps and this plugin's whole job is to place them and read
+# the result.
+#
+# What it does read for itself is GoogleTest's XML report, because that is the one
+# place the framework states its own results unambiguously — which test, in which
+# case, passed, failed or was skipped, and what it printed. Parsing the console
+# output would mean guessing at a format that is meant to be read by people, and a
+# run that guessed would report a test that does not exist.
+#
+# @project Rho Programming Language
+# @license MIT
+#
+
+module:
+  name: rho-test-gtest
+  type: plugin
+  version: 0.1.0
+  author: Aurel Miron
+  description: Runs a project's GoogleTest suites, which the runner does not implement itself
+
+main: rho-test-gtest
+
+features:
+  - test
+  - gtest
+  - googletest
+
+# The component this plugin plugs into, and the hooks of it this plugin answers.
+# A run of that component is the only thing that ever calls it, and every hook
+# here has to be one the component offers.
+extends: rho-test
+
+# What this plugin is for, as a contract of rho-test. A plugin says what
+# it provides rather than leaving a reader to infer it from the hooks it
+# answers: two plugins may answer the same hook and be unrelated things.
+implements:
+  - discover
+
+hooks:
+  # Once, over what the project declared.
+  - discover
+
+# The executable that answers the hook. The request arrives as JSON on standard
+# input and the suites to run are read back as JSON from standard output.
+commands:
+  - name: gtest
+    run: rho-test-gtest
+    hook: discover
+
+package:
+  kind: plugin
+  interface: []
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src

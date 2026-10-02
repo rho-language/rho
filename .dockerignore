@@ -5,3 +5,12 @@ bin/
 .kilo/worktrees/
 *.vsix
 node_modules/
+
+# The check image (ci/check.Dockerfile) copies the tree to run the procedure from
+# a machine that has never run it. The vendor tree and the tool binaries are
+# fetched or built by that procedure, so carrying them in would be copying the
+# answer into the question.
+.git/
+deploy/
+**/vendor/
+**/go.work.sum

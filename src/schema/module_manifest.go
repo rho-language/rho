@@ -60,13 +60,26 @@ var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
 //     particular board.
 //   - `platform-board` is one board's support package: the pin map, the clock
 //     configuration and the startup that make a platform usable on the piece of
-//     hardware it is fitted to. It depends on a platform; a platform never
-//     depends on a board.
+//     hardware it is fitted to.
 //
 // They are kept apart because they are not the same thing, and a module that
 // implements a platform while claiming to be its interfaces — or a board that
 // claims to be a platform — describes itself as something it is not, in the
 // one place a reader looks to find out what a module is.
+//
+// A board carries no `depends`, and that is the whole of what it says about
+// where it sits. It cannot be built on its own: a board is a support package,
+// and a support package is only ever compiled into something that has a platform,
+// an interface and a set of dependencies to compile it against. All three belong
+// to the application, so the application declares them and the board is found
+// through the platform it belongs to.
+//
+// The alternative is what twenty-seven board manifests did, each declaring the
+// interfaces and the platform it is part of — the second of them being the
+// repository the board lives in. Every one of those was a dependency resolved by a
+// path relative to itself, which works on a checkout and on nothing else, and a
+// board that cannot resolve its own dependencies cannot be the thing that
+// decides them.
 //
 // None of them declares `main`: each is native code a project links rather than
 // something it runs.
