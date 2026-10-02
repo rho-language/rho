@@ -46,8 +46,10 @@ fn main() void {
 		t.Fatalf("running program failed: %v", err)
 	}
 
-	if string(output) != "Hello CLI\n" {
-		t.Fatalf("unexpected output: got %q, want %q", string(output), "Hello CLI\n")
+	// `print` writes exactly what it is given, so a newline appears in the output
+	// only when the program put one there.
+	if string(output) != "Hello CLI" {
+		t.Fatalf("unexpected output: got %q, want %q", string(output), "Hello CLI")
 	}
 }
 

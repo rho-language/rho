@@ -25,7 +25,6 @@ go build -o ./bin/rho ./cmd/rho
 
 - `cmd/rho` - Main CLI entry point
 - `cmd/rho-deps` - Dependency manager
-- `cmd/rho-flash` - Device flashing tool
 - `cmd/rho-pkg/` - Package management (init, pack, unpack, inspect)
 - `cmd/rho-module/` - Module management (publish, unpublish, search, etc.)
 - `src/` - Compiler, runtime, AST, parser, codegen
@@ -36,7 +35,7 @@ go build -o ./bin/rho ./cmd/rho
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-doc`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
+- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-doc`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
 - `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in

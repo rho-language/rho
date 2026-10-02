@@ -39,6 +39,13 @@ type Codegen struct {
 	// A call site is lowered once for every backend and says the qualified name;
 	// this is where C reads it as the name that exists.
 	foreign map[string]string
+	// hostMain is the function being emitted is a `main` declared void, which C
+	// spells `int` so that something can call it and read an exit status.
+	//
+	// It is here rather than passed down because the consequence is at the
+	// instruction: Rho's `main` has nothing to return, so its `return` carries no
+	// value, while the C function it became is expected to give one back.
+	hostMain bool
 }
 
 /* -------------------------------------------------------------------------- */
@@ -237,9 +244,11 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 		cg.b.WriteString(" {\n")
 
 		// body (Rho 0.1: minimal, based on IR instructions)
+		cg.hostMain = hostMain
 		for _, instr := range fn.Body {
 			cg.emitInstr(instr)
 		}
+		cg.hostMain = false
 		if hostMain {
 			// A void `main` is emitted as `int` so that a real entry point can
 			// call it, which means the C compiler expects a value back. Rho's
@@ -420,11 +429,25 @@ func defaultValueFor(t ir.Type) string {
 func (cg *Codegen) emitInstr(instr ir.Instr) {
 	switch instr.Op {
 	case ir.OpReturn:
+		// A `return` with no expression is lowered with one operand, and that
+		// operand is empty — so the operand's emptiness is what says whether there
+		// is a value here, not how many operands arrived.
+		value := ""
 		if len(instr.Args) == 1 {
+			value = strings.TrimSpace(instr.Args[0])
+		}
+		switch {
+		case value != "":
 			cg.b.WriteString("    return ")
-			cg.b.WriteString(instr.Args[0])
+			cg.b.WriteString(value)
 			cg.b.WriteString(";\n")
-		} else {
+		case cg.hostMain:
+			// A `main` declared void has nothing to hand back, and the `int` it was
+			// emitted as is expected to hand something back. Zero, because reaching
+			// the end of a void `main` is the same thing as saying so: the program
+			// ran to completion, which is success.
+			cg.b.WriteString("    return 0;\n")
+		default:
 			cg.b.WriteString("    return;\n")
 		}
 
@@ -510,7 +533,13 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 }
 
 func (cg *Codegen) emitNested(instructions []ir.Instr) {
+	// The child is given what this function needs to know, and not only the empty
+	// buffer. A nested `return` is lowered by the same rules as any other one, and
+	// a `main` emitted as `int` has to supply a value for every one of them, not
+	// only the ones at the top level of its body.
 	child := New()
+	child.hostMain = cg.hostMain
+	child.foreign = cg.foreign
 	for _, instruction := range instructions {
 		child.emitInstr(instruction)
 	}

@@ -1,0 +1,49 @@
+#
+# rho-flash — put a built binary on the board.
+#
+# What a board needs to be flashed is not a property of the flasher. OpenOCD,
+# st-flash, picotool and dfu-util each want a different invocation, and which one
+# is right depends on the part, the probe and what the board has soldered on it.
+# So the platform says: a target spec carries a `flash` block naming the tool and
+# the command, and this program runs it. That is one description of a board
+# rather than one in the spec the build read and another in the flasher, and it
+# is why the program reads the spec through rho-target instead of parsing it.
+#
+# It used to carry a switch over MCU names instead, with the tool and the load
+# address written into the program. The address in particular was a constant here
+# that the memory map already knew.
+#
+# The command is `flash` and nothing else: a build already produces the binary,
+# and this is what puts it on the board.
+#
+# @project Rho Programming Language
+# @license MIT
+#
+
+module:
+  name: rho-flash
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Puts a built binary on a board, using the command its target spec declares
+  command: flash
+
+main: rho-flash
+
+features:
+  - flash
+  - openocd
+  - stlink
+  - board
+
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src

@@ -469,14 +469,21 @@ build step required.
 
 ### Device Flashing
 
-`rho-flash` is a standalone hardware tool for supported targets. It requires
-the target-specific external tools and hardware:
+`rho flash` puts a built binary on a board. It is a component like the formatter
+and the documentation generator, dispatched to by name:
 
 ```sh
-go build -o ./rho-flash ./cmd/rho-flash
-./rho-flash -mcu pico firmware.bin
-./rho-flash -mcu stm32 firmware.bin
+rho module publish modules/components/rho-flash
+rho flash -target nucleo-h753zi build/output/hello_world
 ```
+
+`-target` names the board, and the board's own target spec says which tool
+writes to it — OpenOCD for an ST-LINK, `st-flash` for an ST-LINK utility,
+`picotool` for a Pico, `dfu-util` for a part in DFU mode. So the tool and its
+invocation come from the platform rather than from this program, and supporting
+another programmer is a change to a board spec. The external tool and the probe
+have to be installed and connected; see `rho target show <board>` for what a
+given board expects.
 
 ## Examples
 

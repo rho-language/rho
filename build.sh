@@ -22,17 +22,22 @@ go build -o "${BIN}/rho-install" "${ROOT}/cmd/rho-install"
 echo "==> Building rho-lsp (uses core compiler, must be built inside the repo)..."
 go build -o "${BIN}/rho-lsp"  "${ROOT}/modules/components/rho-lsp/src"
 
+echo "==> Building rho-flash (pure Go, reads target specs through rho-target)..."
+go build -o "${BIN}/rho-flash" "${ROOT}/modules/components/rho-flash/src"
+
 echo "==> Installing standard library..."
 cp -r "${ROOT}/std/." "${STD}/"
 
 echo "==> Installing documentation..."
 cp -r "${ROOT}/docs/." "${DOCS}/"
 
-echo "==> Carrying the rho-lsp manifest..."
+echo "==> Carrying the manifests of the components that ship with the toolchain..."
 # The manifest travels so `rho install` can register the component; the binary
 # stays in bin/, which is where an install looks for the toolchain's executables.
-mkdir -p "${MODULES}/components/rho-lsp"
-cp "${ROOT}/modules/components/rho-lsp/module.yml" "${MODULES}/components/rho-lsp/"
+for component in rho-lsp rho-flash; do
+  mkdir -p "${MODULES}/components/${component}"
+  cp "${ROOT}/modules/components/${component}/module.yml" "${MODULES}/components/${component}/"
+done
 
 echo "==> Creating install manifest..."
 cat > "${DEPLOY}/install-manifest.txt" <<'MANIFEST'
@@ -40,6 +45,7 @@ rho          — Core compiler/CLI
 rho-deps     — Dependency manager
 rho-install  — Standalone installer
 rho-lsp      — Language server (LSP)
+rho-flash    — Device flashing, driven by a board's target spec
 std/         — Standard library (.rho sources)
 docs/        — Documentation
 modules/     — Pre-registered components

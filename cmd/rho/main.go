@@ -780,19 +780,27 @@ func buildCLI(args []string) int {
 	// generator reads the result from the same place.
 	_ = configured
 
+	// A project written in C is used as it stands: there is nothing to translate,
+	// so its entry and its other sources go into the generated project to be
+	// compiled there, beside the dependencies and the configuration.
+	nativeEntry := strings.HasSuffix(absIn, ".c")
+	if nativeEntry {
+		sourceFiles = append(sourceFiles, absIn)
+		sourceFiles = append(sourceFiles, declaredSources(projectRoot, manifest)...)
+	}
+
 	shimSources := []string{}
 	for _, candidate := range []string{
 		filepath.Join(generatedTree, "c", "ffi_shim.c"),
-		filepath.Join(generatedTree, "modules", "preset-sources.txt"),
 	} {
 		if _, statErr := os.Stat(candidate); statErr == nil {
 			shimSources = append(shimSources, candidate)
 		}
 	}
-	shimSources = append(shimSources, readLines(filepath.Join(generatedTree, "modules", "preset-sources.txt"))...)
+	shimSources = append(shimSources, compilable(readLines(filepath.Join(generatedTree, "modules", "preset-sources.txt")))...)
 	// The board's own sources, for the same reason: they were declared by the board
 	// and read by the step that resolved the board, and nothing compiled them.
-	shimSources = append(shimSources, readLines(filepath.Join(generatedTree, "modules", "preset-sources-board-sources.txt"))...)
+	shimSources = append(shimSources, compilable(readLines(filepath.Join(generatedTree, "modules", "preset-sources-board-sources.txt")))...)
 
 	// The include directories the selected preset declares, read from where the
 	// step that resolved the preset recorded them. A vendor source compiled
@@ -865,7 +873,10 @@ func buildCLI(args []string) int {
 	// What `-o` names is still honoured — a caller that asked for a translation
 	// unit in a particular place gets one there — but a build that generates a
 	// project writes the project, and nothing beside it.
-	if *out != "" {
+	// A Rho entry is translated here when a caller asked for the translation
+	// unit itself. A C entry never is: it is already C, and translating it would
+	// mean compiling a language it was not written in.
+	if *out != "" && !nativeEntry {
 		outC, _ := filepath.Abs(*out)
 		if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
 			fmt.Fprintln(os.Stderr, "rho build:", err)
@@ -1235,4 +1246,38 @@ func guardedSources(roots []string) map[string]string {
 		return nil
 	}
 	return guarded
+}
+
+// declaredSources returns the C files a project declares alongside its entry.
+//
+// Read from the manifest rather than found by walking the project: a directory
+// holds whatever a person left in it, and a build that compiled all of it would
+// compile a scratch file along with the program.
+func declaredSources(projectRoot string, manifest *deps.Manifest) []string {
+	sources := []string{}
+	for _, declared := range manifest.BuildSources {
+		path := declared
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(projectRoot, filepath.FromSlash(declared))
+		}
+		sources = append(sources, path)
+	}
+	return sources
+}
+
+// compilable keeps the files a compiler can be given.
+//
+// A list of sources arrives from a text file, and the list of what to compile is
+// not the same as the list of what was recorded: one of them is a description of
+// the other's location. Handing a text file to a compiler fails on the first line
+// of it, which says nothing about where it came from.
+func compilable(paths []string) []string {
+	kept := make([]string, 0, len(paths))
+	for _, path := range paths {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".c", ".s":
+			kept = append(kept, path)
+		}
+	}
+	return kept
 }

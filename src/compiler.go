@@ -90,9 +90,19 @@ func GenerateProjectWithDependencies(path, outputDir string, includePaths, sourc
 // GenerateTarget emits one generated project for a descriptor target id.
 // The compiled module may be supplied to avoid re-running the front end.
 func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles, dependencyRoots []string, compiled *ast.Module, shim ...[]string) error {
-	irModule, err := compileToIR(compiled, path, dependencyRoots)
-	if err != nil {
-		return err
+	// A C project is used as it stands: there is nothing to translate, so the
+	// module stands empty and the generator writes a project with no Rho entry
+	// wrapper of its own.
+	native := strings.HasSuffix(path, ".c")
+	var irModule ir.ModuleIR
+	if native {
+		irModule = ir.NewModuleIR(filepath.Base(ProjectRoot(path)))
+	} else {
+		converted, convertErr := compileToIR(compiled, path, dependencyRoots)
+		if convertErr != nil {
+			return convertErr
+		}
+		irModule = converted
 	}
 	descriptor, err := ResolveDescriptor(ProjectRoot(path))
 	if err != nil {
@@ -104,9 +114,11 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 	}
 	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots)
 	ctx := projectgen.Context{
+		Native:         native,
 		ModuleName:     irModule.Name,
 		ProjectRoot:    ProjectRoot(path),
 		ShimSources:    firstOf(shim),
+		ShimHeader:     shimHeaderOf(firstOf(shim)),
 		OutputDir:      outputDir,
 		IR:             irModule,
 		IncludePaths:   includePaths,
@@ -168,13 +180,34 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 		return nil, err
 	}
 
-	compiled, err := loadModuleGraphWithDependencies(path, dependencyRoots)
-	if err != nil {
-		return nil, err
+	// A C project is a passthrough: it is already C, so there is no module graph
+	// to load and nothing to translate. An empty IR stands for it, and the
+	// generator writes it a project with no Rho entry wrapper of its own.
+	// A C project is a passthrough: there is no module graph to load and nothing
+	// to translate, so the IR stays empty and the generator writes the project
+	// without an entry wrapper of its own. Its own sources are copied in and
+	// compiled there, which is what makes the generated project the whole program
+	// rather than a wrapper around one.
+	native := strings.HasSuffix(path, ".c")
+	var compiled *ast.Module
+	if !native {
+		loaded, loadErr := loadModuleGraphWithDependencies(path, dependencyRoots)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		compiled = loaded
 	}
-	irModule, err := compileToIR(compiled, path, dependencyRoots)
-	if err != nil {
-		return nil, err
+	// The IR is what the program means. A C project has none of it here — it is
+	// already C — so the module stands empty and the generator writes a project
+	// with no Rho entry wrapper, which is what lets the project's own `main` be
+	// the entry rather than a second one.
+	irModule := ir.NewModuleIR(filepath.Base(ProjectRoot(path)))
+	if !native {
+		compiledIR, compileErr := compileToIR(compiled, path, dependencyRoots)
+		if compileErr != nil {
+			return nil, compileErr
+		}
+		irModule = compiledIR
 	}
 
 	descriptor, err := ResolveDescriptor(projectRoot)
@@ -224,13 +257,15 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 	for _, target := range targets {
 		dir := filepath.Join(root, target.ID)
 		ctx := projectgen.Context{
+			Native:         native,
 			ModuleName:     irModule.Name,
 			ProjectRoot:    projectRoot,
 			ShimSources:    firstOf(shim),
+			ShimHeader:     shimHeaderOf(firstOf(shim)),
 			OutputDir:      dir,
 			IR:             irModule,
 			IncludePaths:   includePaths,
-			SourceFiles:    sourceFiles,
+			SourceFiles:    append(sourceFiles, path),
 			Config:         configBridge(projectRoot, dir, dependencyRoots...),
 			EnabledConfigs: enabledConfigs,
 			GuardedSources: guardedSources,
@@ -1471,6 +1506,33 @@ func firstOf(values [][]string) []string {
 		return nil
 	}
 	return values[0]
+}
+
+// shimHeaderOf is the header a generated application's own source has to include
+// to call the foreign interface.
+//
+// What a Rho program calls is not the library's symbols but the generated
+// wrappers rho-cimport wrote for the declarations Rho cannot make itself, and the
+// connection's headers do not declare those. So the header that says what those
+// calls look like is the one written beside the shim, and a project that does not
+// include it compiles every one of them as an implicit declaration — which is
+// accepted, resolves to whatever the symbol happens to be, and turns a signature
+// that changed into a failure at run time.
+//
+// Found by looking beside the source rather than assumed: a shim source is any C
+// this build compiles, and a preset's vendor sources are listed there too without a
+// header of their own.
+func shimHeaderOf(sources []string) string {
+	for _, source := range sources {
+		if !strings.HasSuffix(source, ".c") {
+			continue
+		}
+		header := strings.TrimSuffix(source, ".c") + ".h"
+		if _, err := os.Stat(header); err == nil {
+			return filepath.Base(header)
+		}
+	}
+	return ""
 }
 
 // namedFragment is a Kconfig file found in a dependency, with the name it should
