@@ -55,22 +55,19 @@ RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho     ./cmd/rho \
 # A registry that could not reach a generator would hold modules it cannot
 # document, and one that could not write a description would serve an API it
 # does not describe.
-# -buildvcs=false because the image carries sources without the history, which
-# is what a copied tree is; the go.work file is what lets a component resolve
-# the toolchain it is built against from the tree rather than from a network.
-RUN cd /src/modules/components/rho-fmt   && go build -buildvcs=false -o rho-fmt   ./src \
- && cd /src/modules/components/rho-log   && go build -buildvcs=false -o rho-log   ./src \
- && cd /src/modules/components/rho-router && go build -buildvcs=false -o rho-router ./src \
- && cd /src/modules/components/rho-openapi && go build -buildvcs=false -o rho-openapi ./src \
- && cd /src/modules/components/rho-doc   && go build -buildvcs=false -o rho-doc   ./src \
- && cd /src/modules/plugins/rho-doc-api  && go build -buildvcs=false -o rho-doc-api ./src \
- && cd /src \
- && HOME=/home/rho ./bin/rho module publish modules/components/rho-fmt \
- && HOME=/home/rho ./bin/rho module publish modules/components/rho-log \
- && HOME=/home/rho ./bin/rho module publish modules/components/rho-router \
- && HOME=/home/rho ./bin/rho module publish modules/components/rho-openapi \
- && HOME=/home/rho ./bin/rho module publish modules/components/rho-doc \
- && HOME=/home/rho ./bin/rho module publish modules/plugins/rho-doc-api
+# By `check.sh publish`, which is the same build-and-publish a developer's machine
+# and CI do. It was written out here by hand, six pairs of build and publish
+# commands, and a hand-written list is a list that stops agreeing with the tree:
+# the next component the service needs would be added to this file and not to
+# whatever the rest of the toolchain builds. Naming the six the *service* needs is
+# still a decision; how they are built is one place.
+#
+# GOFLAGS=-buildvcs=false because the image carries sources without the history,
+# which is what a copied tree is; the go.work file is what lets a component
+# resolve the toolchain it is built against from the tree rather than from a
+# network.
+RUN HOME=/home/rho ./check.sh publish \
+      rho-fmt rho-log rho-router rho-openapi rho-doc rho-doc-api
 
 # The runtime tree: an installed toolchain plus the sources rho compiles at
 # start-up, being the standard library and the service.

@@ -1,6 +1,7 @@
 package deps
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -331,12 +332,47 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 
 	// 6. Git clone → local cache
 	if dep.GitURL == "" {
-		return "", fmt.Errorf("dependency %s has no source", dep.Name)
+		return "", &MissingError{Name: dep.Name, Reason: "no source to fetch it from: a path that is not there, and no git URL"}
 	}
 
 	if err := gitClone(dep.GitURL, cloneDest, dep.GitTag, dep.GitBranch); err != nil {
-		return "", fmt.Errorf("git clone %s: %w", dep.Name, err)
+		return "", &MissingError{Name: dep.Name, Reason: err.Error()}
 	}
 
 	return cloneDest, nil
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Saying what was absent                                                     */
+/* -------------------------------------------------------------------------- */
+
+// MissingError is a dependency this machine does not have.
+//
+// It exists because "the build failed" and "the build cannot be run here yet" are
+// different facts, and a caller that has to tell them apart by reading the message
+// is a caller parsing prose. A matrix of builds is mostly the second kind — a
+// vendor tree not fetched, a board with no spec — and a toolchain that reports
+// both as one exit code makes every one of them look like a broken build.
+//
+// So the component that could not find something says so in its own type, and a
+// caller reads that rather than guessing.
+type MissingError struct {
+	// Name is the dependency that is not here.
+	Name string
+	// Reason is why it could not be found.
+	Reason string
+}
+
+// Error is the message, which reads as what it is.
+func (e *MissingError) Error() string {
+	if e.Reason == "" {
+		return fmt.Sprintf("dependency %s is not available on this machine", e.Name)
+	}
+	return fmt.Sprintf("dependency %s is not available on this machine: %s", e.Name, e.Reason)
+}
+
+// IsMissing reports whether an error is about something this machine does not have.
+func IsMissing(err error) bool {
+	var missing *MissingError
+	return errors.As(err, &missing)
 }

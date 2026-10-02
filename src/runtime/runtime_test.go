@@ -16,9 +16,9 @@
 package runtime
 
 import (
-    "bytes"
-    "os"
-    "testing"
+	"bytes"
+	"os"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -26,18 +26,18 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func captureStderr(f func()) string {
-    old := os.Stderr
-    r, w, _ := os.Pipe()
-    os.Stderr = w
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
 
-    f()
+	f()
 
-    w.Close()
-    os.Stderr = old
+	w.Close()
+	os.Stderr = old
 
-    var buf bytes.Buffer
-    buf.ReadFrom(r)
-    return buf.String()
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	return buf.String()
 }
 
 /* -------------------------------------------------------------------------- */
@@ -45,13 +45,13 @@ func captureStderr(f func()) string {
 /* -------------------------------------------------------------------------- */
 
 func TestLog(t *testing.T) {
-    out := captureStderr(func() {
-        Log("hello")
-    })
+	out := captureStderr(func() {
+		Log("hello")
+	})
 
-    if !bytes.Contains([]byte(out), []byte("rho: hello")) {
-        t.Fatalf("expected log output to contain 'rho: hello', got %q", out)
-    }
+	if !bytes.Contains([]byte(out), []byte("rho: hello")) {
+		t.Fatalf("expected log output to contain 'rho: hello', got %q", out)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -59,13 +59,13 @@ func TestLog(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestLogf(t *testing.T) {
-    out := captureStderr(func() {
-        Logf("value=%d", 42)
-    })
+	out := captureStderr(func() {
+		Logf("value=%d", 42)
+	})
 
-    if !bytes.Contains([]byte(out), []byte("rho: value=42")) {
-        t.Fatalf("expected logf output to contain 'rho: value=42', got %q", out)
-    }
+	if !bytes.Contains([]byte(out), []byte("rho: value=42")) {
+		t.Fatalf("expected logf output to contain 'rho: value=42', got %q", out)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -73,6 +73,6 @@ func TestLogf(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestAssertTrue(t *testing.T) {
-    // Should not panic/exit when condition is true.
-    Assert(true, "should not fail")
+	// Should not panic/exit when condition is true.
+	Assert(true, "should not fail")
 }

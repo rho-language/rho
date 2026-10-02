@@ -59,3 +59,9 @@ coverage/
 
 # Built binaries written where the project declares.
 output/
+
+# The workspace's checksum cache. Derived, and nothing depends on which of its
+# entries happen to be there: `go` writes whatever is missing on the next build.
+# Its per-module equivalents are tracked, so this is the one of the three that is
+# only a cache.
+go.work.sum

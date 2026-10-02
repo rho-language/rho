@@ -8,15 +8,15 @@ import (
 )
 
 type LockedPackage struct {
-	Name    string
-	Type    DepType
-	Version string
-	GitURL  string
-	GitTag  string
+	Name      string
+	Type      DepType
+	Version   string
+	GitURL    string
+	GitTag    string
 	GitBranch string
-	Rev     string
-	Path    string
-	Hash    string
+	Rev       string
+	Path      string
+	Hash      string
 }
 
 type Lockfile struct {

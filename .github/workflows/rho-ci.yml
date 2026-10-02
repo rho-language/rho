@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
@@ -19,53 +22,33 @@ jobs:
       with:
         go-version-file: go.mod
 
-    - name: Run Go tests
-      run: go test ./...
-
-    - name: Build Go tools
-      run: go build ./...
-
-    # A component and a plugin is its own Go module, so the root module's
-    # `go build ./...` and `go test ./...` do not reach it. Every module in the
-    # repository is built and tested here, so a component cannot pass CI
-    # untested: the toolchain, the formatter, the logger, the test runner and
-    # the documentation generator all live in one of these trees.
-    - name: Build and test the modules
-      run: |
-        for module in modules/components/*/ modules/plugins/*/; do
-          if [ -f "$module/go.mod" ]; then
-            echo "::group::$module"
-            (cd "$module" && go build ./... && go test ./...)
-            echo "::endgroup::"
-          fi
-        done
-
-    # Installing a module makes it available; using it is a separate decision,
-    # and a module that is not enabled is not used. A machine that means to run
-    # something therefore has to say so, and this is where CI says it.
+    # Build, publish, install, test — in that order, and by the script in the
+    # repository rather than by steps written out here.
     #
-    # The registry's tests need the SQL component and the sqlite engine, and skip
-    # without them. Enabling both here means they run rather than skip, which is
-    # the difference between a registry whose records are checked and one that is
-    # only built.
-    - name: Enable the modules the tests need
-      run: |
-        go build -o ./bin/rho ./cmd/rho
-        for module in modules/components/*/ modules/plugins/*/; do
-          if [ -f "$module/module.yml" ]; then
-            name=$(awk '/^  name: /{print $2; exit}' "$module/module.yml")
-            case "$name" in
-              rho-sql|rho-doc|rho-test|rho-router|rho-auth|rho-log|rho-openapi|rho-fmt|rho-cimport|rho-kconfig|rho-lsp|rho-target)
-                ./bin/rho module enable "$name" || true
-                ;;
-            esac
-          fi
-        done
-        ./bin/rho plugin enable rho-sql-sqlite || true
-        ./bin/rho plugin enable rho-doc-toc || true
-        ./bin/rho plugin enable rho-doc-api || true
-        ./bin/rho plugin enable rho-test-junit || true
+    # The order is not tidiness. A component and a plugin is a separate Go module
+    # that the toolchain runs as a program, so a test that builds a program needs
+    # rho-target, rho-cimport and rho-kconfig installed in the local registry and
+    # enabled. This workflow used to run `go test ./...` first and enable the
+    # modules afterwards, and so failed three tests with
+    #
+    #     this build needs the rho-target component: module not installed
+    #
+    # — a true statement about the runner and a useless one about the code. The
+    # steps that came after could not rescue it: the tests had already run.
+    #
+    # The hand-written list of components to enable is gone for the same reason.
+    # `check.sh` publishes every module the tree carries at the version its own
+    # manifest declares, which is also what stops that list going stale — and what
+    # lets a module added to the tree be tested without this file being edited.
+    - name: Check
+      run: ./check.sh
 
+    # The CMake build on top: the Go toolchain through CMake, which is how the
+    # project is packaged, and the CTest suite it registers.
+    #
+    # After the check rather than instead of it, because `configureAndBuild` runs
+    # the Go toolchain to produce a project and that toolchain dispatches to the
+    # components `check.sh` has just installed.
     - name: Configure CMake
       run: cmake -S . -B build -DBUILD_TESTING=ON
 

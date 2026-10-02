@@ -53,6 +53,41 @@ regions as facts rather than as somewhere a program is laid out. A board whose
 platform links with its own script names it in `linker_script` instead.
 :::
 
+## What a vendor asks for and does not ship
+
+The STMicroelectronics HAL opens with `#include "stm32f4xx_hal_conf.h"` — the
+bare name, not a path. Nothing ST ships satisfies that: what the vendor has is
+`stm32f4xx_hal_conf_template.h`, a template each project is expected to copy,
+edit and keep. Every ST project in existence has one of those in it, written by
+hand, kept in git, and going stale silently as the template moves.
+
+So this component writes it, during a build, from the vendor's own template and
+from two things the project already declares:
+
+| | |
+|---|---|
+| which drivers are enabled | the platform's own manifest, because that is what the platform supports |
+| the clock values | the target spec, because that is where a board's crystal lives |
+
+Everything else is the template's, untouched — it is the only authoritative
+statement of what those macros mean, and a hand-written copy is a second copy to
+keep in step with the vendor's.
+
+It goes into the platform's vendor tree, at `vendor/includes/`, and only when it is
+not already there. That is the same rule the whole vendor tree follows: fetched
+when absent, generated when the vendor asks for something it does not ship, and
+never checked in. A file kept in git is generated once and then stale for ever.
+
+A build that names an ST HAL and whose vendor tree has no template for it says so
+by name, rather than failing later on a missing header that names a file and not
+the reason.
+
+:::{note}
+This is part of `rho build`, for the same reason the vendor tree is fetched there:
+a project should build from a checkout containing nothing but sources, with
+everything it needs either retrieved or produced on the way.
+:::
+
 ## The pin map
 
 A board says what each pin is for, and which interface it is on:
