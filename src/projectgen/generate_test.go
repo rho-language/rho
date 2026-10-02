@@ -125,6 +125,195 @@ func TestEmitCProjectUsesCMakeSafeName(t *testing.T) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Test: sources a dependency does not compile                               */
+/* -------------------------------------------------------------------------- */
+
+// writeManifestFile puts a manifest where the generator will find one.
+func writeManifestFile(t *testing.T, root, content string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatalf("create %s: %v", root, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(content), 0644); err != nil {
+		t.Fatalf("write manifest in %s: %v", root, err)
+	}
+}
+
+// platformLayout lays out a repository the way a platform repository is: the
+// platform at its root, with an application beside the code it is written for.
+//
+// The application is inside the platform's directory on purpose, because that is
+// where an example lives, and it is the arrangement that decides whether a build
+// can tell the application's own sources from the platform's.
+func platformLayout(t *testing.T) (platform, project string) {
+	t.Helper()
+	repo := t.TempDir()
+	platform = filepath.Join(repo, "robohub-stm32")
+	project = filepath.Join(platform, "examples", "hello_world")
+
+	for _, dir := range []string{
+		filepath.Join(platform, "src"),
+		filepath.Join(project, "src"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("create %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(platform, "CMakeLists.txt"), []byte("# platform\n"), 0644); err != nil {
+		t.Fatalf("write platform CMakeLists.txt: %v", err)
+	}
+	return platform, project
+}
+
+// chdirInto moves the process into a directory for the duration of a test, which
+// is how a person runs a build: from the project they are building. A generator
+// that resolves a declared source against this rather than against the project
+// reads a different file depending on where the command was typed.
+func chdirInto(t *testing.T, dir string) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previous); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+}
+
+// What a C dependency provides is compiled by the dependency's own build file, so
+// it is left out of the executable this project declares.
+func TestASourceADependencyProvidesIsNotCompiledHere(t *testing.T) {
+	platform, project := platformLayout(t)
+	writeManifestFile(t, project, "module:\n  name: demo\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n"+
+		"depends:\n  - name: robohub-stm32\n    type: c\n    path: "+filepath.ToSlash(platform)+"\n")
+
+	ctx := Context{
+		ModuleName:  "demo",
+		ProjectRoot: project,
+		OutputDir:   filepath.Join(project, "build", "generated", "c"),
+		IR:          sampleIR(),
+	}
+	ctx.SourceFiles = []string{"src/main.rho.go", filepath.Join(platform, "src", "driver.c")}
+	artifacts, err := EmitCProject(ctx)
+	if err != nil {
+		t.Fatalf("EmitCProject failed: %v", err)
+	}
+	if !strings.Contains(artifacts.Build, "src/main.rho.go") {
+		t.Error("the project's own source should be compiled by its executable")
+	}
+	if strings.Contains(artifacts.Build, "driver.c") {
+		t.Error("a source a dependency provides is compiled by that dependency, not here")
+	}
+}
+
+// A project may live inside the repository of the platform it is written for —
+// an example beside the platform. Every one of its sources is then under a
+// dependency root, and a build that read that as ownership would compile nothing
+// of it and report a missing entry point rather than a project whose own file
+// had been left out.
+func TestAProjectInsideADependencyStillCompilesItsOwnSources(t *testing.T) {
+	platform, project := platformLayout(t)
+	if err := os.WriteFile(filepath.Join(project, "src", "main.c"), []byte("int main(void){return 0;}\n"), 0644); err != nil {
+		t.Fatalf("write main.c: %v", err)
+	}
+	writeManifestFile(t, project, "module:\n  name: hello-world\n  type: module\n  version: 0.1.0\nmain: src/main.c\n"+
+		"build:\n  language: c\n  sources:\n    - src/main.c\n"+
+		"depends:\n  - name: robohub-stm32\n    type: c\n    path: "+filepath.ToSlash(platform)+"\n")
+
+	ctx := Context{
+		ModuleName:  "hello-world",
+		ProjectRoot: project,
+		OutputDir:   filepath.Join(project, "build", "generated", "c"),
+		IR:          sampleIR(),
+		// A C project brings its own entry point, so the sources it declares are
+		// the only ones that can define `main`.
+		Native:      true,
+		SourceFiles: []string{"src/main.c"},
+	}
+	// Run from the project, as a person does.
+	chdirInto(t, project)
+	artifacts, err := EmitCProject(ctx)
+	if err != nil {
+		t.Fatalf("EmitCProject failed: %v", err)
+	}
+	own := filepath.ToSlash(filepath.Join(ctx.ProjectRoot, "src", "main.c"))
+	if !strings.Contains(artifacts.Build, own) {
+		t.Errorf("a source the project wrote should be compiled even from inside a dependency:\n%s", artifacts.Build)
+	}
+	if strings.Contains(artifacts.Build, "app_main") {
+		t.Error("a C project brings its own main, so the Rho entry wrapper should be left out")
+	}
+	if content, ok := artifacts.Extra["src/main.c"]; !ok || !strings.Contains(content, "int main") {
+		t.Error("a declared source travels with the generated project, so it can be built on its own")
+	}
+}
+
+// A configured project declares sources as well as a Kconfig bridge, and gets
+// both.
+func TestAConfiguredProjectKeepsItsOwnSources(t *testing.T) {
+	ctx := newContext(t)
+	ctx.Native = true
+	if err := os.MkdirAll(filepath.Join(ctx.ProjectRoot, "src"), 0755); err != nil {
+		t.Fatalf("create project src: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ctx.ProjectRoot, "src", "main.c"), []byte("int main(void){return 0;}\n"), 0644); err != nil {
+		t.Fatalf("write main.c: %v", err)
+	}
+	ctx.SourceFiles = []string{"src/main.c"}
+	ctx.Config = &Config{Dialect: "linux", ValuesFile: "project.conf"}
+
+	artifacts, err := EmitCProject(ctx)
+	if err != nil {
+		t.Fatalf("EmitCProject failed: %v", err)
+	}
+	if _, ok := artifacts.Extra["rho-config.cmake"]; !ok {
+		t.Error("a configured project should get the bridge that resolves its configuration")
+	}
+	if content, ok := artifacts.Extra["src/main.c"]; !ok || !strings.Contains(content, "int main") {
+		t.Error("resolving the configuration should not cost the project the C it wrote")
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Test: the foreign interface                                               */
+/* -------------------------------------------------------------------------- */
+
+// What a Rho program calls is a generated wrapper, not a symbol of the library it
+// was generated from, so the library's headers do not declare it. The header that
+// does is the one written beside the shim, and an application that leaves it out
+// compiles every foreign call as an implicit declaration — accepted by the
+// compiler, resolved by the linker to whatever the symbol is, and a changed
+// signature that only fails at run time.
+func TestTheApplicationIncludesWhatTheForeignInterfaceDeclares(t *testing.T) {
+	ctx := newContext(t)
+	ctx.ShimHeader = "ffi_shim.h"
+	artifacts, err := EmitCProject(ctx)
+	if err != nil {
+		t.Fatalf("EmitCProject failed: %v", err)
+	}
+	if !strings.Contains(artifacts.Implementation, "#include \"ffi_shim.h\"") {
+		t.Errorf("the generated application should include the shim's header:\n%s", artifacts.Implementation)
+	}
+}
+
+// A project that calls nothing foreign has no shim, and includes nothing for one.
+func TestAnApplicationWithoutAForeignInterfaceIncludesNoShim(t *testing.T) {
+	ctx := newContext(t)
+	artifacts, err := EmitCProject(ctx)
+	if err != nil {
+		t.Fatalf("EmitCProject failed: %v", err)
+	}
+	if strings.Contains(artifacts.Implementation, "ffi_shim") {
+		t.Errorf("a project with no foreign interface should not include a shim header:\n%s", artifacts.Implementation)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Test: Go Backend                                                           */
 /* -------------------------------------------------------------------------- */
 

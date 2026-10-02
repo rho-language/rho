@@ -298,11 +298,29 @@ type Context struct {
 	// IncludePaths and SourceFiles carry C dependency inputs.
 	IncludePaths []string
 	SourceFiles  []string
+	// Native says the project is written in C and is used as it stands.
+	//
+	// Everything the build does for it is the same — the same manifest, the same
+	// declarations, the same generated CMake, the same dependencies, the same
+	// flash command. The one thing not done is the translation, because there is
+	// nothing to translate. A project written this way is a passthrough: it goes
+	// into the generated project and is compiled there beside everything else.
+	Native bool
 	// ShimSources are the generated C a foreign interface calls through: the shim
 	// rho-cimport wrote alongside the Rho declarations. They are listed with the
 	// project's own sources rather than a dependency's, because they belong to
 	// this build and are regenerated with it.
 	ShimSources []string
+	// ShimHeader is the header that declares what ShimSources define, by name as
+	// the generated project knows it.
+	//
+	// It is named rather than derived from the first source: a shim source is
+	// listed here by path, and the sources a preset declares are listed here too
+	// without a header of their own. A program that calls a foreign function
+	// needs the declaration, and a call whose declaration is missing compiles as
+	// an implicit one — which is accepted, and which then fails to report a
+	// signature that does not match.
+	ShimHeader string
 	// EnabledConfigs are the configuration symbols that ended up set, by name
 	// without the `CONFIG_` prefix.
 	EnabledConfigs map[string]bool

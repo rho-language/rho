@@ -114,8 +114,11 @@ fn main() void {
         t.Fatalf("running program failed: %v", err)
     }
 
-    if got := string(data); got != "Hello from Rho\n" {
-        t.Fatalf("unexpected output: got %q, want %q", got, "Hello from Rho\n")
+    // `print` writes exactly what it is given: a newline is in the output only
+    // if the program put one there. Appending one would make what a program
+    // prints depend on the language rather than on the program.
+    if got := string(data); got != "Hello from Rho" {
+        t.Fatalf("unexpected output: got %q, want %q", got, "Hello from Rho")
     }
 }
 
@@ -166,8 +169,8 @@ fn main() void {
         t.Fatalf("running program failed: %v", err)
     }
 
-    if got := string(data); got != "Alice\n" {
-        t.Fatalf("unexpected output: got %q, want %q", got, "Alice\n")
+    if got := string(data); got != "Alice" {
+        t.Fatalf("unexpected output: got %q, want %q", got, "Alice")
     }
 }
 
@@ -217,8 +220,8 @@ fn main() void {
         t.Fatalf("running program failed: %v", err)
     }
 
-    if got := string(data); got != "Hello Alice\n" {
-        t.Fatalf("unexpected output: got %q, want %q", got, "Hello Alice\n")
+    if got := string(data); got != "Hello Alice" {
+        t.Fatalf("unexpected output: got %q, want %q", got, "Hello Alice")
     }
 }
 
