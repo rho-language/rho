@@ -44,5 +44,19 @@
     "tool": "picotool",
     "command": "picotool load -f -x {binary}",
     "comment": "the bootrom's own protocol over USB; hold BOOTSEL while powering the board"
+  },
+  "debug": {
+    "tool": "arm-none-eabi-gdb",
+    "server": "openocd",
+    "server_args": ["-f", "interface/cmsis-dap.cfg", "-f", "target/rp2040.cfg"],
+    "adapter": "cortex-debug",
+    "server_type": "gdb",
+    "interface": "cmsis-dap",
+    "config": ["interface/cmsis-dap.cfg", "target/rp2040.cfg"],
+    "device": "PicoProbe",
+    "svd": "rp2040.svd",
+    "port": "3333",
+    "load": true,
+    "comment": "the probe is a second USB cable into the board's debug port; the running program is halted, flashed and resumed on connect"
   }
 }

@@ -485,6 +485,61 @@ another programmer is a change to a board spec. The external tool and the probe
 have to be installed and connected; see `rho target show <board>` for what a
 given board expects.
 
+### Debugging
+
+`rho dbg` is a debug adapter. It speaks the Debug Adapter Protocol to an editor —
+VS Code, Neovim, anything with a debug client — and the GDB Machine Interface to a
+debugger, and it starts the probe that sits between the two:
+
+```sh
+rho module publish modules/components/rho-dbg
+
+# What a machine can debug a board with, and which of it is installed
+rho dbg engines
+rho dbg check -target nucleo-h753zi
+
+# A session, which an editor starts for you
+rho dbg --dap --program build/output/hello_world --target nucleo-h753zi
+
+# The chip's register map, for a peripheral view
+rho dbg registers -target nucleo-h753zi
+
+# Put a board's register map in the machine's cache, now
+rho dbg svd --target nucleo-h753zi
+```
+
+The register map a session shows comes from the project first — `debug.svd` in the
+application's manifest, a path per board — then from what the project or a platform
+vendors, and only then from the vendor's published set, worked out from the part
+number against what that set actually publishes. A part nothing publishes stops the
+session rather than showing registers it guessed at.
+
+The board decides the rest: its target spec says which debugger reaches it, which
+probe holds the connection and which register map describes its peripherals. A spec
+that declares no `debug:` block still says how to reach the board in its `flash:`
+command, and that is read for the probe — which is why every board spec written
+before anything needed a debugger is debuggable without being edited.
+
+GDB is the debugger this component carries. Another one is a plugin: a module in
+`modules/plugins` declaring `extends: rho-dbg` names the debugger's own adapter,
+and this runs it and relays to it. See `modules/components/rho-dbg/README.md`.
+
+### Configuring an editor
+
+`rho ide` writes what an editor reads, from what a project declares: the launch
+configurations, the tasks, and a workspace file that carries the compiler settings
+and the recommended extensions with them.
+
+```sh
+rho ide vscode .
+```
+
+Which produces `.vscode/launch.json` and `.vscode/tasks.json`, plus
+`<project>.code-workspace` — with a session for this toolchain's own adapter, one
+for the adapter the board's spec names, and an attach for a program already
+running. A file that is already there is updated rather than replaced, so a
+configuration a person has added to is kept.
+
 ## Examples
 
 The repository includes a minimal project in `examples/hello-rho` that loads a

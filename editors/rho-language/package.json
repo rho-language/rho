@@ -1,8 +1,8 @@
 {
     "name": "rho",
     "displayName": "Rho",
-    "description": "Language support for Rho (syntax highlighting, LSP client).",
-    "version": "0.3.0",
+    "description": "Rho: language support, a debug adapter, and the peripheral view for embedded targets.",
+    "version": "0.4.0",
     "publisher": "robohubplatform",
     "engines": {
         "vscode": "^1.82.0"
@@ -40,6 +40,26 @@
                     "type": "string",
                     "default": "",
                     "markdownDescription": "Where the `rho` toolchain is, **only when it is not where the extension finds it by itself**. The extension checks (1) this setting, (2) `RHO_BIN`, (3) the Rho home (`~/.rho`/`RHO_HOME`), and (4) `PATH`, so a deployed toolchain is found with nothing configured. Set an absolute path here when it is somewhere unusual; a relative path is read from the Rho home."
+                },
+                "rho.debug.target": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "The board to debug, as its target spec names it (`nucleo-h753zi`, `pico`). **Leave empty to use what the project declares** \u2014 the `target` in the launch configuration `rho ide vscode` writes. It decides the debugger, the probe and the register map, all of which are read from that board's spec rather than configured here."
+                },
+                "rho.debug.engine": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "A debugger this machine has, when the board's own is not the one wanted: `gdb` for the built-in GDB/MI engine, or the name of one a plugin provides. Run **Rho: Debuggers Available** to see what this machine has. A plugin in `modules/plugins` declaring `extends: rho-dbg` adds one."
+                },
+                "rho.debug.svdFile": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Where the chip's register map is, for a project that vendors its own CMSIS-SVD file. Leave empty to use the one the target spec names. Read by the peripheral view, and by a session that finds no map of its own."
+                },
+                "rho.debug.build": {
+                    "type": "boolean",
+                    "default": true,
+                    "markdownDescription": "Whether a session builds the project before it starts. A launch configuration may say `build: false`; **one that says so is not built, which is what a person debugging a program they just flashed wants.**"
                 }
             }
         },
@@ -78,37 +98,124 @@
                 "command": "rho.modules",
                 "title": "Manage Modules",
                 "category": "Rho"
+            },
+            {
+                "command": "rho.debug",
+                "title": "Debug This Project",
+                "category": "Rho",
+                "icon": "$(debug-alt)"
+            },
+            {
+                "command": "rho.debug.attach",
+                "title": "Attach to a Running Program",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.debug.setup",
+                "title": "Configure Editor for This Project",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.debug.engines",
+                "title": "Debuggers Available",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.clean",
+                "title": "Clean Project",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.flash",
+                "title": "Flash Board",
+                "category": "Rho"
+            },
+            {
+                "command": "rho.peripherals.refresh",
+                "title": "Refresh Peripherals",
+                "category": "Rho",
+                "icon": "$(refresh)"
             }
         ],
         "menus": {
             "editor/title": [
                 {
+                    "command": "rho.debug",
+                    "when": "editorLangId == rho",
+                    "group": "navigation@1"
+                },
+                {
                     "command": "rho.build",
                     "when": "editorLangId == rho",
-                    "group": "navigation"
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "rho.doc",
+                    "when": "editorLangId == rho",
+                    "group": "navigation@3"
                 }
             ],
             "editor/context": [
                 {
                     "command": "rho.run",
                     "when": "editorLangId == rho",
-                    "group": "navigation"
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "rho.debug",
+                    "when": "editorLangId == rho",
+                    "group": "navigation@2"
                 },
                 {
                     "command": "rho.test",
-                    "when": "editorLangId == rho"
+                    "when": "editorLangId == rho",
+                    "group": "1_rho"
+                },
+                {
+                    "command": "rho.clean",
+                    "when": "editorLangId == rho",
+                    "group": "1_rho"
+                },
+                {
+                    "command": "rho.flash",
+                    "when": "editorLangId == rho",
+                    "group": "1_rho"
                 },
                 {
                     "command": "rho.doc",
-                    "when": "editorLangId == rho"
+                    "when": "editorLangId == rho",
+                    "group": "2_rho"
                 },
                 {
                     "command": "rho.modules",
-                    "when": "editorLangId == rho"
+                    "when": "editorLangId == rho",
+                    "group": "2_rho"
+                },
+                {
+                    "command": "rho.debug.setup",
+                    "when": "editorLangId == rho",
+                    "group": "9_rho"
+                }
+            ],
+            "view/title": [
+                {
+                    "command": "rho.peripherals.refresh",
+                    "when": "view == rho.peripherals",
+                    "group": "navigation"
                 }
             ]
         },
         "keybindings": [
+            {
+                "command": "rho.debug",
+                "key": "f5",
+                "when": "editorLangId == rho"
+            },
+            {
+                "command": "rho.debug.attach",
+                "key": "shift+f5",
+                "when": "editorLangId == rho"
+            },
             {
                 "command": "rho.build",
                 "key": "ctrl+alt+b",
@@ -116,11 +223,131 @@
                 "when": "editorLangId == rho"
             },
             {
-                "command": "rho.run",
-                "key": "f5",
+                "command": "rho.clean",
+                "key": "ctrl+alt+shift+b",
+                "mac": "cmd+alt+shift+b",
+                "when": "editorLangId == rho"
+            },
+            {
+                "command": "rho.flash",
+                "key": "ctrl+alt+f",
+                "mac": "cmd+alt+f",
                 "when": "editorLangId == rho"
             }
-        ]
+        ],
+        "debuggers": [
+            {
+                "type": "rho",
+                "label": "Rho",
+                "languages": [
+                    "rho",
+                    "c"
+                ],
+                "configurationAttributes": {
+                    "launch": {
+                        "required": [],
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "The built program. Filled in from the project when not given."
+                            },
+                            "target": {
+                                "type": "string",
+                                "description": "The board, as its target spec names it. Its spec says which debugger and which probe reach it."
+                            },
+                            "engine": {
+                                "type": "string",
+                                "description": "A debugger this machine has. Empty means the board's own, or GDB."
+                            },
+                            "svdFile": {
+                                "type": "string",
+                                "description": "The chip's register map, for a project that vendors its own."
+                            },
+                            "serverpath": {
+                                "type": "string",
+                                "description": "The probe server, when this machine has it somewhere unusual."
+                            },
+                            "cwd": {
+                                "type": "string",
+                                "description": "Where the session runs.",
+                                "default": "${workspaceFolder}"
+                            },
+                            "build": {
+                                "type": "boolean",
+                                "description": "Whether to build before starting.",
+                                "default": true
+                            },
+                            "stopAtEntry": {
+                                "type": "boolean",
+                                "description": "Whether to stop before the program's first line.",
+                                "default": false
+                            }
+                        }
+                    },
+                    "attach": {
+                        "required": [],
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "The built program, loaded for its symbols."
+                            },
+                            "target": {
+                                "type": "string",
+                                "description": "The board to attach to."
+                            },
+                            "cwd": {
+                                "type": "string",
+                                "description": "Where the session runs.",
+                                "default": "${workspaceFolder}"
+                            }
+                        }
+                    }
+                },
+                "initialConfigurations": [
+                    {
+                        "name": "Debug this project",
+                        "type": "rho",
+                        "request": "launch",
+                        "cwd": "${workspaceFolder}",
+                        "build": true
+                    }
+                ],
+                "configurationSnippets": [
+                    {
+                        "label": "Rho: debug a board",
+                        "description": "Debug a board named by its target spec, with its own debugger and probe.",
+                        "body": {
+                            "name": "Debug ${1:target}",
+                            "type": "rho",
+                            "request": "launch",
+                            "program": "^\"\\${workspaceFolder}/build/output/${2:app}\"",
+                            "target": "$1",
+                            "cwd": "^\"\\${workspaceFolder}\"",
+                            "preLaunchTask": "rho: build",
+                            "build": true
+                        }
+                    }
+                ]
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "rho",
+                    "title": "Rho",
+                    "icon": "media/rho.svg"
+                }
+            ]
+        },
+        "views": {
+            "rho": [
+                {
+                    "id": "rho.peripherals",
+                    "name": "Peripherals",
+                    "contextualTitle": "Peripherals"
+                }
+            ]
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
@@ -137,5 +364,10 @@
     "dependencies": {
         "vscode-languageclient": "^9.0.0",
         "vscode-languageserver-protocol": "^3.17.0"
-    }
+    },
+    "activationEvents": [
+        "onLanguage:rho",
+        "onDebugResolve:rho",
+        "workspaceContains:**/module.yml"
+    ]
 }
