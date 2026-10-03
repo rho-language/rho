@@ -1,8 +1,5 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import * as fs from 'fs';
 import * as os from 'os';
-import { execFile } from 'child_process';
 import {
     LanguageClient,
     LanguageClientOptions,
@@ -10,162 +7,41 @@ import {
     State,
     TransportKind
 } from 'vscode-languageclient/node';
+import {
+    Component,
+    findToolchain,
+    inTerminal,
+    run,
+    setToolchain,
+    toolchainPath,
+    toolchainSource,
+    toolchainVersion,
+    workspaceRoot
+} from './toolchain';
+import { registerDebugging } from './debugger';
+import { registerPeripherals } from './peripherals';
 
 let client: LanguageClient;
 let status: vscode.StatusBarItem;
-/** The toolchain this session found, so a command runs the same one. */
-let toolchain: string | undefined;
-
-/**
- * Where the Rho home is.
- *
- * The extension looks here rather than at the workspace because a toolchain is
- * deployed, not checked out: the sources it was built from are not on the machine
- * that runs it, so a path relative to a project would find nothing on exactly the
- * machines that installed Rho to use it.
- */
-function rhoHome(): string {
-    return process.env.RHO_HOME ?? path.join(os.homedir(), '.rho');
-}
 
 /** Server is the language server, and how to start it. */
-interface Server {
-    command: string;
+interface Server extends Component {
     args: string[];
-    source: string;
 }
 
 /**
- * Where the language server is, in the order a person would look.
+ * The language server, which is a component the toolchain dispatches to.
  *
- * There is no standalone server binary: the server is a component the toolchain
- * dispatches to, the way `rho doc` dispatches to the generator. So what is found
- * here is the toolchain, and what is run is `rho lsp`.
- *
- * 1. The setting, because a person who set it meant it. A relative path is read
- *    from the Rho home, which is where a deployed toolchain puts itself.
- * 2. `RHO_BIN`, which the toolchain sets for the processes it launches, so a
- *    session started through `rho` uses that toolchain rather than a copy found
- *    by searching.
- * 3. The Rho home, which is where `rho install` puts the binary.
- * 4. The path, which is where it is once somebody has followed the install
- *    instructions.
- *
- * When none of those find it, the toolchain is not installed on this machine and
- * nothing the extension can do will change that — so it says so and offers to
- * install it, rather than failing with a path nobody chose.
+ * Nothing is found here beyond the toolchain: the server is not a separate program
+ * with its own path, it is `rho lsp`, and the search for where the toolchain is
+ * belongs to one place rather than to three of them.
  */
-function findServer(): Server | undefined {
-    const configured = (vscode.workspace.getConfiguration('rho.lsp').get<string>('serverPath') ?? '').trim();
-    if (configured !== '') {
-        const candidate = path.isAbsolute(configured) ? configured : path.join(rhoHome(), configured);
-        if (isRunnable(candidate)) {
-            return { command: candidate, args: ['lsp'], source: 'the setting' };
-        }
-        // A path that was set and is not there is worth saying out loud: the
-        // fallback would find the toolchain anyway, and the person would never
-        // learn the setting they wrote is doing nothing.
-        vscode.window.showWarningMessage(
-            `Rho: ${configured} is set as the toolchain but is not there. Using the one that is installed.`
-        );
+function findLanguageServer(): Server | undefined {
+    const found = findToolchain();
+    if (!found) {
+        return undefined;
     }
-
-    const fromEnv = process.env.RHO_BIN;
-    if (fromEnv && isRunnable(fromEnv)) {
-        return { command: fromEnv, args: ['lsp'], source: 'RHO_BIN' };
-    }
-
-    const installed = path.join(rhoHome(), 'bin', 'rho');
-    if (isRunnable(installed)) {
-        return { command: installed, args: ['lsp'], source: 'the Rho home' };
-    }
-
-    const found = which('rho');
-    if (found) {
-        return { command: found, args: ['lsp'], source: 'PATH' };
-    }
-    return undefined;
-}
-
-/** isRunnable reports whether a path is a file that can be run. */
-function isRunnable(candidate: string): boolean {
-    try {
-        const info = fs.statSync(candidate);
-        if (!info.isFile()) {
-            return false;
-        }
-        // A file with no execute bit is not something to run, and reporting it as
-        // found would fail later with a message about permissions rather than
-        // about where the toolchain is.
-        if (process.platform !== 'win32') {
-            fs.accessSync(candidate, fs.constants.X_OK);
-        }
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-/** which finds a program on the path, without a shell. */
-function which(program: string): string | undefined {
-    const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
-    const suffixes = process.platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
-    for (const dir of dirs) {
-        for (const suffix of suffixes) {
-            const candidate = path.join(dir, program + suffix);
-            if (isRunnable(candidate)) {
-                return candidate;
-            }
-        }
-    }
-    return undefined;
-}
-
-/** run runs the toolchain and answers with what it said, or why it could not. */
-function run(args: string[], cwd?: string): Promise<{ ok: boolean; out: string }> {
-    return new Promise(resolve => {
-        if (!toolchain) {
-            resolve({ ok: false, out: 'the Rho toolchain was not found' });
-            return;
-        }
-        execFile(toolchain, args, { cwd, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-            // A toolchain that answered with an error said something useful, so
-            // its output is kept either way: the message is what a person needs
-            // when a build fails, and discarding it is how a tool becomes
-            // mysteriously unhelpful.
-            resolve({ ok: !err, out: `${stdout ?? ''}${stderr ?? ''}`.trim() });
-        });
-    });
-}
-
-/** inTerminal runs the toolchain where its output is visible and long-lived. */
-function inTerminal(args: string[], cwd?: string) {
-    const terminal = vscode.window.createTerminal({ name: `rho ${args[0] ?? ''}`.trim(), cwd });
-    terminal.show();
-    terminal.sendText(toolchain ? `${toolchain} ${args.join(' ')}` : `rho ${args.join(' ')}`);
-}
-
-/** workspaceRoot is the folder a project command runs in. */
-function workspaceRoot(): string | undefined {
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-}
-
-/** toolchainVersion is what the toolchain says it is. */
-function toolchainVersion(): Promise<string | undefined> {
-    return new Promise(resolve => {
-        if (!toolchain) {
-            resolve(undefined);
-            return;
-        }
-        execFile(toolchain, ['--version'], { timeout: 4000 }, (err, stdout) => {
-            if (err) {
-                resolve(undefined);
-                return;
-            }
-            const first = stdout.split('\n')[0]?.trim();
-            resolve(first && /v?\d+\.\d+/.test(first) ? first : undefined);
-        });
-    });
+    return { command: found.command, args: ['lsp'], source: found.source };
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -174,13 +50,13 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(status);
     showStatus('finding Rho', 'busy');
 
-    const found = findServer();
+    const found = findLanguageServer();
     if (!found) {
         showStatus('Rho not installed', 'error');
         await offerInstall();
         return;
     }
-    toolchain = found.command;
+    setToolchain(found);
 
     const serverOptions: ServerOptions = {
         command: found.command,
@@ -222,9 +98,10 @@ export async function activate(context: vscode.ExtensionContext) {
         const version = await toolchainVersion();
         const lines = [
             `Rho Toolchain Status`,
-            `  toolchain: ${version ?? 'not reported'}`,
+            `  version: ${version ?? 'not reported'}`,
+            `  toolchain: ${toolchainPath() ?? 'not found'}`,
+            `  found in: ${toolchainSource() ?? 'nowhere'}`,
             `  server: ${found.command}`,
-            `  found in: ${found.source}`,
             `  client: ${client ? client.state : State.Stopped}`,
         ];
         vscode.window.showInformationMessage(lines.join('\n'));
@@ -245,7 +122,6 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    register(context, 'rho.build', () => inTerminal(['build', '.'], workspaceRoot()));
     register(context, 'rho.run', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -257,6 +133,13 @@ export async function activate(context: vscode.ExtensionContext) {
     register(context, 'rho.test', () => inTerminal(['test'], workspaceRoot()));
     register(context, 'rho.doc', () => inTerminal(['doc', '.', '-out', 'build/docs'], workspaceRoot()));
     register(context, 'rho.modules', () => inTerminal(['module', 'list'], workspaceRoot()));
+
+    // Debugging and the peripheral panel, both of which dispatch to components the
+    // same way the language server does. Registered before the server starts so a
+    // project whose sources are generated — an embedded one — has F5 and its
+    // registers working anyway.
+    registerDebugging(context);
+    registerPeripherals(context);
 
     try {
         await client.start();
@@ -315,9 +198,18 @@ function showStatus(text: string, kind: 'ok' | 'busy' | 'error', found?: { comma
         return;
     }
     status.text = kind === 'busy' ? `$(sync~spin) ${text}` : `$(circuit-board) ${text}`;
-    status.tooltip = found
-        ? `Rho language server\n${found.command}\nfound in ${found.source}`
-        : 'Rho language server';
+    // The tooltip says the toolchain and the debugger, not just the server: the two
+    // failures a person meets first are "the toolchain is not installed" and "this
+    // board has no debugger", and both are visible from here.
+    status.tooltip = [
+        toolchainPath() ?? 'Rho toolchain not found',
+        toolchainSource() ? `found in ${toolchainSource()}` : undefined,
+        found ? `language server: ${found.command}` : undefined,
+        'debug adapter: rho dbg --dap',
+        'peripherals: rho dbg registers'
+    ]
+        .filter(line => line !== undefined)
+        .join('\n');
     status.backgroundColor = kind === 'error' ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
     status.show();
 }

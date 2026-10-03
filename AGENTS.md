@@ -42,7 +42,8 @@ by hand.
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-doc`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
+- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-doc`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
+- `src/ide/` - What an editor reads, rendered from what a project declares (`rho ide`)
 - `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-gtest`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
@@ -112,6 +113,34 @@ cd <project-dir>/build/generated/c && cmake -B out && cmake --build out
 A target may ask for a port, which is how a project gets what only a host can
 supply: `logemit` for logging, `fsstore` for a module store, `docemit` for the
 documentation generator, `kconfig` for a resolved configuration.
+
+## Debugging
+
+`rho dbg` is a debug adapter: the Debug Adapter Protocol on one side, the GDB
+Machine Interface on the other, and the probe that reaches a board in between.
+The board's own facts come from its target spec, and the editor's from the same
+place — `rho ide vscode` writes them, so a launch configuration and the session
+it produces cannot disagree about the board.
+
+```sh
+rho dbg engines                       # what a machine can debug a board with
+rho dbg check -target pico            # which of it is installed
+rho dbg registers -target pico        # the chip's register map, as JSON
+rho dbg svd --target pico             # put that map in the machine's cache
+rho dbg --dap --program build/output/app --target pico
+```
+
+A debugger this component has never heard of is a plugin: a module in
+`modules/plugins` declaring `extends: rho-dbg` with the `engine` contract names
+the debugger's own adapter, and `rho dbg` runs it and relays to it. GDB is the one
+it carries, because every cross toolchain has one.
+
+A register map comes from the application first — `debug.svd` in its manifest, a
+path per board — then from what the project or a platform vendors, then from the
+vendor's published set, which `rho-dbg` is configured with (`svd_repository`,
+`svd_branch`, `svd_cache`, `svd_fetch`, declared in its own manifest and read from
+the `config/dbg.yml` that travels with it). A part that the published set does not
+have stops the session rather than being approximated.
 
 ## Targets
 

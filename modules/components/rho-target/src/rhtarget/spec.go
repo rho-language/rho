@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -59,6 +60,14 @@ type Spec struct {
 	// Arch is the architecture a chip is built as, and the spec it inherits its
 	// flags from.
 	Arch string `json:"arch,omitempty"`
+	// Preset is the family spec this one is built for, when a board names its family
+	// through its preset rather than through `mcu` or `arch`.
+	//
+	// Read as a link in the chain when it names a spec, and as the build preset it
+	// otherwise is. Those are the same string for a platform whose presets are named
+	// after their families, which is what lets one field carry both meanings without
+	// either of them being wrong about the other.
+	Preset string `json:"preset,omitempty"`
 	// MCU is the chip a board carries.
 	MCU string `json:"mcu,omitempty"`
 	// ResolvedFrom names the specs this one was resolved from, nearest first, so
@@ -93,6 +102,8 @@ type Spec struct {
 	Peripherals map[string]Peripheral `json:"peripherals,omitempty"`
 	// Flash is how a built program is written to the board.
 	Flash Flash `json:"flash,omitempty"`
+	// Debug is how a program's execution is inspected on this target.
+	Debug Debug `json:"debug,omitempty"`
 	// Source is the file the spec was read from, so a report can say where it
 	// came from.
 	Source string `json:"-"`
@@ -274,6 +285,229 @@ func SplitCommand(command string) []string {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Debugging                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// Debug is how a program's execution is inspected on a target.
+//
+// It is a block in a spec for the same reason `flash` is: which debugger, which
+// probe, and where the register map lives are facts about the board rather than
+// about the project, and they are the same for every project built for it. A
+// build can therefore hand an editor a debug configuration that is already
+// correct instead of one the person has to know how to write.
+type Debug struct {
+	// Tool is the debugger program, such as arm-none-eabi-gdb. Empty means the
+	// debugger that goes with the compiler, which is what a cross toolchain
+	// always has.
+	Tool string `json:"tool,omitempty"`
+	// Server is the program that sits between the debugger and the board when a
+	// probe is in the way: openocd, pyocd, probe-rs, JLinkGDBServer. A target
+	// that is debugged in place, with no probe between, declares none and the
+	// debugger starts the program itself.
+	Server string `json:"server,omitempty"`
+	// ServerArgs are the arguments that server is started with, before the port
+	// it is told to listen on. Written as a list rather than a command string:
+	// these are arguments, and a list is what a process is started with.
+	ServerArgs []string `json:"server_args,omitempty"`
+	// Adapter names the debug adapter an editor drives this target with, which is
+	// `cortex-debug` for a Cortex-M board. It is a name an editor resolves rather
+	// than a program to run, so it is said here and left to the editor.
+	Adapter string `json:"adapter,omitempty"`
+	// ServerType is what the debugger connects to, which is what distinguishes
+	// one probe server from another at the far end of the port: `gdb` for
+	// OpenOCD and GDB server, `pyocd`, `jlink`.
+	ServerType string `json:"server_type,omitempty"`
+	// Interface is the probe, as the server names it: cmsis-dap, stlink.
+	Interface string `json:"interface,omitempty"`
+	// Config are the configuration files the server is started with, as the
+	// server spells them: interface/stlink.cfg, target/stm32f4x.cfg.
+	Config []string `json:"config,omitempty"`
+	// Device is the probe as the vendor names it, for a server that wants that
+	// rather than an interface and a board: J-Link, ST-LINK/V2.
+	Device string `json:"device,omitempty"`
+	// SVD is the CMSIS-SVD file that describes this chip's peripherals, which is
+	// what turns a register address into a name a person recognises. It is a path,
+	// looked for beside the program and in the vendor tree of each platform the
+	// project depends on.
+	SVD string `json:"svd,omitempty"`
+	// SVDSource is the same file in the repository `rho dbg` fetches from when no
+	// project and no platform carries one: a vendor directory and a file, as the
+	// CMSIS device data repository writes it — `STMicro/STM32H7x3.svd`.
+	//
+	// Separate from `svd` because the two say different things and neither is
+	// derived from the other. `svd` is where a file a repository carries is; this is
+	// which file in a vendor's published set it is, and a path cannot say that
+	// because the file's name in the vendor's set is the vendor's, not ours —
+	// `STM32H7x3.svd` covers a whole device line where a project would have named
+	// one part. Naming it is therefore a fact about the part, which only the spec
+	// that knows the part can state.
+	SVDSource string `json:"svd_source,omitempty"`
+	// Port is the TCP port the server listens on for the debugger. Empty means
+	// 3333, which is what every GDB server in this family defaults to.
+	Port string `json:"port,omitempty"`
+	// Reset is how the board is reset before a session starts, which is the one
+	// thing that differs between a board whose bootloader watches a pin and one
+	// that does not. Empty means halt-and-load, which is what most do.
+	Reset string `json:"reset,omitempty"`
+	// Load is whether the program is written to the board at the start of a session.
+	// A launch on a board that is already flashed says false; a launch that flashes
+	// first, or reloads a rebuilt binary, says true; and a block that says nothing
+	// leaves it to be worked out, which is why this is a pointer rather than a flag.
+	//
+	// Three states, not two, and the third is the one that matters here: a family
+	// that names its register map and says nothing about loading leaves this to the
+	// board's flash command, and a bool could not tell that from a board that said
+	// `load: false`.
+	Load *Tri `json:"load,omitempty"`
+	// Comment says what has to be true for a session to work at all: a boot mode,
+	// a jumper, a probe that has to be plugged in a particular way.
+	Comment string `json:"comment,omitempty"`
+}
+
+// LoadsProgram is whether a session on this target writes the program to it.
+func (d Debug) LoadsProgram() bool { return d.Load != nil && d.Load.Value }
+
+// Tri is a yes/no a spec may leave out, read from either spelling of one.
+//
+// Two things about it, both from the same source. A YAML scalar arrives as a
+// string — `load: true` and `load: "true"` are the same to the reader, and the
+// first is what a person writes — so a plain bool refuses the ordinary spelling of
+// the thing it means, in one of the two formats a spec may be written in. And a
+// bool cannot say "nobody said", which is the third state that matters for a field
+// one spec may set and another leaves to be worked out.
+type Tri struct {
+	// Value is what it says.
+	Value bool
+	// Stated says whether it said anything at all.
+	Stated bool
+}
+
+// UnmarshalJSON reads a yes/no, or the absence of one.
+func (t *Tri) UnmarshalJSON(data []byte) error {
+	text := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	switch strings.ToLower(text) {
+	case "null", "":
+		*t = Tri{}
+	case "true", "yes", "1", "on":
+		*t = Tri{Value: true, Stated: true}
+	case "false", "no", "0", "off":
+		*t = Tri{Value: false, Stated: true}
+	default:
+		return fmt.Errorf("%q is not a yes or a no", text)
+	}
+	return nil
+}
+
+// MarshalJSON writes what it says, and nothing when it said nothing.
+func (t Tri) MarshalJSON() ([]byte, error) {
+	if !t.Stated {
+		return []byte("null"), nil
+	}
+	if t.Value {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
+}
+
+// DebugPort is the port the default server is told to listen on. It is the port
+// GDB itself defaults to, so a spec that names none lands where a debugger run
+// by hand would have connected.
+const DebugPort = "3333"
+
+// Declared reports whether the target says anything about debugging.
+func (d Debug) Declared() bool {
+	// Every field, because a block that declares one thing is declared: replacing it
+	// with a parent's would lose the one thing it said. A board that names where its
+	// register map is and says nothing about its probe still keeps that, and gets
+	// the probe filled in beside it.
+	return strings.TrimSpace(d.Tool) != "" ||
+		strings.TrimSpace(d.Server) != "" ||
+		strings.TrimSpace(d.Adapter) != "" ||
+		strings.TrimSpace(d.SVD) != "" ||
+		strings.TrimSpace(d.SVDSource) != ""
+}
+
+// Watcher is whether a probe has to be running before a debugger may connect.
+//
+// It is the difference between debugging a board and debugging a process, and
+// getting it wrong is why a launch works on a laptop and does nothing on the
+// bench: a program running on the host is started by the debugger, and a program
+// on a board is started by whatever flashed it.
+func (d Debug) Watcher() bool {
+	return strings.TrimSpace(d.Server) != ""
+}
+
+// ListenPort is the port the server is told to listen on, which is the declared
+// one or the default.
+func (d Debug) ListenPort() string {
+	if port := strings.TrimSpace(d.Port); port != "" {
+		return port
+	}
+	return DebugPort
+}
+
+// ServerInvocation is how the server is started, as the program to run and the
+// arguments to run it with.
+//
+// The listening port is appended rather than written into a spec, because a spec
+// that named one would have to be edited the moment two sessions were wanted at
+// once. A target that declares no server answers false: there is nothing to
+// start, and the debugger starts the program itself.
+func (d Debug) ServerInvocation() (string, []string, bool) {
+	server := strings.TrimSpace(d.Server)
+	if server == "" {
+		return "", nil, false
+	}
+	argv := append([]string{}, d.ServerArgs...)
+	return server, append(argv, "-s", d.ListenPort()), true
+}
+
+// Debugger is the debugger a session on this target is run with, given the
+// compiler this target is built with.
+//
+// A spec that names a tool has said which one, and that answer stands. One that
+// does not has said nothing, which is not the same as having no debugger: every
+// GNU toolchain ships the debugger that goes with its compiler, and the name of
+// one is the name of the other with the compiler replaced. So a spec may leave
+// this out and still be debuggable, and `arm-none-eabi-gcc` becomes
+// `arm-none-eabi-gdb` without anybody writing that down.
+func (d Debug) Debugger(compiler string) string {
+	if tool := strings.TrimSpace(d.Tool); tool != "" {
+		return tool
+	}
+	return DebuggerFor(compiler)
+}
+
+// DebuggerFor is the debugger that goes with a compiler.
+//
+// The compiler's own name decides it: the last component of a prefixed
+// toolchain is dropped and `gdb` appended, so `arm-none-eabi-gcc` gives
+// `arm-none-eabi-gdb` and `riscv32-unknown-elf-gcc` gives
+// `riscv32-unknown-elf-gdb`. A compiler with no prefix is the host's own, and
+// the host's debugger is `gdb`.
+func DebuggerFor(compiler string) string {
+	compiler = strings.TrimSpace(compiler)
+	if compiler == "" {
+		return ""
+	}
+	if slash := strings.LastIndexAny(compiler, "/\\"); slash >= 0 {
+		compiler = compiler[slash+1:]
+	}
+	// The suffixes a compiler is named with, longest first so that `g++` is not
+	// read as a `g`.
+	for _, suffix := range []string{"-gcc", "-g++", "-clang++", "-clang", "-cc"} {
+		if trimmed := strings.TrimSuffix(compiler, suffix); trimmed != compiler {
+			return trimmed + "-gdb"
+		}
+	}
+	switch compiler {
+	case "gcc", "g++", "cc", "c++", "clang", "clang++":
+		return "gdb"
+	}
+	return compiler + "-gdb"
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Reading                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -449,6 +683,20 @@ func (l *Library) Get(name string) (Spec, bool) {
 	return spec, found
 }
 
+// Has reports whether a spec of this name is declared.
+//
+// Reported separately from Get because a caller walking a chain of parents has to
+// ask whether the name it holds is a spec before treating it as one, and Get
+// answers with a zero spec — which is indistinguishable from a spec that declares
+// nothing at all.
+func (l *Library) Has(name string) bool {
+	if name == "" {
+		return false
+	}
+	_, found := l.Get(name)
+	return found
+}
+
 // Boards are the specs that describe a board.
 func (l *Library) Boards() []Spec {
 	boards := []Spec{}
@@ -481,6 +729,8 @@ func (l *Library) Resolve(name string) (Spec, []Diagnostic) {
 
 	chain := []Spec{}
 	seen := map[string]bool{}
+	// unresolved is the name the chain ended on, if it ended on one.
+	unresolved := ""
 	for current := spec; ; {
 		if seen[current.Name] {
 			diagnostics = append(diagnostics, Diagnostic{
@@ -490,36 +740,55 @@ func (l *Library) Resolve(name string) (Spec, []Diagnostic) {
 		seen[current.Name] = true
 		chain = append(chain, current)
 
-		next := current.MCU
-		if next == "" {
-			next = current.Arch
-		}
-		if next == "" {
+		// Each relation is tried until one names a spec, because a relation that names
+		// nothing is the ordinary case rather than a fault: no spec is named after a
+		// part, and most presets name a build preset rather than a family. Stopping at
+		// the first name that names nothing would cut the chain short on every board
+		// that says its family through a preset, which is every board on such a
+		// platform.
+		next := ""
+		for _, relation := range relationsOf(current) {
+			if relation.name == "" || !l.Has(relation.name) {
+				continue
+			}
+			// A preset that names its own spec is not a link to itself: it is a family
+			// spec saying which preset a program is built for, which is every one of
+			// them and is not a cycle. An `mcu` or an `arch` that names the spec it is
+			// on genuinely is, and is reported.
+			if relation.field == "preset" && relation.name == current.Name {
+				continue
+			}
+			next = relation.name
 			break
 		}
-		parent, parentFound := l.Get(next)
-		if !parentFound {
-			// The chain names the part a spec is for, and no spec is named after
-			// a part: a board is `nucleo-h753zi` and carries an `STM32H753ZI`, and
-			// `STM32H753ZI` is the chip, not another spec. So the chain usually
-			// ends here, which is not a problem.
-			//
-			// A spec that stops there has to be able to stand on its own. A board
-			// spec does — it carries its own toolchain, memory map and flash
-			// command — so it is left alone. One that cannot is incomplete, and
-			// saying so names the spec that is short rather than the part it
-			// mentioned.
-			if !specIsSelfContained(current) {
-				diagnostics = append(diagnostics, Diagnostic{
-					Path: current.Source,
-					Message: fmt.Sprintf("%q is for %q, which no spec declares, and it does not "+
-						"carry a toolchain and memory map of its own to stand without one",
-						current.Name, next),
-				})
+		if next == "" {
+			// Nothing more to fold. Which relation was named and named nothing is
+			// said, because that is what a person reading a diagnostic for a board
+			// needs: not that a name is missing, but which one and why the rest of the
+			// chain was not enough.
+			for _, relation := range relationsOf(current) {
+				if relation.name != "" && !(relation.field == "preset" && relation.name == current.Name) {
+					unresolved = relation.name
+					break
+				}
 			}
 			break
 		}
+		parent, _ := l.Get(next)
 		current = parent
+	}
+
+	// The chain named something that no spec declares — almost always a part, since
+	// no spec is named after one: a board is `nucleo-h753zi` and carries an
+	// `STM32H753ZI`, which is the chip rather than another spec. That is not a
+	// problem for a board, which carries its own memory map and flash command; it is
+	// a problem for a spec that cannot stand on its own, and the diagnostic says
+	// which one rather than naming the part again.
+	if unresolved != "" && !specIsSelfContained(chain[0]) {
+		diagnostics = append(diagnostics, Diagnostic{
+			Path:    chain[0].Source,
+			Message: fmt.Sprintf("%q is for %q, which no spec declares, and it does not carry a toolchain and memory map of its own to stand without one", chain[0].Name, unresolved),
+		})
 	}
 
 	// The chain is written child first, and a child's facts win: a board's flags
@@ -536,7 +805,238 @@ func (l *Library) Resolve(name string) (Spec, []Diagnostic) {
 	resolved.Kind = spec.Kind
 	resolved.Name = spec.Name
 	resolved.Source = spec.Source
+
+	// A spec that says nothing about debugging is not necessarily a board that
+	// cannot be: it is more often a board that already says how it is reached.
+	// Derived after the chain is folded, so that a chip's flash block and a board's
+	// are both available and a board's still wins.
+	resolved.Debug = resolved.Debugged()
 	return resolved, diagnostics
+}
+
+// Debugged is how this target is debugged, from its own `debug` block when it
+// declares one and from its `flash` block when it does not.
+//
+// The derivation exists because the two blocks describe the same thing from the two
+// ends. Reaching a board to write to its flash and reaching it to read a register
+// are the same connection: the same probe, the same interface configuration, the
+// same target configuration. A board spec written before anything needed a debugger
+// already carries every fact a session needs in the command that flashes it, and
+// requiring a second block to be written by hand would leave those boards
+// undebuggable for no reason.
+//
+// What is taken from the flash command is what a probe server needs and nothing
+// else: the program, and the `-f` configuration files. What is dropped is what the
+// server would refuse — `-c program ... exit`, which writes the flash and quits,
+// and the binary it names. The port is the one every server in this family defaults
+// to, because the flash command does not listen on one at all.
+func (s Spec) Debugged() Debug {
+	debug := s.Debug
+	if !debug.Declared() {
+		return s.derivedDebug(debug)
+	}
+
+	// A block that declares one thing and not the other is the ordinary case, not
+	// an oversight: a family says which register map its parts have and says nothing
+	// about how they are reached, because how they are reached is the board's. So the
+	// derivation fills in the fields the block left out and the block keeps the ones
+	// it set — which is the same rule every other fact in a spec follows, and the
+	// reason a family can add a register map without a board's probe going missing.
+	if !debug.Watcher() && strings.TrimSpace(debug.Tool) == "" {
+		return s.derivedDebug(debug)
+	}
+	return debug
+}
+
+// derivedDebug is the block a flash command implies, with whatever a declared block
+// already said kept.
+func (s Spec) derivedDebug(declared Debug) Debug {
+	server, config, interfaceName, ok := probeFromFlashCommand(s.Flash)
+	if !ok {
+		return declared
+	}
+	writes := Tri{Value: true, Stated: true}
+	derived := Debug{
+		Server:     server,
+		ServerArgs: configArguments(config),
+		Config:     config,
+		Interface:  interfaceName,
+		Port:       DebugPort,
+		// The program is written to the board at the start of a session, because the
+		// board was being flashed by the very command this was read from.
+		Load: &writes,
+	}
+	if strings.HasPrefix(s.Core, "cortex-m") {
+		derived.Adapter = "cortex-debug"
+	}
+	if derived.Tool == "" {
+		derived.Tool = DebuggerFor(s.Toolchain.Compiler)
+	}
+	return fillDebug(declared, derived)
+}
+
+// fillDebug is the declared block over the derived one: a field the block set is the
+// answer, and a field it left out is the derived block's.
+func fillDebug(declared Debug, derived Debug) Debug {
+	out := declared
+	if out.Tool == "" {
+		out.Tool = derived.Tool
+	}
+	if out.Server == "" {
+		out.Server = derived.Server
+	}
+	if len(out.ServerArgs) == 0 {
+		out.ServerArgs = derived.ServerArgs
+	}
+	if len(out.Config) == 0 {
+		out.Config = derived.Config
+	}
+	if out.Interface == "" {
+		out.Interface = derived.Interface
+	}
+	if out.Adapter == "" {
+		out.Adapter = derived.Adapter
+	}
+	if out.Port == "" {
+		out.Port = derived.Port
+	}
+	if out.Load == nil {
+		out.Load = derived.Load
+	}
+	return out
+}
+
+// probeFromFlashCommand is the probe server a flash command starts, and the
+// configuration files it was given.
+//
+// False for a command that is not a probe server: a flasher this cannot tell from a
+// command line is not turned into one, because a session that starts the wrong
+// program and waits for it to listen would take twenty seconds to say what was
+// already wrong here.
+func probeFromFlashCommand(flash Flash) (server string, config []string, interfaceName string, ok bool) {
+	tool := strings.TrimSpace(flash.Tool)
+	command := strings.TrimSpace(flash.Command)
+	if tool == "" || command == "" {
+		return "", nil, "", false
+	}
+	if !isProbeServer(tool) {
+		return "", nil, "", false
+	}
+	arguments, wellFormed := commandFields(command)
+	if !wellFormed {
+		return "", nil, "", false
+	}
+	if len(arguments) == 0 || arguments[0] != tool {
+		// The command names a different program than the block's tool. Left alone:
+		// a wrapper is a thing a flasher may do, and a wrapper's arguments are not
+		// a server's arguments.
+		return "", nil, "", false
+	}
+	for index := 0; index+1 < len(arguments); index++ {
+		if arguments[index] != "-f" && arguments[index] != "--file" {
+			continue
+		}
+		file := arguments[index+1]
+		config = append(config, file)
+		if interfaceName == "" && strings.Contains(file, "interface/") {
+			interfaceName = strings.TrimSuffix(strings.TrimPrefix(path.Base(file), "interface/"), ".cfg")
+		}
+	}
+	if len(config) == 0 {
+		// A server with no configuration file is not one this can say how to reach
+		// anything with, and starting it would leave it listening on a port with no
+		// target behind it.
+		return "", nil, "", false
+	}
+	return tool, config, interfaceName, true
+}
+
+// isProbeServer is whether a program's name is one this treats as a probe server
+// rather than as a flasher.
+//
+// By name, because that is all a spec says: the tools in this family are named for
+// what they are, and a spec that names something else has said what its flash needs
+// are, not what its debug needs.
+func isProbeServer(tool string) bool {
+	base := path.Base(tool)
+	base = strings.TrimSuffix(base, ".exe")
+	for _, known := range []string{"openocd", "pyocd", "probe-rs", "JLinkGDBServer", "st-util", "pyocd-gdbserver"} {
+		if base == known {
+			return true
+		}
+	}
+	return false
+}
+
+// configArguments are the configuration files as arguments, in the order the
+// command gave them.
+//
+// Order kept because it is the order the server wants: an interface configuration
+// before a target one, which is what nearly every invocation writes and what the
+// target configuration refers to.
+func configArguments(config []string) []string {
+	out := make([]string, 0, len(config)*2)
+	for _, file := range config {
+		out = append(out, "-f", file)
+	}
+	return out
+}
+
+// commandFields splits a command line, honouring quotes.
+//
+// Honoured because a flash command routinely contains a `-c "program {binary} exit"`
+// and the quotes are what keep that one argument — a naive split would hand the
+// server half of it and the session would fail on a command that is in the spec.
+func commandFields(command string) ([]string, bool) {
+	fields := []string{}
+	current := &strings.Builder{}
+	quote := rune(0)
+	started := false
+	for _, c := range command {
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+				continue
+			}
+			current.WriteRune(c)
+		case c == '\'' || c == '"':
+			quote = c
+			started = true
+		case c == ' ' || c == '\t':
+			if current.Len() > 0 || started {
+				fields = append(fields, current.String())
+				current.Reset()
+				started = false
+			}
+		default:
+			current.WriteRune(c)
+		}
+	}
+	if quote != 0 {
+		return nil, false
+	}
+	if current.Len() > 0 || started {
+		fields = append(fields, current.String())
+	}
+	return fields, true
+}
+
+// relation is one of the names a spec holds that may point at another spec.
+type relation struct{ field, name string }
+
+// relationsOf are the relations a spec declares, in the order they are tried: the
+// part it carries, the family it is built for, the architecture it is built as.
+//
+// The family comes before the architecture because its facts are the part's — its
+// flags, its register map — while the architecture's are what every part of the
+// family shares.
+func relationsOf(spec Spec) []relation {
+	return []relation{
+		{"mcu", spec.MCU},
+		{"preset", spec.Preset},
+		{"arch", spec.Arch},
+	}
 }
 
 // merge folds a parent spec into a child, with the child's own facts winning.
@@ -588,13 +1088,47 @@ func merge(parent, child Spec) Spec {
 	if child.Flash.Tool == "" {
 		child.Flash = parent.Flash
 	}
+	// Debug is folded whole rather than field by field, like Flash: a board that
+	// names a probe server has named a debugger that matches it, and a child's
+	// debug block with half of it filled in is not a board overriding one field of
+	// its chip's, it is a board with a broken block in it. A board that means to
+	// override one value writes the whole block.
+	if !child.Debug.Declared() {
+		child.Debug = parent.Debug
+	}
 	return child
 }
 
 // AllFlags are every flag a target is built with, in the order a compiler reads
 // them: the architecture's, then the chip's.
 func (s Spec) AllFlags() []string {
-	return append(append([]string{}, s.Toolchain.Flags...), s.Flags...)
+	flags := append(append([]string{}, s.Toolchain.Flags...), s.Flags...)
+	// Debug information, for a target that is debugged.
+	//
+	// Without it a bare-metal program has a symbol table and nothing else: the
+	// debugger resolves `HAL_Delay` but reports no line, every breakpoint lands on
+	// a function entry, and a session on a board looks like a debugger that does not
+	// understand the program. It is added here rather than left to the person
+	// building for a board, because a target that declares how it is debugged is
+	// saying that this is a thing to be done here.
+	if s.Debug.Declared() && !hasDebugInformation(flags) {
+		flags = append([]string{"-g"}, flags...)
+	}
+	return flags
+}
+
+// hasDebugInformation is whether a list of flags already asks for it.
+//
+// Any of the flags that produce it, not only `-g`: a spec that says `-g3` or
+// `-gdwarf-5` has asked, and adding `-g` beside it is at best redundant and at
+// worst a second thing in the command line for somebody to explain.
+func hasDebugInformation(flags []string) bool {
+	for _, flag := range flags {
+		if flag == "-g" || strings.HasPrefix(flag, "-g") {
+			return true
+		}
+	}
+	return false
 }
 
 // Regions are every memory region a target has, in the order a linker script

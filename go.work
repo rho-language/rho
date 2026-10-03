@@ -4,6 +4,7 @@ use (
 	.
 	./modules/components/rho-auth
 	./modules/components/rho-cimport
+	./modules/components/rho-dbg
 	./modules/components/rho-doc
 	./modules/components/rho-flash
 	./modules/components/rho-fmt
@@ -35,6 +36,7 @@ use (
 replace (
 	github.com/rho/rho-auth v0.0.0 => ./modules/components/rho-auth
 	github.com/rho/rho-cimport v0.0.0 => ./modules/components/rho-cimport
+	github.com/rho/rho-dbg v0.0.0 => ./modules/components/rho-dbg
 	github.com/rho/rho-doc v0.0.0 => ./modules/components/rho-doc
 	github.com/rho/rho-flash v0.0.0 => ./modules/components/rho-flash
 	github.com/rho/rho-fmt v0.0.0 => ./modules/components/rho-fmt

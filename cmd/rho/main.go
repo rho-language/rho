@@ -105,6 +105,13 @@ func main() {
 	case "config":
 		os.Exit(configCLI(os.Args[2:]))
 
+	// An editor is configured from what a project declares, so the command that
+	// does it is here rather than in a component: the facts it reads are in the
+	// project's own manifest, and a person who has a project and no editor
+	// installed is still the one asking.
+	case "ide":
+		os.Exit(ideCLI(os.Args[2:]))
+
 	case "pkg":
 		os.Exit(pkgcli.Main(os.Args[2:]))
 

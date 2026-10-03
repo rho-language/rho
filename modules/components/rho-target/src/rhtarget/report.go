@@ -174,6 +174,35 @@ func Describe(spec Spec) string {
 		}
 	}
 
+	if spec.Debug.Declared() {
+		fmt.Fprintf(&b, "\ndebug:\n")
+		if debugger := spec.Debug.Debugger(spec.Toolchain.Compiler); debugger != "" {
+			fmt.Fprintf(&b, "  debugger: %s\n", debugger)
+		}
+		if spec.Debug.Server != "" {
+			program, arguments, _ := spec.Debug.ServerInvocation()
+			fmt.Fprintf(&b, "  server:   %s %s\n", program, strings.Join(arguments, " "))
+		}
+		if spec.Debug.Adapter != "" {
+			fmt.Fprintf(&b, "  adapter:  %s\n", spec.Debug.Adapter)
+		}
+		if spec.Debug.ServerType != "" {
+			fmt.Fprintf(&b, "  speaks:   %s\n", spec.Debug.ServerType)
+		}
+		if len(spec.Debug.Config) > 0 {
+			fmt.Fprintf(&b, "  config:   %s\n", strings.Join(spec.Debug.Config, " "))
+		}
+		if spec.Debug.Device != "" {
+			fmt.Fprintf(&b, "  probe:    %s\n", spec.Debug.Device)
+		}
+		if spec.Debug.SVD != "" {
+			fmt.Fprintf(&b, "  svd:      %s\n", spec.Debug.SVD)
+		}
+		if spec.Debug.Comment != "" {
+			fmt.Fprintf(&b, "  %s\n", spec.Debug.Comment)
+		}
+	}
+
 	if len(spec.Pins) > 0 || len(spec.Peripherals) > 0 {
 		fmt.Fprintf(&b, "\npin map:\n")
 		b.WriteString(indent(Pins(spec), "  "))

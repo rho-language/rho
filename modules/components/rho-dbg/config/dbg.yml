@@ -1,0 +1,52 @@
+# Where a debugging session gets a chip's register map.
+#
+# This file is part of the module: it is in the package, and a rho-dbg installed
+# from a registry reads the same file wherever it lands. It sits beside module.yml
+# because that is where a person looks for how a module is configured, and because
+# a file that travels with the thing it configures cannot be left behind by an
+# upgrade.
+#
+# Nothing here is needed for a project that carries its own CMSIS-SVD file: a
+# register map a project has is read from the project, and everything below is only
+# what happens when nothing has one. The order is deliberate — the project first,
+# then a platform's vendor tree, then the published set — because a file somebody
+# committed to a repository is a fact, and a file this fetched is a convenience.
+
+# Where a chip's register map is fetched from when no project and no platform
+# carries one: the CMSIS device data repository, which holds one SVD file per device
+# line. Set it to empty to mean that a session must never reach for the network and
+# only ever reads a map a project has.
+svd_repository: https://github.com/cmsis-svd/cmsis-svd-data
+
+# Which ref of that repository a file is taken from.
+#
+# A branch moves and a tag does not. `main` means a machine keeps getting the
+# current register maps, which is what somebody following the vendor wants; a tag
+# means it keeps getting the same ones, which is what somebody whose peripheral
+# tree is part of their build wants. A register map that changes underneath a
+# project is a surprise, and this is the line that decides whether it can happen
+# here.
+svd_branch: main
+
+# Where a fetched register map is kept, relative to the Rho home unless named
+# absolutely.
+#
+# Shared by every project on this machine, which is the whole point: a vendor's
+# register map is the same file whichever program is being debugged, so a machine
+# holds one of each rather than one per checkout. Under the Rho home rather than in
+# a project because a project is somewhere people commit from and a fetched file is
+# not — the same reason the toolchain and its components live where they do.
+#
+# The layout under it is the repository's own, so `cache/svd/STMicro/STM32H753x.svd`
+# says plainly which file it is.
+svd_cache: cache/svd
+
+# Whether to fetch a register map when nothing has it.
+#
+# On by default, and it happens once: the cache is looked at first and only a miss
+# reaches for the network. Set it to false to mean that a session with no register
+# map says so and carries on with everything else it can do — which is the right
+# answer on a machine that is not allowed to, and on one where a project pins its
+# own and a fetch would only be a way of getting a different answer to a question
+# that is already settled.
+svd_fetch: true
