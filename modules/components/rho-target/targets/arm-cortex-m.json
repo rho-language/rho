@@ -7,5 +7,18 @@
     "linker": "arm-none-eabi-gcc",
     "objcopy": "arm-none-eabi-objcopy",
     "size": "arm-none-eabi-size"
+  },
+  "debug": {
+    "tool": "arm-none-eabi-gdb",
+    "server": "openocd",
+    "server_args": [
+      "-f",
+      "interface/cmsis-dap.cfg"
+    ],
+    "adapter": "cortex-debug",
+    "server_type": "gdb",
+    "interface": "cmsis-dap",
+    "port": "3333",
+    "comment": "the probe decides the interface and the board decides the target config, so a chip names both and this names only what every Cortex-M shares; a chip with no probe of its own inherits this and a board with a probe of its own declares a whole block rather than editing these"
   }
 }

@@ -1,0 +1,186 @@
+# rho-dbg — a debugging session that an editor can drive.
+#
+# One program, and two protocols: the Debug Adapter Protocol on one side, which
+# is what VS Code, Neovim and rho-keeper all speak, and the GDB Machine Interface
+# on the other, which is what every debugger worth using on a microcontroller
+# speaks. In between it starts the probe — openocd, pyocd, probe-rs — because
+# nothing else does: an editor cannot attach to a board, and a debugger cannot
+# find one.
+#
+# That is the whole of it. A session is three processes and the correspondence
+# between what the editor asks for and what the debugger is told:
+#
+#   the editor  <-- Debug Adapter Protocol -->  rho dbg  <-- Machine Interface -->  gdb
+#                                                                        |
+#                                                                        +--> openocd --> the board
+#
+# The value is not the bridge — the bridge is small. It is that the board's facts
+# come from the target spec rather than from a launch.json somebody wrote once:
+# which debugger, which probe, which port, and which register map. `rho ide
+# vscode` writes the editor's half of the same facts, so the two agree.
+module:
+  name: rho-dbg
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: A debug adapter that turns editor debug sessions into GDB sessions, and starts the probe
+  command: dbg
+
+main: rho-dbg
+
+features:
+  - debug
+  - dap
+  - gdb
+  - embedded
+  - probe
+
+# The session logs through the shared logger, so a session is identifiable in a
+# log that several components write to. It reads target specs through
+# rho-target, because which debugger and which probe a board uses are facts that
+# component holds and that its plugins extend.
+deps:
+  rho-log: ">=0.1.0"
+  rho-target: ">=0.1.0"
+
+# The hooks a debugging session goes through.
+#
+# `engine` and `register map` are the two questions that are not this component's
+# to answer. Which debugger drives a session is a fact about the debugger rather
+# than about the board — GDB speaks MI, but a probe that speaks CMSIS-DAP speaks
+# something else entirely — and where a chip's register map comes from is a fact
+# about the chip: a vendor's SVD file is one answer, and a project that reads its
+# registers from a device tree has another.
+provides:
+  contracts:
+    # A debugger this component does not drive. One such plugin fills it: a second
+    # engine is a choice between, not a pipeline of.
+    - name: engine
+      description: A debugger that is not GDB, driven through whatever protocol it speaks.
+      one: true
+      hooks: [engine]
+    - name: register-map
+      description: Where a chip's peripheral registers are described, when not from an SVD file.
+      one: false
+      hooks: [register-map]
+  hooks:
+    # Once, before a session starts: which debugger this session is driven by.
+    - engine
+    # Once, before a session starts: where the peripheral registers are described.
+    - register-map
+
+# What a person may configure it with.
+#
+# The values live in a YAML file beside this one, and the file is part of the
+# package: a rho-dbg installed from a registry reads the same file wherever it
+# lands, rather than one the installation had to be told about. The declaration is
+# here rather than only in the file because this is what a person reads to find out
+# what a debugging session can be asked to do — the file says what the values are
+# set to, and this says what may be set, what it is called and what it is for.
+#
+# All four are about one thing: where a chip's register map comes from. A project
+# or a platform may carry the map itself, and that is always preferred; where one
+# does not, these say where to get it and whether to reach for it at all.
+settings:
+  file: config/dbg.yml
+  settings:
+    - name: svd_repository
+      description: >-
+        Where a chip's register map is fetched from when no project and no
+        platform carries one. The CMSIS device data repository, which holds one SVD
+        file per device line. Empty means a register map is only ever read from
+        what a project already has, which is the same thing as saying that a
+        session must never reach for the network.
+      default: https://github.com/cmsis-svd/cmsis-svd-data
+
+    - name: svd_branch
+      description: >-
+        Which ref of that repository a file is taken from. A branch moves and a tag
+        does not, so a machine that should keep getting the current register maps
+        says `main` and a machine that should keep getting the same ones says a tag.
+        A register map changing underneath a project is a surprise, and this is
+        where a project that cannot have one says so.
+      default: main
+
+    - name: svd_cache
+      description: >-
+        Where a fetched register map is kept, relative to the Rho home unless named
+        absolutely. Shared by every project on this machine, which is the whole
+        point: a vendor's register map is the same file whichever program is being
+        debugged, so a machine holds one of each rather than one per checkout. Under
+        the Rho home rather than in a project because a project is somewhere people
+        commit from and a fetched file is not.
+      default: cache/svd
+
+    - name: svd_fetch
+      description: >-
+        Whether to fetch a register map when nothing has it. On by default, and the
+        fetch happens once: the cache is looked at first, and only a miss reaches
+        for the network. Off means a session with no register map says so and
+        carries on with everything else it can do.
+      default: "true"
+      choices: ["true", "false"]
+
+# The commands it answers.
+#
+# The same binary serves all of them; a component's commands are what the CLI
+# dispatches to, so this is also the surface `rho dbg --help` lists.
+commands:
+  - name: dap
+    description: Serve the Debug Adapter Protocol on standard input and output
+    run: rho-dbg
+    hook: dap
+
+  - name: engines
+    description: What this machine can debug a board with
+    run: rho-dbg
+    hook: engines
+
+  - name: check
+    description: Which of the programs a board needs are installed here
+    run: rho-dbg
+    hook: check
+
+  - name: registers
+    description: The chip's register map, as JSON
+    run: rho-dbg
+    hook: registers
+
+  # Fetching a register map on purpose, for a machine that should hold it before a
+  # session needs it. A session fetches one by itself when nothing has it, so this is
+  # for the case where that should happen now rather than the moment somebody
+  # presses F5.
+  - name: svd
+    description: Put a chip's register map in the cache
+    run: rho-dbg
+    hook: svd
+
+# The component ships as a command. It is a program an editor starts and speaks
+# to, not a library a project links: nothing in a generated project calls into it.
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    # The settings a person can change. They travel with the module so that a
+    # rho-dbg installed from a registry is configured by the same file as one run
+    # from a checkout, rather than by whatever the installation happened to have.
+    - config
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - config
+    - src
+
+# The component documents itself: the protocol it speaks on both sides, and what
+# a target spec has to say for it to start a session.
+docs:
+  title: Debug adapter
+  section: components
+  order: "45"
+  index: docs/index.md
+  sources:
+    - docs/index.md

@@ -131,6 +131,44 @@ type Provides struct {
 	Contracts []Contract
 }
 
+// DebugMapping is what a project says about debugging the chip it is built for.
+//
+// Declared by the application and authoritative: a project that names its chip's
+// register map has said which one is right, and everything else — the target spec,
+// the vendor's own naming — is what a project falls back to when nobody has said.
+type DebugMapping struct {
+	// SVD is the register map for each board this project is built for, by the name
+	// the board's target spec answers to.
+	//
+	// A map and not one path, because a project written for several boards has
+	// several chips: one path would be one board's registers standing in for all of
+	// them, and on every board it is wrong for it would be wrong silently. A board
+	// not named here has no claim from the project, and the search continues with
+	// what the board's spec and the vendor's naming say.
+	SVD map[string]string
+}
+
+// PathFor is the file the project named for a board, or "" when it named none.
+func (d *DebugMapping) PathFor(target string) string {
+	if d == nil || len(d.SVD) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(d.SVD[target])
+}
+
+// Declared reports whether the project has said anything about debugging at all.
+func (d *DebugMapping) Declared() bool {
+	if d == nil {
+		return false
+	}
+	for _, path := range d.SVD {
+		if strings.TrimSpace(path) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // ModuleSettings is what a module can be configured with, and the file its
 // configured values live in.
 //
@@ -270,7 +308,17 @@ type Manifest struct {
 	// this is for, and every build of it is for that hardware whatever resolves
 	// its dependencies.
 	BuildToolchain string
-	BuildDefines   []string
+	// BuildPresets are the boards this program is written for, when it is not
+	// written for one.
+	//
+	// Read because a program written for several boards says so here, and
+	// everything downstream needs the same list: a build picks one of them, a
+	// generated editor configuration offers one entry per board so the build and
+	// the session cannot be for different ones, and a flash command names one.
+	// A list here is the answer rather than one preset, because a program that is
+	// written for one board says so with `toolchain` and does not need this.
+	BuildPresets []string
+	BuildDefines []string
 	// BuildGuardedSources are sources compiled only when a symbol is set.
 	BuildGuardedSources []GuardedSource
 	BuildIncludeDirs    []string
@@ -337,6 +385,9 @@ type Manifest struct {
 	// is read by the generator: that is Config, and this is a person changing
 	// how an installed tool behaves.
 	Settings *ModuleSettings
+	// Debug is what this project says about debugging the chip it is built for, and
+	// it is the answer: a name here is used as it is written.
+	Debug *DebugMapping
 	// Provides is what this module offers a plugin. Only a component has
 	// something to offer.
 	Provides *Provides
@@ -555,6 +606,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		}
 		m.BuildTargets = yamlStrings(build.Map["targets"])
 		m.BuildToolchain = yamlString(build, "toolchain")
+		m.BuildPresets = yamlStrings(build.Map["presets"])
 		m.BuildIncludeDirs = yamlStrings(build.Map["include_dirs"])
 		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
 		m.BuildSources = yamlStrings(build.Map["sources"])
@@ -614,6 +666,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	}
 	m.Requires = parseRequires(doc.Map["requires"])
 	m.Settings = parseSettingsManifest(doc.Map["settings"])
+	m.Debug = parseDebugManifest(doc.Map["debug"])
 	m.Config = parseConfigManifest(doc.Map["config"])
 	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")
@@ -942,6 +995,30 @@ func parseConfigManifest(node yaml.Value) *ConfigManifest {
 		return nil
 	}
 	return config
+}
+
+// parseDebugManifest reads what a project says about debugging its chip.
+func parseDebugManifest(node yaml.Value) *DebugMapping {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	// A map of board to file. Nested rather than flat, because it is nested: which
+	// file is for which board is the whole content of it.
+	mapping := &DebugMapping{}
+	if svd := node.Map["svd"]; svd.Kind == yaml.KindMap {
+		for board, path := range svd.Map {
+			if declared := strings.TrimSpace(yamlUnquote(path.Str)); declared != "" && board != "" {
+				if mapping.SVD == nil {
+					mapping.SVD = map[string]string{}
+				}
+				mapping.SVD[board] = declared
+			}
+		}
+	}
+	if !mapping.Declared() {
+		return nil
+	}
+	return mapping
 }
 
 // parseSettingsManifest reads what a module can be configured with.
@@ -1352,4 +1429,37 @@ func readScalar(value yaml.Value) string {
 		return ""
 	}
 	return value.Str
+}
+
+// VendorRoots are the directories a project's dependencies keep their vendor code
+// in, for the project at root.
+//
+// A file a platform vendors lives beside that platform, not beside the program
+// that uses it: a vendor's register map is megabytes of XML that every program
+// built for the chip would otherwise carry a copy of. So a path a project declares
+// is looked for in the project itself and then in each of the platforms it depends
+// on — which is the difference between a platform that vendors a register map once
+// and a platform that cannot.
+//
+// Only C dependencies are looked in: those are the ones a program is linked
+// against, and therefore the ones whose vendor trees a build already reads. A module
+// dependency has no code of its own to look in.
+func (m *Manifest) VendorRoots(projectRoot string) []string {
+	if m == nil {
+		return nil
+	}
+	roots := []string{}
+	for _, dependency := range m.Deps {
+		if dependency.Type != DepTypeC || dependency.Path == "" {
+			continue
+		}
+		root := dependency.Path
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(projectRoot, root)
+		}
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }

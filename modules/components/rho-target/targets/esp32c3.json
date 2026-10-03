@@ -47,5 +47,27 @@
     "command": "esptool.py --chip esp32c3 write_flash 0x10000 {binary}",
     "offset": "0x10000",
     "comment": "the offset is the app partition's, and an IDF project also writes a bootloader and a partition table"
+  },
+  "debug": {
+    "tool": "riscv32-unknown-elf-gdb",
+    "server": "openocd",
+    "server_args": [
+      "-f",
+      "interface/ftdi/esp32_devkitj_v1.cfg",
+      "-f",
+      "target/esp32c3.cfg"
+    ],
+    "adapter": "cortex-debug",
+    "server_type": "espflash",
+    "interface": "ftdi/esp32_devkitj_v1",
+    "config": [
+      "interface/ftdi/esp32_devkitj_v1.cfg",
+      "target/esp32c3.cfg"
+    ],
+    "device": "esp32c3",
+    "svd": "esp32c3.svd",
+    "port": "3333",
+    "load": true,
+    "comment": "the RISC-V build is debugged through the same JTAG bridge the flash tool uses, and the program is written on connect"
   }
 }

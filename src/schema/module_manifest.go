@@ -475,6 +475,31 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// Which chip's register map this project is built against, as a file.
+				//
+				// A path and nothing else, because this is the one thing a person
+				// settles for themselves: a file on this machine, chosen by whoever
+				// wired the board up. A name in a vendor's published set is a fact about
+				// a chip rather than a choice, so it belongs in the board's own spec —
+				// and a session that could not settle it asks for this, because a person
+				// asked can answer it by pointing at the file.
+				Name:     "debug",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					// Which board's register map is which file, keyed by the name the
+					// target spec answers to.
+					//
+					// A map rather than one path because a project written for several
+					// boards has several chips, and a single path would be one board's
+					// registers standing in for all of them — on the boards it is wrong
+					// for, silently. A board that is not named here has no claim from
+					// the project, and the search goes on to what the board's own spec
+					// and the vendor's naming say.
+					{Name: "svd", Required: false, Kind: KindMap},
+				},
+			},
+			{
 				// Where a platform keeps the declarations of the hardware it supports.
 				//
 				// Declared rather than found. A directory called `targets` beside a
