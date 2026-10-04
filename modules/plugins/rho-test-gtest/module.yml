@@ -20,7 +20,7 @@
 # run that guessed would report a test that does not exist.
 #
 # @project Rho Programming Language
-# @license MIT
+# @license Apache-2.0
 #
 
 module:

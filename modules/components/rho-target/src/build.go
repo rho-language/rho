@@ -18,7 +18,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 package main
@@ -312,7 +312,7 @@ func writeBuildFlags(project, specSource, targetName, output string) error {
 	b.WriteString("# @version 0.1\n")
 	b.WriteString("# @date 2026\n")
 	b.WriteString("#\n")
-	b.WriteString("# SPDX-License-Identifier: MIT\n\n")
+	b.WriteString("# SPDX-License-Identifier: Apache-2.0\n\n")
 	b.WriteString("# Written by rho-target from the target spec and from what this project's\n")
 	b.WriteString("# dependencies declared about their tests. Included by the generated\n")
 	b.WriteString("# CMakeLists, and set on the command line as well so that a value given\n")

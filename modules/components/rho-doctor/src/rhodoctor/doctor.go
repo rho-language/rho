@@ -17,7 +17,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 // Package rhodoctor is the diagnostic half of the system's health: it reads what

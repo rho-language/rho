@@ -17,7 +17,7 @@
 # and this is what puts it on the board.
 #
 # @project Rho Programming Language
-# @license MIT
+# @license Apache-2.0
 #
 
 module:

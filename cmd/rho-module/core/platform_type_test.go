@@ -9,7 +9,7 @@
 // native library is refused for a file it has no reason to have.
 //
 // @project Rho Programming Language
-// @license MIT
+// @license Apache-2.0
 //
 
 package core

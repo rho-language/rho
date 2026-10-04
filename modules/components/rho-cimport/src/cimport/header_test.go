@@ -16,7 +16,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 package cimport
@@ -57,7 +57,7 @@ func TestAMultiLineCommentIsNotReadAsDeclarations(t *testing.T) {
  * @file test.h
  * @brief A header.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
