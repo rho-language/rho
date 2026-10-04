@@ -18,10 +18,10 @@
 package core
 
 import (
-    "os"
-    "path/filepath"
-    "strings"
-    "testing"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -29,10 +29,10 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestLoadValidManifest(t *testing.T) {
-    tmp := t.TempDir()
-    path := filepath.Join(tmp, "module.yml")
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "module.yml")
 
-    content := `
+	content := `
 module:
   name: hello-rho
   type: rho
@@ -44,22 +44,22 @@ features:
   - math
   - io
 `
-    os.WriteFile(path, []byte(content), 0644)
+	os.WriteFile(path, []byte(content), 0644)
 
-    m, err := LoadModuleYAML(path)
-    if err != nil {
-        t.Fatalf("LoadModuleYAML failed: %v", err)
-    }
+	m, err := LoadModuleYAML(path)
+	if err != nil {
+		t.Fatalf("LoadModuleYAML failed: %v", err)
+	}
 
-    if m.Module.Name != "hello-rho" {
-        t.Fatalf("wrong module name")
-    }
-    if m.Main != "src/main.rho" {
-        t.Fatalf("wrong main")
-    }
-    if len(m.Features) != 2 {
-        t.Fatalf("expected 2 features")
-    }
+	if m.Module.Name != "hello-rho" {
+		t.Fatalf("wrong module name")
+	}
+	if m.Main != "src/main.rho" {
+		t.Fatalf("wrong main")
+	}
+	if len(m.Features) != 2 {
+		t.Fatalf("expected 2 features")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -67,26 +67,26 @@ features:
 /* -------------------------------------------------------------------------- */
 
 func TestSaveManifest(t *testing.T) {
-    tmp := t.TempDir()
-    path := filepath.Join(tmp, "module.yml")
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "module.yml")
 
-    m := ModuleYAML{
-        Module: ModuleSection{
-            Name:    "hello-rho",
-            Type:    "rho",
-            Version: "0.1.0",
-        },
-        Main:     "src/main.rho",
-        Features: []string{"math"},
-    }
+	m := ModuleYAML{
+		Module: ModuleSection{
+			Name:    "hello-rho",
+			Type:    "rho",
+			Version: "0.1.0",
+		},
+		Main:     "src/main.rho",
+		Features: []string{"math"},
+	}
 
-    if err := SaveModuleYAML(path, m); err != nil {
-        t.Fatalf("SaveModuleYAML failed: %v", err)
-    }
+	if err := SaveModuleYAML(path, m); err != nil {
+		t.Fatalf("SaveModuleYAML failed: %v", err)
+	}
 
-    if _, err := os.Stat(path); err != nil {
-        t.Fatalf("module.yml not written")
-    }
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("module.yml not written")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -94,18 +94,18 @@ func TestSaveManifest(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestValidateManifestErrors(t *testing.T) {
-    m := ModuleYAML{
-        Module: ModuleSection{
-            Name:    "",
-            Type:    "rho",
-            Version: "0.1.0",
-        },
-        Main: "src/main.rho",
-    }
+	m := ModuleYAML{
+		Module: ModuleSection{
+			Name:    "",
+			Type:    "rho",
+			Version: "0.1.0",
+		},
+		Main: "src/main.rho",
+	}
 
-    if err := ValidateModuleYAML(m); err == nil {
-        t.Fatalf("expected validation error for missing name")
-    }
+	if err := ValidateModuleYAML(m); err == nil {
+		t.Fatalf("expected validation error for missing name")
+	}
 }
 
 /* -------------------------------------------------------------------------- */

@@ -48,33 +48,33 @@ func LoadInstalledModule(name string) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, moduleType := range []string{"component", "plugin"} {
 		typeDir := filepath.Join(modulesDir, moduleType)
 		if _, err := os.Stat(typeDir); err != nil {
 			continue
 		}
-		
+
 		entries, err := os.ReadDir(typeDir)
 		if err != nil {
 			continue
 		}
-		
+
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
 			}
-			
+
 			// Check if directory name matches name@version pattern
 			if len(e.Name()) > len(name) && e.Name()[:len(name)] == name && e.Name()[len(name)] == '@' {
 				modulePath := filepath.Join(typeDir, e.Name())
 				manifestPath := filepath.Join(modulePath, "module.yml")
-				
+
 				manifest, err := LoadModuleYAML(manifestPath)
 				if err != nil {
 					continue
 				}
-				
+
 				if manifest.Module.Name == name {
 					return &Module{
 						Name:     name,
@@ -86,6 +86,6 @@ func LoadInstalledModule(name string) (*Module, error) {
 			}
 		}
 	}
-	
+
 	return nil, fmt.Errorf("module not installed: %s", name)
 }

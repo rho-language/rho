@@ -33,38 +33,38 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func RemoveDependency(dir, spec string) error {
-    name, version := parseSpec(spec)
+	name, version := parseSpec(spec)
 
-    // Step 1: Load lockfile
-    lock, err := loadLockfile(dir)
-    if err != nil {
-        return fmt.Errorf("cannot load rho.lock: %w", err)
-    }
+	// Step 1: Load lockfile
+	lock, err := loadLockfile(dir)
+	if err != nil {
+		return fmt.Errorf("cannot load rho.lock: %w", err)
+	}
 
-    // Step 2: Determine installed version
-    installed, ok := lock[name]
-    if !ok {
-        return fmt.Errorf("dependency not found in lockfile: %s", name)
-    }
+	// Step 2: Determine installed version
+	installed, ok := lock[name]
+	if !ok {
+		return fmt.Errorf("dependency not found in lockfile: %s", name)
+	}
 
-    // If user specified version, check match
-    if version != "" && version != installed {
-        return fmt.Errorf("version mismatch: installed=%s, requested=%s", installed, version)
-    }
+	// If user specified version, check match
+	if version != "" && version != installed {
+		return fmt.Errorf("version mismatch: installed=%s, requested=%s", installed, version)
+	}
 
-    // Step 3: Remove directory
-    depDir := filepath.Join(dir, ".rho-deps", fmt.Sprintf("%s@%s", name, installed))
-    if err := os.RemoveAll(depDir); err != nil {
-        return fmt.Errorf("cannot remove dependency directory: %w", err)
-    }
+	// Step 3: Remove directory
+	depDir := filepath.Join(dir, ".rho-deps", fmt.Sprintf("%s@%s", name, installed))
+	if err := os.RemoveAll(depDir); err != nil {
+		return fmt.Errorf("cannot remove dependency directory: %w", err)
+	}
 
-    // Step 4: Update lockfile
-    delete(lock, name)
-    if err := writeLockfile(dir, lock); err != nil {
-        return fmt.Errorf("cannot update rho.lock: %w", err)
-    }
+	// Step 4: Update lockfile
+	delete(lock, name)
+	if err := writeLockfile(dir, lock); err != nil {
+		return fmt.Errorf("cannot update rho.lock: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -72,32 +72,32 @@ func RemoveDependency(dir, spec string) error {
 /* -------------------------------------------------------------------------- */
 
 func loadLockfile(dir string) (map[string]string, error) {
-    path := filepath.Join(dir, "rho.lock")
+	path := filepath.Join(dir, "rho.lock")
 
-    data, err := os.ReadFile(path)
-    if err != nil {
-        return nil, err
-    }
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 
-    out := map[string]string{}
+	out := map[string]string{}
 
-    lines := strings.Split(string(data), "\n")
-    for _, line := range lines {
-        line = strings.TrimSpace(line)
-        if strings.HasPrefix(line, "-") || strings.HasPrefix(line, "lock:") || line == "" {
-            continue
-        }
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "-") || strings.HasPrefix(line, "lock:") || line == "" {
+			continue
+		}
 
-        parts := strings.Split(line, ":")
-        if len(parts) != 2 {
-            continue
-        }
+		parts := strings.Split(line, ":")
+		if len(parts) != 2 {
+			continue
+		}
 
-        name := strings.TrimSpace(parts[0])
-        version := strings.Trim(strings.TrimSpace(parts[1]), "\"")
+		name := strings.TrimSpace(parts[0])
+		version := strings.Trim(strings.TrimSpace(parts[1]), "\"")
 
-        out[name] = version
-    }
+		out[name] = version
+	}
 
-    return out, nil
+	return out, nil
 }

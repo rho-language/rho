@@ -328,6 +328,20 @@ func emitCMakeLists(ctx Context) string {
 	b.WriteString("endif()\n\n")
 	b.WriteString("set(CMAKE_C_STANDARD 11)\nset(CMAKE_C_STANDARD_REQUIRED ON)\n\n")
 
+	// The compilation database, written by CMake into the build directory.
+	//
+	// Set here rather than left to whoever configures the project because this
+	// generated tree already knows every flag the compiler is invoked with — the
+	// toolchain file, the Kconfig merge, the dependency's exported include paths —
+	// and none of that is in the manifest a static analyzer would be given. Anything
+	// derived from the manifest is a second-best answer; this is the real one.
+	//
+	// It costs nothing when nobody wants it: CMake writes a JSON file that no part of
+	// the build reads. And it is what makes `rho lint` work on a generated project
+	// rather than only on a hand-written one, because a run reads this before it
+	// derives anything.
+	b.WriteString("set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n\n")
+
 	// A project with a Kconfig bridge resolves it before anything is compiled,
 	// and every source sees the header the merge wrote. The bridge is included
 	// rather than inlined so a person can read what a build does before it does

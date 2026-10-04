@@ -28,56 +28,56 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func UpdateDependencies(dir string) error {
-    // Step 1: Load manifest
-    modPath := filepath.Join(dir, "module.yml")
-    manifest, err := LoadModuleYAML(modPath)
-    if err != nil {
-        return fmt.Errorf("cannot load module.yml: %w", err)
-    }
+	// Step 1: Load manifest
+	modPath := filepath.Join(dir, "module.yml")
+	manifest, err := LoadModuleYAML(modPath)
+	if err != nil {
+		return fmt.Errorf("cannot load module.yml: %w", err)
+	}
 
-    // Step 2: Load lockfile
-    lock, err := loadLockfile(dir)
-    if err != nil {
-        return fmt.Errorf("cannot load rho.lock: %w", err)
-    }
+	// Step 2: Load lockfile
+	lock, err := loadLockfile(dir)
+	if err != nil {
+		return fmt.Errorf("cannot load rho.lock: %w", err)
+	}
 
-    // Step 3: Resolve latest compatible versions
-    resolved, err := resolveDependencies(manifest.Deps)
-    if err != nil {
-        return fmt.Errorf("dependency resolution failed: %w", err)
-    }
+	// Step 3: Resolve latest compatible versions
+	resolved, err := resolveDependencies(manifest.Deps)
+	if err != nil {
+		return fmt.Errorf("dependency resolution failed: %w", err)
+	}
 
-    // Step 4: Compare with lockfile
-    updates := map[string]string{}
-    for name, newVersion := range resolved {
-        oldVersion := lock[name]
-        if oldVersion != newVersion {
-            updates[name] = newVersion
-        }
-    }
+	// Step 4: Compare with lockfile
+	updates := map[string]string{}
+	for name, newVersion := range resolved {
+		oldVersion := lock[name]
+		if oldVersion != newVersion {
+			updates[name] = newVersion
+		}
+	}
 
-    // Nothing to update
-    if len(updates) == 0 {
-        return nil
-    }
+	// Nothing to update
+	if len(updates) == 0 {
+		return nil
+	}
 
-    // Step 5: Download updated modules
-    for name, version := range updates {
-        spec := fmt.Sprintf("%s@%s", name, version)
-        if err := DownloadModule(spec); err != nil {
-            return fmt.Errorf("failed to download %s: %w", spec, err)
-        }
-    }
+	// Step 5: Download updated modules
+	for name, version := range updates {
+		spec := fmt.Sprintf("%s@%s", name, version)
+		if err := DownloadModule(spec); err != nil {
+			return fmt.Errorf("failed to download %s: %w", spec, err)
+		}
+	}
 
-    // Step 6: Install updated modules
-    if err := installLocalCache(dir, resolved); err != nil {
-        return fmt.Errorf("local cache error: %w", err)
-    }
+	// Step 6: Install updated modules
+	if err := installLocalCache(dir, resolved); err != nil {
+		return fmt.Errorf("local cache error: %w", err)
+	}
 
-    // Step 7: Write updated lockfile
-    if err := writeLockfile(dir, resolved); err != nil {
-        return fmt.Errorf("cannot write rho.lock: %w", err)
-    }
+	// Step 7: Write updated lockfile
+	if err := writeLockfile(dir, resolved); err != nil {
+		return fmt.Errorf("cannot write rho.lock: %w", err)
+	}
 
-    return nil
+	return nil
 }

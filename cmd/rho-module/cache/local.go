@@ -26,9 +26,9 @@
 package cache
 
 import (
-    "os"
-    "path/filepath"
-    "strings"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -36,9 +36,9 @@ import (
 /* -------------------------------------------------------------------------- */
 
 type LocalEntry struct {
-    Name    string
-    Version string
-    Path    string
+	Name    string
+	Version string
+	Path    string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -46,45 +46,45 @@ type LocalEntry struct {
 /* -------------------------------------------------------------------------- */
 
 func LocalCacheDir(dir string) string {
-    return filepath.Join(dir, ".rho-deps")
+	return filepath.Join(dir, ".rho-deps")
 }
 
 func ListLocalModules(dir string) ([]LocalEntry, error) {
-    base := LocalCacheDir(dir)
+	base := LocalCacheDir(dir)
 
-    entries, err := os.ReadDir(base)
-    if err != nil {
-        return nil, err
-    }
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil, err
+	}
 
-    out := []LocalEntry{}
+	out := []LocalEntry{}
 
-    for _, e := range entries {
-        if !e.IsDir() {
-            continue
-        }
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
 
-        parts := strings.Split(e.Name(), "@")
-        if len(parts) != 2 {
-            continue
-        }
+		parts := strings.Split(e.Name(), "@")
+		if len(parts) != 2 {
+			continue
+		}
 
-        out = append(out, LocalEntry{
-            Name:    parts[0],
-            Version: parts[1],
-            Path:    filepath.Join(base, e.Name()),
-        })
-    }
+		out = append(out, LocalEntry{
+			Name:    parts[0],
+			Version: parts[1],
+			Path:    filepath.Join(base, e.Name()),
+		})
+	}
 
-    return out, nil
+	return out, nil
 }
 
 func LocalModuleExists(dir, name, version string) bool {
-    path := filepath.Join(LocalCacheDir(dir), name+"@"+version)
-    _, err := os.Stat(path)
-    return err == nil
+	path := filepath.Join(LocalCacheDir(dir), name+"@"+version)
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func LocalModulePath(dir, name, version string) string {
-    return filepath.Join(LocalCacheDir(dir), name+"@"+version)
+	return filepath.Join(LocalCacheDir(dir), name+"@"+version)
 }

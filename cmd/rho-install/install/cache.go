@@ -17,10 +17,10 @@
 package install
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "path/filepath"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -28,17 +28,17 @@ import (
 /* -------------------------------------------------------------------------- */
 
 var (
-    emptyRegistryCache = map[string]any{
-        "modules":        []any{},
-        "active_plugins": map[string]any{},
-        "settings":       map[string]any{},
-    }
+	emptyRegistryCache = map[string]any{
+		"modules":        []any{},
+		"active_plugins": map[string]any{},
+		"settings":       map[string]any{},
+	}
 
-    emptyModulesCache = map[string]any{
-        "installed": []any{},
-    }
+	emptyModulesCache = map[string]any{
+		"installed": []any{},
+	}
 
-    emptyActivePluginsCache = map[string]any{}
+	emptyActivePluginsCache = map[string]any{}
 )
 
 /* -------------------------------------------------------------------------- */
@@ -47,56 +47,56 @@ var (
 
 // InitCache creates all cache files in ~/.rho/cache.
 func InitCache() error {
-    cachePath, err := GetMetadataCachePath()
-    if err != nil {
-        return err
-    }
+	cachePath, err := GetMetadataCachePath()
+	if err != nil {
+		return err
+	}
 
-    files := map[string]map[string]any{
-        "registry.json":       emptyRegistryCache,
-        "modules.json":        emptyModulesCache,
-        "active_plugins.json": emptyActivePluginsCache,
-    }
+	files := map[string]map[string]any{
+		"registry.json":       emptyRegistryCache,
+		"modules.json":        emptyModulesCache,
+		"active_plugins.json": emptyActivePluginsCache,
+	}
 
-    for name, content := range files {
-        file := filepath.Join(cachePath, name)
+	for name, content := range files {
+		file := filepath.Join(cachePath, name)
 
-        // Avoid overwriting existing cache
-        if _, err := os.Stat(file); err == nil {
-            continue
-        }
+		// Avoid overwriting existing cache
+		if _, err := os.Stat(file); err == nil {
+			continue
+		}
 
-        data, err := json.MarshalIndent(content, "", "  ")
-        if err != nil {
-            return fmt.Errorf("failed to marshal cache file %s: %w", name, err)
-        }
+		data, err := json.MarshalIndent(content, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal cache file %s: %w", name, err)
+		}
 
-        if err := os.WriteFile(file, data, 0o644); err != nil {
-            return fmt.Errorf("failed to write cache file %s: %w", name, err)
-        }
-    }
+		if err := os.WriteFile(file, data, 0o644); err != nil {
+			return fmt.Errorf("failed to write cache file %s: %w", name, err)
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // CacheExists checks if all cache files exist.
 func CacheExists() bool {
-    cachePath, err := GetMetadataCachePath()
-    if err != nil {
-        return false
-    }
+	cachePath, err := GetMetadataCachePath()
+	if err != nil {
+		return false
+	}
 
-    files := []string{
-        "registry.json",
-        "modules.json",
-        "active_plugins.json",
-    }
+	files := []string{
+		"registry.json",
+		"modules.json",
+		"active_plugins.json",
+	}
 
-    for _, f := range files {
-        if _, err := os.Stat(filepath.Join(cachePath, f)); os.IsNotExist(err) {
-            return false
-        }
-    }
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(cachePath, f)); os.IsNotExist(err) {
+			return false
+		}
+	}
 
-    return true
+	return true
 }

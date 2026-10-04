@@ -304,7 +304,7 @@ const stripDocsRoot = "docs"
 // pageTarget is the name a cross-reference uses to reach a page.
 //
 // A page is named for the module it documents and its path inside that module,
-// so `{ref}`rho-log/index`` reaches one component's page from another's. A
+// so `{ref}`rho-log/index“ reaches one component's page from another's. A
 // repository's own pages are named for the directory they were written in,
 // which is their section. Both are unique across a site by construction, which
 // is what a site-wide name has to be.
