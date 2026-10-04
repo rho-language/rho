@@ -482,6 +482,9 @@ func generate(args []string) int {
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
 	treePlugins := fs.Bool("tree-plugins", false, "also read the plugins the tree carries")
 	specs := fs.String("specs", "", "colon-separated directories of target specs to read, such as a platform's")
+	// Whether the link writes its map, as in `rho target build`. The same choice,
+	// spelled the same way, because it is the same setting.
+	linkMap := linkMapFlag(fs)
 	// Flags are read wherever they appear, because `rho target generate <project>
 	// --target pico` is what a person types first.
 	flagArgs, rest := splitArgs(args, map[string]bool{"target": true, "dir": true, "specs": true})
@@ -520,6 +523,7 @@ func generate(args []string) int {
 	}
 
 	written := []string{}
+	spec.LinkMap = *linkMap
 	for _, file := range rhtarget.Files(spec, *directory) {
 		destination := filepath.Join(absolute, filepath.FromSlash(file.Path))
 		if !inside(absolute, destination) {
