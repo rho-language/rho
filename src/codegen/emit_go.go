@@ -21,7 +21,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 package codegen
@@ -760,7 +760,7 @@ func goModulePath(name string) string {
 }
 
 func goBanner(m ir.ModuleIR, file, brief string) string {
-	return fmt.Sprintf("//\n// @file %s\n// @brief %s\n//\n// @project %s\n// @version 0.1\n// @date 2026\n//\n// SPDX-License-Identifier: MIT\n//\n\n",
+	return fmt.Sprintf("//\n// @file %s\n// @brief %s\n//\n// @project %s\n// @version 0.1\n// @date 2026\n//\n// SPDX-License-Identifier: Apache-2.0\n//\n\n",
 		file, brief, m.Name)
 }
 

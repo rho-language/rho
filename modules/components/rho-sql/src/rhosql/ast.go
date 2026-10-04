@@ -25,7 +25,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 // Package rhosql is the SQL a service declares, and the client that runs it.
