@@ -8,7 +8,7 @@
 // it is linked into a project rather than run.
 //
 // @project Rho Programming Language
-// @license MIT
+// @license Apache-2.0
 //
 
 package schema

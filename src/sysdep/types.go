@@ -23,7 +23,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 // Package sysdep is what a module needs from the machine it runs on: the programs

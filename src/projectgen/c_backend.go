@@ -12,7 +12,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 package projectgen
@@ -758,7 +758,7 @@ func hasRhoInit(m ir.ModuleIR) bool {
 }
 
 func cBanner(project, file, brief string) string {
-	return fmt.Sprintf("/*\n * @file %s\n * @brief %s\n *\n * @project %s\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: MIT\n */\n\n",
+	return fmt.Sprintf("/*\n * @file %s\n * @brief %s\n *\n * @project %s\n * @version 0.1\n * @date 2026\n *\n * SPDX-License-Identifier: Apache-2.0\n */\n\n",
 		file, brief, project)
 }
 
@@ -770,7 +770,7 @@ func cBanner(project, file, brief string) string {
 // the same either way, and it is written with the file's own comment syntax
 // rather than a fixed one.
 func cmakeBanner(project, file, brief string) string {
-	return fmt.Sprintf("# @file %s\n# @brief %s\n#\n# @project %s\n# @version 0.1\n# @date 2026\n#\n# SPDX-License-Identifier: MIT\n\n",
+	return fmt.Sprintf("# @file %s\n# @brief %s\n#\n# @project %s\n# @version 0.1\n# @date 2026\n#\n# SPDX-License-Identifier: Apache-2.0\n\n",
 		file, brief, project)
 }
 

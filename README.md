@@ -603,4 +603,4 @@ run it with:
 
 ## License
 
-Rho is released under the MIT License. See [LICENSE](LICENSE).
+Rho is released under the Apache License, Version 2.0. See [LICENSE](LICENSE).

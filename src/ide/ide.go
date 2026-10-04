@@ -18,7 +18,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 // Package ide renders a project's own declarations into the files an editor

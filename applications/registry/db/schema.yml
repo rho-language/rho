@@ -10,7 +10,7 @@
 # tree it was unpacked into. Those are derived, they are many small files, and a
 # database holding them would be a cache.
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 
 tables:
   # users are identities, named by whatever the credential said.

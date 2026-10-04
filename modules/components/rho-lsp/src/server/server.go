@@ -4,7 +4,7 @@
 //
 // Implements the core JSON-RPC loop for the Rho Language Server.
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 package server

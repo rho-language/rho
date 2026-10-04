@@ -18,7 +18,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // It reads rather than imports because a component is dispatched to, not linked
 // against: which targets exist is a fact the component carrying the specs holds,
@@ -29,7 +29,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 
 package targetspec
