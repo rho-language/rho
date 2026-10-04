@@ -23,6 +23,7 @@
 package rhomem
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -230,4 +231,102 @@ func WriteGrowth(out io.Writer, check *Check) {
 	if len(check.Growth) > 0 && check.HasBaseline {
 		fmt.Fprintln(out, "  (a negative change is a smaller image than the baseline)")
 	}
+}
+
+// Result is an analysis in a form another program can read.
+//
+// A report is written for a person, and a person reading it is the point of most
+// runs. This is the same numbers as a document, for the runs where the reader is a
+// program: `rho bench` composes this component's static footprint with its own
+// runtime figures, and the only honest way to compose two components is for one of
+// them to be able to answer in something other than a picture of a terminal.
+type Result struct {
+	Target      string          `json:"target,omitempty"`
+	Source      string          `json:"source,omitempty"`
+	MapFile     string          `json:"map_file,omitempty"`
+	ELFFile     string          `json:"elf_file,omitempty"`
+	Total       uint64          `json:"total_bytes"`
+	Regions     []RegionResult  `json:"regions"`
+	Verdicts    []VerdictResult `json:"verdicts,omitempty"`
+	Growth      []GrowthResult  `json:"growth,omitempty"`
+	Failed      []string        `json:"failed,omitempty"`
+	Diagnostics []string        `json:"diagnostics,omitempty"`
+}
+
+// RegionResult is one region's usage as a number.
+type RegionResult struct {
+	Name      string  `json:"name"`
+	Used      uint64  `json:"used_bytes"`
+	Length    uint64  `json:"length_bytes,omitempty"`
+	FromLoad  uint64  `json:"from_load_bytes,omitempty"`
+	Percent   float64 `json:"percent,omitempty"`
+	State     string  `json:"state,omitempty"`
+	Ambiguous bool    `json:"ambiguous,omitempty"`
+}
+
+// VerdictResult is what was decided about a region.
+type VerdictResult struct {
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Note   string `json:"note,omitempty"`
+	Failed bool   `json:"failed"`
+}
+
+// GrowthResult is one region's change against a baseline.
+type GrowthResult struct {
+	Name      string  `json:"name"`
+	Delta     int64   `json:"delta_bytes"`
+	Percent   float64 `json:"percent,omitempty"`
+	Limit     uint64  `json:"limit_bytes,omitempty"`
+	OverLimit bool    `json:"over_limit"`
+}
+
+// AsResult is an analysis and its verdicts as a document.
+func AsResult(analysis *Analysis, check *Check) Result {
+	out := Result{
+		Target:      analysis.Target,
+		Source:      analysis.Source,
+		MapFile:     analysis.Artifacts.MapFile,
+		ELFFile:     analysis.Artifacts.ELFFile,
+		Total:       analysis.Total(),
+		Diagnostics: append([]string{}, analysis.Diagnostics...),
+	}
+	for _, usage := range analysis.Usage {
+		entry := RegionResult{
+			Name: usage.Name, Used: usage.Used, Length: usage.Length,
+			FromLoad: usage.FromLoad, Ambiguous: usage.Ambiguous,
+		}
+		if usage.Length > 0 {
+			entry.Percent = float64(usage.Used) / float64(usage.Length) * 100
+		}
+		out.Regions = append(out.Regions, entry)
+	}
+	if check != nil {
+		for _, verdict := range check.Verdicts {
+			out.Verdicts = append(out.Verdicts, VerdictResult{
+				Name:   verdict.Name,
+				State:  verdict.State,
+				Note:   verdict.Note,
+				Failed: verdict.State == StateOver,
+			})
+		}
+		for _, growth := range check.Growth {
+			out.Growth = append(out.Growth, GrowthResult{
+				Name: growth.Name, Delta: growth.Delta, Percent: growth.Percent,
+				Limit: growth.Limit, OverLimit: growth.OverLimit,
+			})
+		}
+		out.Failed = append(out.Failed, check.Failed...)
+	}
+	return out
+}
+
+// WriteJSON writes an analysis as a document.
+func WriteJSON(out io.Writer, result Result) error {
+	encoded, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, string(encoded))
+	return err
 }

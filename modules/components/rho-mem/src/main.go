@@ -82,6 +82,7 @@ options:
   --write-baseline      record this run's figures as the baseline
   --width N             how wide the usage bars are drawn
   --bytes               print exact byte counts as well
+  --json                write the analysis as a document, for another program
   --no-warn             do not apply the warn threshold
   -o, --out PATH        write the report to a file rather than to standard output`)
 }
@@ -98,6 +99,7 @@ type options struct {
 	writeBase   bool
 	width       int
 	bytes       bool
+	asJSON      bool
 	noWarn      bool
 	enforcing   bool
 	outPath     string
@@ -233,6 +235,20 @@ func analyse(args []string, enforcing bool) int {
 		defer file.Close()
 		out = file
 	}
+	if options.asJSON {
+		// A document rather than a picture of a terminal, for the runs where the
+		// reader is a program. The report is still the default, because a person
+		// reading it is the point of most runs.
+		if err := rhomem.WriteJSON(out, rhomem.AsResult(analysis, &verdict)); err != nil {
+			fmt.Fprintln(os.Stderr, "rho mem:", err)
+			return exitUsage
+		}
+		if baseline != nil && len(verdict.Growth) > 0 {
+			rhomem.WriteGrowth(out, &verdict)
+		}
+		return exitClean
+	}
+
 	rhomem.WriteReport(out, analysis, &verdict, reportOptions)
 	if baseline != nil && len(verdict.Growth) > 0 {
 		rhomem.WriteGrowth(out, &verdict)
@@ -312,6 +328,8 @@ func parseArgs(args []string, into *options) []string {
 			into.writeBase = !isFalse(value, hasValue)
 		case "bytes":
 			into.bytes = !isFalse(value, hasValue)
+		case "json":
+			into.asJSON = !isFalse(value, hasValue)
 		case "no-warn":
 			into.noWarn = !isFalse(value, hasValue)
 		case "":

@@ -384,6 +384,37 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// How this project is measured: how many iterations, how many
+				// warm-up runs to discard, and the limits a check enforces.
+				//
+				// Everything here changes what a number means rather than only how
+				// it is presented, which is why it is a project declaration and not
+				// a flag: a benchmark measured a thousand times is not comparable
+				// with one measured once, and which of those two a CI run compared
+				// against a baseline is the difference between a regression and a
+				// coincidence.
+				Name:     "bench",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "default_iterations", Required: false, Kind: KindString},
+					{Name: "warmup_runs", Required: false, Kind: KindString},
+					{Name: "stack_watermark", Required: false, Kind: KindBool},
+					{
+						Name:     "budgets",
+						Required: false,
+						Kind:     KindMap,
+						Fields: []FieldSchema{
+							{Name: "max_stack_bytes", Required: false, Kind: KindString},
+							{Name: "max_heap_bytes", Required: false, Kind: KindString},
+							{Name: "max_cycles_per_iteration", Required: false, Kind: KindString},
+							{Name: "fail_on_regression_percent", Required: false, Kind: KindString},
+						},
+					},
+					{Name: "targets", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+				},
+			},
+			{
 				// The platform identity this module implements, such as
 				// `zenith`. A platform module declares it so a project can be
 				// recognized as being built for that platform without a name, a
