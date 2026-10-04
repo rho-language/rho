@@ -16,13 +16,13 @@ version 1.0.0
 main = "src/main.rho"
 feature = "math.control"
 
-dep robohub-common {
+dep sensor-lib {
     type = "c"
-    git = "https://github.com/aurel/robohub-common.git"
+    git = "https://github.com/aurel/sensor-lib.git"
 	tag = "v1.0.0"
     version = ">=1.0.0 <2.0.0"
-    env = "ROBOHUB_COMMON_PATH"
-    path = "../external/robohub-common"
+    env = "SENSOR_LIB_PATH"
+    path = "../external/sensor-lib"
     include = "include"
     src = "src"
 }
@@ -41,7 +41,7 @@ dep robohub-common {
 		t.Fatalf("unexpected manifest contents: %+v", m)
 	}
 	d := m.Deps[0]
-	if d.Name != "robohub-common" || d.Type != DepTypeC || d.GitURL == "" || d.GitTag != "v1.0.0" || d.GitBranch != "" || d.Version.Raw != ">=1.0.0 <2.0.0" || d.EnvVar != "ROBOHUB_COMMON_PATH" || d.Path != "../external/robohub-common" || d.Include != "include" || d.Src != "src" {
+	if d.Name != "sensor-lib" || d.Type != DepTypeC || d.GitURL == "" || d.GitTag != "v1.0.0" || d.GitBranch != "" || d.Version.Raw != ">=1.0.0 <2.0.0" || d.EnvVar != "SENSOR_LIB_PATH" || d.Path != "../external/sensor-lib" || d.Include != "include" || d.Src != "src" {
 		t.Fatalf("unexpected dependency: %+v", d)
 	}
 }
@@ -56,10 +56,10 @@ main: src/main.rho
 features:
   - math.control
 depends:
-  - name: robohub-common
+  - name: sensor-lib
     type: c
     version: 1.0.0
-    path: /opt/robohub-common
+    path: /opt/sensor-lib
 `
 	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ depends:
 	if m.ModuleName != "yaml-app" || m.Version != "1.0.0" || m.Main != "src/main.rho" {
 		t.Fatalf("unexpected YAML manifest: %+v", m)
 	}
-	if len(m.Features) != 1 || len(m.Deps) != 1 || m.Deps[0].Path != "/opt/robohub-common" {
+	if len(m.Features) != 1 || len(m.Deps) != 1 || m.Deps[0].Path != "/opt/sensor-lib" {
 		t.Fatalf("unexpected YAML manifest contents: %+v", m)
 	}
 }
@@ -255,7 +255,7 @@ commands:
 	if len(m.Extends.Hooks) != 2 || m.Extends.Hooks[0] != "index" || m.Extends.Hooks[1] != "page" {
 		t.Fatalf("expected the hooks it answers, got %+v", m.Extends.Hooks)
 	}
-	if !m.Extends.Answers("index") || m.Extends.Answers("shutdown") {
+	if !m.Extends.Answers("rho-doc", "index") || m.Extends.Answers("rho-doc", "shutdown") {
 		t.Fatalf("expected only the declared hooks to be answered, got %+v", m.Extends.Hooks)
 	}
 	if len(m.Extends.Commands) != 1 {
@@ -264,6 +264,106 @@ commands:
 	command := m.Extends.Commands[0]
 	if command.Name != "table-of-contents" || command.Run != "rho-doc-toc" || command.Stage() != "index" {
 		t.Fatalf("unexpected command: %+v", command)
+	}
+}
+
+func TestLoadYAMLManifestReadsAPluginSpanningComponents(t *testing.T) {
+	path := writeManifest(t, `module:
+  name: rho-zenith
+  type: plugin
+  version: 0.1.0
+main: rho-zenith
+extends:
+  - component: rho-target
+    implements: [platform]
+    hooks: [spec]
+  - component: rho-kconfig
+    implements: [platform]
+    hooks: [render]
+serves: [zenith]
+commands:
+  - name: target-spec
+    run: rho-zenith
+    hook: spec
+    component: rho-target
+`)
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Extends == nil {
+		t.Fatal("expected the relation a spanning plugin plugs into to be read")
+	}
+	targets := m.Extends.All()
+	if len(targets) != 2 {
+		t.Fatalf("expected one relation per component, got %+v", targets)
+	}
+	if targets[0].Component != "rho-target" || targets[1].Component != "rho-kconfig" {
+		t.Fatalf("expected the components it extends, got %+v", targets)
+	}
+	if len(targets[0].Implements) != 1 || targets[0].Implements[0] != "platform" {
+		t.Fatalf("expected the contract each relation fills, got %+v", targets)
+	}
+	if len(m.Extends.Platforms) != 1 || m.Extends.Platforms[0] != "zenith" {
+		t.Fatalf("expected the platform it serves, got %+v", m.Extends.Platforms)
+	}
+	if m.Extends.Commands[0].Component != "rho-target" {
+		t.Fatalf("expected the command to name its component, got %+v", m.Extends.Commands[0])
+	}
+	if !m.Extends.Answers("rho-target", "spec") {
+		t.Error("expected the target hook to be answered for rho-target")
+	}
+	if m.Extends.Answers("rho-target", "render") {
+		t.Error("a hook of another component was answered for rho-target")
+	}
+	if !m.Extends.Answers("rho-kconfig", "render") {
+		t.Error("expected the configuration hook to be answered for rho-kconfig")
+	}
+}
+
+func TestLoadYAMLManifestReadsAPlatformIdentity(t *testing.T) {
+	path := writeManifest(t, "module:\n  name: board-lib\n  type: platform\n  version: 0.1.0\nplatform: zenith\n")
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Platform != "zenith" {
+		t.Fatalf("expected the platform identity to be read, got %q", m.Platform)
+	}
+}
+
+func TestPlatformIsRecognizedFromTheModuleGraph(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	common := filepath.Join(root, "sensor-lib")
+	platform := filepath.Join(root, "board-lib")
+	for _, dir := range []string{app, common, platform} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(dir, name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "module.yml"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(app, "app", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndepends:\n  - name: sensor-lib\n    type: c\n    path: ../sensor-lib\n")
+	// The interfaces module enumerates the platform that implements it, which
+	// is how a project written against the interfaces alone is still recognized.
+	write(common, "sensor-lib", "module:\n  name: sensor-lib\n  type: interfaces\n  version: 1.0.0\nplatforms:\n  - name: board-lib\n    path: ../board-lib\n")
+	write(platform, "board-lib", "module:\n  name: board-lib\n  type: platform\n  version: 0.1.0\nplatform: zenith\n")
+
+	if got := Platform(app); got != "zenith" {
+		t.Fatalf("expected the platform to be recognized through the graph, got %q", got)
+	}
+	if got := Platform(common); got != "zenith" {
+		t.Fatalf("expected the platform to be recognized from the interfaces module, got %q", got)
+	}
+	if got := Platform(t.TempDir()); got != "" {
+		t.Fatalf("expected no platform for a project that names none, got %q", got)
 	}
 }
 

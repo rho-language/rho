@@ -19,9 +19,9 @@
 // wrong sometimes is a tool people learn to distrust wholesale. The checks that need
 // a front end are clang-tidy's and cppcheck's job, which is what the plugins are for.
 //
-// The example in robohub-stm32 is the test material. `examples/rho/hello_world` is a
-// program that must produce nothing from this engine, and `examples/c/hello_world`
-// is one this engine is never pointed at, because there is nothing in it to point at.
+// A Rho program that must produce nothing from this engine is the test material,
+// and so is a C program this engine is never pointed at, because there is nothing
+// in it to point at. Both are exercised by the engine's own tests.
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -203,7 +203,7 @@ func tree(source Source) *ast.Module {
 // failure is a message about a module that does not exist rather than about this
 // file.
 //
-// A module name may be dotted — `module robohub.hal.gpio` — and only its last
+// A module name may be dotted — `module device.hal.gpio` — and only its last
 // segment is the file's name. Comparing the whole string to the stem would report
 // every module in a tree of them, which is the shape a real project has.
 func rhoModuleName(source Source) []Diagnostic {
@@ -250,11 +250,11 @@ func fileStem(path string) string {
 // rhoUnusedImport is an import nothing in the file names.
 //
 // The rule with the most room to be wrong here, and it is worth saying exactly why
-// it is nevertheless right, because the example in robohub-stm32 is the case:
+// it is nevertheless right, because a generated foreign interface is the case:
 //
 //	import ffi
 //	...
-//	robohub_platform_init()
+//	device_init()
 //
 // `ffi` is not named by anything, and it is not unused — its declarations were
 // generated from the platform's headers into `build/generated/modules/ffi.rho` and

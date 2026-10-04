@@ -11,19 +11,19 @@ func TestLockfileSaveAndLoad(t *testing.T) {
 	lock := &Lockfile{
 		Packages: []LockedPackage{
 			{
-				Name:    "robohub-common",
+				Name:    "sensor-lib",
 				Version: "1.4.2",
-				GitURL:  "https://github.com/aurel/robohub-common.git",
+				GitURL:  "https://github.com/aurel/sensor-lib.git",
 				Rev:     "1.4.2",
-				Path:    "/deps/robohub-common",
+				Path:    "/deps/sensor-lib",
 				Hash:    "sha256:abc123",
 			},
 			{
-				Name:    "robohub-hal",
+				Name:    "sensor-hal",
 				Version: "0.7.1",
-				GitURL:  "https://github.com/aurel/robohub-hal.git",
+				GitURL:  "https://github.com/aurel/sensor-hal.git",
 				Rev:     "0.7.1",
-				Path:    "/deps/robohub-hal",
+				Path:    "/deps/sensor-hal",
 				Hash:    "sha256:def456",
 			},
 		},
@@ -44,8 +44,8 @@ func TestLockfileSaveAndLoad(t *testing.T) {
 	}
 
 	p := loaded.Packages[0]
-	if p.Name != "robohub-common" {
-		t.Fatalf("expected robohub-common, got %s", p.Name)
+	if p.Name != "sensor-lib" {
+		t.Fatalf("expected sensor-lib, got %s", p.Name)
 	}
 	if p.Version != "1.4.2" {
 		t.Fatalf("expected version 1.4.2, got %s", p.Version)

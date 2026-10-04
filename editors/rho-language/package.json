@@ -4,7 +4,7 @@
     "description": "Rho: language support, a debug adapter, and the peripheral view for embedded targets.",
     "version": "0.4.0",
     "license": "Apache-2.0",
-    "publisher": "robohubplatform",
+    "publisher": "rho-lang",
     "engines": {
         "vscode": "^1.82.0"
     },

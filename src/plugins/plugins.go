@@ -125,18 +125,30 @@ type Plugin struct {
 	Version string
 	// Root is the module root, which a command path is relative to.
 	Root string
-	// Extends is the component this plugin plugs into.
-	Extends string
-	// Implements are the contracts of that component this plugin fills, which
-	// is what says what the plugin is rather than which hooks it happens to
-	// answer. Two plugins may answer the same hook and be unrelated things, and
-	// this is what tells them apart when someone decides whether to run one.
-	Implements []string
-	// Hooks are the hooks of that component this plugin answers, and the
-	// component offers every one of them.
-	Hooks []string
+	// Extensions are the components this plugin plugs into, one entry per
+	// component. A plugin that extends one component has exactly one; a
+	// platform plugin that spans the toolchain has one per component it maps.
+	Extensions []Extension
+	// Platforms are the platform identities this plugin serves. Empty means it
+	// is platform-agnostic and is offered whatever a project builds for.
+	Platforms []string
 	// Commands are the executables a run goes through this plugin.
 	Commands []Command
+
+	// Extends, Implements and Hooks are the single-target view, kept for a
+	// caller that only wants to name the component a plugin extends. They mirror
+	// the first extension.
+	Extends    string
+	Implements []string
+	Hooks      []string
+}
+
+// Extension is one component a plugin plugs into, and the contracts and hooks
+// of that component it answers there.
+type Extension struct {
+	Component  string
+	Implements []string
+	Hooks      []string
 }
 
 // Command is one executable a plugin answers a hook with.
@@ -144,6 +156,10 @@ type Command struct {
 	Name string
 	Run  string
 	Hook string
+	// Component is the component this command answers, when the plugin extends
+	// more than one. Empty means it answers whichever component is asking,
+	// which is what a single-target plugin means.
+	Component string
 }
 
 // Stage is the hook a command answers: the one it names, or its own name when a
@@ -155,11 +171,48 @@ func (c Command) Stage() string {
 	return c.Name
 }
 
-// Answers reports whether this plugin declared a hook.
+// ExtensionFor is the extension this plugin declares for a component.
+//
+// A plugin that extends one component answers for it from the single-target
+// fields, which is what a plugin written before a plugin could span components
+// carries.
+func (p Plugin) ExtensionFor(component string) (Extension, bool) {
+	for _, extension := range p.Extensions {
+		if extension.Component == component {
+			return extension, true
+		}
+	}
+	if p.Extends == component {
+		return Extension{Component: p.Extends, Implements: p.Implements, Hooks: p.Hooks}, true
+	}
+	return Extension{}, false
+}
+
+// Answers reports whether this plugin declared a hook for any component. A
+// component that needs to know which of its own hooks is answered asks
+// AnswersFor instead.
 func (p Plugin) Answers(hook string) bool {
-	for _, offered := range p.Hooks {
-		if offered == hook {
-			return true
+	return p.AnswersFor("", hook)
+}
+
+// AnswersFor reports whether this plugin answers a hook for a component. An
+// empty component asks across every extension.
+func (p Plugin) AnswersFor(component, hook string) bool {
+	for _, extension := range p.Extensions {
+		if component != "" && extension.Component != component {
+			continue
+		}
+		for _, offered := range extension.Hooks {
+			if offered == hook {
+				return true
+			}
+		}
+	}
+	if len(p.Extensions) == 0 || component == "" || p.Extends == component {
+		for _, offered := range p.Hooks {
+			if offered == hook {
+				return true
+			}
 		}
 	}
 	return false
@@ -176,6 +229,14 @@ type Source struct {
 	Tree string
 	// RhoHome is the installation whose plugins are trusted, or "" for none.
 	RhoHome string
+	// Platform is the platform identity the project is built for, such as
+	// `zenith`, or "" when none was recognized.
+	//
+	// A plugin that names platforms runs only when the project's platform is one
+	// of them; a plugin that names none runs for any project, platform or not.
+	// An unrecognized platform therefore runs only the platform-agnostic
+	// plugins, which is what a standard build is.
+	Platform string
 	// TrustTree runs the plugins the tree carries.
 	//
 	// A plugin is a program, and running one is running code the tree supplied.
@@ -186,6 +247,19 @@ type Source struct {
 	TrustTree bool
 }
 
+// Offered reports whether a plugin runs for this source's platform.
+func (s Source) Offered(plugin Plugin) bool {
+	if len(plugin.Platforms) == 0 {
+		return true
+	}
+	for _, platform := range plugin.Platforms {
+		if platform == s.Platform && platform != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Discover reads the plugins attached to one component.
 //
 // A plugin that is installed and not active is not here: it is available, and
@@ -193,10 +267,17 @@ type Source struct {
 // it says so, rather than carrying on with fewer than it asked for — a build
 // that silently dropped a formatter would produce pages nobody asked for the
 // shape of.
+//
+// A plugin that names platforms is offered only when the project is built for
+// one of them. A project whose platform could not be recognized therefore runs
+// only the platform-agnostic plugins, which is the standard path.
 func (s Source) Discover(component string) []Plugin {
 	found := []Plugin{}
 	for _, plugin := range s.All() {
-		if plugin.Extends == component {
+		if !s.Offered(plugin) {
+			continue
+		}
+		if _, ok := plugin.ExtensionFor(component); ok {
 			found = append(found, plugin)
 		}
 	}
@@ -256,15 +337,28 @@ func (s Source) Contracts(component string) []Contract {
 // which is what a plugin written before contracts existed does and is why a
 // component that needs to tell its plugins apart has to say so.
 func (p Plugin) Fills(contract string) bool {
-	if contract == "" || len(p.Implements) == 0 {
+	offered := p.filledContracts()
+	if contract == "" || len(offered) == 0 {
 		return true
 	}
-	for _, offered := range p.Implements {
-		if offered == contract {
+	for _, candidate := range offered {
+		if candidate == contract {
 			return true
 		}
 	}
 	return false
+}
+
+// filledContracts is every contract this plugin fills, across all extensions.
+func (p Plugin) filledContracts() []string {
+	out := []string{}
+	for _, extension := range p.Extensions {
+		out = append(out, extension.Implements...)
+	}
+	if len(p.Extensions) == 0 {
+		out = append(out, p.Implements...)
+	}
+	return out
 }
 
 // FillsAny reports whether a plugin fills at least one of the contracts, which
@@ -336,7 +430,7 @@ func readPlugin(root string, seen map[string]bool) (Plugin, bool) {
 		return Plugin{}, false
 	}
 	extension := manifest.Extends
-	if extension == nil || extension.Component == "" || seen[manifest.ModuleName] {
+	if extension == nil || len(extension.All()) == 0 || seen[manifest.ModuleName] {
 		return Plugin{}, false
 	}
 	seen[manifest.ModuleName] = true
@@ -345,12 +439,22 @@ func readPlugin(root string, seen map[string]bool) (Plugin, bool) {
 		Name:       manifest.ModuleName,
 		Version:    manifest.Version,
 		Root:       root,
+		Platforms:  extension.Platforms,
 		Extends:    extension.Component,
 		Implements: extension.Implements,
 		Hooks:      extension.Hooks,
 	}
+	for _, target := range extension.All() {
+		plugin.Extensions = append(plugin.Extensions, Extension{
+			Component:  target.Component,
+			Implements: target.Implements,
+			Hooks:      target.Hooks,
+		})
+	}
 	for _, command := range extension.Commands {
-		plugin.Commands = append(plugin.Commands, Command{Name: command.Name, Run: command.Run, Hook: command.Hook})
+		plugin.Commands = append(plugin.Commands, Command{
+			Name: command.Name, Run: command.Run, Hook: command.Hook, Component: command.Component,
+		})
 	}
 	return plugin, true
 }
@@ -391,11 +495,21 @@ func RunHooks(found []Plugin, component, hook string, payload any) Result {
 		// component offers: the two lists were checked against each other when
 		// the module was validated, and are checked again here because a run
 		// must not depend on that having happened.
-		if !plugin.Answers(hook) {
+		//
+		// The hook is checked against this component's extension, not across
+		// every component the plugin extends: two components may offer a hook
+		// of the same name, and a plugin that answers one has not answered the
+		// other.
+		if !plugin.AnswersFor(component, hook) {
 			continue
 		}
 		for _, command := range plugin.Commands {
 			if command.Stage() != hook {
+				continue
+			}
+			// A command that names a component answers only it; one that names
+			// none answers whichever component is asking.
+			if command.Component != "" && command.Component != component {
 				continue
 			}
 			response, err := runCommand(plugin, command, Request{

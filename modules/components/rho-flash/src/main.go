@@ -35,7 +35,18 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"rho/src/deps"
+	"rho/src/plugins"
 )
+
+// ComponentName is this component's own name, which is what a plugin has to say
+// in order to be loaded by it.
+const ComponentName = "rho-flash"
+
+// HookFlash is the hook a platform plugin answers with how its boards are
+// reached, for the cases a target spec cannot state.
+const HookFlash = "flash"
 
 // Flash is the part of a target spec this program needs.
 //
@@ -168,6 +179,74 @@ func resolve(name, project string) (Flash, error) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Flash                                                                     */
+/* -------------------------------------------------------------------------- */
+
+// flashRequest is what a platform plugin is asked: which board is being reached,
+// for which project, with which binary, and what its target spec already says.
+type flashRequest struct {
+	Target  string `json:"target"`
+	Project string `json:"project"`
+	Binary  string `json:"binary"`
+	Flash   Flash  `json:"flash"`
+}
+
+// flashResponse is what a plugin answers: the flash block to use in place of,
+// or in addition to, what the target spec declared. An omitted field leaves the
+// spec's own.
+type flashResponse struct {
+	Flash *Flash `json:"flash,omitempty"`
+}
+
+// platformFlash lets a platform plugin supply how a board is reached, which is
+// for the cases a target spec cannot state. A plugin that fails is reported and
+// the target spec's own answer stands.
+func platformFlash(project, target, binary string, current Flash) Flash {
+	found := plugins.Source{Tree: project, RhoHome: deps.RhoHome(), Platform: deps.Platform(project)}.Discover(ComponentName)
+	if len(found) == 0 {
+		return current
+	}
+	answer := plugins.RunHooks(found, ComponentName, HookFlash, flashRequest{
+		Target: target, Project: project, Binary: binary, Flash: current,
+	})
+	for _, diagnostic := range answer.Diagnostics {
+		fmt.Fprintf(os.Stderr, "rho flash: %s\n", diagnostic)
+	}
+	for _, raw := range answer.Payload {
+		response := flashResponse{}
+		if err := json.Unmarshal(raw, &response); err != nil || response.Flash == nil {
+			continue
+		}
+		current = mergeFlash(current, *response.Flash)
+	}
+	return current
+}
+
+// mergeFlash overlays the fields a plugin set on the spec's own flash block, so
+// a plugin can fill in what a spec left out without restating what it said.
+func mergeFlash(base, over Flash) Flash {
+	if over.Tool != "" {
+		base.Tool = over.Tool
+	}
+	if over.Command != "" {
+		base.Command = over.Command
+	}
+	if len(over.Arguments) > 0 {
+		base.Arguments = over.Arguments
+	}
+	if over.Offset != "" {
+		base.Offset = over.Offset
+	}
+	if len(over.PostArgs) > 0 {
+		base.PostArgs = over.PostArgs
+	}
+	if over.Comment != "" {
+		base.Comment = over.Comment
+	}
+	return base
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Flashing                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -189,6 +268,9 @@ func FlashFile(binary string, targetName string, project string) error {
 	if err != nil {
 		return err
 	}
+	// A platform may say how its boards are reached, for the cases a target
+	// spec cannot state. The spec's own answer stands where the plugin is silent.
+	flash = platformFlash(project, targetName, binary, flash)
 	if !flash.declared() {
 		return fmt.Errorf("the target %q declares no way to reach a board; add a flash block to its spec", targetName)
 	}

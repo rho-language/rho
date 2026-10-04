@@ -172,7 +172,7 @@ func build(args []string) int {
 	// be able to be built from a checkout that contains nothing but sources, with
 	// every vendor repository fetched and every file a vendor needs but does not
 	// ship produced along the way.
-	if err := writeHalConf(specSource, spec.Defines); err != nil {
+	if err := writeHalConf(specSource, spec); err != nil {
 		fmt.Fprintln(os.Stderr, "rho target build:", err)
 		return 1
 	}

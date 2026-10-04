@@ -38,9 +38,9 @@ func TestDepsRemove(t *testing.T) {
 module root
 version 0.1.0
 
-dep robohub-common {
+dep sensor-lib {
     type = "c"
-    git = "https://github.com/aurel/robohub-common.git"
+    git = "https://github.com/aurel/sensor-lib.git"
     version = ">=1.0.0 <2.0.0"
 }
 `
@@ -53,7 +53,7 @@ dep robohub-common {
 	os.Chdir(tmp)
 
 	out := captureRemoveOutput(t, func() {
-		runDepsRemove([]string{"robohub-common"})
+		runDepsRemove([]string{"sensor-lib"})
 	})
 
 	if !strings.Contains(out, "Removed dependency") {
@@ -62,7 +62,7 @@ dep robohub-common {
 
 	// Check manifest updated
 	data, _ := os.ReadFile(filepath.Join(tmp, "rho.mod"))
-	if strings.Contains(string(data), "dep robohub-common") {
+	if strings.Contains(string(data), "dep sensor-lib") {
 		t.Fatalf("dependency block not removed from manifest")
 	}
 }

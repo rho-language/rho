@@ -325,9 +325,36 @@ func ModuleSchema() Schema {
 				// free-floating: it names the component it extends, and the
 				// hooks of that component it answers, so the relation is
 				// declared rather than assumed.
+				//
+				// Two shapes are accepted, so Kind is left open and the shape is
+				// checked below: a single component name, which is what a plugin
+				// that extends one component writes, or a list of
+				// `{component, implements, hooks}` entries, which is what a
+				// plugin spanning several components of the toolchain writes.
 				Name:     "extends",
 				Required: false,
+				Kind:     "",
+			},
+			{
+				// The platform identity this module implements, such as
+				// `zenith`. A platform module declares it so a project can be
+				// recognized as being built for that platform without a name, a
+				// repository or a directory being assumed.
+				Name:     "platform",
+				Required: false,
 				Kind:     KindString,
+			},
+			{
+				// The platform identities a plugin serves. Empty means the
+				// plugin is platform-agnostic and runs for any project. Named
+				// `serves` rather than `platforms` because the latter is already
+				// the list of modules that implement an interfaces module.
+				Name:     "serves",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindString,
+				},
 			},
 			{
 				// The contracts of the component this plugin fills, so a plugin
@@ -366,6 +393,10 @@ func ModuleSchema() Schema {
 						{Name: "name", Required: true, RejectNull: true, Kind: KindString},
 						{Name: "run", Required: true, RejectNull: true, Kind: KindString},
 						{Name: "hook", Required: false, Kind: KindString},
+						// The component a command answers, when the plugin
+						// extends more than one. Empty answers whichever
+						// component is asking.
+						{Name: "component", Required: false, Kind: KindString},
 					},
 				},
 			},
@@ -848,6 +879,41 @@ func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors
 					Severity: SeverityWarning,
 				})
 			}
+		}
+	}
+
+	// `extends` is a component name or a list of components a plugin spans, so
+	// the shape is checked here rather than by a single expected kind. A list
+	// entry has to name its component, because that is the whole of what the
+	// entry is for.
+	if extensionNode, ok := data.Map["extends"]; ok && extensionNode.Kind != yaml.KindNull {
+		switch extensionNode.Kind {
+		case yaml.KindString:
+			// The single-component form.
+		case yaml.KindList:
+			for i, item := range extensionNode.List {
+				if item.Kind != yaml.KindMap {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("extends[%d]", i),
+						Message:  "each extends entry must be a map naming its component",
+						Severity: SeverityError,
+					})
+					continue
+				}
+				if component, hasComponent := item.Map["component"]; !hasComponent || component.Str == "" {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("extends[%d].component", i),
+						Message:  "an extends entry must name the component it plugs into",
+						Severity: SeverityError,
+					})
+				}
+			}
+		default:
+			errs = append(errs, ValidationError{
+				Path:     "extends",
+				Message:  "extends must be a component name or a list of components",
+				Severity: SeverityError,
+			})
 		}
 	}
 

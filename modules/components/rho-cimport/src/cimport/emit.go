@@ -355,7 +355,7 @@ func cType(name string) string {
 	}
 	fields := strings.Fields(trimmed)
 	if len(fields) == 1 && !strings.ContainsAny(trimmed, "*") {
-		// One word: a tag the library declares (RoboHubSPI) or a primitive.
+		// One word: a tag the library declares (DeviceSPI) or a primitive.
 		return trimmed
 	}
 	// More than one word, or a pointer: a qualified type, written as C writes it.

@@ -814,7 +814,7 @@ func isExternalBuiltin(name string) bool {
 	if strings.HasPrefix(name, "c_") {
 		return true
 	}
-	for _, builtin := range []string{"sqrt", "sin", "cos", "atan2", "floor", "clamp_f64", "lerp", "str_eq", "panic", "abort", "sizeof", "robohub_platform_init", "robohub_board_register"} {
+	for _, builtin := range []string{"sqrt", "sin", "cos", "atan2", "floor", "clamp_f64", "lerp", "str_eq", "panic", "abort", "sizeof"} {
 		if name == builtin {
 			return true
 		}
@@ -841,11 +841,11 @@ func comparable(left, right ir.Type) bool { return assignable(left, right) || as
 // the string is already the pointer. A literal is written into the program's
 // read-only data with a terminating byte after it, and a string that was built
 // at run time is the same thing — a `const char*` that C strings are. So
-// `robohub_get_gpio("user_led")` passes the address of the literal, not a copy
+// `device_get_led("user_led")` passes the address of the literal, not a copy
 // and not a buffer.
 //
 // The alternative was refusing, and refusing is what produced
-// `robohub_get_gpio(name.something())` in the first place: a program with a
+// `device_get_led(name.something())` in the first place: a program with a
 // string to give had nothing to give it with. Every header written afterwards
 // would have carried the same workaround, which is the shape of a missing
 // language rule rather than of a missing function.
@@ -889,7 +889,7 @@ func assignable(want, got ir.Type) bool {
 	// the program writing a conversion at every call.
 	//
 	// A null still means absent, because that is what a null is in the
-	// representation. The conversion loses nothing: `robohub_get_gpio` answering
+	// representation. The conversion loses nothing: `device_get_led` answering
 	// NULL still arrives as `None`.
 	if IsOptionalPointer(want.Name) && got.Kind == ir.TypePtr {
 		return true
@@ -1554,7 +1554,7 @@ func cTypeForName(name string) string {
 		// A pointer is spelled as a C pointer. Mangling the name would write
 		// `Ptr_u8`, which is not a type a C compiler knows: every foreign call
 		// that passes a pointer crosses this path, so a binding generated for
-		// robohub-common would not compile at all.
+		// any native library would not compile at all.
 		element := strings.TrimSuffix(strings.TrimPrefix(name[len(base):], "["), "]")
 		// A pointer to nothing is a pointer to nothing: `Ptr[Unit]` is how a
 		// foreign handle is declared, and C spells that void*.

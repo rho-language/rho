@@ -190,7 +190,7 @@ func generate(args []string, check bool) int {
 	if *usePlugins {
 		// Only the installed plugins: a generation reads the tree it was pointed
 		// at, and a plugin from that tree is code from whoever wrote it.
-		options.Plugins = plugins.Source{RhoHome: deps.RhoHome()}.Discover(cimport.ComponentName)
+		options.Plugins = plugins.Source{RhoHome: deps.RhoHome(), Platform: deps.Platform(absolute)}.Discover(cimport.ComponentName)
 	}
 	// The preset declares which vendor sources belong to this build — the startup
 	// assembly and the system file, for a board preset, and the family's own

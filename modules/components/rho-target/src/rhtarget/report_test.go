@@ -30,7 +30,7 @@ func reportedSpec() Spec {
 	spec := testSpec()
 	spec.MCU = "chip"
 	spec.Arch = "arm-cortex-m"
-	spec.VendorLibrary = "robohub_board"
+	spec.VendorLibrary = "device_board"
 	spec.Comment = "A board for the test."
 	spec.Pins = map[string]Pin{
 		"gp16": {Name: "GP16", Role: "spi0_rx"},
@@ -53,7 +53,7 @@ func TestTheReportNamesTheChainTheFactsCameFrom(t *testing.T) {
 		"A board for the test.",
 		"core:      cortex-m4",
 		"compiler:  arm-none-eabi-gcc",
-		"links:     robohub_board",
+		"links:     device_board",
 		"-mcpu=cortex-m4",
 		"CHIP=1",
 		"FLASH",

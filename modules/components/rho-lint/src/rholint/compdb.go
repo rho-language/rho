@@ -691,9 +691,9 @@ const DefaultStandard = "-std=c11"
 //
 // `build.toolchain` first because it names one board; then the first entry of
 // `build.presets`, which is a list because a program is not for one board and whose
-// first entry is the one a build uses when it is given no choice. The examples in
-// robohub-stm32 are this case: six presets, no toolchain, and every build of them
-// is for one of the six.
+// first entry is the one a build uses when it is given no choice. A multi-board
+// platform is this case: several presets, no toolchain, and every build of it is
+// for one of them.
 func BoardFor(manifest *deps.Manifest, named string) string {
 	if board := strings.TrimSpace(named); board != "" {
 		return board

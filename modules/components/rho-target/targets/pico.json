@@ -1,9 +1,8 @@
 {
   "kind": "board",
   "name": "pico",
-  "comment": "The Raspberry Pi Pico, an RP2040 on a board. The HAL implementations the platform-agnostic interfaces resolve to are robohub-pico's, which is what a build links.",
+  "comment": "The Raspberry Pi Pico, an RP2040 on a board. The pin map is the board's own fact; which HAL implementation a build links is declared by the project.",
   "mcu": "rp2040",
-  "vendor_library": "robohub_pico",
   "pins": {
     "gp0": { "name": "GP0", "role": "uart0_tx" },
     "gp1": { "name": "GP1", "role": "uart0_rx" },

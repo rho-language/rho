@@ -1,9 +1,8 @@
 {
   "kind": "board",
   "name": "esp32c3",
-  "comment": "An ESP32-C3 on its development board: a single-core RISC-V chip with Wi-Fi and Bluetooth. ESP-IDF is the platform here rather than a bare linker script, because the chip's flash is reached through a partition table and its radio needs the IDF's own startup, so the build is a CMake ESP-IDF project and the HAL implementations are robohub-esp32's.",
+  "comment": "An ESP32-C3 on its development board: a single-core RISC-V chip with Wi-Fi and Bluetooth. ESP-IDF is the platform here rather than a bare linker script, because the chip's flash is reached through a partition table and its radio needs the IDF's own startup, so the build is a CMake ESP-IDF project.",
   "core": "riscv32imc",
-  "vendor_library": "robohub_esp32",
   "toolchain": {
     "compiler": "riscv32-unknown-elf-gcc",
     "linker": "riscv32-unknown-elf-gcc",

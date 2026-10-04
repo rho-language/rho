@@ -36,6 +36,22 @@ features:
   - stlink
   - board
 
+# The hook a flash goes through, and the contract a platform plugin fills.
+#
+# A board's own target spec says how it is reached, and this component runs it.
+# A platform whose boards are reached in a way a spec cannot state — a tool
+# chosen from what is installed, an address the platform computes — says so
+# through this hook, so the platform's peculiarity is a plugin rather than a
+# switch over part numbers in this component.
+provides:
+  hooks:
+    - flash
+  contracts:
+    - name: platform
+      description: Supplies the command a platform's board is programmed with.
+      one: true
+      hooks: [flash]
+
 package:
   kind: component
   binary: true

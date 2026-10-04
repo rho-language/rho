@@ -5,7 +5,7 @@
 // A value that may be absent is normally a tag and a payload: a flag saying
 // whether there is a value, and the value itself. For a pointer that is a waste.
 // A null pointer already says "there is no value", and every C library that
-// returns a pointer already uses null for it — `robohub_get_gpio` answers NULL
+// returns a pointer already uses null for it — `device_get_led` answers NULL
 // for a name it does not know, and the program has to be able to see that.
 //
 // So `Option[Ptr[T]]` is stored as the pointer. `None` is `NULL` and `Some(p)` is
@@ -44,8 +44,8 @@ func IsOptionalPointer(name string) bool {
 // optionalPointerCType returns the C type an optional pointer is represented
 // as, and whether the name was one at all.
 //
-// `Option[RoboHubGPIO_Ptr]` carries `RoboHubGPIO`, so the representation is
-// `RoboHubGPIO*`. A payload that already names a pointer keeps its star: an
+// `Option[DeviceLED_Ptr]` carries `DeviceLED`, so the representation is
+// `DeviceLED*`. A payload that already names a pointer keeps its star: an
 // option of a pointer to a pointer is still a pointer, and writing `**` for it
 // would be inventing a level of indirection the program did not ask for.
 func optionalPointerCType(name string) (string, bool) {

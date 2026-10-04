@@ -15,7 +15,7 @@ rho cimport generate <project>     # write the interface, and the C shim
 A Rho program can call C, but only through a declaration it has:
 
 ```rho
-extern fn robohub_get_spi(name: Ptr[u8]) Ptr[RoboHubSPI]
+extern fn sensor_open(name: Ptr[u8]) Ptr[Device]
 ```
 
 Writing those by hand for a real library is a day of transcription that is wrong
@@ -40,23 +40,23 @@ cannot do:
 ```yaml
 # module.yml
 c_connection:
-  library: robohub-common
+  library: sensor-lib
   headers:
     - registry.h
-    - robohub/hal/spi.h
+    - sensor/hal/spi.h
   include_dirs:
     - include
-    - include/robohub/hal
+    - include/sensor/hal
   variants:
     stm32:
-      target: robohub_stm32
+      target: vendor_stm32
     pico:
-      target: robohub_pico
+      target: vendor_pico
 ```
 
 A build target a person names and a library a build links are different things,
 and this is where they meet: `rho build --target stm32` generates the C target
-with `robohub_stm32` linked behind it. The generated project carries the declared
+with `vendor_stm32` linked behind it. The generated project carries the declared
 headers and its own C sources, so it builds where it is generated.
 
 ### Layer 2: what the headers declare
@@ -97,20 +97,36 @@ written by hand, because what reads well is a judgement and not a translation.
 ## Extending it
 
 The component takes plugins, over the same mechanism every component does. It
-offers one hook: `map`, which runs once with the declarations that were read, and
-answers with the C types a plugin knows and what they are in Rho. A vendor type
-the header names and the language has no primitive for is the one thing a
-generator cannot work out on its own.
+declares the contract `platform` and offers one hook for it, `map`, which runs
+once with the declarations that were read and answers with the C types a plugin
+knows and what they are in Rho. A vendor type the header names and the language
+has no primitive for is the one thing a generator cannot work out on its own.
 
 ```yaml
 # the plugin's module.yml
-extends: rho-cimport
-hooks: [map]
+serves: [zenith]
+
+extends:
+  - component: rho-cimport
+    implements: [platform]
+    hooks: [map]
+
 commands:
   - name: vendor-types
     run: my-vendor-types
     hook: map
+    component: rho-cimport
 ```
+
+`extends` is a list because a platform speaks through more than one component:
+the same platform states its C types here, its targets in rho-target and its
+configuration in rho-kconfig, and each of those relations names the component it
+belongs to. `serves` is what makes the mapping happen for one platform and not
+for any other — see [the platform plugins](../../plugins/rho-robohub/) for a
+plugin that fills four components' `platform` contracts at once.
+
+A plugin that extends exactly one component may write `extends: rho-cimport` as
+before, with `implements` and `hooks` beside it; both forms are the same thing.
 
 The request and the answer are JSON envelopes, and the component's payload is
 inside the envelope:

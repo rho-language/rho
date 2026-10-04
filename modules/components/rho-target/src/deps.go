@@ -81,7 +81,7 @@ func writeDepsFiles(projectRoot, destination string) error {
 // manifest exported.
 //
 // A dependency that brings its own build defines its own target —
-// `robohub-common` — and its manifest exports a namespaced name for it, because
+// `sensor-lib` — and its manifest exports a namespaced name for it, because
 // two dependencies may both call their library by the same thing and a consumer
 // should not have to care which is which. Those are two names for one thing, so
 // something has to join them.

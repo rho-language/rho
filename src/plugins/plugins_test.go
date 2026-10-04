@@ -125,6 +125,146 @@ func TestAModuleThatIsNotAPluginIsNotAnExtension(t *testing.T) {
 	}
 }
 
+// writeRawPlugin writes a plugin manifest exactly as given, for the forms the
+// fixed helper above cannot express.
+func writeRawPlugin(t *testing.T, root, name, body string) string {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "module.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A plugin that spans several components is found by each of them. This is the
+// shape a platform plugin has: the same platform expresses itself through the
+// target it builds for, the configuration it renders and the C it maps, and one
+// plugin is the one place that mapping lives.
+func TestAPluginSpanningComponentsIsFoundByEachOfThem(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	writeRawPlugin(t, root, "spanning", "module:\n"+
+		"  name: spanning\n"+
+		"  type: plugin\n"+
+		"  version: 0.1.0\n"+
+		"main: spanning\n"+
+		"extends:\n"+
+		"  - component: rho-target\n"+
+		"    implements: [platform]\n"+
+		"    hooks: [spec]\n"+
+		"  - component: rho-kconfig\n"+
+		"    implements: [platform]\n"+
+		"    hooks: [render]\n")
+
+	source := Source{Tree: root, TrustTree: true}
+	if found := source.Discover("rho-target"); len(found) != 1 {
+		t.Fatalf("expected the spanning plugin to extend rho-target, got %+v", found)
+	}
+	if found := source.Discover("rho-kconfig"); len(found) != 1 {
+		t.Fatalf("expected the spanning plugin to extend rho-kconfig, got %+v", found)
+	}
+	if found := source.Discover("rho-cimport"); len(found) != 0 {
+		t.Fatalf("expected no relation to rho-cimport, got %+v", found)
+	}
+}
+
+// A hook name is not unique across the toolchain. A plugin that answers `render`
+// for one component has not answered it for another, and the run asks the
+// component's own extension.
+func TestAHookIsAnsweredForTheComponentThatOffersIt(t *testing.T) {
+	plugin := Plugin{
+		Name: "spanning",
+		Extensions: []Extension{
+			{Component: "rho-target", Hooks: []string{"spec"}},
+			{Component: "rho-kconfig", Hooks: []string{"render"}},
+		},
+	}
+	if !plugin.AnswersFor("rho-target", "spec") {
+		t.Error("expected the target hook to be answered for rho-target")
+	}
+	if plugin.AnswersFor("rho-target", "render") {
+		t.Error("a hook of another component was answered for rho-target")
+	}
+	if !plugin.AnswersFor("rho-kconfig", "render") {
+		t.Error("expected the configuration hook to be answered for rho-kconfig")
+	}
+}
+
+// A platform plugin runs only when the project is built for the platform it
+// names. Nothing recognized is the standard path: only the platform-agnostic
+// plugins run, and a build for another platform does not pick this one up.
+func TestAPlatformPluginRunsOnlyForItsPlatform(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	writeRawPlugin(t, root, "zenith", "module:\n"+
+		"  name: zenith\n"+
+		"  type: plugin\n"+
+		"  version: 0.1.0\n"+
+		"main: zenith\n"+
+		"extends:\n"+
+		"  - component: rho-target\n"+
+		"    hooks: [spec]\n"+
+		"serves: [zenith]\n")
+	writeRawPlugin(t, root, "generic", "module:\n"+
+		"  name: generic\n"+
+		"  type: plugin\n"+
+		"  version: 0.1.0\n"+
+		"main: generic\n"+
+		"extends:\n"+
+		"  - component: rho-target\n"+
+		"    hooks: [spec]\n")
+
+	if found := (Source{Tree: root, TrustTree: true, Platform: "zenith"}).Discover("rho-target"); len(found) != 2 {
+		t.Fatalf("expected both plugins for their platform and any, got %+v", found)
+	}
+	if found := (Source{Tree: root, TrustTree: true}).Discover("rho-target"); len(found) != 1 || found[0].Name != "generic" {
+		t.Fatalf("expected only the platform-agnostic plugin when nothing is recognized, got %+v", found)
+	}
+	if found := (Source{Tree: root, TrustTree: true, Platform: "pico"}).Discover("rho-target"); len(found) != 1 || found[0].Name != "generic" {
+		t.Fatalf("expected only the platform-agnostic plugin for another platform, got %+v", found)
+	}
+}
+
+// A command that names a component answers only it, so a plugin spanning
+// components can route two commands of the same hook name to the right one.
+func TestACommandIsRoutedToTheComponentItNames(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	path := writeRawPlugin(t, root, "spanning", "module:\n"+
+		"  name: spanning\n"+
+		"  type: plugin\n"+
+		"  version: 0.1.0\n"+
+		"main: spanning\n"+
+		"extends:\n"+
+		"  - component: rho-kconfig\n"+
+		"    hooks: [render]\n"+
+		"  - component: rho-cimport\n"+
+		"    hooks: [render]\n"+
+		"commands:\n"+
+		"  - name: config-render\n"+
+		"    run: "+helperName+" -test.run TestHelperProcess -- report\n"+
+		"    hook: render\n"+
+		"    component: rho-kconfig\n"+
+		"  - name: cimport-render\n"+
+		"    run: "+helperName+" -test.run TestHelperProcess -- report\n"+
+		"    hook: render\n"+
+		"    component: rho-cimport\n")
+	carryHelper(t, path)
+
+	// Both components offer `render`, so a plugin that did not route by
+	// component would answer twice for each run. Exactly one command answers.
+	for _, component := range []string{"rho-kconfig", "rho-cimport"} {
+		found := (Source{Tree: root, TrustTree: true}).Discover(component)
+		result := RunHooks(found, component, "render", map[string]any{})
+		if len(result.Payload) != 1 {
+			t.Fatalf("expected exactly one command to answer %s, got %d", component, len(result.Payload))
+		}
+	}
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Running                                                                   */
 /* -------------------------------------------------------------------------- */

@@ -16,7 +16,7 @@
 //	typedef struct { rh_u32 a; } Name;     a structure
 //	typedef union  { rh_u32 a; } Name;     a union
 //	typedef void (*Name)(int x);          a function pointer
-//	RoboHubError robohub_init(void);      a function
+//	DeviceError device_init(void);        a function
 //	#define RH_MAX 32                      a constant
 //
 // What is not read, and is reported: bitfields, unions of several members (the

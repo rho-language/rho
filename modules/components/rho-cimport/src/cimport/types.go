@@ -216,8 +216,8 @@ func (m *TypeMapper) pointer(cType string, depth int) (string, bool) {
 		return "Ptr[Unit]", true
 	}
 	if len(fields) == 2 && fields[0] == "struct" {
-		// A pointer to a struct written inline: `struct RoboHubI2C*`, which names
-		// the same type as `RoboHubI2C*`, so both are mapped the same way.
+		// A pointer to a struct written inline: `struct DeviceI2C*`, which names
+		// the same type as `DeviceI2C*`, so both are mapped the same way.
 		if m.Known[fields[1]] {
 			return "Ptr[" + fields[1] + "]", true
 		}
@@ -259,12 +259,12 @@ func normalise(cType string) string {
 
 // EnumMembers are the names a C enumeration's members are given in Rho.
 //
-// C spells its members with the enumeration's own prefix — `ROBOHUB_ERR_IO` in
-// `RoboHubError` — and that prefix says which enumeration a member belongs to,
+// C spells its members with the enumeration's own prefix — `DEVICE_ERR_IO` in
+// `DeviceError` — and that prefix says which enumeration a member belongs to,
 // which the Rho type already says. So what is dropped is the prefix the members
 // *share*, which is what makes a set of related members read as a set.
 //
-//	ROBOHUB_OK, ROBOHUB_ERR_IO  ->  OK, IO
+//	DEVICE_OK, DEVICE_ERR_IO  ->  OK, IO
 //	RH_FALSE, RH_TRUE            ->  FALSE, TRUE
 func EnumMembers(members []Field) []string {
 	prefix := sharedPrefix(members)
@@ -293,8 +293,8 @@ func sharedPrefix(members []Field) string {
 			return ""
 		}
 	}
-	// A prefix that ends mid-word is a fragment: `ROBOHUBERR` and
-	// `ROBOHUB_ERR_IO` share `ROBOHUBERR`, and the underscore is what makes the
+	// A prefix that ends mid-word is a fragment: `DEVICEERR` and
+	// `DEVICE_ERR_IO` share `DEVICEERR`, and the underscore is what makes the
 	// rest a member name.
 	if cut := strings.LastIndex(shared, "_"); cut >= 0 {
 		shared = shared[:cut+1]

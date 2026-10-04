@@ -99,7 +99,7 @@ func TestACommentAboveADeclarationIsCarriedAcross(t *testing.T) {
 	// The comment is where a C interface explains itself, and a binding should
 	// carry the explanation rather than make the reader open the header.
 	read := header(t, `/* Initialise the registry. */
-void robohub_registry_init(void);
+void device_registry_init(void);
 `)
 	if len(read.Decls) != 1 {
 		t.Fatalf("expected one function, got %+v", read.Decls)
@@ -209,7 +209,7 @@ func TestAFunctionPointerMemberKeepsItsSignature(t *testing.T) {
 }
 
 func TestAMultiLineFunctionIsOneDeclaration(t *testing.T) {
-	read := header(t, `RoboHubError robohub_spi_transfer(RoboHubSPI* self,
+	read := header(t, `DeviceError device_spi_transfer(DeviceSPI* self,
                                           const rh_u8* tx,
                                           rh_u8* rx,
                                           rh_size len);
@@ -220,7 +220,7 @@ func TestAMultiLineFunctionIsOneDeclaration(t *testing.T) {
 	if len(read.Decls[0].Params) != 4 {
 		t.Fatalf("expected four parameters, got %+v", read.Decls[0].Params)
 	}
-	if read.Decls[0].Result != "RoboHubError" {
+	if read.Decls[0].Result != "DeviceError" {
 		t.Fatalf("expected the result, got %q", read.Decls[0].Result)
 	}
 }
@@ -233,13 +233,13 @@ func TestALinkageBlockIsNotADeclaration(t *testing.T) {
 extern "C" {
 #endif
 
-void robohub_init(void);
+void device_init(void);
 
 #ifdef __cplusplus
 }
 #endif
 `)
-	if len(read.Decls) != 1 || read.Decls[0].Name != "robohub_init" {
+	if len(read.Decls) != 1 || read.Decls[0].Name != "device_init" {
 		t.Fatalf("expected the one declaration, got %+v (%+v)", read.Decls, read.Diagnostics)
 	}
 	if len(read.Diagnostics) != 0 {
@@ -258,7 +258,7 @@ func TestAHeaderIsReadThroughItsIncludes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "types.h"), []byte("typedef unsigned int rh_u32;\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "spi.h"), []byte("#include \"types.h\"\nint32_t robohub_spi_init(rh_u32 speed);\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "spi.h"), []byte("#include \"types.h\"\nint32_t device_spi_init(rh_u32 speed);\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,7 +267,7 @@ func TestAHeaderIsReadThroughItsIncludes(t *testing.T) {
 	for _, decl := range read.Decls {
 		names = append(names, decl.Name)
 	}
-	if len(names) != 2 || names[0] != "rh_u32" || names[1] != "robohub_spi_init" {
+	if len(names) != 2 || names[0] != "rh_u32" || names[1] != "device_spi_init" {
 		t.Fatalf("expected the included type and the function, got %+v (%+v)", names, read.Diagnostics)
 	}
 }
@@ -320,12 +320,12 @@ func TestSplitMembersSplitsOnlyBetweenMembers(t *testing.T) {
 }
 
 func TestEnumMembersDropThePrefixTheyShare(t *testing.T) {
-	// A caller writes Enum.IO, not Enum.ROBOHUB_ERR_IO: the prefix says which
+	// A caller writes Enum.IO, not Enum.DEVICE_ERR_IO: the prefix says which
 	// enumeration a member belongs to, and the Rho type already says that.
 	members := []Field{
-		{Name: "ROBOHUB_OK"},
-		{Name: "ROBOHUB_ERR_FAIL"},
-		{Name: "ROBOHUB_ERR_IO"},
+		{Name: "DEVICE_OK"},
+		{Name: "DEVICE_ERR_FAIL"},
+		{Name: "DEVICE_ERR_IO"},
 	}
 	got := EnumMembers(members)
 	want := []string{"OK", "ERR_FAIL", "ERR_IO"}
