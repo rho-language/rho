@@ -38,6 +38,7 @@ import (
 	src "rho/src" // compiler orchestrator v3
 	clicore "rho/src/cli"
 	deps "rho/src/deps" // dependency system
+	"rho/src/privilege"
 	"rho/src/schema"
 )
 
@@ -46,6 +47,14 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func main() {
+	// Said once, here, before anything is done: a `sudo rho` writes root-owned files
+	// that the next run without sudo cannot read, and that is expensive to trace back
+	// to this. A warning and never a failure — a container runs as root and always
+	// will — and silence when a pipeline has asked for it.
+	if !privilege.Silenced() {
+		privilege.Warn(os.Stderr)
+	}
+
 	// A component is a separate process, so it needs to be told which rho
 	// invoked it. Without this a component can pick up a different, possibly
 	// older, rho from PATH and fail on a flag this one has.

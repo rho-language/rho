@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"rho/src/schema"
+	"rho/src/sysdep"
 	"rho/src/yaml"
 )
 
@@ -388,6 +389,15 @@ type Manifest struct {
 	// Debug is what this project says about debugging the chip it is built for, and
 	// it is the answer: a name here is used as it is written.
 	Debug *DebugMapping
+	// SystemDeps is what this module needs from the machine it runs on. A different
+	// kind of requirement from `deps`, which this toolchain resolves: everything in
+	// `deps` is another module of this toolchain and `rho-deps` fetches it, while
+	// everything in here is a program or a permission somebody installs.
+	//
+	// Read and reported by `rho-doctor`, acted for by `rho-keeper`, and resolved by
+	// neither: a report that installed things would be a report that changed the
+	// machine it was reporting on.
+	SystemDeps *sysdep.SystemDeps
 	// Provides is what this module offers a plugin. Only a component has
 	// something to offer.
 	Provides *Provides
@@ -667,6 +677,9 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	m.Requires = parseRequires(doc.Map["requires"])
 	m.Settings = parseSettingsManifest(doc.Map["settings"])
 	m.Debug = parseDebugManifest(doc.Map["debug"])
+	// A block read out of the document's own map rather than from the document: the
+	// parser wants the block, and this is where the manifest's keys live.
+	m.SystemDeps = sysdep.Parse(yaml.Value{Kind: yaml.KindMap, Map: doc.Map})
 	m.Config = parseConfigManifest(doc.Map["config"])
 	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")

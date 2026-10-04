@@ -83,3 +83,37 @@ It does not install, enable, disable, or configure anything. Those are the
 commands, and they are printed next to the thing they change. It does not start
 a background process: it runs while you run it, and stopping it is stopping the
 terminal.
+
+## The system half
+
+`rho doctor` says what this machine has against what the installed modules need, and
+these commands act on that report. The report is *read* from the doctor rather than
+worked out here, so a terminal and this dashboard cannot tell one person two things
+about one machine.
+
+```sh
+rho keeper doctor              # the report, in the doctor's words
+rho keeper sync --dry-run      # what would be done, and none of it
+rho keeper sync                # do it, after showing it and asking
+rho keeper fix                 # one thing at a time, asking about each
+rho keeper install rho-dbg arm-none-eabi-gdb
+```
+
+Three things about how it acts, and they are the whole design:
+
+**A fetch comes first.** A prebuilt archive, fetched into `~/.rho/toolchains/` and run
+from there, needs no privileges at all — and it is preferred for reasons that have
+nothing to do with sudo: it belongs to the person rather than to the machine, it does
+not change when the machine's package manager does, and it comes away with the
+directory it was put in.
+
+**Root is asked for twice, for two files.** A udev rule is a file in a system
+directory and nothing else can put it there. So: the file is compared before it is
+copied, the source is named before the prompt appears, the copy is the one elevated
+command, and the reload only happens if the copy worked. Both the words and the
+commands are printed first.
+
+**The page shows commands; it does not run them.** Every fix appears as the command a
+person would type, in a form they can copy. A dashboard is a good place to *read* a
+command and a poor place to be the only way to run one, because installing a package
+asks for privileges.

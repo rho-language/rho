@@ -22,6 +22,7 @@
       <li><a href="#/docs"      data-nav="docs"><span class="ico">▦</span>Docs</a></li>
       <li><a href="#/cli"       data-nav="cli"><span class="ico">&gt;_</span>CLI</a></li>
       <li><a href="#/system"    data-nav="system"><span class="ico">⌘</span>System<span class="count" id="nav-system"></span></a></li>
+            <li><a href="#/doctor"    data-nav="doctor"><span class="ico">✚</span>Doctor<span class="count" id="nav-doctor"></span></a></li>
     </ul>
     <div class="side-foot">
       <span class="k">Local</span>
@@ -148,7 +149,7 @@
         </div>
       </section>
 
-      <!-- system -->
+      <!-- system: what this machine is -->
       <section class="view" data-view="system" hidden>
         <div class="split">
           <div class="block">
@@ -161,7 +162,37 @@
               <thead><tr><th>Tool</th><th>Version</th></tr></thead>
               <tbody id="system-drivers"></tbody>
             </table>
+            <div class="block-head"><h2>Fetched</h2><span class="hint">What was put in this Rho home rather than installed on the machine.</span></div>
+            <table class="grid">
+              <thead><tr><th>What</th><th>Where</th><th>Size</th></tr></thead>
+              <tbody id="system-fetched"></tbody>
+            </table>
+            <p class="empty" id="system-fetched-empty" hidden></p>
           </div>
+        </div>
+      </section>
+
+      <!-- doctor: what the modules need of this machine -->
+      <section class="view" data-view="doctor" hidden>
+        <div class="block">
+          <div class="block-head">
+            <h2>Requirements</h2>
+            <span class="hint" id="doctor-summary"></span>
+          </div>
+          <table class="grid">
+            <thead><tr><th>Status</th><th>What</th><th>Wants</th><th>Version</th><th>Fix</th></tr></thead>
+            <tbody id="doctor-rows"></tbody>
+          </table>
+          <p class="empty" id="doctor-empty" hidden></p>
+        </div>
+        <div class="block">
+          <div class="block-head">
+            <h2>Console</h2>
+            <span class="hint">What an install printed, as it printed it.</span>
+            <button class="ghost" id="doctor-console-clear" type="button">Clear</button>
+          </div>
+          <pre class="console" id="doctor-console"></pre>
+          <p class="empty" id="doctor-console-empty">Nothing has been run from here.</p>
         </div>
       </section>
 

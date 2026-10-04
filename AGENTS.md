@@ -42,8 +42,10 @@ by hand.
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-doc`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
+- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
 - `src/ide/` - What an editor reads, rendered from what a project declares (`rho ide`)
+- `src/sysdep/` - What a module needs from the machine: `system_deps`, versions, the fetched-toolchain layout
+- `src/privilege/` - Saying something when a run has more authority than it needs
 - `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-gtest`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
@@ -158,6 +160,36 @@ rho target generate . --target pico      # write cmake/ into the project
 The generated project includes `cmake/toolchain.cmake` before `project()` and
 `cmake/target.cmake` after it, when they are there. A project that targets the
 host has neither and builds as it did.
+
+## System dependencies
+
+A module says what it needs from the machine in `system_deps`, which is a
+different kind of requirement from `deps` and is declared apart from it:
+
+```yaml
+system_deps:
+  executables:
+    - name: arm-none-eabi-gdb
+      version: ">=10.0"            # the same constraint grammar `deps` uses
+      version_flag: "--version"
+      version_pattern: '...'       # which version in the output is meant
+      fetch: {url: ..., archive: tar.xz, binary: bin/arm-none-eabi-gdb}
+      install: {apt: gdb-multiarch, brew: arm-none-eabi-gcc}
+  env_vars: [...]
+  udev_rules: [...]
+```
+
+Everything in `deps` is another module and `rho-deps` resolves it. Everything in
+`system_deps` is a program or a permission on the machine, and nothing this
+toolchain fetches produces it.
+
+`rho doctor` reads the blocks and reports; it changes nothing and exits 1 when
+something is missing. `rho keeper` acts on that report — `sync`, `fix`, `install` —
+and prefers a fetch into `~/.rho/toolchains/` over a package manager, asking for
+root only for a udev rule and only for that one file. Both commands read the
+doctor's JSON, so a terminal and the dashboard cannot disagree.
+
+`rho` warns when it is run as root and never refuses: a container is root.
 
 ## Configuration
 

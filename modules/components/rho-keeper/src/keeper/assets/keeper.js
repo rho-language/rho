@@ -46,6 +46,7 @@ const TITLES = {
   docs: "Docs",
   cli: "CLI",
   system: "System",
+  doctor: "Doctor",
   module: "Module",
 };
 
@@ -516,6 +517,14 @@ async function loadCommands() {
 /*  The system                                                                  */
 /* -------------------------------------------------------------------------- */
 
+// statusClass is the colour a status is shown in: a missing thing and an old one
+// both stop something, and a warning does not.
+function statusClass(status) {
+  if (status === "OK") return "version";
+  if (status === "WARNING") return "hint";
+  return "absent";
+}
+
 async function loadSystem() {
   let info;
   try {
@@ -552,6 +561,188 @@ async function loadSystem() {
     .join("");
   $("nav-system").textContent = info.os ? "" : "";
 }
+
+/* -------------------------------------------------------------------------- */
+/*  The doctor                                                                 */
+/* -------------------------------------------------------------------------- */
+
+// What the installed modules need from this machine, and a button that does
+// something about it.
+//
+// The button runs `rho keeper install` — the same command the terminal would, shown
+// beside it — and watches it over a stream, because a download takes minutes and a
+// package install asks for a password. Neither is something to wait for in silence.
+async function loadDoctor() {
+  let report;
+  try {
+    report = await (await fetch("/api/v1/system/requirements")).json();
+  } catch (err) {
+    $("doctor-rows").innerHTML = '<tr><td colspan="5">Could not be read: ' + esc(String(err)) + "</td></tr>";
+    return;
+  }
+
+  const rows = report.requirements || [];
+  $("doctor-summary").textContent = report.host
+    ? `${esc(report.summary)} · ${esc(report.host)}`
+    : esc(report.summary || "");
+
+  $("doctor-rows").innerHTML = rows
+    .map((r) => {
+      const fix = r.fixable
+        ? `<button class="act" data-install="${esc(r.module)}|${esc(r.dep)}">Install</button>` +
+          (r.fixCommand ? `<code class="pick" title="The command this runs">${esc(r.fixCommand)}</code>` : "")
+        : r.status === "OK"
+          ? '<span class="hint">nothing to do</span>'
+          : `<span class="hint">${esc(r.problem || "nothing here can install it")}</span>`;
+      return (
+        `<tr>` +
+        `<td>${badge(r.status)}</td>` +
+        `<td><strong>${esc(r.dep)}</strong><br><span class="hint">${esc(r.module)} · ${esc(r.kind)}</span><br>${esc(r.message)}</td>` +
+        `<td>${r.wanted ? `<code>${esc(r.wanted)}</code>` : '<span class="hint">any version</span>'}</td>` +
+        `<td>${r.version ? esc(r.version) : '<span class="hint">—</span>'}</td>` +
+        `<td>${fix}</td>` +
+        `</tr>`
+      );
+    })
+    .join("");
+
+  const empty = $("doctor-empty");
+  if (!rows.length) {
+    empty.hidden = false;
+    empty.textContent =
+      report.problem || "Nothing declared: no installed module has said what it needs from this machine.";
+  } else {
+    empty.hidden = true;
+  }
+
+  // The badge on the menu says how much there is to do, which is the one number a
+  // person wants before they click anything.
+  const needsWork = rows.filter((r) => r.status === "MISSING" || r.status === "OUTDATED").length;
+  $("nav-doctor").textContent = needsWork ? String(needsWork) : "";
+
+  const fetched = report.fetched || [];
+  $("system-fetched").innerHTML = fetched
+    .map(
+      (f) =>
+        `<tr><td>${esc(f.name)}</td><td><code>${esc(f.dir)}</code></td><td>${sizeOf(f.size)}</td></tr>`
+    )
+    .join("");
+  const fetchedEmpty = $("system-fetched-empty");
+  if (fetched.length) {
+    fetchedEmpty.hidden = true;
+  } else {
+    fetchedEmpty.hidden = false;
+    fetchedEmpty.textContent = "Nothing has been fetched into this Rho home.";
+  }
+}
+
+// badge is a status as a coloured mark rather than as a word in a column.
+//
+// Coloured because the one thing a person scans a table for is the row that is
+// wrong, and a column of identical words does not let their eye find it.
+function badge(status) {
+  const kind = String(status || "").toLowerCase();
+  return `<span class="badge ${esc(kind)}">${esc(status)}</span>`;
+}
+
+function sizeOf(bytes) {
+  if (!bytes) return "—";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value = value / 1024;
+    unit++;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+// The console, and the stream behind it.
+function consoleLine(text) {
+  const box = $("doctor-console");
+  box.hidden = false;
+  $("doctor-console-empty").hidden = true;
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+  box.textContent += (box.textContent ? "\n" : "") + text;
+  if (atBottom) {
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+function consoleClear() {
+  $("doctor-console").textContent = "";
+  $("doctor-console").hidden = true;
+  $("doctor-console-empty").hidden = false;
+}
+
+// installing is the stream currently being watched, so a second click does not open
+// a second connection and two downloads do not start.
+let installing = null;
+
+function installRequirement(module, dep) {
+  if (installing) {
+    consoleLine("something is already being installed; watch it finish first.");
+    return;
+  }
+  consoleLine(`installing ${dep} for ${module}…`);
+  // `confirm=yes` is what makes it run rather than merely report. Without it the
+  // server answers with the plan and stops, so a URL that gets opened by anything but
+  // this button cannot start a download or reach for privileges.
+  const url = `/api/v1/system/install/${encodeURIComponent(module)}/${encodeURIComponent(dep)}?confirm=yes`;
+  installing = new EventSource(url);
+
+  installing.addEventListener("plan", (event) => {
+    let plan = {};
+    try {
+      plan = JSON.parse(event.data);
+    } catch (err) {
+      return;
+    }
+    if (plan.fixCommand) consoleLine("$ " + plan.fixCommand);
+    for (const recipe of plan.recipes || []) consoleLine("  " + recipe.command);
+    if (plan.ruleSource) {
+      consoleLine(`  copying ${plan.ruleSource} to ${plan.targetPath} (needs root)`);
+    }
+  });
+  installing.addEventListener("line", (event) => {
+    try {
+      consoleLine(JSON.parse(event.data));
+    } catch (err) {
+      consoleLine(event.data);
+    }
+  });
+  installing.addEventListener("done", (event) => {
+    let result = {};
+    try {
+      result = JSON.parse(event.data);
+    } catch (err) {
+      result = { message: event.data };
+    }
+    consoleLine(result.ok ? "✓ " + result.message : "✗ " + result.message);
+    installing.close();
+    installing = null;
+    // Asked again rather than assumed: an install that reported success and left
+    // nothing behind is a thing this page has to be able to see.
+    loadDoctor();
+  });
+  installing.onerror = () => {
+    consoleLine("the connection to the install was lost; refresh to see whether it finished.");
+    if (installing) installing.close();
+    installing = null;
+  };
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-install]");
+  if (button) {
+    const [module, dep] = button.dataset.install.split("|");
+    installRequirement(module, dep);
+    return;
+  }
+  if (event.target.closest("#doctor-console-clear")) {
+    consoleClear();
+  }
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Documentation                                                               */
@@ -792,5 +983,6 @@ document.addEventListener("click", (event) => {
 
 route();
 loadSystem();
+loadDoctor();
 loadCommands();
 connect();

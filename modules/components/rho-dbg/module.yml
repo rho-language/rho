@@ -121,6 +121,68 @@ settings:
       default: "true"
       choices: ["true", "false"]
 
+# What this component needs from the machine.
+#
+# The programs a debugging session runs, and the one host permission a session on a
+# board cannot have without. This is the block that separates "the toolchain could
+# not resolve it" from "it is not installed": `deps` above is resolved by
+# `rho-deps` and everything under it is here, while everything below is a program
+# somebody installs, `rho doctor` reports on, and `rho keeper` fixes.
+system_deps:
+  executables:
+    - name: arm-none-eabi-gdb
+      version: ">=10.0"
+      version_flag: "--version"
+      # `gdb` prints several version-shaped runs and means the last one: this
+      # version reports `gdb (Ubuntu 12.1-3ubuntu1~22.04) 12.1`.
+      version_pattern: '[^\n]*?\)\s*([0-9][^\s(]*)'
+      description: sessions drive a board through the Machine Interface with it
+
+      # Put under the Rho home rather than installed system-wide, and preferred over
+      # a package manager for three reasons that have nothing to do with sudo: it
+      # belongs to the person rather than to the machine, it does not change when the
+      # machine's package manager does — so a build cannot change under a project
+      # between two runs — and it comes away with the directory it was put in.
+      fetch:
+        url: https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
+        archive: tar.xz
+        dir: arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi
+        binary: bin/arm-none-eabi-gdb
+        version: "14.2"
+
+      # What to do instead when this machine has no xz. Said in the manifest so the
+      # fallback is a fact rather than something discovered halfway through a
+      # download.
+      install:
+        brew: arm-none-eabi-gcc
+        apt: gdb-multiarch
+        pacman: arm-none-eabi-gdb
+        manual: https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads
+
+    - name: openocd
+      version: ">=0.11.0"
+      version_flag: "-v"
+      description: it holds the connection between the debugger and a probe
+      required: false
+      install:
+        brew: open-ocd
+        apt: openocd
+        pacman: openocd
+
+  udev_rules:
+    - name: 60-rho-probes.rules
+      target_path: /etc/udev/rules.d/60-rho-probes.rules
+      # The file itself, carried with this component. A rule is a fact about the
+      # machine rather than about the code being debugged, so it belongs to the
+      # component rather than to a project — and installing it is a copy of something
+      # a person can read before it goes into a system directory.
+      source: probe/60-rho-probes.rules
+      description: >-
+        a probe that is plugged in and not permitted is a probe that is not there.
+        ST-LINK and J-Link both need it, and neither can install it without root
+        because it is the host's file rather than a program's.
+      optional: true
+
 # The commands it answers.
 #
 # The same binary serves all of them; a component's commands are what the CLI
@@ -167,6 +229,10 @@ package:
     # rho-dbg installed from a registry is configured by the same file as one run
     # from a checkout, rather than by whatever the installation happened to have.
     - config
+    # The probe rules. A fact about the machine rather than about the code being
+    # debugged, so it belongs to the component and not to a project, and installing it
+    # is a copy of a file the person can read first.
+    - probe
     - docs
     - src
   require:
