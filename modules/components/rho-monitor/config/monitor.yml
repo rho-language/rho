@@ -1,0 +1,6 @@
+backend: auto
+baud_rate: 115200
+timestamps: true
+color_levels: true
+log_file: ""
+duration: ""
