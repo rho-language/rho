@@ -37,9 +37,18 @@ package:
 
 # The hook a generation goes through. A library's own types are the thing a
 # generator cannot know, so a plugin answers `map` with the mappings for them.
+#
+# `platform` is the contract a platform plugin fills: how a platform's C types
+# and declarations are seen by Rho, so that a platform the generator has never
+# seen is mapped by a plugin rather than by a table written into this component.
 provides:
   hooks:
     - map
+  contracts:
+    - name: platform
+      description: Maps a platform's C declarations to the types a Rho program uses.
+      one: true
+      hooks: [map]
 
 docs:
   title: C import bridge

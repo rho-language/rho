@@ -5,7 +5,7 @@
 // A value that may be absent is normally a tag and a payload: a flag saying
 // whether there is a value, and the value itself. For a pointer that is a waste.
 // A null pointer already says "there is no value", and every C library that
-// returns a pointer already uses null for it — `robohub_get_gpio` answers NULL
+// returns a pointer already uses null for it — `device_get_led` answers NULL
 // for a name it does not know, and the program has to be able to see that.
 //
 // So `Option[Ptr[T]]` is stored as the pointer. `None` is `NULL` and `Some(p)` is
@@ -59,8 +59,8 @@ func npoPayload(name string) string {
 // optionalPointerPayload returns the C type an optional pointer is represented
 // as, or "" when the name is not one.
 //
-// `Option[RoboHubGPIO_Ptr]` carries `RoboHubGPIO`, so the representation is
-// `RoboHubGPIO*`. A nested `Ptr` keeps its brackets, which is what a C type
+// `Option[DeviceLED_Ptr]` carries `DeviceLED`, so the representation is
+// `DeviceLED*`. A nested `Ptr` keeps its brackets, which is what a C type
 // wants and what a mangled name no longer spells.
 func optionalPointerPayload(name string) string {
 	if !IsOptionalPointer(name) {

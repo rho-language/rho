@@ -36,9 +36,20 @@ package:
 
 # The hook a project extends: a board this component has never heard of is a spec
 # a plugin supplies, and the generator writes the same CMake from it.
+#
+# `platform` is the contract a platform plugin fills: the target facts that are
+# the platform's own — which family macro a build defines, which HAL configuration
+# header a vendor's umbrella header asks for, which library a board links — so
+# that a platform this component has never heard of is described by a plugin
+# rather than written into this component.
 provides:
   hooks:
     - spec
+  contracts:
+    - name: platform
+      description: Supplies the target facts for a platform this component does not carry.
+      one: true
+      hooks: [spec]
 
 docs:
   title: Board and architecture specs

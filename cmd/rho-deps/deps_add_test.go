@@ -48,20 +48,20 @@ version 0.1.0
 
 	out := captureAddOutput(t, func() {
 		runDepsAdd([]string{
-			"robohub-common",
-			"--git", "https://github.com/aurel/robohub-common.git",
+			"sensor-lib",
+			"--git", "https://github.com/aurel/sensor-lib.git",
 			"--version", ">=1.0.0 <2.0.0",
 			"--type", "c",
 		})
 	})
 
-	if !strings.Contains(out, "robohub-common") {
+	if !strings.Contains(out, "sensor-lib") {
 		t.Fatalf("missing dep name in output: %s", out)
 	}
 
 	// Check manifest updated
 	data, _ := os.ReadFile(filepath.Join(tmp, "rho.mod"))
-	if !strings.Contains(string(data), "dep robohub-common") {
+	if !strings.Contains(string(data), "dep sensor-lib") {
 		t.Fatalf("dependency block not added to manifest")
 	}
 }

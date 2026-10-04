@@ -4,7 +4,7 @@
 //
 // Every rule here is checked against the thing it is supposed to fire on *and*
 // against the thing it must not, because a rule that only has the first test is a
-// rule whose false positives nobody would find. The examples in robohub-stm32 supply
+// rule whose false positives nobody would find. The examples in board-lib supply
 // both halves: `examples/rho/hello_world/src/main.rho` is a program that must produce
 // nothing, and its `import ffi` is the case that makes the unused-import rule
 // interesting — a module whose declarations were generated, imported by name, and
@@ -85,7 +85,7 @@ func assertNoFindings(t *testing.T, found []Diagnostic, what string) {
 // helloWorld is `examples/rho/hello_world/src/main.rho`, which must produce nothing.
 const helloWorld = `// hello_world — says hello, then says something every second.
 //
-// It is written against the RoboHub contracts and nothing else.
+// It is written against the Device contracts and nothing else.
 
 module main
 
@@ -95,24 +95,24 @@ fn main() void {
     // The name the board's own support package gives the user LED.
     let led_name: string = "user_led"
 
-    if robohub_platform_init() != 0 {
+    if device_platform_init() != 0 {
         return
     }
 
-    let led: Option[Ptr[RoboHubGPIO]] = robohub_get_gpio(led_name)
-    let timer: Option[Ptr[RoboHubTimer]] = robohub_get_timer("system_timer")
+    let led: Option[Ptr[DeviceGPIO]] = device_get_led(led_name)
+    let timer: Option[Ptr[DeviceTimer]] = device_get_timer("system_timer")
 
     let seconds: u32 = 0
     while true {
         seconds = seconds + 1
         if is_some(led) {
-            rho_robohubgpio_write(value(led), 0, seconds % 2)
+            rho_devicegpio_write(value(led), 0, seconds % 2)
         }
     }
 }
 `
 
-func TestRhoEngineIsSilentOnTheRoboHubExample(t *testing.T) {
+func TestRhoEngineIsSilentOnACleanProgram(t *testing.T) {
 	// The whole rule set at once, because a test per rule would miss the rule that
 	// fires because of what another one does.
 	set := RhoRules()
@@ -169,9 +169,9 @@ fn main() void {
 }
 
 func TestRhoModuleNameComparesTheLastSegment(t *testing.T) {
-	// `module robohub.hal.gpio` in `gpio.rho` is correct, and comparing the whole
+	// `module zenith.hal.gpio` in `gpio.rho` is correct, and comparing the whole
 	// string to the file's stem would report every module in a tree of them.
-	source := aRho("/project/src/gpio.rho", "module robohub.hal.gpio\n")
+	source := aRho("/project/src/gpio.rho", "module zenith.hal.gpio\n")
 	assertNoFindings(t, rulesRun(t, RhoRules(), RhoModuleName, source), "a dotted name matching the file")
 
 	// A name no import can reach is a real defect: `import hello_world` fails with a
@@ -359,7 +359,7 @@ const helloWorldC = `#include <stdbool.h>
 
 #include "platform.h"
 #include "registry.h"
-#include "robohub/hal/gpio.h"
+#include "zenith/hal/gpio.h"
 
 #define BSP_LED_NAME "user_led"
 
@@ -373,14 +373,14 @@ static void say(rh_u32 seconds)
     while (*prefix != '\0') {
         line[at++] = *prefix++;
     }
-    (void)robohub_console_write(line, at);
+    (void)device_console_write(line, at);
 }
 
 int main(void)
 {
-    RoboHubGPIO* led = robohub_get_gpio(BSP_LED_NAME);
+    DeviceGPIO* led = device_get_led(BSP_LED_NAME);
 
-    if (robohub_platform_init() != ROBOHUB_OK) {
+    if (device_platform_init() != DEVICE_OK) {
         return 1;
     }
 
@@ -456,8 +456,8 @@ func TestCDefinitionInHeaderTellsADefinitionFromADeclaration(t *testing.T) {
 	// `void f(void);` in a header is correct and is the ordinary case. A body is what
 	// makes it a definition, and the difference is a build failing at link time.
 	declared := aC("/project/src/hal.h", `#pragma once
-void robohub_platform_init(void);
-int robohub_get_gpio(const char* name);
+void device_platform_init(void);
+int device_get_led(const char* name);
 `)
 	assertNoFindings(t, rulesRun(t, CRules(), CDefinitionInHeader, declared), "declarations only")
 
@@ -559,7 +559,7 @@ func TestCEmptyBodyDoesNotFireInAHeader(t *testing.T) {
 	// A header that declares a function and does not define it is correct, and
 	// saying otherwise would be a rule that fires on every interface header in a
 	// vendor tree.
-	source := aC("/project/src/hal.h", "#pragma once\nvoid robohub_platform_init(void);\n")
+	source := aC("/project/src/hal.h", "#pragma once\nvoid device_platform_init(void);\n")
 	assertNoFindings(t, rulesRun(t, CRules(), CEmptyBody, source), "a declaration in a header")
 }
 

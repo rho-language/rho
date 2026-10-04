@@ -30,12 +30,12 @@ func bindingFor(t *testing.T, text string) *Interface {
 
 const halHeader = `typedef uint32_t rh_u32;
 
-typedef struct RoboHubGPIO {
+typedef struct DeviceGPIO {
     rh_u32 pin;
-    int32_t (*write)(struct RoboHubGPIO* self, rh_u32 pin, rh_u32 value);
-} RoboHubGPIO;
+    int32_t (*write)(struct DeviceGPIO* self, rh_u32 pin, rh_u32 value);
+} DeviceGPIO;
 
-int32_t robohub_gpio_write(RoboHubGPIO* port, rh_u32 pin, rh_u32 value);
+int32_t device_gpio_write(DeviceGPIO* port, rh_u32 pin, rh_u32 value);
 `
 
 func TestTheInterfaceIsMarkedGenerated(t *testing.T) {
@@ -57,10 +57,10 @@ func TestAStructureIsDocumentedRatherThanDeclared(t *testing.T) {
 	// The structure is the library's. A Rho struct of the same name would be a
 	// different type, and a pointer the library hands over would be read through it.
 	rho := bindingFor(t, halHeader).Rho()
-	if strings.Contains(rho, "struct RoboHubGPIO {") {
+	if strings.Contains(rho, "struct DeviceGPIO {") {
 		t.Fatalf("expected no Rho struct for a C type, got:\n%s", rho)
 	}
-	if !strings.Contains(rho, "RoboHubGPIO: a C structure, and it is the library's") {
+	if !strings.Contains(rho, "DeviceGPIO: a C structure, and it is the library's") {
 		t.Fatalf("expected the structure to be documented, got:\n%s", rho)
 	}
 	if !strings.Contains(rho, "pin: u32") {
@@ -70,7 +70,7 @@ func TestAStructureIsDocumentedRatherThanDeclared(t *testing.T) {
 
 func TestAFunctionBecomesAForeignDeclaration(t *testing.T) {
 	rho := bindingFor(t, halHeader).Rho()
-	if !strings.Contains(rho, "extern fn robohub_gpio_write(port: Ptr[RoboHubGPIO], pin: u32, value: u32) i32") {
+	if !strings.Contains(rho, "extern fn device_gpio_write(port: Ptr[DeviceGPIO], pin: u32, value: u32) i32") {
 		t.Fatalf("expected the declaration, got:\n%s", rho)
 	}
 }
@@ -83,7 +83,7 @@ func TestAFunctionPointerBecomesAShim(t *testing.T) {
 		t.Fatalf("expected one shim, got %+v", binding.Shims)
 	}
 	shim := binding.Shims[0]
-	if shim.Name != "rho_robohubgpio_write" || shim.Member != "write" || shim.Owner != "RoboHubGPIO" {
+	if shim.Name != "rho_devicegpio_write" || shim.Member != "write" || shim.Owner != "DeviceGPIO" {
 		t.Fatalf("unexpected shim: %+v", shim)
 	}
 	if len(shim.Params) != 2 {
@@ -91,7 +91,7 @@ func TestAFunctionPointerBecomesAShim(t *testing.T) {
 	}
 
 	rho := binding.Rho()
-	if !strings.Contains(rho, "extern fn rho_robohubgpio_write(self: Ptr[RoboHubGPIO], pin: u32, value: u32) i32") {
+	if !strings.Contains(rho, "extern fn rho_devicegpio_write(self: Ptr[DeviceGPIO], pin: u32, value: u32) i32") {
 		t.Fatalf("expected the shim declaration, got:\n%s", rho)
 	}
 }
@@ -101,15 +101,15 @@ func TestTheCShimForwardsToTheTable(t *testing.T) {
 	// arguments, in that order, because that is what the pointer takes.
 	binding := bindingFor(t, halHeader)
 
-	header := binding.ShimHeader([]string{"robohub/hal/gpio.h"})
-	if !strings.Contains(header, "#include <robohub/hal/gpio.h>") {
+	header := binding.ShimHeader([]string{"zenith/hal/gpio.h"})
+	if !strings.Contains(header, "#include <zenith/hal/gpio.h>") {
 		t.Fatalf("expected the declared header to be included, got:\n%s", header)
 	}
 	// The shim is declared under exactly the name it is called by. It is a C
 	// function the header of this generated interface declares, so a call to it
 	// carries that name; defining it under anything else is an undefined reference
 	// at the link step.
-	declared := "int32_t rho_robohubgpio_write(RoboHubGPIO* self, rh_u32 pin, rh_u32 value);"
+	declared := "int32_t rho_devicegpio_write(DeviceGPIO* self, rh_u32 pin, rh_u32 value);"
 	if !strings.Contains(header, declared) {
 		t.Fatalf("expected %q, got:\n%s", declared, header)
 	}

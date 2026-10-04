@@ -164,10 +164,31 @@ func TestFeatureDeclarationsReachGeneratedC(t *testing.T) {
 	}
 }
 
+// featureProject writes a project that declares the `math.control` feature and
+// imports the standard module it enables, which is the shape the two tests below
+// need from a project. Built here rather than pointed at an example, because a
+// test that depends on an example is a test that breaks when the example changes
+// for a reason that has nothing to do with the compiler.
+func featureProject(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	manifest := "module:\n  name: feature-app\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n\nfeatures:\n  - math.control\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := "module main\n\nimport std.math.control\n\nfn main() void {\n    let controller = pid_init(0.1, 0.01, 0.0, 0.0, 1.0)\n    print(pid_output(controller, 1.0, 0.0))\n}\n"
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "main.rho"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root, "src", "main.rho")
+}
+
 func TestStandardLibraryImportResolves(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "app.c")
-	entry := "../examples/robohub-common-app/src/main.rho"
-	if err := CompileProjectTo(entry, out); err != nil {
+	if err := CompileProjectTo(featureProject(t), out); err != nil {
 		t.Fatalf("compile standard-library import: %v", err)
 	}
 	data, err := os.ReadFile(out)
@@ -224,7 +245,7 @@ fn main() void {
 
 func TestManifestFeatureLoadsStandardModule(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "app.c")
-	if err := CompileProjectTo("../examples/robohub-common-app/src/main.rho", out); err != nil {
+	if err := CompileProjectTo(featureProject(t), out); err != nil {
 		t.Fatalf("compile feature-enabled project: %v", err)
 	}
 	data, err := os.ReadFile(out)

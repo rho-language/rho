@@ -46,8 +46,8 @@ module:
 build:
   include_dirs:
     - include/
-    - include/robohub/hal/
-`, "include/robohub/hal", "src")
+    - include/zenith/hal/
+`, "include/zenith/hal", "src")
 
 	resolver := &Resolver{ProjectRoot: root, Cache: filepath.Join(root, ".cache")}
 	resolution, err := resolver.Resolve(Preset{
@@ -58,7 +58,7 @@ build:
 		t.Fatalf("resolve: %v", err)
 	}
 
-	for _, want := range []string{"include", "include/robohub/hal"} {
+	for _, want := range []string{"include", "include/zenith/hal"} {
 		found := false
 		for _, dir := range resolution.IncludeDirs {
 			if dir == filepath.Join(root, want) {

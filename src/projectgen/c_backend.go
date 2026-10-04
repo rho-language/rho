@@ -558,7 +558,7 @@ func copyProjectSources(ctx Context) (map[string]string, error) {
 //
 // A build target a person names and a library a build links are different
 // things, and this is where they meet: `--target stm32` is resolved by the
-// connection to the vendor target robohub_stm32, and the generated project links
+// connection to the vendor target `vendor_stm32`, and the generated project links
 // that. Without a variant the project links the library it declared, which is
 // what a host build of the same project does.
 // cDependencyRoots returns the roots of the C dependencies a project declares,
@@ -675,14 +675,12 @@ func connectionCMake(ctx Context, name string) (link string, includes []string) 
 
 	includes = append(includes, connection.IncludeDirs...)
 	includes = append(includes, variant.IncludeDirs...)
+	// A variant is selected at compile time, and the macros that select it are
+	// the variant's to declare. A macro naming this toolchain's own platform
+	// would be a vendor's fact written into the generator, and the next platform
+	// would need the same line changed.
 	defines := append([]string{}, connection.Defines...)
 	defines = append(defines, variant.Defines...)
-	// A variant is selected at compile time, and the macros say which: a vendor
-	// library compiles its own implementation behind them, and a project that
-	// only linked it would compile the wrong one.
-	if ctx.Variant != "" {
-		defines = append(defines, "ROBOHUB_PLATFORM="+strings.ToUpper(ctx.Variant))
-	}
 
 	// A library is linked when it is named, and a build with nothing to link
 	// gets no link line rather than an empty one.

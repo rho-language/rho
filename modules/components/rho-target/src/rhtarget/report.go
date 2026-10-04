@@ -38,30 +38,79 @@ const HookSpec = "spec"
 const ComponentName = "rho-target"
 
 // SpecRequest is what a plugin is asked: the targets that were found, so it can
-// add one or say what it would replace.
+// add one or say what it would replace, and enough detail about each that a
+// platform plugin can map a target to its conventions without opening the spec
+// files itself.
 type SpecRequest struct {
 	Targets []string `json:"targets"`
+	// Families is the declared family of each target, keyed by target name.
+	Families map[string]string `json:"families,omitempty"`
+	// Details is what each target already declares, so a plugin does not repeat
+	// a fact the spec carries: a target that already has a vendor HAL header is
+	// not given another one.
+	Details []TargetDetail `json:"details,omitempty"`
 }
 
-// SpecResponse is what a plugin answers with: the specs it knows.
+// TargetDetail is what a target already declares, as a plugin sees it.
+type TargetDetail struct {
+	Name      string   `json:"name"`
+	Family    string   `json:"family,omitempty"`
+	MCU       string   `json:"mcu,omitempty"`
+	HALHeader string   `json:"hal_header,omitempty"`
+	Defines   []string `json:"defines,omitempty"`
+}
+
+// SpecResponse is what a plugin answers with: the specs it knows, and the
+// platform facts it adds to the specs this component already carries.
 type SpecResponse struct {
 	Specs []Spec `json:"specs"`
+	// Augment are facts a platform adds to a target it does not own: the defines
+	// that select the platform's implementation at compile time, and the header
+	// a vendor's umbrella includes by name. A platform plugin says so here rather
+	// than shipping a copy of a spec it did not write.
+	Augment []SpecAugment `json:"augment,omitempty"`
 }
 
-// LoadWith reads the specs a directory holds and the ones a plugin contributes.
-//
-// A plugin that fails is reported and its specs are left out: the targets this
-// component ships are still there, which is what a project builds with.
+// SpecAugment is what a plugin adds to an existing target.
+type SpecAugment struct {
+	Target  string   `json:"target"`
+	Defines []string `json:"defines,omitempty"`
+	// HALHeader is the header a vendor's HAL umbrella includes by name for this
+	// target, which is what a build derives the vendor's configuration header
+	// from.
+	HALHeader string `json:"hal_header,omitempty"`
+}
+
 // LoadWith reads the specs in every root and then asks any plugin for more.
-//
-// The roots are read in order and the first to declare a name is the one that
-// stands, so a caller puts the roots it wants to win first.
 func LoadWith(roots []string, found []plugins.Plugin) *Library {
-	library := LoadFrom(roots)
-	if len(found) == 0 {
+	return Apply(LoadFrom(roots), found)
+}
+
+// Apply asks the plugins for what a platform contributes, over a library that
+// has already been read.
+//
+// Separate from loading because the order is the whole of it: a platform plugin
+// answers about the targets a project carries, and a hook that ran before those
+// targets were loaded would be answering about a library that did not have them
+// yet. A board named as a file rather than found in a directory tree is loaded
+// this way, so a caller that has files to add adds them first and applies after.
+func Apply(library *Library, found []plugins.Plugin) *Library {
+	if library == nil || len(found) == 0 {
 		return library
 	}
-	answer := plugins.RunHooks(found, ComponentName, HookSpec, SpecRequest{Targets: library.Names()})
+	request := SpecRequest{Targets: library.Names(), Families: map[string]string{}}
+	for name, spec := range library.specs {
+		detail := TargetDetail{
+			Name: name, Family: spec.Family, MCU: spec.MCU,
+			HALHeader: spec.HALHeader, Defines: append([]string{}, spec.Defines...),
+		}
+		request.Details = append(request.Details, detail)
+		if spec.Family != "" {
+			request.Families[name] = spec.Family
+		}
+	}
+	sort.Slice(request.Details, func(i, j int) bool { return request.Details[i].Name < request.Details[j].Name })
+	answer := plugins.RunHooks(found, ComponentName, HookSpec, request)
 	for _, diagnostic := range answer.Diagnostics {
 		library.Diagnostics = append(library.Diagnostics, Diagnostic{Message: diagnostic.String()})
 	}
@@ -84,6 +133,21 @@ func LoadWith(roots []string, found []plugins.Plugin) *Library {
 			}
 			spec.Source = "a plugin"
 			library.specs[spec.Name] = spec
+		}
+		// A platform's facts are added to the specs this component carries, so a
+		// platform does not have to restate a board to say which macro selects it.
+		for _, augment := range response.Augment {
+			spec, ok := library.specs[augment.Target]
+			if !ok {
+				library.Diagnostics = append(library.Diagnostics, Diagnostic{
+					Message: fmt.Sprintf("a plugin augments %q, which is not a target this component carries", augment.Target)})
+				continue
+			}
+			spec.Defines = append(spec.Defines, augment.Defines...)
+			if augment.HALHeader != "" {
+				spec.HALHeader = augment.HALHeader
+			}
+			library.specs[augment.Target] = spec
 		}
 	}
 	return library

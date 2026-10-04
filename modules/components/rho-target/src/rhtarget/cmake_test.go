@@ -89,9 +89,9 @@ func TestTheTargetFileCarriesFlagsDefinesAndMemory(t *testing.T) {
 
 func TestTheTargetFileNamesTheLibraryAndTheFlashing(t *testing.T) {
 	spec := testSpec()
-	spec.VendorLibrary = "robohub_board"
+	spec.VendorLibrary = "device_board"
 	content := TargetCMake(spec, "cmake/linker.ld")
-	if !strings.Contains(content, "set(RHO_VENDOR_LIBRARY robohub_board)") {
+	if !strings.Contains(content, "set(RHO_VENDOR_LIBRARY device_board)") {
 		t.Errorf("expected the library, got:\n%s", content)
 	}
 	if !strings.Contains(content, "add_custom_target(flash") {

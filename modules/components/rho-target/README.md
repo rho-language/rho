@@ -23,8 +23,8 @@ carries, and a chip names the architecture it is built as.
 | `arm-cortex-m` | arch | The toolchain every Cortex-M chip is built with |
 | `stm32f4` | mcu | Cortex-M4F, arm-none-eabi, 1 MB flash, 128 KB + 64 KB CCM RAM, an ST-Link to flash through |
 | `rp2040` | mcu | Cortex-M0+, 2 MB of XIP flash, 264 KB SRAM, the bootrom's USB protocol |
-| `pico` | board | An RP2040 on the Raspberry Pi Pico, with the pin map and `robohub_pico` linked |
-| `esp32c3` | board | A RISC-V ESP32-C3 on its development board, built as an ESP-IDF project with `robohub_esp32` |
+| `pico` | board | An RP2040 on the Raspberry Pi Pico, with the pin map |
+| `esp32c3` | board | A RISC-V ESP32-C3 on its development board, built as an ESP-IDF project |
 
 A spec resolves through that chain, so `rho target show pico` reports one target
 with the compiler of the chip's architecture, the chips's memory, and the board's

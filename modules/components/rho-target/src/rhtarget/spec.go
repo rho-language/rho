@@ -75,10 +75,17 @@ type Spec struct {
 	ResolvedFrom []string `json:"-"`
 
 	// Family is the family of parts this spec is for, as the vendor names it —
-	// `STM32H7`. It is what the family macro is derived from, so a spec states
-	// which family it is once and everything downstream agrees rather than each
-	// working it out from the part number.
+	// `STM32H7`. A platform that selects a family at compile time maps it to a
+	// macro through the platform hook, so a spec states which family it is once
+	// and the platform's naming lives with the platform rather than here.
 	Family string `json:"family,omitempty"`
+	// HALHeader is the header a vendor's HAL umbrella includes by name, such as
+	// `stm32f4xx_hal.h`, or empty when this target has no such vendor.
+	//
+	// It is the one fact that says which family's configuration header a build
+	// has to produce from the vendor's template, and the vendor's naming is not
+	// derivable from a part number without guessing — so the platform states it.
+	HALHeader string `json:"hal_header,omitempty"`
 	// Core is the processor core, which is a fact about the chip that a program
 	// may want to know.
 	Core string `json:"core,omitempty"`
@@ -1049,6 +1056,12 @@ func merge(parent, child Spec) Spec {
 	}
 	if child.MCU == "" {
 		child.MCU = parent.MCU
+	}
+	if child.Family == "" {
+		child.Family = parent.Family
+	}
+	if child.HALHeader == "" {
+		child.HALHeader = parent.HALHeader
 	}
 	if child.Toolchain.Compiler == "" {
 		child.Toolchain.Compiler = parent.Toolchain.Compiler

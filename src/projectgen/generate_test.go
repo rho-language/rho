@@ -148,7 +148,7 @@ func writeManifestFile(t *testing.T, root, content string) {
 func platformLayout(t *testing.T) (platform, project string) {
 	t.Helper()
 	repo := t.TempDir()
-	platform = filepath.Join(repo, "robohub-stm32")
+	platform = filepath.Join(repo, "board-lib")
 	project = filepath.Join(platform, "examples", "hello_world")
 
 	for _, dir := range []string{
@@ -190,7 +190,7 @@ func chdirInto(t *testing.T, dir string) {
 func TestASourceADependencyProvidesIsNotCompiledHere(t *testing.T) {
 	platform, project := platformLayout(t)
 	writeManifestFile(t, project, "module:\n  name: demo\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n"+
-		"depends:\n  - name: robohub-stm32\n    type: c\n    path: "+filepath.ToSlash(platform)+"\n")
+		"depends:\n  - name: board-lib\n    type: c\n    path: "+filepath.ToSlash(platform)+"\n")
 
 	ctx := Context{
 		ModuleName:  "demo",
@@ -223,7 +223,7 @@ func TestAProjectInsideADependencyStillCompilesItsOwnSources(t *testing.T) {
 	}
 	writeManifestFile(t, project, "module:\n  name: hello-world\n  type: module\n  version: 0.1.0\nmain: src/main.c\n"+
 		"build:\n  language: c\n  sources:\n    - src/main.c\n"+
-		"depends:\n  - name: robohub-stm32\n    type: c\n    path: "+filepath.ToSlash(platform)+"\n")
+		"depends:\n  - name: board-lib\n    type: c\n    path: "+filepath.ToSlash(platform)+"\n")
 
 	ctx := Context{
 		ModuleName:  "hello-world",

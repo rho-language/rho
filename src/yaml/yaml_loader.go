@@ -152,7 +152,7 @@ func Load(src string) (Value, error) {
 			}
 			item := strings.TrimSpace(line[1:])
 			// A quoted item is a string, whatever it contains. A target name
-			// like `rho::robohub-common` is quoted precisely because of its
+			// like `rho::sensor-lib` is quoted precisely because of its
 			// colons, and reading that as a key and a value turned a declared name
 			// into a one-entry map — which then failed a schema that had said it
 			// expected a string.

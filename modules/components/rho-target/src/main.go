@@ -244,7 +244,7 @@ func withDeclaredSpecs(projectRoot string) {
 
 func library(trust bool) *rhtarget.Library {
 	root := specRoot()
-	found := plugins.Source{Tree: root, RhoHome: deps.RhoHome(), TrustTree: trust}.Discover(ComponentName)
+	found := plugins.Source{Tree: root, RhoHome: deps.RhoHome(), TrustTree: trust, Platform: buildPlatform()}.Discover(ComponentName)
 
 	// Specs a build was handed come first, so that a platform's spec for a board
 	// shadows a shipped one of the same name rather than the other way round: a
@@ -259,11 +259,61 @@ func library(trust bool) *rhtarget.Library {
 	// reached are that board's. Handing its *directory* to a reader that searches
 	// directories would instead read its manifest, its presets and its support
 	// package as if they were hardware.
-	library := rhtarget.LoadWith(append(roots, specRoots()...), found)
+	library := rhtarget.LoadFrom(append(roots, specRoots()...))
 	for _, path := range declaredSpecFiles {
 		library.AddFile(path)
 	}
-	return library
+	// A platform plugin answers about the targets this project carries, so it is
+	// asked only once they are all loaded. Asked earlier it would answer about a
+	// library that had not read the project's boards yet, which is every board a
+	// platform supplies.
+	return rhtarget.Apply(library, found)
+}
+
+// buildPlatform is the platform identity the build being served is for.
+//
+// Read from the application, not from the directory this component's own specs
+// live in: the specs are the component's, and the platform is the project's.
+//
+// Which flag carries the application depends on the command, and getting that
+// wrong reads a generated tree for a fact it cannot have. `build` is handed the
+// generated tree in `-project` and the application in `-for`, so `--for` is
+// asked first; `show`, `list` and the rest name the application in `-project`.
+// A build that names neither is run from the project it is building, so the
+// working directory is the answer in that case.
+//
+// Nothing recognized is a real answer and not a failure: the platform-agnostic
+// plugins run and the specs carry what the build needs, which is what a host
+// build, or a build for a platform nobody has written a plugin for, is.
+func buildPlatform() string {
+	if root := pathFlag(os.Args[1:], "for"); root != "" {
+		return deps.Platform(root)
+	}
+	if root := pathFlag(os.Args[1:], "project"); root != "" {
+		return deps.Platform(root)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return deps.Platform(cwd)
+	}
+	return ""
+}
+
+// pathFlag is the value of a `-name value` or `-name=value` flag, or "" when the
+// caller did not give it.
+func pathFlag(args []string, name string) string {
+	for i, arg := range args {
+		switch {
+		case arg == "-"+name || arg == "--"+name:
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		case strings.HasPrefix(arg, "-"+name+"="):
+			return strings.TrimPrefix(arg, "-"+name+"=")
+		case strings.HasPrefix(arg, "--"+name+"="):
+			return strings.TrimPrefix(arg, "--"+name+"=")
+		}
+	}
+	return ""
 }
 
 // specRoot is the directory the specs this component ships are read from.

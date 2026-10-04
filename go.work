@@ -21,6 +21,7 @@ use (
 	./modules/components/rho-test
 	./modules/plugins/rho-doc-api
 	./modules/plugins/rho-doc-toc
+	./modules/plugins/rho-robohub
 	./modules/plugins/rho-sql-sqlite
 	./modules/plugins/rho-test-gtest
 	./modules/plugins/rho-test-junit
@@ -55,6 +56,7 @@ replace (
 	github.com/rho/rho-test v0.0.0 => ./modules/components/rho-test
 	github.com/rho/rho-doc-api v0.0.0 => ./modules/plugins/rho-doc-api
 	github.com/rho/rho-doc-toc v0.0.0 => ./modules/plugins/rho-doc-toc
+	github.com/rho/rho-robohub v0.0.0 => ./modules/plugins/rho-robohub
 	github.com/rho/rho-sql-sqlite v0.0.0 => ./modules/plugins/rho-sql-sqlite
 	github.com/rho/rho-test-gtest v0.0.0 => ./modules/plugins/rho-test-gtest
 	github.com/rho/rho-test-junit v0.0.0 => ./modules/plugins/rho-test-junit

@@ -147,7 +147,7 @@ func merge(args []string) int {
 		// Only the installed plugins: a run resolves a project's configuration,
 		// and a plugin found in the tree the project happens to sit in is code
 		// from whoever wrote that tree.
-		options.Plugins = plugins.Source{RhoHome: deps.RhoHome()}.Discover(rhokconfig.ComponentName)
+		options.Plugins = plugins.Source{RhoHome: deps.RhoHome(), Platform: deps.Platform(*root)}.Discover(rhokconfig.ComponentName)
 	}
 
 	// A run that names a path and no fragment reads what the project declared: a

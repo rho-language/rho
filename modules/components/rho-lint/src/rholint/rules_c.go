@@ -768,7 +768,7 @@ func hasStorageClass(code string, nameAt int, bodyAt int, class string) bool {
 
 // isWordStart reports whether an offset begins an identifier.
 //
-// The preceding-character test is what keeps `RoboHubGPIO::write` and `stm32_gpio.c`
+// The preceding-character test is what keeps `DeviceGPIO::write` and `stm32_gpio.c`
 // from being split into two words: an identifier that is already part of one, by a
 // `::` or a `.`, is not the start of a declaration.
 func isWordStart(code string, index int) bool {

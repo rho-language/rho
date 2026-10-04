@@ -2,7 +2,7 @@
 // @file compdb_test.go
 // @brief Tests for the compilation database: finding, reading and deriving one.
 //
-// The examples in robohub-stm32 are the material, and the two of them are the two
+// The examples in board-lib are the material, and the two of them are the two
 // cases this file has to get right. `examples/c/hello_world` declares its source and
 // names six boards; `examples/rho/hello_world` declares neither and has a generated C
 // project beside it. A run over one is a run over a declared source, and a run over
@@ -354,7 +354,7 @@ func TestDeriveOfAProjectWithNoCIsEmptyRatherThanAnError(t *testing.T) {
 }
 
 func TestBoardForPrefersTheBoardsOwnName(t *testing.T) {
-	// Six presets and no toolchain, which is the shape both robohub-stm32 examples
+	// Six presets and no toolchain, which is the shape both board-lib examples
 	// have: the first preset is what a build uses when it is given no choice.
 	root := t.TempDir()
 	manifest := aManifest(t, root, `module:

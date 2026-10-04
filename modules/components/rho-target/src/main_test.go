@@ -47,7 +47,7 @@ func specTree(t *testing.T) string {
 		"arch.json": `{"kind": "arch", "name": "arm-cortex-m",
 		  "toolchain": {"compiler": "arm-none-eabi-gcc", "objcopy": "arm-none-eabi-objcopy"}}`,
 		"board.json": `{"kind": "board", "name": "board", "arch": "arm-cortex-m", "core": "cortex-m4",
-		  "vendor_library": "robohub_board",
+		  "vendor_library": "device_board",
 		  "flags": ["-mcpu=cortex-m4", "-mthumb"],
 		  "memory": {"flash": {"origin": "0x08000000", "length": "0x100000"},
 		             "ram": {"origin": "0x20000000", "length": "0x20000"}},

@@ -120,43 +120,79 @@ func ValidateModule(dir string) error {
 // cheaper than discovering it from a build log.
 func validatePlugin(dir string, manifest *deps.Manifest) error {
 	extension := manifest.Extends
-	if extension == nil {
+	if extension == nil || len(extension.All()) == 0 {
 		return fmt.Errorf("plugin must declare `extends:` naming the component it plugs into")
-	}
-	if len(extension.Hooks) == 0 {
-		return fmt.Errorf("plugin must declare the hooks of %s it answers", extension.Component)
 	}
 	if len(extension.Commands) == 0 {
 		return fmt.Errorf("plugin must declare at least one command")
 	}
 
+	// A plugin may extend more than one component, and each relation is checked
+	// on its own: the component has to exist, it has to offer the hooks the
+	// plugin claims there, and the contracts it implements there have to be
+	// contracts that component offers.
+	targets := extension.All()
+	for _, target := range targets {
+		if err := validateTarget(dir, target); err != nil {
+			return err
+		}
+	}
+
+	// Every command has to answer a hook of a component it belongs to. A
+	// command that names its component is checked against that one; one that
+	// names none may answer any of the components the plugin extends.
+	for _, command := range extension.Commands {
+		stage := command.Stage()
+		if !answersAny(targets, command.Component, stage) {
+			return fmt.Errorf("command %q answers hook %q, which the plugin does not declare", command.Name, stage)
+		}
+	}
+	return nil
+}
+
+// answersAny reports whether a hook is declared by a target the command belongs
+// to: the one it names, or any target when it names none.
+func answersAny(targets []deps.ExtendsTarget, component, hook string) bool {
+	for _, target := range targets {
+		if component != "" && target.Component != component {
+			continue
+		}
+		for _, offered := range target.Hooks {
+			if offered == hook {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateTarget checks one component a plugin extends.
+func validateTarget(dir string, target deps.ExtendsTarget) error {
+	if len(target.Hooks) == 0 {
+		return fmt.Errorf("plugin must declare the hooks of %s it answers", target.Component)
+	}
+
 	// The named component has to be something that can run the hooks. It is
 	// located the way a dependency is, so an installed component and a
 	// component in the same tree are both found.
-	component, err := findComponent(dir, extension.Component)
+	component, err := findComponent(dir, target.Component)
 	if err != nil {
 		return err
 	}
 	if component.Provides == nil || len(component.Provides.Hooks) == 0 {
-		return fmt.Errorf("%s offers no hooks; a plugin has nothing to answer", extension.Component)
+		return fmt.Errorf("%s offers no hooks; a plugin has nothing to answer", target.Component)
 	}
 	offered := map[string]bool{}
 	for _, hook := range component.Provides.Hooks {
 		offered[hook] = true
 	}
-	for _, hook := range extension.Hooks {
+	for _, hook := range target.Hooks {
 		if !offered[hook] {
 			return fmt.Errorf("hook %q is not offered by %s; it offers %s",
-				hook, extension.Component, strings.Join(component.Provides.Hooks, ", "))
+				hook, target.Component, strings.Join(component.Provides.Hooks, ", "))
 		}
 	}
-	for _, command := range extension.Commands {
-		stage := command.Stage()
-		if !extension.Answers(stage) {
-			return fmt.Errorf("command %q answers hook %q, which the plugin does not declare", command.Name, stage)
-		}
-	}
-	return validateContracts(extension, component)
+	return validateContracts(target, component)
 }
 
 // validateContracts checks what a plugin says it is against what its component
@@ -170,15 +206,15 @@ func validatePlugin(dir string, manifest *deps.Manifest) error {
 // A plugin that names no contract is accepted. A component whose plugins are all
 // of one kind has no reason to name them, and requiring it to would be a rule
 // with no failure behind it.
-func validateContracts(extension *deps.Extends, component *deps.Manifest) error {
-	if len(extension.Implements) == 0 || component.Provides == nil {
+func validateContracts(target deps.ExtendsTarget, component *deps.Manifest) error {
+	if len(target.Implements) == 0 || component.Provides == nil {
 		return nil
 	}
 	contracts := map[string]deps.Contract{}
 	for _, contract := range component.Provides.Contracts {
 		contracts[contract.Name] = contract
 	}
-	for _, named := range extension.Implements {
+	for _, named := range target.Implements {
 		contract, offered := contracts[named]
 		if !offered {
 			available := make([]string, 0, len(contracts))
@@ -190,11 +226,11 @@ func validateContracts(extension *deps.Extends, component *deps.Manifest) error 
 				return fmt.Errorf(
 					"%s offers no contracts, so %s cannot implement %q; "+
 						"a component says what a plugin is for under `provides: contracts:`",
-					extension.Component, extension.Component, named)
+					target.Component, target.Component, named)
 			}
 			return fmt.Errorf(
 				"%q is not a contract of %s; it offers %s",
-				named, extension.Component, strings.Join(available, ", "))
+				named, target.Component, strings.Join(available, ", "))
 		}
 		// The contract names the hooks a plugin filling it answers, which makes
 		// it checkable rather than a label. A plugin that answers a hook outside
@@ -206,11 +242,11 @@ func validateContracts(extension *deps.Extends, component *deps.Manifest) error 
 		for _, hook := range contract.Hooks {
 			within[hook] = true
 		}
-		for _, hook := range extension.Hooks {
+		for _, hook := range target.Hooks {
 			if !within[hook] {
 				return fmt.Errorf(
 					"hook %q is outside the %q contract of %s, which covers %s",
-					hook, contract.Name, extension.Component, strings.Join(contract.Hooks, ", "))
+					hook, contract.Name, target.Component, strings.Join(contract.Hooks, ", "))
 			}
 		}
 	}

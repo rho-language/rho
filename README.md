@@ -1,9 +1,8 @@
 # Rho
 Version: v0.1
 
-Rho is a small, experimental language for the RoboHub ecosystem. It is
-designed to compile down to portable C for host-side tooling and embedded
-development workflows.
+Rho is a small, experimental programming language. It is designed to compile
+down to portable C for host-side tooling and embedded development workflows.
 
 This repository contains the language compiler, runtime helpers, examples,
 and the minimal infrastructure needed to build and test host-side Rho code.

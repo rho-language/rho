@@ -55,7 +55,7 @@ const chipSpec = `{
 }`
 
 const boardSpec = `{
-  "kind": "board", "name": "board", "mcu": "chip", "vendor_library": "robohub_board",
+  "kind": "board", "name": "board", "mcu": "chip", "vendor_library": "device_board",
   "flags": ["-DBOARD=1"],
   "pins": {"gp25": {"name": "GP25", "role": "led"}},
   "peripherals": {"i2c0": {"instance": "i2c0", "pins": {"sda": "GP4"}}}
@@ -153,7 +153,7 @@ func TestABoardInheritsFromItsChipAndArchitecture(t *testing.T) {
 			t.Fatalf("expected %v, got %v", want, flags)
 		}
 	}
-	if spec.VendorLibrary != "robohub_board" {
+	if spec.VendorLibrary != "device_board" {
 		t.Errorf("expected the board's library, got %q", spec.VendorLibrary)
 	}
 	if pin, found := spec.Pin("led"); !found || pin.Name != "GP25" {
