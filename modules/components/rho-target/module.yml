@@ -47,3 +47,43 @@ docs:
   index: docs/index.md
   sources:
     - docs/index.md
+
+# What this component needs from the machine.
+#
+# The toolchain a cross build is compiled and linked with, and the utilities that
+# read the result. Not required: a board built for the host needs none of them, and a
+# machine that has none can still build and debug for the machine it is on.
+system_deps:
+  executables:
+    - name: arm-none-eabi-gcc
+      version: ">=10.0"
+      # GCC's output leads with the package epoch — `13.2.1 20221008 (15:13.2…)` —
+      # so the first version-shaped run in it is not the compiler's version. The
+      # group after the closing parenthesis is.
+      version_pattern: '\)\s*([0-9][^\s]*)'
+      description: bare-metal builds for a Cortex-M board are compiled with it
+      required: false
+      install:
+        brew: arm-none-eabi-gcc
+        apt: gcc-arm-none-eabi
+        pacman: arm-none-eabi-gcc
+        manual: https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads
+
+    - name: arm-none-eabi-objcopy
+      description: it turns a linked program into the binary a board is flashed with
+      required: false
+      install:
+        brew: arm-none-eabi-gcc
+        apt: gcc-arm-none-eabi
+        pacman: arm-none-eabi-gcc
+
+    - name: cmake
+      version: ">=3.16"
+      description: a project for a board is generated and built with it
+      required: false
+      install:
+        brew: cmake
+        apt: cmake
+        pacman: cmake
+        dnf: cmake
+        choco: cmake

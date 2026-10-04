@@ -516,6 +516,83 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// What this module needs from the machine it runs on: the programs it
+				// runs, the environment it expects, the host permissions it needs.
+				//
+				// A different thing from `deps`, and declared apart from it because it
+				// is a different problem. `deps` is a graph this toolchain resolves —
+				// every requirement is another module, and everything it needs is here.
+				// A requirement on the machine is a program somebody has to install, and
+				// no amount of resolving this toolchain's own graph will produce it.
+				//
+				// So `deps` is what `rho-deps` resolves and `system_deps` is what
+				// `rho-doctor` reports on and `rho-keeper` acts for: a block a module
+				// states its requirements in, and nothing this toolchain fetches.
+				Name:     "system_deps",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "executables", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "name", Required: true, Kind: KindString},
+							// The constraint, in the grammar `deps` uses: `>=10.0`,
+							// `=0.12.0`, `>=0.11 <0.13`, `~1.2`, `^2`, and
+							// alternatives with `||`. A minimum, a maximum and a
+							// range are one field written three ways, and this
+							// toolchain already has a grammar for all three.
+							{Name: "version", Required: false, Kind: KindString},
+							// The flag that makes it print a version, for the programs that
+							// do not use `--version`.
+							{Name: "version_flag", Required: false, Kind: KindString},
+							// How to read the version out of what it printed: a pattern whose
+							// first group is the version. Needed because `gdb` prints four
+							// version-shaped runs and means the last.
+							{Name: "version_pattern", Required: false, Kind: KindString},
+							{Name: "description", Required: false, Kind: KindString},
+							// Required defaults to true: a system dependency a module does
+							// not need is not one, and a block of optional programs nobody
+							// checks for is a block that reports nothing.
+							{Name: "required", Required: false, Kind: KindString},
+							// How to get it, by package manager. Declared rather than
+							// executed: a manifest is a statement about a requirement, and
+							// somebody runs the recipe.
+							{Name: "install", Required: false, Kind: KindMap},
+							// How to get it without a package manager: a prebuilt archive
+							// put under the Rho home. Preferred wherever it exists — a
+							// toolchain in the user's own directory belongs to that user,
+							// does not change when the machine's package manager does, and
+							// comes away with the directory it was put in.
+							{Name: "fetch", Required: false, Kind: KindMap},
+						},
+					}},
+					{Name: "env_vars", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "name", Required: true, Kind: KindString},
+							{Name: "description", Required: false, Kind: KindString},
+							{Name: "required", Required: false, Kind: KindString},
+						},
+					}},
+					{Name: "udev_rules", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "name", Required: true, Kind: KindString},
+							// Where the rule has to be. A path outside the project,
+							// because it is the host's file, and a missing one is a device
+							// that is present and not permitted.
+							{Name: "target_path", Required: true, Kind: KindString},
+							{Name: "description", Required: false, Kind: KindString},
+							// Where the rule file is in the repository that carries it,
+							// which is what makes installing it a copy rather than a
+							// written-out guess at the vendor's rules.
+							{Name: "source", Required: false, Kind: KindString},
+							{Name: "optional", Required: false, Kind: KindString},
+						},
+					}},
+				},
+			},
+			{
 				// Where this module keeps its vendor sources.
 				//
 				// A path that already holds a repository is used as it is; a path that holds

@@ -84,12 +84,18 @@ func New(subject string, options Options) *Logger {
 	return logger
 }
 
-// Default returns a logger writing to standard output, which is what a
-// developer wants and what a container wants.
+// Default returns a logger writing to standard error.
+//
+// Standard error, not standard output, and the reason is that standard output
+// belongs to whatever the command was asked for. `rho doctor --json` puts a report
+// there, a debug adapter puts a protocol there, `rho doc` puts a document there,
+// and a line of diagnostics in front of any of them makes it unparseable — for a
+// program that reads it, and for a person who pipes it. A developer still sees every
+// line, because a terminal shows both.
 func Default(subject string) *Logger {
 	return New(subject, Options{
 		Level: logfmt.LevelInfo,
-		Sinks: []Sink{&WriterSink{Writer: os.Stdout}},
+		Sinks: []Sink{&WriterSink{Writer: os.Stderr}},
 	})
 }
 

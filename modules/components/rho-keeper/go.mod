@@ -24,5 +24,6 @@ require (
 	// opinion about what the project's documentation says, and the one a person
 	// reads on a generated site is the one that should be read here too.
 	github.com/rho/rho-doc v0.0.0
+	github.com/rho/rho-doctor v0.0.0
 	rho v0.0.0
 )

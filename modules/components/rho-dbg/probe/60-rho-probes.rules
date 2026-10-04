@@ -1,0 +1,28 @@
+# USB access for the probes a debugging session reaches a board through.
+#
+# A probe that is plugged in and not permitted is a probe that is not there: the
+# session reports it as no board found, because from the board's side that is
+# exactly what it is. This file is the difference, and it has to be in the host's
+# own rules directory because udev reads it from there and nowhere else.
+#
+# Carried with the component rather than with a project: a rule is a fact about
+# the machine, not about the code being debugged, and every project built for a
+# board needs the same one.
+#
+# Installed with:  rho keeper install rho-dbg 60-rho-probes.rules
+#
+# STMicroelectronics ST-LINK, which is the probe soldered onto every Nucleo board.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3744", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3748", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374e", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374a", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374f", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3753", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# SEGGER J-Link, in the four forms it ships as.
+SUBSYSTEM=="usb", ATTR{idVendor}=="1366", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# CMSIS-Debug probes as a class, which is what the specification defines and what a
+# probe nobody has added a line for above will be.
+SUBSYSTEM=="usb", ATTR{interface}=="CMSIS-DAP", MODE="0660", GROUP="plugdev", TAG+="uaccess"

@@ -1,0 +1,68 @@
+# rho-doctor — what this machine has, against what it needs.
+#
+# A tool that runs and a machine that is missing something look the same from
+# outside: a session fails, and the failure names this component rather than the
+# program that was never installed. `rho doctor` is the command that tells them
+# apart.
+#
+# It reads. It does not install, and it does not need root, and it never changes the
+# machine it is reporting on — because a report you cannot tell from the changes it
+# made is not a report. Installing what it finds is `rho keeper`'s half, and that
+# half consumes this one's JSON.
+#
+# It is a component rather than part of the toolchain because the reading lives in a
+# place a component's own tests can reach: the checking needs to run in a test with
+# a fabricated machine, and that means the machine has to be a parameter.
+module:
+  name: rho-doctor
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Reports what the installed modules need from this machine, and what it has
+  command: doctor
+
+main: rho-doctor
+
+features:
+  - diagnostics
+  - system
+  - health
+  - doctor
+
+# A health check that says which of several programs is which version belongs to
+# nobody in particular, so it depends on nothing but the toolchain: it is a command
+# people run when something else is broken, and a command that cannot run because
+# something else is broken is not that.
+#
+# It logs through the shared logger, so a check is identifiable in a log that
+# several components write to.
+deps:
+  rho-log: ">=0.1.0"
+
+# The commands it answers.
+commands:
+  - name: doctor
+    description: Report what the installed modules need from this machine
+    run: rho-doctor
+    hook: doctor
+
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+docs:
+  title: System doctor
+  section: components
+  order: "46"
+  index: docs/index.md
+  sources:
+    - docs/index.md
