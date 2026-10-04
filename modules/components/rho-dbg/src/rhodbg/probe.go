@@ -39,6 +39,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"rho/src/deps"
+	"rho/src/sysdep"
 )
 
 // How long a probe is given to start listening before the session gives up on it.
@@ -428,10 +431,15 @@ func ResolveDebugger(name string, extraPaths ...string) (string, error) {
 		// it after each of them.
 		candidates = append(candidates, "gdb-multiarch", "gdb")
 	}
-	// Every candidate before the bare `gdb`, so a machine with both uses the
-	// cross debugger it named.
+	// What was fetched into the Rho home, looked in *before* the fallback rather
+	// than after it: a toolchain fetched from the vendor is the one the module asked
+	// for, while gdb-multiarch is a thing the machine happens to have. The other way
+	// round would report a satisfied requirement and then debug with something else,
+	// which is the exact mismatch this whole block exists to catch.
+	paths := append([]string{}, sysdep.FetchBinDirs(sysdep.ToolchainRoot(deps.RhoHome()))...)
+	paths = append(paths, extraPaths...)
 	for _, candidate := range candidates {
-		if resolved, err := ResolveProgram(candidate, extraPaths...); err == nil {
+		if resolved, err := ResolveProgram(candidate, paths...); err == nil {
 			return resolved, nil
 		}
 	}

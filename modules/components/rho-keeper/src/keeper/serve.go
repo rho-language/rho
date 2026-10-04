@@ -478,6 +478,29 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 		writeJSON(w, ReadSystem())
 	})
 
+	// What the installed modules need from this machine, which is the doctor's
+	// report rather than a second reading of it — and the fix for each, as the
+	// command a person would run.
+	mux.HandleFunc("GET /api/v1/system/requirements", func(w http.ResponseWriter, r *http.Request) {
+		rows, problem := SystemRequirements()
+		writeJSON(w, map[string]any{
+			"requirements": rows,
+			"summary":      SystemSummary(),
+			"host":         HostDescription(),
+			"problem":      problem,
+			// What a plan would do, so the page can say what `sync` would do before
+			// anybody asks it to.
+			"plan":    PlanFor(readReportOrEmpty()),
+			"fetched": FetchSummary(),
+		})
+	})
+
+	// Doing one of them, with its output as it happens. Loading this without
+	// `confirm` answers with what it would do and stops: a URL a page can be made to
+	// open must not be able to start a download or reach for privileges, and a
+	// person clicking a button is what makes it run.
+	mux.HandleFunc("GET /api/v1/system/install/{module}/{dep}", handleInstall)
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})

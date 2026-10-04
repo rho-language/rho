@@ -11,11 +11,18 @@ module:
   type: component
   version: 0.1.0
   author: Aurel Miron
-  description: A local dashboard for the Rho installation and its registry
+  description: A local dashboard for the Rho installation and its registry, and what it fixes
   command: keeper
   import_path: rho.keeper
 
 main: rho-keeper
+
+# The report it acts on. Reading that report rather than working one out here is
+# what keeps a terminal and this dashboard from telling the same person two
+# different things about the same machine — and it means the inspection is one
+# implementation, tested in one place.
+deps:
+  rho-doctor: ">=0.1.0"
 
 features:
   - dashboard
@@ -54,7 +61,32 @@ settings:
 #
 # A component's commands are what the CLI dispatches to, so this is also the
 # surface `rho keeper --help` lists.
+# The system half. `rho doctor` reads what a module needs from this machine and
+# reports; these act on that report — `sync` fixes what it can, `fix` asks about
+# each thing, `install` does one named thing. The dashboard shows the same report and
+# every fix as the command that would do it, because a page is a good place to read a
+# command and a poor place to be the only way to run one.
 commands:
+  - name: doctor
+    description: What this machine has, against what the modules need
+    run: rho-keeper
+    hook: doctor
+
+  - name: sync
+    description: Install what the doctor found missing
+    run: rho-keeper
+    hook: sync
+
+  - name: fix
+    description: The same, one thing at a time, asking about each
+    run: rho-keeper
+    hook: fix
+
+  - name: install
+    description: Install one dependency of one module
+    run: rho-keeper
+    hook: install
+
   - name: start
     description: Run the dashboard on a port
     run: rho-keeper

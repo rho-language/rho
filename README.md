@@ -524,7 +524,57 @@ GDB is the debugger this component carries. Another one is a plugin: a module in
 `modules/plugins` declaring `extends: rho-dbg` names the debugger's own adapter,
 and this runs it and relays to it. See `modules/components/rho-dbg/README.md`.
 
-### Configuring an editor
+### What this machine needs
+
+A module says what it needs from the machine in `system_deps` — a different kind
+of requirement from `deps`, and declared apart from it. Everything in `deps` is
+another module of this toolchain and `rho-deps` resolves it; everything in
+`system_deps` is a program or a permission that somebody installs.
+
+```yaml
+system_deps:
+  executables:
+    - name: arm-none-eabi-gdb
+      version: ">=10.0"          # the same constraint grammar `deps` uses
+      version_flag: "--version"
+      version_pattern: '[^\n]*?\)\s*([0-9][^\s(]*)'
+      # Put under the Rho home, preferred over a package manager: no privileges, it
+      # belongs to the person rather than to the machine, and it comes away with the
+      # directory it was put in.
+      fetch:
+        url: https://developer.arm.com/-/media/.../arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
+        archive: tar.xz
+        binary: bin/arm-none-eabi-gdb
+        version: "14.2"
+      install: {apt: gdb-multiarch, brew: arm-none-eabi-gcc, pacman: arm-none-eabi-gdb}
+  udev_rules:
+    - name: 60-rho-probes.rules
+      target_path: /etc/udev/rules.d/60-rho-probes.rules
+      source: probe/60-rho-probes.rules
+```
+
+`rho doctor` reads those blocks and reports what the machine has — five answers
+(`OK`, `MISSING`, `OUTDATED`, `WARNING`, `UNKNOWN`), because "installed but too
+old" and "installed and right" want different things done about them. It changes
+nothing.
+
+`rho keeper` acts on the report:
+
+```sh
+rho keeper doctor            # the same report, through the same reading
+rho keeper sync --dry-run   # what it would do, and nothing of it
+rho keeper sync              # do it, after showing it and asking
+rho keeper fix               # one thing at a time, asking about each
+rho keeper install rho-dbg arm-none-eabi-gdb
+```
+
+A fetch is preferred over a package manager, and root is asked for exactly twice:
+for one udev rule, and only for that file, with the file named before the prompt
+appears. The dashboard shows the same report and every fix as the command that
+would do it, because a page is a good place to read a command and a poor place to
+be the only way to run one.
+
+## Configuring an editor
 
 `rho ide` writes what an editor reads, from what a project declares: the launch
 configurations, the tasks, and a workspace file that carries the compiler settings

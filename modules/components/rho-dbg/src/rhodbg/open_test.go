@@ -22,6 +22,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"rho/src/sysdep"
 	"strconv"
 	"strings"
 	"testing"
@@ -668,6 +669,10 @@ func TestADebuggerIsResolvedToTheOneThisMachineHas(t *testing.T) {
 	// test that passes on one machine and fails on another is one that is testing
 	// the machine.
 	t.Setenv("PATH", root)
+	// The Rho home is the other half of the search — a fetched toolchain is looked
+	// in before the fallback — so it is confined too, or the test answers with whatever
+	// this machine has fetched.
+	t.Setenv("RHO_HOME", t.TempDir())
 	write := func(name string) {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatal(err)
@@ -778,5 +783,52 @@ func TestTheTranslationTableIsReadByADebuggerWhenThereIsOne(t *testing.T) {
 		if answer.Class == "error" {
 			t.Errorf("%s: %s", command.Arguments(), errorOf(answer))
 		}
+	}
+}
+
+// A toolchain fetched into the Rho home is the one the module asked for, so it is
+// found before the fallback. The other way round would report a requirement as
+// satisfied and then debug with something else — which is the exact mismatch this
+// whole block exists to catch.
+func TestAFetchedDebuggerIsFoundBeforeTheFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RHO_HOME", home)
+	cache := sysdep.ToolchainRoot(home)
+	// A fetched one, at the path the layout says.
+	fetched := filepath.Join(cache, "arm-none-eabi-gdb-1.0", "toolchain-1.0", "bin")
+	if err := os.MkdirAll(fetched, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fetched, "arm-none-eabi-gdb"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// And a fallback on the machine's own path, so there is something to *not* choose.
+	machine := t.TempDir()
+	for _, name := range []string{"arm-none-eabi-gdb", "gdb-multiarch", "gdb"} {
+		if err := os.WriteFile(filepath.Join(machine, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", machine)
+
+	found, err := ResolveDebugger("arm-none-eabi-gdb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != filepath.Join(fetched, "arm-none-eabi-gdb") {
+		t.Errorf("expected the fetched debugger, got %q", found)
+	}
+
+	// With nothing fetched, the fallback is what there is — and it is still chosen
+	// before the host's own bare gdb.
+	if err := os.RemoveAll(filepath.Join(cache, "arm-none-eabi-gdb-1.0")); err != nil {
+		t.Fatal(err)
+	}
+	found, err = ResolveDebugger("arm-none-eabi-gdb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != filepath.Join(machine, "arm-none-eabi-gdb") {
+		t.Errorf("expected the machine's own cross debugger, got %q", found)
 	}
 }

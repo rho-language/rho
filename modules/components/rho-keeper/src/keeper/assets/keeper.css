@@ -477,3 +477,76 @@ tr:last-child td { border-bottom: none; }
 .comp .name { font-size: .86rem; color: var(--ink); white-space: nowrap; }
 .comp .about { flex: 1; font-size: .85rem; color: var(--soft); min-width: 0; }
 .comp .from { font-size: .72rem; color: var(--faint); font-family: var(--mono); }
+
+/* A command a person can read and copy. The dashboard never runs one on its own:
+   a page is a good place to read a command and a poor place to be the only way to
+   run one, because installing a package asks for privileges. */
+.pick {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
+  cursor: text;
+  user-select: all;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Statuses and the install console                                            */
+/* -------------------------------------------------------------------------- */
+
+/* A status as a mark rather than a word in a column, so that the row which is wrong
+   is findable by looking rather than by reading. The colours are the ones the rest
+   of this page already uses for present and absent: green is here, red is stopped,
+   amber is a warning. */
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge.ok { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.badge.warning { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.badge.missing, .badge.outdated { color: var(--stop); border-color: var(--stop); background: var(--stop-soft); }
+.badge.unknown { color: var(--soft); border-color: var(--line); background: var(--page); }
+
+/* The button that runs a command the terminal would. Labelled with what it does
+   rather than with "Run", because on this page it is not obvious that pressing it
+   installs something. */
+button.act {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+button.act:hover { border-color: var(--accent); color: var(--accent); }
+button.act:active { transform: translateY(1px); }
+
+/* The console, which is a terminal because it shows a terminal's output: fixed
+   width, lines that do not wrap, and scrolling rather than growing. */
+.console {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--page);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+}
+.console:empty { display: none; }
