@@ -1,0 +1,196 @@
+#
+# rho-bench — what a firmware costs to run, and what it grew by.
+#
+# `rho mem` measures a program's size, and `rho-test` says whether it passes. Neither
+# says how long it takes. That is this component's whole job, and the reason it exists
+# rather than being a flag on one of them: a size is a fact about the program at rest,
+# and a time is a fact about the program running, and they answer different questions
+# and move for different reasons.
+#
+#                              ┌───────────────────────────┐
+#                              │         rho bench         │
+#                              └─────────────┬─────────────┘
+#                                            │
+#          ┌─────────────────────────────────┼─────────────────────────────────┐
+#          ▼                                 ▼                                 ▼
+#   ┌───────────────┐                 ┌───────────────┐                 ┌───────────────┐
+#   │   rho-mem     │                 │   rho-test    │                 │  rho-monitor  │
+#   │ static flash  │                 │ runs the      │                 │ captures the  │
+#   │ and RAM sizes │                 │ benchmark on  │                 │ trace a run   │
+#   └───────▲───────┘                 │ the target    │                 │ produced      │
+#           │                         └───────▲───────┘                 └───────▲───────┘
+#           └─────────── asked, not linked ──┴─────────────────────────┴───────────┘
+#
+# The two static and dynamic halves are composed rather than merged. rho-mem reads the
+# linker map and the ELF; this reads what a harness printed on a target. Neither
+# component's library is linked into the other: `rho mem --json` is the seam, and it
+# is a documented document rather than a function signature. That is what lets either
+# side be replaced — by a plugin, or by a version of rho-mem that answers differently
+# — without this component changing at all.
+#
+# The harness is the other half, and it is deliberately the smallest thing here:
+#
+#     void bench_aes(rho_bench_t *b) {
+#         RHO_BENCH_LOOP(b) {
+#             aes128_encrypt(key, data);
+#         }
+#     }
+#
+# Everything in `rho/bench.h` is code that runs inside somebody's firmware, on a part
+# with 128 kB of RAM. So it measures and prints, and it does not summarise: the median,
+# the percentiles and the verdict are computed here, on a machine with memory, because
+# a harness that also computed them would be a second implementation of a median that
+# nobody would keep in step with the first.
+#
+# What it measures, and where:
+#
+#   - **Cycles** from `DWT->CYCCNT` on Cortex-M — two instructions, so almost no
+#     overhead of its own — or `rdtsc` on a host.
+#   - **Time** from a monotonic clock, because cycles mean nothing without a frequency
+#     and a frequency is a fact about the clock tree.
+#   - **Stack** from a fill, which is the only way to know how deep a call went after
+#     the fact: the stack is painted, the benchmark runs, and the lowest byte still
+#     holding the paint is one below the deepest thing written.
+#   - **Heap** from the allocator's own calls, which gives a peak and a live count —
+#     and a live count that did not come back down is what a leak looks like.
+#
+# Both are reported, and both are reported with the clock they came from: a host's
+# cycles and a board's cycles are different units, and a comparison between them is a
+# number with no meaning. So a baseline recorded for one target is refused against
+# another rather than compared.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: rho-bench
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Measures how long a program's code takes, how much stack and heap it uses while running, and how that compares with a baseline
+  command: bench
+
+main: rho-bench
+
+features:
+  - benchmark
+  - performance
+  - profiling
+  - cycles
+  - stack
+  - heap
+  - ci
+
+# The components this one asks rather than links.
+#
+# Declared because the composition is a real dependency: a `rho bench` run without
+# rho-mem reports runtime figures and says the static one is missing, which is a
+# different report from one that has it. Nothing here is a library dependency — both
+# are reached as component calls, so that either can be replaced without this
+# component changing.
+deps:
+  rho-mem: ">=0.1.0"
+  rho-log: ">=0.1.0"
+
+# The hook a run goes through.
+#
+# There is one, and it is `measure`, because the question in this component is the
+# only one the harness protocol has: what did the target say. Which benchmark ran, on
+# which target, and how the numbers compared is decided by the project and by the
+# baseline — not by a plugin.
+#
+# A plugin answers `measure` for a target whose benchmarks are produced by something
+# this component does not know to run: a vendor's own suite driven over a vendor's own
+# transport, or a board measured through a debug probe somebody else holds. One that
+# does not answer it is never run, and one that does is used only when no benchmark
+# program was found — so a plugin can add a board without taking the place of a suite
+# that works.
+provides:
+  contracts:
+    - name: measure
+      description: >-
+        Produces benchmark results for a target this component cannot run a
+        benchmark program on, in the same report shape the harness prints.
+      one: false
+      hooks: [measure]
+  hooks:
+    - measure
+
+# What a person may configure it with.
+#
+# All of it presentation or a default. The measurement is what the harness decides,
+# and a component whose settings could change what was measured would be a component
+# whose reports could not be compared with one another.
+settings:
+  file: config/bench.yml
+  settings:
+    - name: iterations
+      description: >-
+        How many timed runs each benchmark makes when the project names no number.
+        More runs is a more trustworthy median and a slower run, and the number past
+        which more runs stop helping is a property of the clock rather than of this
+        component — so the default is generous and a project with slow benchmarks
+        lowers it.
+      default: 20000
+
+    - name: warmup_runs
+      description: >-
+        How many runs are discarded before measuring. Discarded because the first
+        call into a function is not the steady state: the instruction cache is cold,
+        the branch predictor has nothing in it, and on a host the code may not be
+        faulted in yet. A benchmark that measured those would report the cost of
+        starting up as the cost of the work.
+      default: 100
+
+    - name: width
+      description: >-
+        How wide the benchmark name column is. Presentation only.
+      default: 24
+
+# The commands it answers.
+commands:
+  - name: measure
+    description: Measure what this project benchmarks and report it
+    run: rho-bench
+    hook: measure
+
+  - name: check
+    description: >-
+      Measure, and fail if a declared budget broke or something regressed by more than
+      the declared limit
+    run: rho-bench
+    hook: check
+
+# The component ships as a command, and as a header: `rho/bench.h` and its harness
+# are what a project compiles into its own firmware, so they travel with the component
+# that documents and maintains them.
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - config
+    - docs
+    - include
+    - harness
+    - examples
+    - src
+  require:
+    - module.yml
+    - README.md
+    - config
+    - include
+    - harness
+    - src
+
+# The component documents itself: what it measures, how the harness works on a target
+# and on a host, and what a project may declare about its budgets.
+docs:
+  title: Benchmarks
+  section: components
+  order: "49"
+  index: docs/index.md
+  sources:
+    - docs/index.md
