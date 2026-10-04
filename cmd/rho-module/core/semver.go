@@ -25,9 +25,9 @@
 package core
 
 import (
-    "fmt"
-    "strconv"
-    "strings"
+	"fmt"
+	"strconv"
+	"strings"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -35,9 +35,9 @@ import (
 /* -------------------------------------------------------------------------- */
 
 type Semver struct {
-    Major int
-    Minor int
-    Patch int
+	Major int
+	Minor int
+	Patch int
 }
 
 /* -------------------------------------------------------------------------- */
@@ -45,27 +45,27 @@ type Semver struct {
 /* -------------------------------------------------------------------------- */
 
 func ParseSemver(s string) (Semver, error) {
-    parts := strings.Split(s, ".")
-    if len(parts) != 3 {
-        return Semver{}, fmt.Errorf("invalid semver: %s", s)
-    }
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return Semver{}, fmt.Errorf("invalid semver: %s", s)
+	}
 
-    major, err := strconv.Atoi(parts[0])
-    if err != nil {
-        return Semver{}, fmt.Errorf("invalid major version: %s", s)
-    }
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return Semver{}, fmt.Errorf("invalid major version: %s", s)
+	}
 
-    minor, err := strconv.Atoi(parts[1])
-    if err != nil {
-        return Semver{}, fmt.Errorf("invalid minor version: %s", s)
-    }
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return Semver{}, fmt.Errorf("invalid minor version: %s", s)
+	}
 
-    patch, err := strconv.Atoi(parts[2])
-    if err != nil {
-        return Semver{}, fmt.Errorf("invalid patch version: %s", s)
-    }
+	patch, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return Semver{}, fmt.Errorf("invalid patch version: %s", s)
+	}
 
-    return Semver{major, minor, patch}, nil
+	return Semver{major, minor, patch}, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -73,8 +73,8 @@ func ParseSemver(s string) (Semver, error) {
 /* -------------------------------------------------------------------------- */
 
 func IsValidSemver(s string) bool {
-    _, err := ParseSemver(s)
-    return err == nil
+	_, err := ParseSemver(s)
+	return err == nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -82,23 +82,23 @@ func IsValidSemver(s string) bool {
 /* -------------------------------------------------------------------------- */
 
 func CompareSemver(a, b Semver) int {
-    if a.Major != b.Major {
-        return compareInt(a.Major, b.Major)
-    }
-    if a.Minor != b.Minor {
-        return compareInt(a.Minor, b.Minor)
-    }
-    return compareInt(a.Patch, b.Patch)
+	if a.Major != b.Major {
+		return compareInt(a.Major, b.Major)
+	}
+	if a.Minor != b.Minor {
+		return compareInt(a.Minor, b.Minor)
+	}
+	return compareInt(a.Patch, b.Patch)
 }
 
 func compareInt(a, b int) int {
-    if a < b {
-        return -1
-    }
-    if a > b {
-        return 1
-    }
-    return 0
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }
 
 /* -------------------------------------------------------------------------- */
@@ -106,62 +106,62 @@ func compareInt(a, b int) int {
 /* -------------------------------------------------------------------------- */
 
 func SemverSatisfies(version string, constraint string) (bool, error) {
-    v, err := ParseSemver(version)
-    if err != nil {
-        return false, err
-    }
+	v, err := ParseSemver(version)
+	if err != nil {
+		return false, err
+	}
 
-    // Example constraint: ">=1.0.0 <2.0.0"
-    parts := strings.Fields(constraint)
+	// Example constraint: ">=1.0.0 <2.0.0"
+	parts := strings.Fields(constraint)
 
-    for _, part := range parts {
-        if strings.HasPrefix(part, ">=") {
-            c := strings.TrimPrefix(part, ">=")
-            cv, err := ParseSemver(c)
-            if err != nil {
-                return false, err
-            }
-            if CompareSemver(v, cv) < 0 {
-                return false, nil
-            }
-        } else if strings.HasPrefix(part, "<=") {
-            c := strings.TrimPrefix(part, "<=")
-            cv, err := ParseSemver(c)
-            if err != nil {
-                return false, err
-            }
-            if CompareSemver(v, cv) > 0 {
-                return false, nil
-            }
-        } else if strings.HasPrefix(part, ">") {
-            c := strings.TrimPrefix(part, ">")
-            cv, err := ParseSemver(c)
-            if err != nil {
-                return false, err
-            }
-            if CompareSemver(v, cv) <= 0 {
-                return false, nil
-            }
-        } else if strings.HasPrefix(part, "<") {
-            c := strings.TrimPrefix(part, "<")
-            cv, err := ParseSemver(c)
-            if err != nil {
-                return false, err
-            }
-            if CompareSemver(v, cv) >= 0 {
-                return false, nil
-            }
-        } else {
-            // Exact match
-            cv, err := ParseSemver(part)
-            if err != nil {
-                return false, err
-            }
-            if CompareSemver(v, cv) != 0 {
-                return false, nil
-            }
-        }
-    }
+	for _, part := range parts {
+		if strings.HasPrefix(part, ">=") {
+			c := strings.TrimPrefix(part, ">=")
+			cv, err := ParseSemver(c)
+			if err != nil {
+				return false, err
+			}
+			if CompareSemver(v, cv) < 0 {
+				return false, nil
+			}
+		} else if strings.HasPrefix(part, "<=") {
+			c := strings.TrimPrefix(part, "<=")
+			cv, err := ParseSemver(c)
+			if err != nil {
+				return false, err
+			}
+			if CompareSemver(v, cv) > 0 {
+				return false, nil
+			}
+		} else if strings.HasPrefix(part, ">") {
+			c := strings.TrimPrefix(part, ">")
+			cv, err := ParseSemver(c)
+			if err != nil {
+				return false, err
+			}
+			if CompareSemver(v, cv) <= 0 {
+				return false, nil
+			}
+		} else if strings.HasPrefix(part, "<") {
+			c := strings.TrimPrefix(part, "<")
+			cv, err := ParseSemver(c)
+			if err != nil {
+				return false, err
+			}
+			if CompareSemver(v, cv) >= 0 {
+				return false, nil
+			}
+		} else {
+			// Exact match
+			cv, err := ParseSemver(part)
+			if err != nil {
+				return false, err
+			}
+			if CompareSemver(v, cv) != 0 {
+				return false, nil
+			}
+		}
+	}
 
-    return true, nil
+	return true, nil
 }

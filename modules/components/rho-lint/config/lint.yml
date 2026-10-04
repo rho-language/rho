@@ -1,0 +1,109 @@
+# What a lint run does by default, and what it fails on.
+#
+# This file is part of the module: it is in the package, and a rho-lint installed
+# from a registry reads the same file wherever it lands. It sits beside module.yml
+# because that is where a person looks for how a module is configured, and because
+# a file that travels with the thing it configures cannot be left behind by an
+# upgrade.
+#
+# Everything here is a decision a project makes once and then stops making. Which
+# analyzers run and how loudly they have to be is not a per-run question, and a
+# pipeline that has to be told the same two things on every invocation is a
+# pipeline that will be invoked without them.
+
+# Which engines a run uses when the command line names none.
+#
+# Four, and they are not doing the same job. The first two cover both kinds of
+# project this toolchain builds — a Rho application and a C one — and need nothing
+# installed, which is why they are here rather than being a note telling a reader
+# to install something.
+#
+#   rho    the Rho sources, through the compiler's own parser. The only engine
+#          here that can say anything about a line that is not C at all.
+#   c      the C the build actually compiles, whether it was written by a person
+#          or translated from the Rho beside it. Needs no front end, so it works
+#          on a machine with no toolchain beyond the one that compiled the code.
+#
+# The last two are plugins, and they are the ones that need something installed.
+# clang-tidy reads the generated C with the flags the build really used. cppcheck
+# is not built on a compiler front end, which is why it finds the dead branch and
+# the resource that is released on one path and not the other.
+#
+# A run says which of them is not installed and carries on with the rest rather
+# than doing nothing: a machine part-way through being set up should still get the
+# engines it has.
+#
+# An engine here may be one this component carries, one a plugin provides, or one
+# that is neither — in which case the run names what is missing and says which
+# plugin would provide it. Empty means every engine this machine has, which is what
+# a machine with one project on it wants.
+default_engines: rho,c,clang-tidy,cppcheck
+
+# The severity at which a run reports failure and exits non-zero, which is what a
+# pipeline reads.
+#
+# Every finding is printed whatever this says. The setting moves the exit code and
+# nothing else, because a threshold that also hid findings would be a threshold
+# that hid the ones nobody had decided about yet — and a run that reports three
+# hundred notes as a success is a run nobody reads.
+#
+# `error` fails on an error and prints the warnings, which is the default because
+# a pipeline that fails on every style note gets this turned down to `never`, and
+# then the errors are in it too.
+#
+# `never` is for a run that reports rather than gates: `rho lint --format sarif`
+# with this set is how findings reach code scanning without the same pipeline
+# failing a pull request over them.
+fail_on: error
+
+# Where the compilation database is read from, and where one is written when
+# nothing has one.
+#
+# A path relative to the project root. Empty means the places this component looks,
+# in order — and the first of them is the one a project written for several boards
+# actually has, which is the point of reading this at all:
+#
+#   build/generated/c/build/<preset>/compile_commands.json
+#
+# One per board, because one board's `-DSTM32F446xx` and another's `-DSTM32H753xx`
+# produce two different sets of branches in the same headers. A project written for
+# six Nucleo boards has six databases, and which one a run reads is the board being
+# linted rather than the newest or the first — which is what `--target` says.
+#
+# Nothing here overrides a database a build already wrote. A database somebody's
+# CMake produced is the accurate one, because it is the list of arguments the
+# compiler was really invoked with, including the ones that came from a Kconfig
+# merge and a vendor's toolchain file; one derived from a manifest is the best
+# guess available and is labelled as such in the run's own output.
+database: ""
+
+# Path fragments that are never linted. A fragment matches when it appears as a path
+# sequence anywhere in a source's path, so `vendor/` catches `vendor/`, `x/vendor/`
+# and `vendor/stm32/...` alike.
+#
+# One fragment, for one reason: a vendored tree is somebody else's code. It was
+# written to a standard that is not this project's, it is not this project's to
+# fix, and a run that reports findings in it is a run whose findings nobody can act
+# on — which is the same thing as a run that reports nothing.
+#
+# `build/generated/` is deliberately *not* here. For a Rho application that
+# directory holds the only C there is, and running clang-tidy over it with the
+# build's own flags is the most valuable analysis in the run. The `rho` engine reads
+# the sources that produced it, so the two do not report the same thing twice.
+# A project that finds the generated runtime noisy names it here.
+exclude: vendor/
+
+# What to do about a source outside this project's directory.
+#
+# `exclude` is right for an application. A generated project compiles its
+# platform's sources beside its own — the HAL, the startup assembly, the vendor's
+# drivers — and those live in another checkout. They are that checkout's to fix and
+# their findings belong to whoever runs a lint over that checkout, which is what
+# `rho lint` does when pointed at it.
+#
+# `include` is right for a platform analyzed as a project in its own right. That is
+# the case this exists for: a library's own sources are, from a consumer's point of
+# view, exactly a dependency's path, and a run over the library must not exclude
+# them. Setting this on the platform and leaving it off in the application is what
+# makes the same code linted once by whoever owns it rather than once by everybody.
+outside: exclude

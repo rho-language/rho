@@ -1,11 +1,11 @@
 package core
 
 import (
-    "archive/tar"
-    "compress/gzip"
-    "os"
-    "path/filepath"
-    "testing"
+	"archive/tar"
+	"compress/gzip"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -13,27 +13,27 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func createTestModuleArchive(path string) {
-    f, _ := os.Create(path)
-    gz := gzip.NewWriter(f)
-    tw := tar.NewWriter(gz)
+	f, _ := os.Create(path)
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
 
-    tw.WriteHeader(&tar.Header{
-        Name: "module.yml",
-        Mode: 0644,
-        Size: int64(len("module: test")),
-    })
-    tw.Write([]byte("module: test"))
+	tw.WriteHeader(&tar.Header{
+		Name: "module.yml",
+		Mode: 0644,
+		Size: int64(len("module: test")),
+	})
+	tw.Write([]byte("module: test"))
 
-    tw.WriteHeader(&tar.Header{
-        Name: "src/lib.rho",
-        Mode: 0644,
-        Size: int64(len("module test")),
-    })
-    tw.Write([]byte("module test"))
+	tw.WriteHeader(&tar.Header{
+		Name: "src/lib.rho",
+		Mode: 0644,
+		Size: int64(len("module test")),
+	})
+	tw.Write([]byte("module test"))
 
-    tw.Close()
-    gz.Close()
-    f.Close()
+	tw.Close()
+	gz.Close()
+	f.Close()
 }
 
 /* -------------------------------------------------------------------------- */
@@ -41,14 +41,14 @@ func createTestModuleArchive(path string) {
 /* -------------------------------------------------------------------------- */
 
 func TestValidateArchive(t *testing.T) {
-    tmp := t.TempDir()
-    archive := filepath.Join(tmp, "test.rho-module")
+	tmp := t.TempDir()
+	archive := filepath.Join(tmp, "test.rho-module")
 
-    createTestModuleArchive(archive)
+	createTestModuleArchive(archive)
 
-    if err := validateArchive(archive); err != nil {
-        t.Fatalf("validateArchive failed: %v", err)
-    }
+	if err := validateArchive(archive); err != nil {
+		t.Fatalf("validateArchive failed: %v", err)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -56,25 +56,25 @@ func TestValidateArchive(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestValidateArchiveMissingModule(t *testing.T) {
-    tmp := t.TempDir()
-    archive := filepath.Join(tmp, "bad.rho-module")
+	tmp := t.TempDir()
+	archive := filepath.Join(tmp, "bad.rho-module")
 
-    f, _ := os.Create(archive)
-    gz := gzip.NewWriter(f)
-    tw := tar.NewWriter(gz)
+	f, _ := os.Create(archive)
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
 
-    tw.WriteHeader(&tar.Header{
-        Name: "src/lib.rho",
-        Mode: 0644,
-        Size: int64(len("module test")),
-    })
-    tw.Write([]byte("module test"))
+	tw.WriteHeader(&tar.Header{
+		Name: "src/lib.rho",
+		Mode: 0644,
+		Size: int64(len("module test")),
+	})
+	tw.Write([]byte("module test"))
 
-    tw.Close()
-    gz.Close()
-    f.Close()
+	tw.Close()
+	gz.Close()
+	f.Close()
 
-    if err := validateArchive(archive); err == nil {
-        t.Fatalf("expected error for missing module.yml")
-    }
+	if err := validateArchive(archive); err == nil {
+		t.Fatalf("expected error for missing module.yml")
+	}
 }

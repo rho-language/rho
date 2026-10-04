@@ -12,8 +12,8 @@
 package install
 
 import (
-    "os"
-    "testing"
+	"os"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -21,14 +21,14 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestGetRhoHome(t *testing.T) {
-    home, err := GetRhoHome()
-    if err != nil {
-        t.Fatalf("GetRhoHome failed: %v", err)
-    }
+	home, err := GetRhoHome()
+	if err != nil {
+		t.Fatalf("GetRhoHome failed: %v", err)
+	}
 
-    if home == "" {
-        t.Fatalf("GetRhoHome returned empty path")
-    }
+	if home == "" {
+		t.Fatalf("GetRhoHome returned empty path")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -36,26 +36,26 @@ func TestGetRhoHome(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestEnsurePaths(t *testing.T) {
-    err := EnsurePaths()
-    if err != nil {
-        t.Fatalf("EnsurePaths failed: %v", err)
-    }
+	err := EnsurePaths()
+	if err != nil {
+		t.Fatalf("EnsurePaths failed: %v", err)
+	}
 
-    home, _ := GetRhoHome()
+	home, _ := GetRhoHome()
 
-    expected := []string{
-        home + "/bin",
-        home + "/modules/installed",
-        home + "/registry/local",
-        home + "/cache",
-        home + "/config",
-        home + "/auth",
-        home + "/pkg/mod",
-    }
+	expected := []string{
+		home + "/bin",
+		home + "/modules/installed",
+		home + "/registry/local",
+		home + "/cache",
+		home + "/config",
+		home + "/auth",
+		home + "/pkg/mod",
+	}
 
-    for _, p := range expected {
-        if _, err := os.Stat(p); os.IsNotExist(err) {
-            t.Fatalf("expected directory missing: %s", p)
-        }
-    }
+	for _, p := range expected {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			t.Fatalf("expected directory missing: %s", p)
+		}
+	}
 }

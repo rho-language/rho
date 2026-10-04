@@ -44,41 +44,41 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func ResolveVersion(name string, constraint string) (string, error) {
-    // Step 1: Get available versions
-    versions, err := getAvailableVersions(name)
-    if err != nil {
-        return "", err
-    }
+	// Step 1: Get available versions
+	versions, err := getAvailableVersions(name)
+	if err != nil {
+		return "", err
+	}
 
-    if len(versions) == 0 {
-        return "", fmt.Errorf("no versions available for module: %s", name)
-    }
+	if len(versions) == 0 {
+		return "", fmt.Errorf("no versions available for module: %s", name)
+	}
 
-    // Step 2: Filter by constraint
-    compatible := []string{}
-    for _, v := range versions {
-        ok, err := SemverSatisfies(v, constraint)
-        if err != nil {
-            return "", err
-        }
-        if ok {
-            compatible = append(compatible, v)
-        }
-    }
+	// Step 2: Filter by constraint
+	compatible := []string{}
+	for _, v := range versions {
+		ok, err := SemverSatisfies(v, constraint)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			compatible = append(compatible, v)
+		}
+	}
 
-    if len(compatible) == 0 {
-        return "", fmt.Errorf("no compatible versions for %s with constraint %s", name, constraint)
-    }
+	if len(compatible) == 0 {
+		return "", fmt.Errorf("no compatible versions for %s with constraint %s", name, constraint)
+	}
 
-    // Step 3: Sort compatible versions
-    sort.Slice(compatible, func(i, j int) bool {
-        vi, _ := ParseSemver(compatible[i])
-        vj, _ := ParseSemver(compatible[j])
-        return CompareSemver(vi, vj) > 0 // descending
-    })
+	// Step 3: Sort compatible versions
+	sort.Slice(compatible, func(i, j int) bool {
+		vi, _ := ParseSemver(compatible[i])
+		vj, _ := ParseSemver(compatible[j])
+		return CompareSemver(vi, vj) > 0 // descending
+	})
 
-    // Step 4: Return latest compatible version
-    return compatible[0], nil
+	// Step 4: Return latest compatible version
+	return compatible[0], nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -86,27 +86,27 @@ func ResolveVersion(name string, constraint string) (string, error) {
 /* -------------------------------------------------------------------------- */
 
 func getAvailableVersions(name string) ([]string, error) {
-    out := []string{}
+	out := []string{}
 
-    // 1. Check local cache
-    local := getLocalVersions(name)
-    out = append(out, local...)
+	// 1. Check local cache
+	local := getLocalVersions(name)
+	out = append(out, local...)
 
-    // 2. Check remote registry (simulated)
-    remote := getRemoteVersions(name)
-    out = append(out, remote...)
+	// 2. Check remote registry (simulated)
+	remote := getRemoteVersions(name)
+	out = append(out, remote...)
 
-    // Deduplicate
-    uniq := map[string]bool{}
-    final := []string{}
-    for _, v := range out {
-        if !uniq[v] {
-            uniq[v] = true
-            final = append(final, v)
-        }
-    }
+	// Deduplicate
+	uniq := map[string]bool{}
+	final := []string{}
+	for _, v := range out {
+		if !uniq[v] {
+			uniq[v] = true
+			final = append(final, v)
+		}
+	}
 
-    return final, nil
+	return final, nil
 }
 
 /* -------------------------------------------------------------------------- */

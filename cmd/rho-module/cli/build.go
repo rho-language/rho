@@ -34,7 +34,7 @@ func Build(args []string) error {
 	// Manual parsing to allow -o flag anywhere
 	outputDir := ""
 	var positionalArgs []string
-	
+
 	i := 0
 	for i < len(args) {
 		if args[i] == "-o" {

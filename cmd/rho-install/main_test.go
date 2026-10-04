@@ -12,8 +12,8 @@
 package main
 
 import (
-    "os"
-    "testing"
+	"os"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -21,7 +21,7 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestMainSmoke(t *testing.T) {
-    // Just ensure main() runs without panic when no args are provided
-    os.Args = []string{"rho-install"}
-    main()
+	// Just ensure main() runs without panic when no args are provided
+	os.Args = []string{"rho-install"}
+	main()
 }

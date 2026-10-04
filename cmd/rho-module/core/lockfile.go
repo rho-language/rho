@@ -25,10 +25,10 @@
 package core
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
-    "strings"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -36,24 +36,24 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func LoadLockfile(dir string) (map[string]string, error) {
-    path := filepath.Join(dir, "rho.lock")
+	path := filepath.Join(dir, "rho.lock")
 
-    data, err := os.ReadFile(path)
-    if err != nil {
-        return nil, fmt.Errorf("cannot read rho.lock: %w", err)
-    }
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read rho.lock: %w", err)
+	}
 
-    return parseLockfile(string(data)), nil
+	return parseLockfile(string(data)), nil
 }
 
 func WriteLockfile(dir string, deps map[string]string) error {
-    out := "lock:\n"
-    for name, version := range deps {
-        out += fmt.Sprintf("  %s: \"%s\"\n", name, version)
-    }
+	out := "lock:\n"
+	for name, version := range deps {
+		out += fmt.Sprintf("  %s: \"%s\"\n", name, version)
+	}
 
-    path := filepath.Join(dir, "rho.lock")
-    return os.WriteFile(path, []byte(out), 0644)
+	path := filepath.Join(dir, "rho.lock")
+	return os.WriteFile(path, []byte(out), 0644)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -61,29 +61,29 @@ func WriteLockfile(dir string, deps map[string]string) error {
 /* -------------------------------------------------------------------------- */
 
 func parseLockfile(data string) map[string]string {
-    out := map[string]string{}
+	out := map[string]string{}
 
-    lines := strings.Split(data, "\n")
-    for _, line := range lines {
-        line = strings.TrimSpace(line)
-        if line == "" || line == "lock:" {
-            continue
-        }
+	lines := strings.Split(data, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "lock:" {
+			continue
+		}
 
-        parts := strings.Split(line, ":")
-        if len(parts) != 2 {
-            continue
-        }
+		parts := strings.Split(line, ":")
+		if len(parts) != 2 {
+			continue
+		}
 
-        name := strings.TrimSpace(parts[0])
-        version := strings.Trim(strings.TrimSpace(parts[1]), "\"")
+		name := strings.TrimSpace(parts[0])
+		version := strings.Trim(strings.TrimSpace(parts[1]), "\"")
 
-        if name != "" && version != "" {
-            out[name] = version
-        }
-    }
+		if name != "" && version != "" {
+			out[name] = version
+		}
+	}
 
-    return out
+	return out
 }
 
 /* -------------------------------------------------------------------------- */
@@ -91,16 +91,16 @@ func parseLockfile(data string) map[string]string {
 /* -------------------------------------------------------------------------- */
 
 func ValidateLockfile(dir string) error {
-    lock, err := LoadLockfile(dir)
-    if err != nil {
-        return err
-    }
+	lock, err := LoadLockfile(dir)
+	if err != nil {
+		return err
+	}
 
-    for name, version := range lock {
-        if !IsValidSemver(version) {
-            return fmt.Errorf("invalid version in lockfile: %s=%s", name, version)
-        }
-    }
+	for name, version := range lock {
+		if !IsValidSemver(version) {
+			return fmt.Errorf("invalid version in lockfile: %s=%s", name, version)
+		}
+	}
 
-    return nil
+	return nil
 }
