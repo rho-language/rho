@@ -336,6 +336,54 @@ func ModuleSchema() Schema {
 				Kind:     "",
 			},
 			{
+				// How this project's output should be read: which transport, and
+				// how it is presented.
+				//
+				// Every value here has a default that works, so a project that says
+				// nothing still gets its output read. That is the whole design of
+				// this block: it exists for the cases where the defaults are wrong
+				// — a console on another device, an RTT channel other than zero —
+				// not for turning a feature on.
+				Name:     "monitor",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "default_backend", Required: false, Kind: KindString,
+						AllowedValues: []string{"auto", "rtt", "uart", "swo"}},
+					{
+						Name:     "rtt",
+						Required: false,
+						Kind:     KindMap,
+						Fields: []FieldSchema{
+							{Name: "host", Required: false, Kind: KindString},
+							{Name: "port", Required: false, Kind: KindString},
+							{Name: "channel", Required: false, Kind: KindString},
+							{Name: "block_if_full", Required: false, Kind: KindBool},
+						},
+					},
+					{
+						Name:     "uart",
+						Required: false,
+						Kind:     KindMap,
+						Fields: []FieldSchema{
+							{Name: "auto_detect", Required: false, Kind: KindBool},
+							{Name: "port", Required: false, Kind: KindString},
+							{Name: "baud_rate", Required: false, Kind: KindString},
+						},
+					},
+					{
+						Name:     "formatting",
+						Required: false,
+						Kind:     KindMap,
+						Fields: []FieldSchema{
+							{Name: "timestamps", Required: false, Kind: KindBool},
+							{Name: "color_levels", Required: false, Kind: KindBool},
+							{Name: "log_file", Required: false, Kind: KindString},
+						},
+					},
+				},
+			},
+			{
 				// The platform identity this module implements, such as
 				// `zenith`. A platform module declares it so a project can be
 				// recognized as being built for that platform without a name, a
