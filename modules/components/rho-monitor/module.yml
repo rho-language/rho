@@ -1,0 +1,205 @@
+#
+# rho-monitor — the target's output, without taking the board from a debugger.
+#
+# A board has one debug probe. Everything else about it is free: the USB console is
+# a second interface beside the debug one, and the RTT buffer is a block of the
+# target's own memory that a server which already holds the probe can read out and
+# publish on a socket. So reading a target's output while `rho dbg` has the board
+# is not a problem to solve — it is the normal case, and a monitor that competed
+# for the probe would be worse than one that does not.
+#
+#                              the target's output
+#                                        │
+#                              ┌─────────┴─────────┐
+#                              │    rho monitor    │
+#                              └─────────┬─────────┘
+#                                        │
+#        ┌───────────────────────────────┼───────────────────────────────┐
+#        ▼                               ▼                               ▼
+#  ┌───────────────┐            ┌─────────────────┐            ┌─────────────────┐
+#  │ UART / serial │            │ SEGGER RTT      │            │ ARM ITM / SWO   │
+#  │ its own USB   │            │ a socket the    │            │ the trace port, │
+#  │ interface     │            │ debug server    │            │ drained by      │
+#  │ /dev/ttyACM0  │            │ already offers  │            │ whoever holds   │
+#  │ costs nothing │            │ costs nothing   │            │ the probe       │
+#  └───────────────┘            └─────────────────┘            └─────────────────┘
+#        free alongside a debugger      free alongside a debugger      contends with one
+#
+# The ordering in the diagram is the design. `auto` asks for RTT first, the UART
+# second and SWO last, because the first two coexist with a debug session and the
+# third does not — draining the trace port is the probe's job, so a SWO stream and a
+# debugger cannot both have it. That is why SWO is never chosen automatically over a
+# working alternative: reading it is a decision, not a default.
+#
+# Zero configuration follows from the same fact. A board plugged in with a USB
+# console and a debug server offering RTT is read without being told anything,
+# because both of the backends that matter find themselves. What a project declares
+# under `monitor:` is for the cases where that is wrong — a console on another
+# device, a channel other than zero, a trace already captured to a file.
+#
+# What the target prints is not written for a terminal, so two things are added that
+# the firmware cannot know it should print: when a line arrived, read from the clock
+# here rather than asked of the target, and how bad it sounds, read from the one word
+# in the line that says so. Both are read from the text rather than imposed on it,
+# because a target's log format belongs to the target.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: rho-monitor
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Reads a target's console over UART, RTT or an ITM/SWO trace, alongside a debug session rather than instead of it
+  command: monitor
+
+main: rho-monitor
+
+features:
+  - monitor
+  - telemetry
+  - uart
+  - rtt
+  - swo
+  - logging
+
+# The shared logger, so a monitor's own output is identifiable in a log several
+# components write to. It is the one dependency, and it is a logger rather than
+# anything that knows about boards: what this component reads is a target's output,
+# which belongs to no module and is not declared by one.
+deps:
+  rho-log: ">=0.1.0"
+
+# The hooks a run goes through.
+#
+# There is one, and it is `source`, because "which transport is this target's
+# output on" is the only question in this component that is not answered by the
+# project or by the machine. Everything else is either declared in `monitor:`,
+# discovered from the devices present, or inherent to the stream.
+#
+# A plugin answers it for a board whose output is somewhere this component does not
+# know to look: a target that prints through a vendor's own trace tool over a socket
+# nobody would guess, or a board whose console is multiplexed behind something. A
+# plugin that does not answer it is never run, and one that does is tried after the
+# built-in transports fail — so a plugin can add a board without ever taking the
+# place of a transport that works.
+provides:
+  contracts:
+    - name: source
+      description: >-
+        A place a target's output can be read from, for a board whose output is not
+        on a UART, an RTT socket or an ITM trace.
+      one: false
+      hooks: [source]
+  hooks:
+    # Once, when the built-in transports found nothing: is there somewhere else?
+    - source
+
+# What a person may configure it with.
+#
+# All of it is presentation or a default. A run's defaults work on a board with a
+# USB console and a debug server offering RTT, which is most boards, and a
+# component whose settings had to be filled in before it would read anything would
+# be a component nobody tries.
+settings:
+  file: config/monitor.yml
+  settings:
+    - name: backend
+      description: >-
+        Which transport to read when the command line names none. `auto` asks for
+        RTT, then a serial console, then an ITM trace — in that order because the
+        first two cost a debugger nothing and the third does not. Naming one skips
+        the rest, which is what somebody reaching for `--backend=swo` is asking
+        for.
+      default: auto
+      choices: ["auto", "rtt", "uart", "swo"]
+
+    - name: baud_rate
+      description: >-
+        The line speed a serial console is opened at. The default is what a
+        firmware is built to print at on most boards, and getting it wrong is the
+        quietest failure there is: the port opens, every byte is discarded by the
+        driver, and a working board looks silent.
+      default: 115200
+
+    - name: timestamps
+      description: >-
+        Prefix each line with when it arrived. Added here rather than asked of the
+        target because a target's output belongs to the target, and because a
+        firmware's own clock is the board's clock rather than this machine's.
+      default: true
+
+    - name: color_levels
+      description: >-
+        Colour a line by the severity word in it. Read from the text, since every
+        log format spells severity its own way and a monitor that only knew one
+        spelling would colour half of what it watched. Written only when the output
+        is going to a terminal, because escape sequences in a log file are a file
+        `grep` cannot read.
+      default: true
+
+    - name: log_file
+      description: >-
+        Where a copy of everything is written, relative to the project. Appended
+        to, never truncated: a run that truncated it would destroy the output of
+        the run before it, which is the run somebody wanted to compare against.
+        Empty means the terminal only.
+      default: ""
+
+    - name: duration
+      description: >-
+        How long a run reads before it stops, in seconds. Empty means until the
+        stream ends or somebody interrupts it, which is what a person at a
+        terminal wants. A number is what a pipeline wants, because a pipeline has
+        no way to press Ctrl-C.
+      default: ""
+
+# The commands it answers.
+commands:
+  - name: monitor
+    description: Read the target's output over whichever transport has one
+    run: rho-monitor
+    hook: monitor
+
+  - name: backends
+    description: What this component can read target output over
+    run: rho-monitor
+    hook: backends
+
+  # Which consoles this machine has. Kept as a command of its own because from
+  # inside a run, "no console found" and "the wrong console found" look the same
+  # until you know what was there.
+  - name: ports
+    description: The serial consoles on this machine
+    run: rho-monitor
+    hook: ports
+
+# The component ships as a command. It is a program a person runs beside a
+# debugger and a pipeline runs in a log, and nothing in a generated project links
+# against it.
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - config
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - config
+    - src
+
+# The component documents itself: which transports coexist with a debugger and
+# which do not, and what a project may declare about them.
+docs:
+  title: Target output
+  section: components
+  order: "48"
+  index: docs/index.md
+  sources:
+    - docs/index.md

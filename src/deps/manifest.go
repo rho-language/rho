@@ -400,6 +400,13 @@ type Manifest struct {
 	// reason the target is: a budget is about this firmware on this board, and
 	// every build of it is checked against the same one.
 	Mem *MemConfig
+	// Monitor is what this project says its output should be read through, or nil
+	// when it says nothing.
+	//
+	// A statement about the project rather than about a dependency: how a
+	// program's output is reached is a fact about the program, and it does not
+	// change when its dependencies resolve to different builds.
+	Monitor *MonitorConfig
 	// BuildPresets are the boards this program is written for, when it is not
 	// written for one.
 	//
@@ -788,6 +795,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	m.SystemDeps = sysdep.Parse(yaml.Value{Kind: yaml.KindMap, Map: doc.Map})
 	m.Config = parseConfigManifest(doc.Map["config"])
 	m.Mem = parseMemConfig(doc.Map["mem"])
+	m.Monitor = parseMonitorConfig(doc.Map["monitor"])
 	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
@@ -1273,6 +1281,156 @@ func parsePercent(raw string) (float64, bool) {
 		return value * 100, true
 	}
 	return value, true
+}
+
+// MonitorConfig is what a project says its output should be read through.
+//
+// Zero-configuration is the point: everything here has a default that works on a
+// board with a USB console and a debug server that exposes RTT, so a project that
+// says nothing still gets its output read. What is here is for the cases where the
+// defaults are wrong — a console on a different device, a channel other than zero,
+// a trace being captured to a file.
+type MonitorConfig struct {
+	// DefaultBackend is `rtt`, `uart` or `swo`. Empty means this component
+	// decides, in that order.
+	//
+	// The order is not arbitrary. RTT is asked first because it needs no device
+	// node and does not compete with a debugger for the probe; the UART is second
+	// because a USB console is a separate interface and costs nothing to open; SWO
+	// is last because reaching it means the same probe a debug session is holding.
+	DefaultBackend string
+	// RTT is how a SEGGER RTT stream is reached.
+	RTT MonitorRTT
+	// UART is how a serial console is reached.
+	UART MonitorUART
+	// Formatting is how the output is presented.
+	Formatting MonitorFormatting
+}
+
+// MonitorRTT is where an RTT stream is read from.
+//
+// A TCP endpoint rather than a device, because that is what makes it coexist with a
+// debugger: the RTT data is inside the target's memory, and the debug server that
+// already holds the probe is what reads it out and offers it on a socket. A second
+// program opening the probe would take it from the debugger; a second program
+// opening a socket does not.
+type MonitorRTT struct {
+	Host string
+	Port int
+	// Channel is the RTT channel to read. Upstream's channel 0 is the console.
+	Channel int
+	// BlockIfFull says whether the target should wait when the buffer is full,
+	// which is a property of the target's side and is sent as a control message
+	// where the server takes one.
+	BlockIfFull bool
+}
+
+// MonitorUART is how a serial console is reached.
+type MonitorUART struct {
+	// AutoDetect scans the conventional device nodes rather than being told one.
+	AutoDetect bool
+	// Port is the device, when it is named rather than found.
+	Port string
+	// BaudRate is the line speed.
+	BaudRate int
+}
+
+// MonitorFormatting is how the output is presented.
+type MonitorFormatting struct {
+	// Timestamps prefixes each line with the time it arrived.
+	Timestamps bool
+	// ColorLevels colours a line by the severity word in it. Read from the text,
+	// because the target's own format is not this component's to change.
+	ColorLevels bool
+	// LogFile is where a copy of everything is written, alongside the terminal.
+	LogFile string
+}
+
+// The transports a target's output can be read through.
+//
+// `auto` is not a transport: it is the absence of a decision, and it is what a
+// project that says nothing gets. The order `auto` resolves in is the order the
+// names are declared in, and it is chosen so that the two backends that do not
+// compete with a debugger for the probe come first.
+const (
+	// BackendAuto lets the monitor decide which transport to use.
+	BackendAuto = "auto"
+	// BackendRTT reads a SEGGER RTT stream through a debug server's socket.
+	BackendRTT = "rtt"
+	// BackendUART reads a serial console.
+	BackendUART = "uart"
+	// BackendSWO decodes an ARM ITM/SWO trace.
+	BackendSWO = "swo"
+)
+
+// parseMonitorConfig reads what a project says its output should be read through.
+func parseMonitorConfig(node yaml.Value) *MonitorConfig {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	out := &MonitorConfig{
+		// Everything says what it does rather than being empty, so that a
+		// monitor block declaring one thing declares the rest the way the
+		// component would have.
+		DefaultBackend: strings.ToLower(strings.TrimSpace(yamlString(node, "default_backend"))),
+		RTT: MonitorRTT{
+			Host:        "localhost",
+			Port:        9090,
+			Channel:     0,
+			BlockIfFull: false,
+		},
+		UART: MonitorUART{
+			AutoDetect: true,
+			BaudRate:   115200,
+		},
+		Formatting: MonitorFormatting{
+			Timestamps:  true,
+			ColorLevels: true,
+		},
+	}
+	if out.DefaultBackend == "" {
+		out.DefaultBackend = BackendAuto
+	}
+
+	if rtt := node.Map["rtt"]; rtt.Kind == yaml.KindMap {
+		if host := strings.TrimSpace(yamlString(rtt, "host")); host != "" {
+			out.RTT.Host = host
+		}
+		if port, err := strconv.Atoi(strings.TrimSpace(yamlString(rtt, "port"))); err == nil && port > 0 {
+			out.RTT.Port = port
+		}
+		if channel, err := strconv.Atoi(strings.TrimSpace(yamlString(rtt, "channel"))); err == nil && channel >= 0 {
+			out.RTT.Channel = channel
+		}
+		if block, declared := yamlBool(rtt, "block_if_full"); declared {
+			out.RTT.BlockIfFull = block
+		}
+	}
+	if uart := node.Map["uart"]; uart.Kind == yaml.KindMap {
+		if detect, declared := yamlBool(uart, "auto_detect"); declared {
+			out.UART.AutoDetect = detect
+		}
+		if port := strings.TrimSpace(yamlString(uart, "port")); port != "" {
+			out.UART.Port = port
+			// Naming a port is a decision not to guess: a project that says
+			// which console it has must not be overridden by whatever node happens
+			// to appear first on the machine.
+			out.UART.AutoDetect = false
+		}
+		if baud, err := strconv.Atoi(strings.TrimSpace(yamlString(uart, "baud_rate"))); err == nil && baud > 0 {
+			out.UART.BaudRate = baud
+		}
+	}
+	if formatting := node.Map["formatting"]; formatting.Kind == yaml.KindMap {
+		if timestamps, declared := yamlBool(formatting, "timestamps"); declared {
+			out.Formatting.Timestamps = timestamps
+		}
+		if colors, declared := yamlBool(formatting, "color_levels"); declared {
+			out.Formatting.ColorLevels = colors
+		}
+		out.Formatting.LogFile = strings.TrimSpace(yamlString(formatting, "log_file"))
+	}
+	return out
 }
 
 // parseDebugManifest reads what a project says about debugging its chip.

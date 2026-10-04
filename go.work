@@ -12,6 +12,7 @@ use (
 	./modules/components/rho-kconfig
 	./modules/components/rho-keeper
 	./modules/components/rho-lint
+	./modules/components/rho-monitor
 	./modules/components/rho-mem
 	./modules/components/rho-log
 	./modules/components/rho-lsp
@@ -48,6 +49,7 @@ replace (
 	github.com/rho/rho-kconfig v0.0.0 => ./modules/components/rho-kconfig
 	github.com/rho/rho-keeper v0.0.0 => ./modules/components/rho-keeper
 	github.com/rho/rho-lint v0.0.0 => ./modules/components/rho-lint
+	github.com/rho/rho-monitor v0.0.0 => ./modules/components/rho-monitor
 	github.com/rho/rho-mem v0.0.0 => ./modules/components/rho-mem
 	github.com/rho/rho-log v0.0.0 => ./modules/components/rho-log
 	github.com/rho/rho-lsp v0.0.0 => ./modules/components/rho-lsp
