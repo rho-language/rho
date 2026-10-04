@@ -82,8 +82,8 @@ needing those is a rule that would be wrong sometimes, and a lint tool that is w
 sometimes is one people learn to distrust wholesale. The checks that need a front end
 are clang-tidy's and cppcheck's job.
 
-The Rho example in `robohub-stm32` is the test material for the first row and the C
-example beside it for the second, and both must produce nothing.
+A Rho program and a C program that carry nothing the rules can act on are the test
+material for the two rows, and both must produce nothing.
 
 ### `rho-unused-import`, and why it knows about generated modules
 
@@ -91,7 +91,7 @@ example beside it for the second, and both must produce nothing.
 import ffi
 
 fn main() void {
-    if robohub_platform_init() != 0 { return }
+    if device_init() != 0 { return }
 }
 ```
 

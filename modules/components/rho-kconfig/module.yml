@@ -35,9 +35,19 @@ package:
 # The hook a build goes through. A dialect is the part that differs between the
 # tools that read a configuration, so it is the part worth extending: a plugin
 # answers `render` with files, and they are written beside the dialect's own.
+#
+# `platform` is the contract a platform plugin fills: the configuration fragments
+# and values a platform's build needs, rendered into the files its toolchain
+# reads, so that supporting a platform is a plugin rather than a dialect written
+# into this component.
 provides:
   hooks:
     - render
+  contracts:
+    - name: platform
+      description: Renders the configuration files a platform's build reads.
+      one: true
+      hooks: [render]
 
 docs:
   title: Configuration bridge

@@ -513,8 +513,8 @@ func configBridge(projectRoot, outputDir string, dependencyRoots ...string) *pro
 	}
 
 	// Then the fragments the dependencies declare, because a symbol a project sets
-	// has to be declared by whoever owns it. The application's `CONFIG_RH_HAL_UART`
-	// means nothing unless robohub-common is the one that declares `RH_HAL_UART`,
+	// has to be declared by whoever owns it. A project's `CONFIG_HAL_UART` means
+	// nothing unless the library that owns HAL is the one declaring `HAL_UART`,
 	// and a merge that saw only the project's own fragment would not know the
 	// symbol existed — let alone whether it were set.
 	for _, root := range cDependencyChain(projectRoot, dependencyRoots) {

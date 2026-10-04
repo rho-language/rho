@@ -15,7 +15,7 @@ rho cimport generate <project>     # write the interface, and the C shim
 A Rho program can call C, but only through a declaration it has:
 
 ```rho
-extern fn robohub_get_spi(name: Ptr[u8]) Ptr[RoboHubSPI]
+extern fn sensor_open(name: Ptr[u8]) Ptr[Device]
 ```
 
 Writing those by hand for a real library is a day of transcription that is wrong
@@ -40,23 +40,23 @@ cannot do:
 ```yaml
 # module.yml
 c_connection:
-  library: robohub-common
+  library: sensor-lib
   headers:
     - registry.h
-    - robohub/hal/spi.h
+    - sensor/hal/spi.h
   include_dirs:
     - include
-    - include/robohub/hal
+    - include/sensor/hal
   variants:
     stm32:
-      target: robohub_stm32
+      target: vendor_stm32
     pico:
-      target: robohub_pico
+      target: vendor_pico
 ```
 
 A build target a person names and a library a build links are different things,
 and this is where they meet: `rho build --target stm32` generates the C target
-with `robohub_stm32` linked behind it. The generated project carries the declared
+with `vendor_stm32` linked behind it. The generated project carries the declared
 headers and its own C sources, so it builds where it is generated.
 
 ### Layer 2: what the headers declare

@@ -36,7 +36,7 @@ import (
 // every finding in a report is written.
 //
 // Relative rather than absolute for three reasons that all come down to one: a
-// report that says `/home/miraur/projects/robohub-stm32/src/hal/stm32_gpio.c`
+// report that says `/home/developer/project/src/hal/stm32_gpio.c`
 // says nothing about the code and everything about the machine, a SARIF `uri` that
 // differs per machine cannot be grouped by a code scanning service, and a pipeline
 // that stores findings as absolute paths cannot diff two runs of two checkouts.

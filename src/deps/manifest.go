@@ -47,11 +47,11 @@ type DepSpec struct {
 // wrong for the next dependency.
 type CMakeExports struct {
 	// Target is the imported target a consumer links, such as
-	// `rho::robohub-common`.
+	// `rho::sensor-lib`.
 	Target string
 	// IncludeDirs are relative to the exporting module's root.
 	IncludeDirs []string
-	// Defines are compiled into every consumer, such as `ROBOHUB_ENABLE_VCP=1`.
+	// Defines are compiled into every consumer, such as `SENSOR_LIB_ENABLE_IRQ=1`.
 	Defines []string
 	// LinkLibraries are further targets a consumer of this one also links.
 	LinkLibraries []string
@@ -224,12 +224,14 @@ type Contract struct {
 	Hooks []string
 }
 
-// Extends is how a plugin says which component it plugs into.
+// ExtendsTarget is one component a plugin plugs into, and the contracts and
+// hooks of that component the plugin answers there.
 //
-// The relation is declared rather than assumed: a tool loads only the plugins
-// that name it, and a plugin that names a tool nothing offers is a plugin no
-// run ever calls.
-type Extends struct {
+// A plugin that extends one component has exactly one of these. A platform
+// plugin that spans the toolchain — the target it builds for, the configuration
+// it renders, the C it maps, the board it flashes — has one per component, so
+// "what this plugin is" is a set of relations rather than a single one.
+type ExtendsTarget struct {
 	// Component is the name of the component this plugin extends.
 	Component string
 	// Implements are the contracts of that component this plugin fills.
@@ -242,18 +244,86 @@ type Extends struct {
 	// Hooks are the hooks of that component this plugin answers. Every one of
 	// them has to be offered by the component.
 	Hooks []string
-	// Commands are the executables that answer a hook.
-	Commands []Command
 }
 
-// Answers reports whether the plugin answers a hook.
-func (e *Extends) Answers(hook string) bool {
-	for _, offered := range e.Hooks {
-		if offered == hook {
-			return true
+// Extends is how a plugin says which components it plugs into.
+//
+// The relation is declared rather than assumed: a tool loads only the plugins
+// that name it, and a plugin that names a tool nothing offers is a plugin no
+// run ever calls.
+//
+// A plugin may extend several components, which is what a platform mapping
+// needs: the same platform expresses itself through rho-target, rho-kconfig,
+// rho-cimport and rho-flash at once, and a plugin that could name only one of
+// them could not be one plugin.
+type Extends struct {
+	// Targets are the components this plugin extends, one entry per component.
+	Targets []ExtendsTarget
+	// Platforms are the platform identities this plugin serves, as a platform
+	// module declares them (`platform: zenith`). Empty means the plugin is
+	// platform-agnostic and is offered whatever a project builds for.
+	Platforms []string
+	// Commands are the executables that answer a hook.
+	Commands []Command
+
+	// Component, Implements and Hooks are the single-target form.
+	//
+	// A plugin that extends one component writes `extends: rho-doc` and these
+	// hold it directly. A plugin that extends several writes a list and Targets
+	// holds the set; these then mirror the first, so a reader that only wants
+	// to name "the component" still can. All answers come from All, which
+	// prefers Targets.
+	Component  string
+	Implements []string
+	Hooks      []string
+}
+
+// All is every component this plugin extends, whichever form the manifest used.
+func (e *Extends) All() []ExtendsTarget {
+	if e == nil {
+		return nil
+	}
+	if len(e.Targets) > 0 {
+		return e.Targets
+	}
+	if e.Component == "" {
+		return nil
+	}
+	return []ExtendsTarget{{Component: e.Component, Implements: e.Implements, Hooks: e.Hooks}}
+}
+
+// Components are the names of the components this plugin extends.
+func (e *Extends) Components() []string {
+	out := []string{}
+	for _, target := range e.All() {
+		out = append(out, target.Component)
+	}
+	return out
+}
+
+// Answers reports whether the plugin answers a hook for a component.
+//
+// A component is named because a hook name is not unique across the toolchain:
+// two components may both offer `render`, and a plugin that answers one of them
+// has not answered the other. An empty component asks the single-target
+// question, which is what a caller with one relation is asking.
+func (e *Extends) Answers(component, hook string) bool {
+	for _, target := range e.All() {
+		if component != "" && target.Component != component {
+			continue
+		}
+		for _, offered := range target.Hooks {
+			if offered == hook {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// AnswersHook reports whether the plugin answers a hook for any component.
+func (e *Extends) AnswersHook(hook string) bool {
+	return e.Answers("", hook)
 }
 
 // Command is one executable a plugin answers a hook with.
@@ -265,6 +335,11 @@ type Command struct {
 	// Hook is the stage this command answers. An empty hook means the command
 	// is named for it, which is what a one-hook plugin can rely on.
 	Hook string
+	// Component is the component this command answers, when a plugin extends
+	// more than one. Empty means the command answers whichever component is
+	// asking, which is what a single-target plugin means and is why existing
+	// plugins need no change.
+	Component string
 }
 
 // Stage is the hook a command answers.
@@ -359,6 +434,17 @@ type Manifest struct {
 	// VendorRepos are the vendor repositories this module builds against, each
 	// with the folder inside VendorDir it lives in.
 	VendorRepos []VendorRef
+	// Platform is the platform identity this module implements, such as
+	// `zenith`, or empty when it names none.
+	//
+	// A platform module carries it so that the platform can be recognized
+	// rather than assumed from a name or a repository: a project whose module
+	// graph contains a module declaring `platform: zenith` is a project being
+	// built for that platform, and the plugins that serve that identity are the
+	// ones a run of the toolchain chooses between. A module that declares
+	// nothing is not a platform, and a project with none of them is built the
+	// standard way.
+	Platform string
 	// Platforms are the modules that implement this module's interfaces, or nil
 	// when it declares none. A build looks at what the project declared first and
 	// falls back to here, which is how a program written against the interfaces
@@ -627,6 +713,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	m.Exports = parseExports(doc.Map["exports"])
 	m.Testing = parseTesting(doc.Map["testing"])
 	m.Platforms = parsePlatforms(doc.Map["platforms"])
+	m.Platform = yamlString(doc, "platform")
 
 	if vendor, ok := doc.Map["vendor"]; ok && vendor.Kind == yaml.KindMap {
 		m.VendorDir = yamlString(vendor, "dir")
@@ -755,7 +842,7 @@ func escape(kind, path string) error {
 // A project that calls C says which library it links, which headers it may
 // call, and which vendor library implements each build target: a target is what
 // a person names (`--target stm32`) and the library is what a build links
-// (`robohub_stm32`).
+// (`vendor_stm32`).
 type CConnection struct {
 	// Library is the CMake target every build of this project links.
 	Library string
@@ -777,7 +864,7 @@ type CConnection struct {
 // CVariant is one build target of a connected project: the vendor libraries it
 // links, and the macros that select the implementation at compile time.
 type CVariant struct {
-	// Target is the vendor CMake target, such as robohub_stm32.
+	// Target is the vendor CMake target, such as `vendor_stm32`.
 	Target string
 	// Libraries are the vendor libraries, when there is more than one.
 	Libraries []string
@@ -1116,24 +1203,78 @@ func parseContracts(node yaml.Value) []Contract {
 }
 
 // parseExtends reads what a plugin plugs into.
+//
+// Two forms are accepted. The one a single-component plugin writes names a
+// component directly:
+//
+//	extends: rho-doc
+//	implements: [contents]
+//	hooks: [index, page]
+//
+// The one a plugin that spans the toolchain writes is a list, because there is
+// no single component to name:
+//
+//	extends:
+//	  - component: rho-target
+//	    implements: [platform]
+//	    hooks: [spec]
+//	  - component: rho-kconfig
+//	    implements: [platform]
+//	    hooks: [render]
+//
+// Both are read into the same shape; the first is the second with one entry.
 func parseExtends(doc yaml.Value) *Extends {
-	component := yamlUnquote(doc.Map["extends"].Str)
-	if component == "" {
+	node := doc.Map["extends"]
+	if node.Kind == yaml.KindNull {
 		return nil
 	}
-	extension := &Extends{
-		Component:  component,
-		Implements: yamlStrings(doc.Map["implements"]),
-		Hooks:      yamlStrings(doc.Map["hooks"]),
+	extension := &Extends{Platforms: yamlStrings(doc.Map["serves"])}
+
+	switch node.Kind {
+	case yaml.KindString:
+		component := yamlUnquote(node.Str)
+		if component == "" {
+			return nil
+		}
+		extension.Component = component
+		extension.Implements = yamlStrings(doc.Map["implements"])
+		extension.Hooks = yamlStrings(doc.Map["hooks"])
+	case yaml.KindList:
+		for _, entry := range node.List {
+			if entry.Kind != yaml.KindMap {
+				continue
+			}
+			target := ExtendsTarget{
+				Component:  yamlString(entry, "component"),
+				Implements: yamlStrings(entry.Map["implements"]),
+				Hooks:      yamlStrings(entry.Map["hooks"]),
+			}
+			if target.Component == "" {
+				continue
+			}
+			extension.Targets = append(extension.Targets, target)
+		}
+		if len(extension.Targets) == 0 {
+			return nil
+		}
+		// Mirror the first target so a reader that only asks for "the
+		// component" has an answer rather than none.
+		extension.Component = extension.Targets[0].Component
+		extension.Implements = extension.Targets[0].Implements
+		extension.Hooks = extension.Targets[0].Hooks
+	default:
+		return nil
 	}
+
 	for _, item := range doc.Map["commands"].List {
 		if item.Kind != yaml.KindMap {
 			continue
 		}
 		extension.Commands = append(extension.Commands, Command{
-			Name: yamlString(item, "name"),
-			Run:  yamlString(item, "run"),
-			Hook: yamlString(item, "hook"),
+			Name:      yamlString(item, "name"),
+			Run:       yamlString(item, "run"),
+			Hook:      yamlString(item, "hook"),
+			Component: yamlString(item, "component"),
 		})
 	}
 	return extension

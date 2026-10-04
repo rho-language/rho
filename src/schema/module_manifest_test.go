@@ -323,15 +323,15 @@ depends:
 // dependency's own manifest when it is absent.
 func TestValidateDependsTypeOptional(t *testing.T) {
 	src := `module:
-  name: robohub-common-app
+  name: sample-app
   type: rho
   version: 0.1.0
 main: src/main.rho
 depends:
-  - name: robohub-common
+  - name: sensor-lib
     version: 1.0.0
-    path: /opt/robohub-common
-    git: https://github.com/RoboHubPlatform/robohub-common
+    path: /opt/sensor-lib
+    git: https://github.com/DevicePlatform/sensor-lib
     branch: main
 `
 	data, err := yaml.Load(src)

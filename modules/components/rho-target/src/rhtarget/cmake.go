@@ -105,17 +105,6 @@ func TargetCMake(spec Spec, linkerScript string) string {
 	banner(&b, "target.cmake", spec, "The flags, memory map and flashing of this target.")
 
 	defines := append([]string{}, spec.Defines...)
-	// The family macro, which the spec's own `family` is what names.
-	//
-	// A vendor library that implements many families at once decides between them
-	// at compile time, from macros, and there is no other way for a build to say
-	// which one it is building. Deriving it here means a spec states its family
-	// once and everything downstream — the driver's own conditionals, a report, a
-	// reader of the build file — agrees, rather than each guessing from the part
-	// number or from which sources happen to be present.
-	if macro := familyMacro(spec.Family); macro != "" {
-		defines = append(defines, macro)
-	}
 	sort.Strings(defines)
 	if len(defines) > 0 {
 		b.WriteString("# The macros a program is compiled with: which chip this is, and how\n")
@@ -379,25 +368,4 @@ func firstSentence(text string) string {
 		return trimmed[:index+1]
 	}
 	return trimmed
-}
-
-// familyMacro is the macro that says which family a build is for.
-//
-// It is derived from the name the spec already carries rather than declared
-// alongside it, because a spec that said `family: STM32H7` and
-// `ROBOHUB_STM32_FAMILY_H7` separately would have two names for one fact, and
-// they would eventually disagree — which is the failure this exists to prevent.
-func familyMacro(family string) string {
-	family = strings.TrimSpace(family)
-	if family == "" {
-		return ""
-	}
-	// `STM32H7` reads as `ROBOHUB_STM32_FAMILY_H7`: the vendor's own prefix
-	// without its `STM32`, which is what the vendor's driver sources test for.
-	trimmed := strings.TrimPrefix(strings.ToUpper(family), "STM32")
-	if trimmed == "" || trimmed == strings.ToUpper(family) {
-		// Not a family this naming knows; better nothing than a wrong name.
-		return ""
-	}
-	return "ROBOHUB_STM32_FAMILY_" + trimmed + "=1"
 }

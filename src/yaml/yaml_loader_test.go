@@ -246,7 +246,7 @@ this is not valid yaml
 // Real manifests carry multi-line descriptions with the folded ">" style.
 func TestLoaderBlockScalarFolded(t *testing.T) {
 	src := `module:
-  name: robohub-common
+  name: sensor-lib
   description: >
     Core platform-independent interfaces for the platform.
     Provides generic types and error codes.

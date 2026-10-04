@@ -37,7 +37,7 @@ import (
 // ExtensionLanguage is the extension that provides this toolchain's language
 // support, named in a workspace so a machine that does not have it is offered it
 // rather than failing to parse every file in the project.
-const ExtensionLanguage = "robohubplatform.rho"
+const ExtensionLanguage = "rho-lang.rho"
 
 // adapterExtensions maps the adapter a target spec names to the extension that
 // provides it. Only the adapters this tree knows are here; one that is not is

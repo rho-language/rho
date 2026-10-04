@@ -45,16 +45,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rho/rho-target/src/rhtarget"
 	"rho/src/deps"
 )
-
-// halHeaderDefine is the macro a target spec declares to say which family's HAL
-// this build is for — `ROBOHUB_STM32_HAL_HEADER="stm32f4xx_hal.h"`.
-//
-// It is read from the spec rather than worked out from the part number, because
-// the spec is where the build was already told which family this is. Deriving it
-// a second time, from a part number, is how a board and its HAL end up disagreeing.
-const halHeaderDefine = "ROBOHUB_STM32_HAL_HEADER"
 
 // How a vendor names these three files, which differ only in their ending: the
 // umbrella header includes `stm32f4xx_hal_conf.h`, the template is
@@ -78,39 +71,24 @@ var halModulePattern = regexp.MustCompile(`^(\s*)#define\s+(HAL_[A-Z0-9_]+_MODUL
 // declares as `HSE_VALUE=25000000`.
 var clockValuePattern = regexp.MustCompile(`^\s*#define\s+([A-Z0-9_]*VALUE[A-Z0-9_]*)\s+`)
 
-// halConfName is the header name a family's HAL asks for, from the HAL header the
-// spec declared: `stm32f4xx_hal.h` names `stm32f4xx`, and that is the family.
-func halConfName(defines []string) (string, bool) {
-	for _, define := range defines {
-		name, value, found := strings.Cut(define, "=")
-		if !found || strings.TrimSpace(name) != halHeaderDefine {
-			continue
-		}
-		header := strings.Trim(strings.TrimSpace(value), `"`)
-		if !strings.HasSuffix(header, halHeaderSuffix) {
-			return "", false
-		}
-		// The family is the header's own stem: `stm32f4xx_hal.h` is the H7-shaped
-		// name of the F4 family, and the configuration header is that stem with
-		// `_conf.h` where `_hal.h` was. Deriving the whole name from the one the
-		// spec already gave is what keeps them in step — the vendor names them
-		// together and a build that spelled the second differently would look for a
-		// file that was never going to be fetched.
-		// Only the `.h` comes off. The stem keeps its `_hal`: the vendor's three
-		// names differ only in their ending, and
-		//
-		//	stm32f4xx_hal.h   stm32f4xx_hal_conf.h   stm32f4xx_hal_conf_template.h
-		//
-		// so trimming the whole `_hal.h` would leave a stem that rebuilds the second
-		// name as `stm32f4xx_conf.h`, which is a file nothing will ever be fetched
-		// for.
-		stem := strings.TrimSuffix(header, ".h")
-		if stem == header || stem == "" {
-			return "", false
-		}
-		return stem + halConfSuffix, true
+// halConfName is the header name a family's HAL asks for, from the HAL header
+// the spec declared: `stm32f4xx_hal.h` names `stm32f4xx`, and that is the family.
+func halConfName(header string) (string, bool) {
+	header = strings.Trim(strings.TrimSpace(header), `"`)
+	if !strings.HasSuffix(header, halHeaderSuffix) {
+		return "", false
 	}
-	return "", false
+	// The family is the header's own stem: `stm32f4xx_hal.h` is the name of the
+	// F4 family, and the configuration header is that stem with `_conf.h` where
+	// `_hal.h` was. Deriving the whole name from the one the spec gave is what
+	// keeps them in step — the vendor names them together and a build that
+	// spelled the second differently would look for a file that was never going
+	// to be fetched.
+	stem := strings.TrimSuffix(header, ".h")
+	if stem == header || stem == "" {
+		return "", false
+	}
+	return stem + halConfSuffix, true
 }
 
 // findHalTemplate looks for the vendor's template for a family, in the platform's
@@ -234,12 +212,12 @@ func halModulesEnabled(roots []string) []string {
 // Written into the generated project, which is on the include path, so the bare
 // `#include "stm32f4xx_hal_conf.h"` in the vendor's umbrella header finds it
 // without anything having to be told where it is.
-func writeHalConf(project string, defines []string) error {
-	name, ok := halConfName(defines)
+func writeHalConf(project string, spec rhtarget.Spec) error {
+	name, ok := halConfName(spec.HALHeader)
 	if !ok {
-		// A build that names no HAL has no vendor configuration header to write.
+		// A build that names no vendor HAL has no configuration header to write.
 		// Not an error: the host target, a Raspberry Pi and anything else whose
-		// spec says nothing about an ST HAL are exactly this.
+		// spec says nothing about a vendor HAL are exactly this.
 		return nil
 	}
 	template, ok := findHalTemplate(project, strings.TrimSuffix(name, halConfSuffix))
@@ -249,7 +227,7 @@ func writeHalConf(project string, defines []string) error {
 		// and not the reason.
 		return fmt.Errorf("this build is for %s, but no vendor tree holds the vendor's %s%s: "+
 			"the HAL driver repository for this family has not been fetched",
-			defines, name, halConfTemplateSuffix)
+			spec.Name, name, halConfTemplateSuffix)
 	}
 
 	// Where it goes, and whether it is already there.
@@ -261,7 +239,7 @@ func writeHalConf(project string, defines []string) error {
 	// copy of a thing that is a property of the family.
 	destination, ok := vendorIncludeFor(project, name)
 	if !ok {
-		return fmt.Errorf("this build is for %s, but no dependency declares a vendor tree to put %s in", defines, name)
+		return fmt.Errorf("this build is for %s, but no dependency declares a vendor tree to put %s in", spec.Name, name)
 	}
 	if _, err := os.Stat(destination); err == nil {
 		// Already there. Left as it is rather than regenerated, because it is a
@@ -275,7 +253,7 @@ func writeHalConf(project string, defines []string) error {
 		return fmt.Errorf("read the vendor's HAL template: %w", err)
 	}
 	enabled := halModulesEnabled(cDependencyRoots(project))
-	content := deriveHalConf(string(source), name, enabled, defines)
+	content := deriveHalConf(string(source), name, enabled, spec.Defines)
 
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err

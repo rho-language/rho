@@ -72,8 +72,8 @@ func TestAPointerToAPrimitiveIsATypedPointer(t *testing.T) {
 func TestAPointerToALibraryStructureIsNamed(t *testing.T) {
 	// The structure is the library's, so the name is the library's: the C the
 	// backend writes resolves against the header the interface includes.
-	mapper := mapperFor(t, "typedef struct RoboHubSPI { int a; } RoboHubSPI;\n")
-	if got, _ := mapper.TryRho("RoboHubSPI*"); got != "Ptr[RoboHubSPI]" {
+	mapper := mapperFor(t, "typedef struct DeviceSPI { int a; } DeviceSPI;\n")
+	if got, _ := mapper.TryRho("DeviceSPI*"); got != "Ptr[DeviceSPI]" {
 		t.Fatalf("expected the library's type to be named, got %s", got)
 	}
 }

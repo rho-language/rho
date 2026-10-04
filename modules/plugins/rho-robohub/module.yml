@@ -1,0 +1,117 @@
+#
+# rho-robohub — the RoboHub platform, as this toolchain's `platform` contracts.
+#
+# A platform is a mapping: which family a board belongs to, what macro selects
+# that family in the vendor's own driver sources, which header the vendor's
+# umbrella includes by name, and how a board is programmed. None of that is
+# Rho's, and all of it used to be written into this toolchain — which is what
+# made Rho a language for one ecosystem rather than a language with a platform
+# attached.
+#
+# So it is here instead: one plugin that fills the `platform` contract of
+# rho-target, rho-kconfig, rho-cimport and rho-flash. It runs only for a
+# project whose module graph names `platform: robohub`, and a project that
+# names none is built the standard way, with this plugin absent and everything
+# it would have said coming from the target spec instead.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: rho-robohub
+  type: plugin
+  version: 0.1.0
+  author: Aurel Miron
+  description: Maps the RoboHub platform's target, configuration, C and flashing conventions onto this toolchain's contracts
+
+main: rho-robohub
+
+features:
+  - robohub
+  - platform
+  - stm32
+  - embedded
+
+# The platforms this plugin serves, as a platform module declares them.
+#
+# A run of the toolchain recognizes the platform from the project's module graph
+# and runs only the plugins that name it, so this is what makes the mapping
+# happen for a RoboHub project and not for any other. A build whose platform was
+# not recognized runs only the platform-agnostic plugins.
+serves:
+  - robohub
+
+# The components this plugin plugs into, one entry per component, and the
+# `platform` contract it fills in each.
+#
+# This is the case a single component cannot express: the same platform speaks
+# through the target it builds for, the configuration it renders, the C it maps
+# and the board it flashes, and the naming for all four is the platform's. Every
+# contract is named `platform` because it is the same role each time, and a
+# reader that sees `platform` four times knows one thing has been mapped rather
+# than four.
+extends:
+  - component: rho-target
+    implements:
+      - platform
+    hooks:
+      - spec
+  - component: rho-kconfig
+    implements:
+      - platform
+    hooks:
+      - render
+  - component: rho-cimport
+    implements:
+      - platform
+    hooks:
+      - map
+  - component: rho-flash
+    implements:
+      - platform
+    hooks:
+      - flash
+
+# One executable answers all four hooks. The hook names them; the program needs
+# no arguments and no state, so a session is not worth having and each request
+# is answered and the process is finished.
+#
+# Each command names its component, because a hook name is not unique across the
+# toolchain and this plugin extends four components at once.
+commands:
+  - name: target-spec
+    run: rho-robohub
+    hook: spec
+    component: rho-target
+  - name: config-render
+    run: rho-robohub
+    hook: render
+    component: rho-kconfig
+  - name: cimport-map
+    run: rho-robohub
+    hook: map
+    component: rho-cimport
+  - name: board-flash
+    run: rho-robohub
+    hook: flash
+    component: rho-flash
+
+package:
+  kind: plugin
+  interface: []
+  include:
+    - module.yml
+    - README.md
+    - src
+  require:
+    - module.yml
+    - src
+
+docs:
+  title: The RoboHub platform
+  section: plugins
+  order: "12"
+  index: docs/index.md
+  sources:
+    - docs/index.md
