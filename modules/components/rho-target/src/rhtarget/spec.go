@@ -86,6 +86,17 @@ type Spec struct {
 	// has to produce from the vendor's template, and the vendor's naming is not
 	// derivable from a part number without guessing — so the platform states it.
 	HALHeader string `json:"hal_header,omitempty"`
+	// LinkMap asks the link to write a linker map beside the program it links.
+	//
+	// The map is what says where every byte went: which region it landed in, and
+	// which object file put it there. Without it a build reports a size and
+	// nothing else, which is the number a budget is written against and no way to
+	// find out what to do about it when the budget moves.
+	//
+	// Not carried by a spec file, because a map is a property of how this build
+	// was linked rather than of the part: the same board linked twice produces
+	// two maps. It is set by whoever asked for the link.
+	LinkMap bool `json:"-"`
 	// Core is the processor core, which is a fact about the chip that a program
 	// may want to know.
 	Core string `json:"core,omitempty"`

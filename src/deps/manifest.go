@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"rho/src/schema"
@@ -384,6 +385,21 @@ type Manifest struct {
 	// this is for, and every build of it is for that hardware whatever resolves
 	// its dependencies.
 	BuildToolchain string
+	// BuildLinkMap asks the link to write a linker map beside the program, and
+	// nil means the default, which is to write one.
+	//
+	// A pointer rather than a bool so "the project did not say" is different from
+	// "the project said no": a build that treated an absent declaration as false
+	// would turn the map off for every project that never heard of the setting,
+	// which is every project written before it existed.
+	BuildLinkMap *bool
+	// Mem is what this project says its memory budgets are, or nil when it says
+	// nothing.
+	//
+	// A statement about the project rather than about a dependency, for the same
+	// reason the target is: a budget is about this firmware on this board, and
+	// every build of it is checked against the same one.
+	Mem *MemConfig
 	// BuildPresets are the boards this program is written for, when it is not
 	// written for one.
 	//
@@ -702,6 +718,9 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		}
 		m.BuildTargets = yamlStrings(build.Map["targets"])
 		m.BuildToolchain = yamlString(build, "toolchain")
+		if linkMap, declared := yamlBool(build, "link_map"); declared {
+			m.BuildLinkMap = &linkMap
+		}
 		m.BuildPresets = yamlStrings(build.Map["presets"])
 		m.BuildIncludeDirs = yamlStrings(build.Map["include_dirs"])
 		m.BuildSourceDirs = yamlStrings(build.Map["source_dirs"])
@@ -768,6 +787,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	// parser wants the block, and this is where the manifest's keys live.
 	m.SystemDeps = sysdep.Parse(yaml.Value{Kind: yaml.KindMap, Map: doc.Map})
 	m.Config = parseConfigManifest(doc.Map["config"])
+	m.Mem = parseMemConfig(doc.Map["mem"])
 	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
@@ -1097,6 +1117,164 @@ func parseConfigManifest(node yaml.Value) *ConfigManifest {
 	return config
 }
 
+// MemConfig is what a project says about the memory its firmware is allowed.
+//
+// The artifact paths are optional because a build knows where it put them: a
+// project that names them is a project that works in a tree it was moved, and one
+// that does not is not broken. The budgets are the part that has to be declared,
+// because a budget nobody wrote is not a budget — it is the size the firmware
+// happened to be the last time anybody looked.
+type MemConfig struct {
+	// MapFile is the linker map to read, relative to the project root.
+	MapFile string
+	// ELFFile is the program to read, relative to the project root.
+	ELFFile string
+	// Baseline is where a previous run's figures are recorded, so a build can be
+	// compared with the one before it. Relative to the project root.
+	Baseline string
+	// Regions are the per-region budgets, keyed by the region's name as the
+	// linker script names it — `FLASH`, `DTCM`, `SRAM1`.
+	Regions map[string]MemRegion
+	// Enforce is what a CI run is allowed to fail on.
+	Enforce MemEnforce
+}
+
+// MemRegion is what one memory region is allowed to use.
+type MemRegion struct {
+	// MaxBytes is the region's capacity, or zero when the project did not say —
+	// in which case the region is reported and not budgeted, because a budget
+	// invented from the linker script is the number that was true before the
+	// board's datasheet was read.
+	MaxBytes uint64
+	// WarnAt is the fraction of the region at which it is worth saying something,
+	// as a percentage: "85%" is 85. Zero means the default.
+	WarnAt float64
+	// WarnAtDeclared says whether the project wrote a threshold at all.
+	WarnAtDeclared bool
+}
+
+// MemEnforce is what a check is allowed to fail on.
+type MemEnforce struct {
+	// FailOnOverflow fails when a region is over its budget. Declared separately
+	// from the budget itself because a project may want the budget reported
+	// without a pipeline failing on it yet.
+	FailOnOverflow bool
+	// FailOnGrowthBytes fails when the image grew by more than this against a
+	// baseline. A budget that is only checked at the limit is a budget that is
+	// exceeded one release at a time.
+	FailOnGrowthBytes uint64
+	// FailOnGrowthDeclared says whether the project wrote a growth limit, so an
+	// absent one is not read as a limit of zero.
+	FailOnGrowthDeclared bool
+}
+
+// parseMemConfig reads what a project says about the memory its firmware is
+// allowed.
+func parseMemConfig(node yaml.Value) *MemConfig {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	config := &MemConfig{
+		MapFile:  yamlString(node, "map_file"),
+		ELFFile:  yamlString(node, "elf_file"),
+		Baseline: yamlString(node, "baseline"),
+		Regions:  map[string]MemRegion{},
+	}
+	if regions := node.Map["regions"]; regions.Kind == yaml.KindMap {
+		for name, declared := range regions.Map {
+			if declared.Kind != yaml.KindMap || name == "" {
+				continue
+			}
+			region := MemRegion{}
+			region.MaxBytes = parseByteCount(declared.Map["max_bytes"].Str)
+			if threshold, declared := parsePercent(declared.Map["warn_threshold"].Str); declared {
+				region.WarnAt = threshold
+				region.WarnAtDeclared = true
+			}
+			config.Regions[name] = region
+		}
+	}
+	if enforce := node.Map["enforce"]; enforce.Kind == yaml.KindMap {
+		if value, declared := yamlBool(enforce, "fail_on_overflow"); declared {
+			config.Enforce.FailOnOverflow = value
+		}
+		// The growth limit is a number of bytes rather than a flag: "fail if it
+		// grew by more than 10 kB" is the question a project actually asks, and a
+		// boolean could not answer it.
+		if size := parseByteCount(enforce.Map["fail_on_growth_bytes"].Str); size > 0 {
+			config.Enforce.FailOnGrowthBytes = size
+			config.Enforce.FailOnGrowthDeclared = true
+		}
+	}
+	return config
+}
+
+// parseByteCount is a size written the way a person writes one: plain bytes, or
+// with a unit suffix.
+//
+// The suffixes are matched longest first, because `KB` and `K` both end in a
+// letter the number does not, and stripping one character at a time turns `128KB`
+// into `128K` — which parses as nothing and reads as a budget of zero, which is
+// the one number in this block that would fail every check for the wrong reason.
+func parseByteCount(raw string) uint64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	// Underscores are how a person writes a large number, and the linker script
+	// writes one in every address.
+	raw = strings.ReplaceAll(raw, "_", "")
+
+	multipliers := []struct {
+		suffix string
+		factor uint64
+	}{
+		{"KIB", 1 << 10}, {"MIB", 1 << 20}, {"GIB", 1 << 30},
+		{"KB", 1 << 10}, {"MB", 1 << 20}, {"GB", 1 << 30},
+		{"K", 1 << 10}, {"M", 1 << 20}, {"G", 1 << 30},
+	}
+	upper := strings.ToUpper(raw)
+	for _, one := range multipliers {
+		if strings.HasSuffix(upper, one.suffix) {
+			number := strings.TrimSpace(raw[:len(raw)-len(one.suffix)])
+			size, err := strconv.ParseUint(number, 0, 64)
+			if err != nil {
+				return 0
+			}
+			return size * one.factor
+		}
+	}
+	size, err := strconv.ParseUint(raw, 0, 64)
+	if err != nil {
+		return 0
+	}
+	return size
+}
+
+// parsePercent is a threshold written as a percentage, and whether one was
+// written at all.
+//
+// Three spellings, because all three appear in real manifests: `85%`, a bare
+// `85`, and a fraction `0.85`. The fraction is the one that is ambiguous in
+// principle and is not in practice — a number between 0 and 1 is read as a
+// fraction, and anything above it as a percentage, because a threshold of 0.85%
+// is not a threshold anybody has ever wanted.
+func parsePercent(raw string) (float64, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	raw = strings.TrimSuffix(raw, "%")
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil {
+		return 0, false
+	}
+	if value > 0 && value <= 1 {
+		return value * 100, true
+	}
+	return value, true
+}
+
 // parseDebugManifest reads what a project says about debugging its chip.
 func parseDebugManifest(node yaml.Value) *DebugMapping {
 	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
@@ -1318,6 +1496,28 @@ func yamlStrings(value yaml.Value) []string {
 		}
 	}
 	return values
+}
+
+// yamlBool is a boolean a manifest declared, and whether it declared one at all.
+//
+// The two answers are different and callers need both: a setting that was never
+// mentioned has a default, and a setting that was mentioned and turned off is not
+// the same as one that was never mentioned.
+func yamlBool(value yaml.Value, key string) (bool, bool) {
+	item, ok := value.Map[key]
+	if !ok || item.Kind == yaml.KindNull {
+		return false, false
+	}
+	// The loader keeps `true` and `false` as text rather than as a type of their
+	// own, which is why this is a word comparison and not a kind comparison: the
+	// same reason the schema validates a decision separately from a value.
+	switch strings.TrimSpace(item.Str) {
+	case "true", "yes", "on":
+		return true, true
+	case "false", "no", "off":
+		return false, true
+	}
+	return false, false
 }
 
 func parseValue(s string) string {
