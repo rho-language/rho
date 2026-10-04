@@ -345,6 +345,51 @@ func ModuleSchema() Schema {
 				Kind:     KindString,
 			},
 			{
+				// What this project's memory budget is: which build artifacts
+				// to read, what each memory region is allowed to use, and what a
+				// check is allowed to fail on.
+				//
+				// A top-level section rather than one under `build:`, because a
+				// budget is not a description of how a build runs — it is a
+				// promise about the result, and it outlives any single build's
+				// flags. `build:` says how the image is produced; this says how
+				// much of the board the image is allowed to take.
+				Name:     "mem",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "map_file", Required: false, Kind: KindString},
+					{Name: "elf_file", Required: false, Kind: KindString},
+					{Name: "baseline", Required: false, Kind: KindString},
+					{
+						// A budget per region, keyed by the name the linker
+						// script gives the region. A map rather than a list,
+						// because the name is the key: a budget for DTCM is
+						// about DTCM, and a list would have to carry the name
+						// separately and could carry the wrong one.
+						Name:     "regions",
+						Required: false,
+						Kind:     KindMap,
+						Fields: []FieldSchema{
+							{Name: "max_bytes", Required: false, Kind: KindString},
+							{Name: "warn_threshold", Required: false, Kind: KindString},
+						},
+					},
+					{
+						Name:     "enforce",
+						Required: false,
+						Kind:     KindMap,
+						Fields: []FieldSchema{
+							{Name: "fail_on_overflow", Required: false, Kind: KindBool},
+							// A number of bytes rather than a flag: "fail if it
+							// grew by more than 10 kB" is the question a project
+							// actually asks, and a boolean cannot answer it.
+							{Name: "fail_on_growth_bytes", Required: false, Kind: KindString},
+						},
+					},
+				},
+			},
+			{
 				// The platform identities a plugin serves. Empty means the
 				// plugin is platform-agnostic and runs for any project. Named
 				// `serves` rather than `platforms` because the latter is already
@@ -456,6 +501,7 @@ func ModuleSchema() Schema {
 					// the build directory: a binary is a build output, and a project with
 					// several targets keeps them side by side.
 					{Name: "output_dir", Required: false, Kind: KindString},
+					{Name: "link_map", Required: false, Kind: KindBool},
 					{Name: "language", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidBuildLanguages},
 					// targets lists the generated-project backends to emit for
 					// this application (for example c and go).

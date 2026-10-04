@@ -100,7 +100,7 @@ func Load(src string) (Value, error) {
 		if strings.Contains(line, ":") && !strings.HasPrefix(line, "-") {
 			parts := strings.SplitN(line, ":", 2)
 			key := strings.TrimSpace(parts[0])
-			val := strings.TrimSpace(parts[1])
+			val := strings.TrimSpace(stripComment(parts[1]))
 
 			if key == "" {
 				return Value{}, fmt.Errorf("invalid YAML key in line: %q", line)
@@ -120,6 +120,11 @@ func Load(src string) (Value, error) {
 
 			if items, ok := inlineSequence(val); ok {
 				current.Map[key] = items
+				continue
+			}
+
+			if entries, ok := inlineMapping(val); ok {
+				current.Map[key] = entries
 				continue
 			}
 
@@ -289,6 +294,151 @@ func inlineSequence(val string) (Value, bool) {
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
+
+// stripComment removes a comment that follows a value on the same line.
+//
+// Needed because the value has to be read before anything can be done with it, and
+// a commented flow mapping is the case that breaks without it:
+//
+//	FLASH: { max_bytes: 16384 }      # 2 MB of flash on this part
+//
+// Here the comment swallows nothing — the value ends at the brace — but the line
+// ends with the comment, so a reader looking for a value ending in `}` does not
+// find one and reads the whole thing as a plain string. Every field in the mapping
+// then reads as missing, which looks exactly like a budget nobody wrote.
+//
+// A `#` only starts a comment when it follows whitespace and is outside quotes:
+// `run: "prog" --flag "#1"` and `name: "a # b"` both carry a `#` that is part of
+// the value, and a loader that stripped at the first one would corrupt them.
+func stripComment(val string) string {
+	quote := byte(0)
+	for index := 0; index < len(val); index++ {
+		char := val[index]
+		switch {
+		case quote != 0:
+			if char == quote {
+				quote = 0
+			}
+		case char == '"' || char == '\'':
+			quote = char
+		case char == '#' && index > 0 && (val[index-1] == ' ' || val[index-1] == '\t'):
+			return strings.TrimSpace(val[:index])
+		}
+	}
+	return val
+}
+
+// inlineMapping parses a flow-style mapping such as `{}` or `{a: 1, b: two}`
+// into a map value.
+//
+// The sibling of `inlineSequence`, and for the same reason it exists: a manifest
+// that declares a small table per row is much shorter in one line per row, and a
+// loader that read only the block form would read a `{...}` row as the literal
+// string "{...}" and every field in it as missing. Which is what happens to a
+// budget:
+//
+//	FLASH: { max_bytes: 2097152, warn_threshold: "85%" }
+//
+// is one line to write and four to write in block form, and the line form is the
+// one a table of them will be written in.
+//
+// Values are read as the loader reads a block value, so a nested list or mapping
+// written inside one works the same way it would on its own line.
+func inlineMapping(val string) (Value, bool) {
+	if len(val) < 2 || val[0] != '{' || val[len(val)-1] != '}' {
+		return Value{}, false
+	}
+	inner := strings.TrimSpace(val[1 : len(val)-1])
+	mapping := Value{Kind: KindMap, Map: map[string]Value{}}
+	if inner == "" {
+		return mapping, true
+	}
+	for _, entry := range splitFlowEntries(inner) {
+		parts := splitFlowEntry(entry)
+		if parts == nil {
+			return Value{}, false
+		}
+		key, value := parts[0], strings.TrimSpace(parts[1])
+		if key == "" {
+			return Value{}, false
+		}
+		switch {
+		case value == "":
+			mapping.Map[key] = Value{Kind: KindNull}
+		default:
+			if items, ok := inlineSequence(value); ok {
+				mapping.Map[key] = items
+				continue
+			}
+			if nested, ok := inlineMapping(value); ok {
+				mapping.Map[key] = nested
+				continue
+			}
+			mapping.Map[key] = Value{Kind: KindString, Str: unquote(value)}
+		}
+	}
+	return mapping, true
+}
+
+// splitFlowEntries splits a flow collection's body on the commas that separate
+// its entries.
+//
+// Not `strings.Split`: a value may itself contain a comma — `warn_threshold` is a
+// percentage, `arguments` is a list — and splitting on those would cut an entry
+// in half and read the rest as another key.
+func splitFlowEntries(inner string) []string {
+	entries := []string{}
+	depth, start := 0, 0
+	quote := byte(0)
+	for index := 0; index < len(inner); index++ {
+		char := inner[index]
+		switch {
+		case quote != 0:
+			if char == quote {
+				quote = 0
+			}
+		case char == '"' || char == '\'':
+			quote = char
+		case char == '{' || char == '[':
+			depth++
+		case char == '}' || char == ']':
+			depth--
+		case char == ',' && depth == 0:
+			entries = append(entries, strings.TrimSpace(inner[start:index]))
+			start = index + 1
+		}
+	}
+	entries = append(entries, strings.TrimSpace(inner[start:]))
+	return entries
+}
+
+// splitFlowEntry is one `key: value` pair of a flow mapping, and nil when the
+// entry is not one.
+//
+// The colon is the first one outside quotes and outside a nested collection, so
+// a value that carries a colon of its own — a URL, a `12:30` — does not end the
+// key early.
+func splitFlowEntry(entry string) []string {
+	depth, quote := 0, byte(0)
+	for index := 0; index < len(entry); index++ {
+		char := entry[index]
+		switch {
+		case quote != 0:
+			if char == quote {
+				quote = 0
+			}
+		case char == '"' || char == '\'':
+			quote = char
+		case char == '{' || char == '[':
+			depth++
+		case char == '}' || char == ']':
+			depth--
+		case char == ':' && depth == 0:
+			return []string{unquote(strings.TrimSpace(entry[:index])), entry[index+1:]}
+		}
+	}
+	return nil
+}
 
 // unquote strips one layer of matching surrounding quotes.
 // Unquote removes the quotes of a quoted scalar, and only those. A reader that

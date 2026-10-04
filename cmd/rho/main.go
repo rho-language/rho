@@ -647,6 +647,13 @@ func buildCLI(args []string) int {
 	// directory half-removed by hand fails in ways that read like the toolchain is
 	// at fault.
 	clean := fs.Bool("clean", false, "remove this project's build directory and stop")
+	// Whether the link writes its map, which is what says where every byte of the
+	// image went. The project declares the same thing in `build.link_map`, and the
+	// flag is for one run of a build that normally does something else; the
+	// project's declaration wins when the flag is absent, so a project that asked
+	// for this did not have to be asked again on every build.
+	linkMapFlag := fs.Bool("link-map", true, "write the linker map beside the program")
+	noLinkMap := fs.Bool("no-link-map", false, "do not write the linker map")
 	fs.Parse(args)
 
 	// The exit code a caller reads, which is why it is written here rather than
@@ -696,6 +703,21 @@ func buildCLI(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
+	}
+
+	// Whether the link writes its map: the project's declaration, unless this run
+	// says otherwise.
+	//
+	// The declaration is the default rather than the answer so that a flag on one
+	// run cannot quietly become what every build does — and a project that asked
+	// for a map did not have to be asked again on every build, which is what makes
+	// it a setting rather than a flag everybody types.
+	linkMap := true
+	if manifest.BuildLinkMap != nil {
+		linkMap = *manifest.BuildLinkMap
+	}
+	if !*linkMapFlag || *noLinkMap {
+		linkMap = false
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -989,7 +1011,7 @@ func buildCLI(args []string) int {
 		return 1
 	}
 
-	if err := buildTarget(generatedDir, projectRoot, targetName); err != nil {
+	if err := buildTarget(generatedDir, projectRoot, targetName, linkMap); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
@@ -1049,7 +1071,7 @@ func isDescriptorBackend(name string) bool {
 // to be able to add to. The component is located the same way every other
 // command locates one, which also means a target nobody enabled is refused here
 // for the same reason it is refused everywhere else.
-func buildTarget(generatedDir, projectRoot, target string) error {
+func buildTarget(generatedDir, projectRoot, target string, linkMap bool) error {
 	module, err := modcore.LoadInstalledModule("rho-target")
 	if err != nil {
 		return fmt.Errorf("this build needs the rho-target component: %w", err)
@@ -1069,6 +1091,10 @@ func buildTarget(generatedDir, projectRoot, target string) error {
 		"--target", target,
 		"--project", generatedDir,
 		"--for", projectRoot,
+		// The linker map, as the same yes or no the project declared, so the
+		// choice travels from the manifest to the link without being decided
+		// twice on the way.
+		"--link-map=" + map[bool]string{true: "on", false: "off"}[linkMap],
 	}, os.Stdin, os.Stdout)
 }
 

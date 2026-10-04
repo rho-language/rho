@@ -160,6 +160,28 @@ func TargetCMake(spec Spec, linkerScript string) string {
 	b.WriteString("  add_link_options(-T${RHO_LINKER_SCRIPT})\n")
 	b.WriteString("endif()\n\n")
 
+	if spec.LinkMap {
+		// The map, and the cross-reference table beside it.
+		//
+		// `-Map` says where every byte of the image went: which region it landed
+		// in, which object file put it there, and how much of it there is. That is
+		// the difference between a size and an answer — a build that reports
+		// "image is 14 kB too large" and no way to find out what is in it has
+		// given half the information.
+		//
+		// `--cref` is what turns the map into an attribution: which object refers
+		// to which symbol. A symbol's size says how much it costs; the cross
+		// reference says who pulled it in, which is the question a budget overrun
+		// actually raises — a driver that was not meant to be linked at all is a
+		// different problem from one that is simply large.
+		b.WriteString("# The linker map, and the cross-reference table that attributes each\n")
+		b.WriteString("# symbol to the object that pulled it in. This is what a memory\n")
+		b.WriteString("# analysis reads: without it a build reports a size and nothing about\n")
+		b.WriteString("# what is in it.\n")
+		fmt.Fprintf(&b, "add_link_options(-Wl,-Map=${CMAKE_BINARY_DIR}/%s.map -Wl,--cref)\n", cmakeMapName(spec.Name))
+		b.WriteString("\n")
+	}
+
 	if spec.VendorLibrary != "" {
 		b.WriteString("# The library that implements this board's interfaces: the platform-agnostic\n")
 		b.WriteString("# calls a program makes resolve to it.\n")
@@ -182,6 +204,27 @@ func TargetCMake(spec Spec, linkerScript string) string {
 }
 
 /* -------------------------------------------------------------------------- */
+// cmakeMapName is the file a link writes its map to, named after the target.
+//
+// Named after the target rather than after the program because the program's
+// name is a project's choice and the target's is not, and a build tree holds one
+// build per target: `nucleo-h753zi.map` is found by knowing which board was
+// built, where `<whatever-the-cmake-project-is-called>.map` is not.
+func cmakeMapName(target string) string {
+	name := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '-'
+		}
+	}, strings.TrimSpace(target))
+	if name == "" {
+		return "linker"
+	}
+	return name
+}
+
 /*  linker.ld                                                                  */
 /* -------------------------------------------------------------------------- */
 

@@ -1,0 +1,151 @@
+#
+# rho-mem — where a firmware's memory went, and whether that is allowed.
+#
+# `arm-none-eabi-size` prints one number per section. That number is what a budget
+# is written against, and it is not an answer: a build that reports "image is 14 kB
+# too large" has said nothing about which of the two hundred things in it to
+# remove. Everything else in embedded tooling that fits in a terminal has the same
+# problem — `nm --size-sort` lists symbols without saying which region they cost,
+# so the flash resident and the RAM resident are one sorted list of numbers that
+# cannot be added to anything.
+#
+# This component reads what the linker already wrote and keeps the two facts
+# together: a symbol's size, and the memory region it was placed in. Which is the
+# difference between a size and a budget.
+#
+#                build artifacts (.map and the ELF beside it)
+#                                  │
+#                    ┌─────────────┴─────────────┐
+#                    ▼                           ▼
+#          linker map                   ELF headers
+#          Memory Configuration          allocated sections
+#          output sections               symbol table
+#          symbols + the object          (+ size, where present)
+#            each one came from
+#                    │           │
+#                    └─────┬─────┘
+#                          ▼
+#              regions, and what landed in each
+#                          │
+#        ┌─────────────────┼──────────────────┐
+#        ▼                 ▼                  ▼
+#   breakdown         top symbols          budgets
+#   per region        by region and size    fail or warn
+#                          │
+#                          ▼
+#                   `rho mem check`
+#
+# The two artifacts answer different halves. The map is the accurate one — the
+# linker wrote it while it had the whole picture, and it names the memory regions
+# exactly as the linker script does, which is what the firmware was laid out
+# against. The ELF is what is there when a build was made without one, and it is
+# what a flash is checked against, so the two are read together and neither is
+# guessed from the other.
+#
+# One detail decides whether any of this is worth doing, and it is the reason
+# `size` cannot answer the question: a `.data` section occupies two regions at
+# once. Its initializer image lives in flash and its variables live in RAM, so a
+# budget that counted it once counted the wrong region once. This component
+# attributes a section to its load region and its run region separately, which is
+# why the totals here add up to the same text/data/bss `size` prints and are
+# distributed correctly among the regions.
+#
+# Nothing here is specific to a board, a vendor or a platform. The regions are
+# whatever the linker script said they were, which is what makes the same
+# component report an STM32, an RP2040 and a host executable without being told
+# which it is looking at.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: rho-mem
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Maps a linked program's symbols onto the board's memory regions, and checks the result against the budgets a project declares
+  command: mem
+
+main: rho-mem
+
+features:
+  - memory
+  - budget
+  - linker-map
+  - embedded
+  - ci
+
+# What a project may declare, and where the numbers come from if it does not.
+#
+# All of these are here rather than only in the file beside this one because this
+# is what a person reads to find out what may be set and what it is for. The file
+# says what the values are set to; this says what the settings are.
+settings:
+  file: config/mem.yml
+  settings:
+    - name: top
+      description: >-
+        How many symbols the footprint attribution lists when the command names no
+        number. The whole point of this component is being told what is in the
+        image, and the answer to "what is in the image" is a list rather than a
+        total — so this is a list by default, and a project that wants only the
+        totals has a command for that.
+      default: 15
+
+    - name: warn_threshold
+      description: >-
+        The fraction of a region, as a percentage, at which it is reported as
+        worth attention even when it is inside its budget. A firmware at 99% of
+        its flash is a firmware whose next feature does not fit, and nothing about
+        that shows up until the build fails.
+      default: "85%"
+
+    - name: width
+      description: >-
+        How wide the usage bar is drawn, in characters. Presentation only, and here
+        because a terminal width is not something a program should guess twice.
+      default: 25
+
+# The commands it answers.
+#
+# `check` is the same analysis as the bare command with the outcome enforced,
+# which is why it exists rather than being a flag: a pipeline reads the exit code
+# and not the text, and a person runs the text.
+commands:
+  - name: report
+    description: Print the memory breakdown and the largest symbols
+    run: rho-mem
+    hook: report
+
+  - name: check
+    description: Check the image against the declared budgets and fail if it does not fit
+    run: rho-mem
+    hook: check
+
+# The component ships as a command. It is a program a person runs and a pipeline
+# runs, and nothing in a generated project links against it.
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - config
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - config
+    - src
+
+# The component documents itself: what it reads, how it attributes a byte, and how
+# a project declares its budgets.
+docs:
+  title: Memory budgets
+  section: components
+  order: "47"
+  index: docs/index.md
+  sources:
+    - docs/index.md

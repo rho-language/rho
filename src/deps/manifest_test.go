@@ -550,3 +550,76 @@ func TestLoadYAMLManifestWithoutSQL(t *testing.T) {
 		t.Error("a project that declared no database was read as having one")
 	}
 }
+
+// A budget is a statement about a project rather than about a dependency, and it
+// is read here so that every component reads the same `mem:` block the same way.
+// The thresholds and sizes are written the way a person writes them, because a
+// budget written as `2097152` is a budget nobody can read while looking at it.
+func TestLoadYAMLManifestReadsAMemoryBudget(t *testing.T) {
+	path := writeManifest(t, "module:\n  name: firmware\n  type: module\n  version: 0.1.0\n\nmain: src/main.rho\n\nmem:\n  map_file: build/firmware.map\n  elf_file: build/firmware.elf\n  regions:\n    FLASH: { max_bytes: 2097152, warn_threshold: \"85%\" }\n    SRAM1: { max_bytes: 512K }\n    DTCM: { max_bytes: 128KB, warn_threshold: 90 }\n  enforce:\n    fail_on_overflow: true\n    fail_on_growth_bytes: 10240\n")
+
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Mem == nil {
+		t.Fatal("expected the memory budget to be read")
+	}
+	if m.Mem.MapFile != "build/firmware.map" || m.Mem.ELFFile != "build/firmware.elf" {
+		t.Errorf("unexpected artifacts: %+v", m.Mem)
+	}
+	flash := m.Mem.Regions["FLASH"]
+	if flash.MaxBytes != 2097152 || !flash.WarnAtDeclared || flash.WarnAt != 85 {
+		t.Errorf("unexpected FLASH budget: %+v", flash)
+	}
+	// `512K` and `128KB` are how a datasheet is written, and a budget that
+	// rejected them would be written in bytes by everybody.
+	if sram := m.Mem.Regions["SRAM1"]; sram.MaxBytes != 512*1024 {
+		t.Errorf("unexpected SRAM1 budget: %+v", sram)
+	}
+	if dtcm := m.Mem.Regions["DTCM"]; dtcm.MaxBytes != 128*1024 {
+		t.Errorf("unexpected DTCM budget: %+v", dtcm)
+	}
+	if !m.Mem.Enforce.FailOnOverflow {
+		t.Error("expected fail_on_overflow to be read")
+	}
+	if m.Mem.Enforce.FailOnGrowthBytes != 10240 || !m.Mem.Enforce.FailOnGrowthDeclared {
+		t.Errorf("unexpected growth limit: %+v", m.Mem.Enforce)
+	}
+}
+
+// "The project did not say" and "the project said no" are different answers, and
+// a growth limit that was never written is not a limit of zero.
+func TestAnAbsentGrowthLimitIsNotALimitOfZero(t *testing.T) {
+	path := writeManifest(t, "module:\n  name: firmware\n  type: module\n  version: 0.1.0\n\nmain: src/main.rho\n\nmem:\n  regions:\n    FLASH: { max_bytes: 1024 }\n")
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Mem.Enforce.FailOnGrowthDeclared {
+		t.Error("a growth limit was declared that the manifest did not declare")
+	}
+}
+
+// `build.link_map` is a pointer so that an absent declaration is not read as a
+// "no": a build that treated silence as false would turn the map off for every
+// project written before the setting existed.
+func TestLoadYAMLManifestReadsTheLinkMapSetting(t *testing.T) {
+	absent := writeManifest(t, "module:\n  name: app\n  type: module\n  version: 0.1.0\n\nmain: src/main.rho\n\nbuild:\n  language: c\n")
+	m, err := LoadManifest(absent)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.BuildLinkMap != nil {
+		t.Errorf("expected no declaration, got %v", *m.BuildLinkMap)
+	}
+
+	declared := writeManifest(t, "module:\n  name: app\n  type: module\n  version: 0.1.0\n\nmain: src/main.rho\n\nbuild:\n  language: c\n  link_map: false\n")
+	m, err = LoadManifest(declared)
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.BuildLinkMap == nil || *m.BuildLinkMap {
+		t.Errorf("expected an explicit off, got %v", m.BuildLinkMap)
+	}
+}

@@ -43,6 +43,51 @@ import (
 // project, then configure and build it. Writing them before configuring is what
 // makes the toolchain file take effect — CMake reads it to learn which compiler
 // it is configuring for, so a file written after `project()` is too late.
+// linkMapFlag declares whether a link writes its map, and how it is asked for.
+//
+// `on`/`off` rather than a boolean flag because a project declares the same
+// choice and the two have to be spellable the same way: `rho build --no-link-map`
+// and `build.link_map: false` are one setting, and a setting that could be
+// written two ways and read as two different things is a setting nobody trusts.
+//
+// It is read as a word rather than declared as a boolean, because a boolean flag
+// that took `on` would refuse it — and `on` is the spelling the manifest uses for
+// the same fact, so the two have to accept the same words.
+//
+// The default is on. The map is a file the linker writes as a byproduct of work
+// it is already doing, and a project that wants the memory a build used should
+// not have to know that a flag exists to ask.
+type linkMapValue struct{ given *bool }
+
+func (v linkMapValue) String() string {
+	if v.given == nil {
+		return "on"
+	}
+	if *v.given {
+		return "on"
+	}
+	return "off"
+}
+
+func (v linkMapValue) Set(raw string) error {
+	switch strings.TrimSpace(raw) {
+	case "on", "true", "yes", "1":
+		*v.given = true
+	case "off", "false", "no", "0":
+		*v.given = false
+	default:
+		return fmt.Errorf("expected on or off, got %q", raw)
+	}
+	return nil
+}
+
+func linkMapFlag(fs *flag.FlagSet) *bool {
+	given := new(bool)
+	*given = true
+	fs.Var(linkMapValue{given}, "link-map", "write the linker map beside the program (on or off)")
+	return given
+}
+
 func build(args []string) int {
 	fs := flag.NewFlagSet("rho target build", flag.ExitOnError)
 	target := fs.String("target", "", "the target to build for")
@@ -60,6 +105,11 @@ func build(args []string) int {
 	kind := fs.String("type", "Release", "the CMake build type")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
 	treePlugins := fs.Bool("tree-plugins", false, "also read the plugins the tree carries")
+	// Whether the link writes its map. On by default, because the map is how a
+	// build is explained: which region a byte landed in and which object put it
+	// there. A build that turned it off would still be correct and would still be
+	// the build somebody has to rebuild with a flag to understand.
+	linkMap := linkMapFlag(fs)
 	// Flags are read wherever they appear, because `rho target build --target pico`
 	// is what a person types first.
 	flagArgs, rest := splitArgs(args, map[string]bool{"target": true, "project": true, "for": true, "build-dir": true})
@@ -101,6 +151,7 @@ func build(args []string) int {
 		fmt.Fprintf(os.Stderr, "rho target build: no target named %q. `rho target list` names the ones there are.\n", *target)
 		return 1
 	}
+	spec.LinkMap = *linkMap
 
 	// Checked before the project's files are written: a target whose compiler is
 	// not installed cannot be built by anything that follows, and finding out

@@ -350,3 +350,106 @@ func TestLoaderQuotedBracketIsString(t *testing.T) {
 		t.Fatalf("expected a string, got %#v", v.Map["expression"])
 	}
 }
+
+// A flow mapping is read as a map, not as the string it is written as. This is
+// what a table of one-line rows is written as:
+//
+//	FLASH: { max_bytes: 2097152, warn_threshold: "85%" }
+//
+// and a loader that read only the block form would see four fields missing and
+// say nothing about why.
+func TestLoaderInlineMapping(t *testing.T) {
+	v, err := Load("regions:\n  FLASH: { max_bytes: 2097152, warn_threshold: \"85%\" }\n  SRAM1: { max_bytes: 524288 }\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	regions := v.Map["regions"]
+	if regions.Kind != KindMap {
+		t.Fatalf("expected a map, got %#v", regions)
+	}
+	flash := regions.Map["FLASH"]
+	if flash.Kind != KindMap || flash.Map["max_bytes"].Str != "2097152" {
+		t.Fatalf("unexpected FLASH entry: %#v", flash)
+	}
+	if flash.Map["warn_threshold"].Str != "85%" {
+		t.Fatalf("unexpected threshold: %#v", flash.Map["warn_threshold"])
+	}
+	sram := regions.Map["SRAM1"]
+	if sram.Kind != KindMap || sram.Map["max_bytes"].Str != "524288" {
+		t.Fatalf("unexpected SRAM1 entry: %#v", sram)
+	}
+}
+
+// A comma inside a value is part of the value, not a separator between entries.
+// A threshold list and an argument list both depend on that.
+func TestLoaderInlineMappingKeepsCommasInsideValues(t *testing.T) {
+	v, err := Load("row: { note: \"a, b\", count: 2 }\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	row := v.Map["row"]
+	if row.Map["note"].Str != "a, b" {
+		t.Fatalf("unexpected note: %#v", row.Map["note"])
+	}
+	if row.Map["count"].Str != "2" {
+		t.Fatalf("unexpected count: %#v", row.Map["count"])
+	}
+}
+
+// A nested flow collection inside a flow mapping reads the same way it would on
+// its own line, which is what makes `tags: {defaults: [a, b]}` work.
+func TestLoaderInlineMappingNests(t *testing.T) {
+	v, err := Load("row: { tags: { defaults: [a, b] }, name: x }\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	row := v.Map["row"]
+	tags := row.Map["tags"].Map["defaults"]
+	if tags.Kind != KindList || len(tags.List) != 2 || tags.List[1].Str != "b" {
+		t.Fatalf("unexpected nested list: %#v", tags)
+	}
+	if row.Map["name"].Str != "x" {
+		t.Fatalf("unexpected name: %#v", row.Map["name"])
+	}
+}
+
+// An empty flow mapping is a map with nothing in it, not the string "{}".
+func TestLoaderInlineEmptyMapping(t *testing.T) {
+	v, err := Load("row: {}\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if row := v.Map["row"]; row.Kind != KindMap || len(row.Map) != 0 {
+		t.Fatalf("expected an empty map, got %#v", row)
+	}
+}
+
+// A comment after a flow mapping is the case that breaks a reader that looks for
+// the value without it: the line ends with the comment, so nothing ends in `}` and
+// the whole mapping reads as one plain string — which looks exactly like a table
+// whose every field is missing.
+func TestLoaderInlineCommentAfterAValue(t *testing.T) {
+	v, err := Load("FLASH: { max_bytes: 16384 }      # 16 KB on this part\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	flash := v.Map["FLASH"]
+	if flash.Kind != KindMap || flash.Map["max_bytes"].Str != "16384" {
+		t.Fatalf("expected the mapping to be read, got %#v", flash)
+	}
+}
+
+// A `#` inside a quoted value is part of the value. Stripping at the first one
+// would corrupt both of these.
+func TestLoaderKeepsAHashInsideAQuotedValue(t *testing.T) {
+	v, err := Load("run: \"prog --flag #1\"\nname: \"a # b\"\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := v.Map["run"].Str; got != "prog --flag #1" {
+		t.Errorf("unexpected run: %q", got)
+	}
+	if got := v.Map["name"].Str; got != "a # b" {
+		t.Errorf("unexpected name: %q", got)
+	}
+}
