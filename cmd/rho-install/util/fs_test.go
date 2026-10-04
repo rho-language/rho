@@ -12,9 +12,9 @@
 package util
 
 import (
-    "os"
-    "path/filepath"
-    "testing"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -22,16 +22,16 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestEnsureDir(t *testing.T) {
-    tmp := t.TempDir()
-    dir := filepath.Join(tmp, "testdir")
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "testdir")
 
-    if err := EnsureDir(dir); err != nil {
-        t.Fatalf("EnsureDir failed: %v", err)
-    }
+	if err := EnsureDir(dir); err != nil {
+		t.Fatalf("EnsureDir failed: %v", err)
+	}
 
-    if !DirExists(dir) {
-        t.Fatalf("DirExists returned false for created directory")
-    }
+	if !DirExists(dir) {
+		t.Fatalf("DirExists returned false for created directory")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -39,21 +39,21 @@ func TestEnsureDir(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestCopyFile(t *testing.T) {
-    tmp := t.TempDir()
+	tmp := t.TempDir()
 
-    src := filepath.Join(tmp, "src.txt")
-    dst := filepath.Join(tmp, "dst.txt")
+	src := filepath.Join(tmp, "src.txt")
+	dst := filepath.Join(tmp, "dst.txt")
 
-    os.WriteFile(src, []byte("hello"), 0o644)
+	os.WriteFile(src, []byte("hello"), 0o644)
 
-    if err := CopyFile(src, dst); err != nil {
-        t.Fatalf("CopyFile failed: %v", err)
-    }
+	if err := CopyFile(src, dst); err != nil {
+		t.Fatalf("CopyFile failed: %v", err)
+	}
 
-    data, _ := os.ReadFile(dst)
-    if string(data) != "hello" {
-        t.Fatalf("CopyFile content mismatch")
-    }
+	data, _ := os.ReadFile(dst)
+	if string(data) != "hello" {
+		t.Fatalf("CopyFile content mismatch")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -61,16 +61,16 @@ func TestCopyFile(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestWriteFile(t *testing.T) {
-    tmp := t.TempDir()
-    file := filepath.Join(tmp, "file.txt")
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "file.txt")
 
-    if err := WriteFile(file, []byte("test")); err != nil {
-        t.Fatalf("WriteFile failed: %v", err)
-    }
+	if err := WriteFile(file, []byte("test")); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
-    if !FileExists(file) {
-        t.Fatalf("FileExists returned false for written file")
-    }
+	if !FileExists(file) {
+		t.Fatalf("FileExists returned false for written file")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -78,8 +78,8 @@ func TestWriteFile(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestJoin(t *testing.T) {
-    p := Join("a", "b", "c")
-    if p != filepath.Join("a", "b", "c") {
-        t.Fatalf("Join returned incorrect path: %s", p)
-    }
+	p := Join("a", "b", "c")
+	if p != filepath.Join("a", "b", "c") {
+		t.Fatalf("Join returned incorrect path: %s", p)
+	}
 }

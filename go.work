@@ -11,6 +11,7 @@ use (
 	./modules/components/rho-fmt
 	./modules/components/rho-kconfig
 	./modules/components/rho-keeper
+	./modules/components/rho-lint
 	./modules/components/rho-log
 	./modules/components/rho-lsp
 	./modules/components/rho-openapi
@@ -44,6 +45,7 @@ replace (
 	github.com/rho/rho-fmt v0.0.0 => ./modules/components/rho-fmt
 	github.com/rho/rho-kconfig v0.0.0 => ./modules/components/rho-kconfig
 	github.com/rho/rho-keeper v0.0.0 => ./modules/components/rho-keeper
+	github.com/rho/rho-lint v0.0.0 => ./modules/components/rho-lint
 	github.com/rho/rho-log v0.0.0 => ./modules/components/rho-log
 	github.com/rho/rho-lsp v0.0.0 => ./modules/components/rho-lsp
 	github.com/rho/rho-openapi v0.0.0 => ./modules/components/rho-openapi

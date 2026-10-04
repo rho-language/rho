@@ -1,0 +1,308 @@
+# rho-lint — one run of every analyzer, told the same thing.
+#
+# A finding in embedded C is only a finding when the analyzer saw the code the way
+# the compiler sees it. Without `-DSTM32H743xx`, without the vendor's include
+# paths, without the flags a Kconfig resolved, a static analyzer reports the
+# branches a build excludes — which are usually the ones that pick the board — and
+# stays silent about the ones it is actually there for. So the one thing this
+# component insists on is a compilation database: it reads the one a CMake build
+# already produced, and writes one from the project's own manifest when nothing
+# has. Every analyzer is then told the same flags the compiler is told, and an
+# analyzer that wants to differ has to say so rather than default differently:
+#
+#   rho lint
+#     │
+#     ├── compile_commands.json          read, or derived from module.yml
+#     │
+#     ├── clang-tidy ─┐   cppcheck ─┐   rho rules ─┐   a plugin ─┐
+#     └── cppcheck ───┴─────────────┴─────────────┴────────────┴── normalize
+#                                      │
+#                                      ▼
+#                            one diagnostic shape, and SARIF out
+#                                      │
+#                                      ▼
+#                     VS Code Problems · GitHub Code Scanning · CI
+#
+# The shape matters more than any one analyzer. clang-tidy writes gcc-shaped lines,
+# cppcheck writes XML, a bespoke rule engine writes JSON of its own inventing, and
+# SARIF is the one format all three of them have somewhere to go. So every
+# analyzer's output is read into the same diagnostic here, and written out as
+# SARIF — one run per analyzer, because that is what the format says a run is and
+# what code scanning expects to see.
+#
+# The analyzers themselves are not implemented here. Which static analyzer a
+# project runs is a fact about the project rather than about this component —
+# clang-tidy and cppcheck both exist, both are better than anything written here,
+# and a third one exists that nobody here has heard of. So they are plugins:
+#
+#   extends: rho-lint
+#   implements: [engine]
+#
+# A plugin contributes a *program* and this runs it. Two engines are carried
+# instead of provided, and they exist so that `rho lint` says something on a
+# machine with nothing installed rather than only reporting that nothing is. One
+# reads the Rho sources through the compiler's own parser, and one reads the C the
+# build actually compiles — which is the same set of files whether a person wrote
+# them in C or the generator translated them from the Rho beside it.
+module:
+  name: rho-lint
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Runs every static analyzer over one compilation database, and writes the findings as SARIF
+  command: lint
+
+main: rho-lint
+
+features:
+  - lint
+  - static-analysis
+  - sarif
+  - embedded
+
+# The run logs through the shared logger, so an analyzer's output is identifiable
+# in a log several components write to. It reads target specs through rho-target,
+# because which compiler a board is compiled with is a fact that component holds,
+# and a compilation database without the right compiler is a database of the wrong
+# program.
+deps:
+  rho-log: ">=0.1.0"
+  rho-target: ">=0.1.0"
+
+# The hooks a lint run goes through.
+#
+# `engine` and `report` are the two questions that are not this component's to
+# answer. Which analyzers run over a project is a fact about the project rather
+# than about this component — clang-tidy and cppcheck are both better than
+# anything written here, and a project's own convention checker is better than both
+# — and how a run's findings are rendered is a fact about whoever is reading them.
+#
+# Note the difference from rho-dbg's `engine` contract, which is `one: true`: a
+# debugging session is driven by exactly one debugger, so that contract is a
+# choice between engines. A lint run is *several* analyzers over one database,
+# which is what makes the normalized output worth having at all — a run that
+# reported only one analyzer's findings would not need a format to put them in.
+provides:
+  contracts:
+    # A static analyzer this component does not run itself. A plugin fills it by
+    # naming a program and how that program's output is read; every enabled
+    # plugin joins the run.
+    - name: engine
+      description: >-
+        A static analyzer that reads a compilation database and reports findings
+        in one of the formats this component can read.
+      one: false
+      hooks: [engine]
+    # A way of rendering a run's findings, for a reader this component does not
+    # write for.
+    - name: report
+      description: >-
+        A renderer for a run's normalized findings — a house format, a dashboard
+        payload, a diff against a baseline.
+      one: false
+      hooks: [report]
+  hooks:
+    # Once, before anything runs: which analyzers this run has.
+    - engine
+    # Once, after every analyzer has reported: how the findings are shown.
+    - report
+
+# What a person may configure it with.
+#
+# The values live in a YAML file beside this one and the file is part of the
+# package, so a rho-lint installed from a registry reads the same file wherever it
+# lands. The declaration is here rather than only in the file because this is what
+# a person reads to find out what a run can be asked to do — the file says what the
+# values are set to, and this says what may be set, what it is called and what it
+# is for.
+#
+# All five are about one thing: which findings are a project's business. Which
+# analyzers run and how loud they have to be is a decision a project makes once
+# and then stops making, which is what makes it a setting rather than a flag.
+settings:
+  file: config/lint.yml
+  settings:
+    - name: default_engines
+      description: >-
+        Which engines a run uses when the command line names none. An engine here
+        may be one this component carries, one a plugin provides, or one that is
+        not installed — a run that names an engine that is not there reports it and
+        runs the rest rather than doing nothing, so a machine part-way through
+        being set up still gets the analyzers it has. The first two cover a Rho
+        application and a C one without anything installed. Empty means every
+        engine available, which is what a machine with one project on it wants.
+      default: rho,c,clang-tidy,cppcheck
+
+    - name: fail_on
+      description: >-
+        The severity at which a run reports failure and exits non-zero, which is
+        what a pipeline reads. Every finding is printed whatever this says — the
+        setting moves the exit code and nothing else, because a threshold that
+        hid findings would be a threshold that hid the ones somebody had not yet
+        decided about. `error` fails the run on an error and prints the warnings,
+        which is the default because a pipeline that fails on every style note
+        gets the threshold turned down and then the errors are in it too.
+      default: error
+      choices: ["error", "warning", "note", "never"]
+
+    - name: database
+      description: >-
+        Where the compilation database is read from and, when one has to be
+        written, where it is written. A path relative to the project root; empty
+        means the places this component looks, in order, which is where a CMake
+        build puts one — including one per board, because a project written for
+        several boards has a different set of defines for each of them. Nothing
+        here creates a database a build already has: a database somebody's CMake
+        wrote is the accurate one, because it is the one the compiler was really
+        invoked with.
+      default: ""
+
+    - name: exclude
+      description: >-
+        Path fragments that are never linted. A fragment matches when it appears as
+        a path sequence anywhere in a source's path. `vendor/` is the useful
+        default: a vendored tree is somebody else's code, written to a standard
+        that is not this project's, and a run that reports findings in it is a run
+        whose findings nobody can act on — which is the same thing as a run that
+        reports nothing.
+      default: vendor/
+
+    - name: outside
+      description: >-
+        What to do about a source outside this project's directory. `exclude` is
+        right for an application, whose generated project compiles the platform's
+        sources beside its own: those sources are another checkout, they are that
+        checkout's to fix, and their findings belong to whoever runs a lint over
+        that checkout. `include` is right for a platform being analyzed as a
+        project in its own right, which is the case this exists for — a library
+        whose sources are somebody else's `deps` path.
+      default: exclude
+      choices: ["exclude", "include"]
+
+# What this component needs from the machine.
+#
+# Nothing here is required. The analyzers are plugins — which is the point of them
+# — and the six rules this component carries need nothing at all, so a machine
+# with no analyzer installed still gets `rho lint` saying something. The entries
+# are here so that `rho doctor` reports the ones that are missing and
+# `rho keeper` can install them, rather than both being a list somebody keeps by
+# hand.
+#
+# `rho keeper` prefers a fetch into ~/.rho/toolchains/ over a package manager, and
+# both of these have upstream builds: LLVM's release tarball for clang-tidy, and
+# cppcheck's own source distribution. Said here so the choice is a fact in the
+# manifest rather than something discovered halfway through a download.
+system_deps:
+  executables:
+    - name: clang-tidy
+      version: ">=10.0"
+      version_flag: "--version"
+      # `--version` prints the version LLVM was built as and then the one this
+      # clang-tidy reports, on the same line: `Ubuntu clang-tidy version 14.0.0-1`.
+      version_pattern: 'clang-tidy version ([0-9][^\s]*)'
+      description: >-
+        reads a compilation database and reports the checks a clang-based build
+        would have failed; it is the strongest analyzer a machine is likely to
+        have and the one most Rho projects should run
+      required: false
+      fetch:
+        url: https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-18.04.tar.xz
+        archive: tar.xz
+        dir: clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-18.04
+        binary: bin/clang-tidy
+        version: "17.0.6"
+      install:
+        brew: llvm
+        apt: clang-tidy
+        pacman: clang
+        manual: https://clang.llvm.org/extra/clang-tidy/
+
+    - name: cppcheck
+      version: ">=2.7"
+      version_flag: "--version"
+      # cppcheck prints `Cppcheck 2.10` on the first line and a Git hash on the
+      # second, so the version wanted is the first number-shaped run after the
+      # name.
+      version_pattern: 'Cppcheck\s+v?([0-9][^\s]*)'
+      description: >-
+        the analyzer that is not built on a compiler front end, which is why it
+        finds the things a front end cannot see — the dead branch, the resource
+        that is released on one path and not the other
+      required: false
+      fetch:
+        url: https://github.com/danmar/cppcheck/archive/refs/tags/2.10.1.tar.gz
+        archive: tar.gz
+        dir: cppcheck-2.10.1
+        binary: cppcheck
+        version: "2.10.1"
+      install:
+        brew: cppcheck
+        apt: cppcheck
+        pacman: cppcheck
+        manual: https://cppcheck.sourceforge.io/
+
+# The commands it answers.
+#
+# The same binary serves all of them; a component's commands are what the CLI
+# dispatches to, so this is also the surface `rho lint --help` lists.
+commands:
+  # The run itself. Named rather than bare because `rho lint lint` reads badly,
+  # and because the first form is what a CI workflow types.
+  - name: run
+    description: Run every engine over one compilation database and report what they found
+    run: rho-lint
+    hook: lint
+
+  - name: engines
+    description: What this machine can lint with, and which of it is installed
+    run: rho-lint
+    hook: engines
+
+  # Which of the programs a run needs are installed here. Kept apart from `run`
+  # because from inside a run every way it can fail looks the same — an analyzer
+  # that is not installed and one that refused the database both end as a run that
+  # found nothing — and this is where they are told apart.
+  - name: check
+    description: Which of the programs a run needs are installed, and where the compilation database is
+    run: rho-lint
+    hook: check
+
+  # Putting a compilation database in place on purpose, for a machine that should
+  # have one before a run needs it. A run derives one itself when nothing has it,
+  # so this is for the case where that should happen now rather than the moment
+  # somebody's editor asks.
+  - name: compile-commands
+    description: Put a compilation database in place, derived from the project's own manifest
+    run: rho-lint
+    hook: compile-commands
+
+# The component ships as a command. It is a program a person runs and a pipeline
+# runs, not a library a project links: nothing in a generated project calls into
+# it.
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    # The settings a person can change. They travel with the module so a rho-lint
+    # installed from a registry is configured by the same file as one run from a
+    # checkout, rather than by whatever the installation happened to have.
+    - config
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - config
+    - src
+
+# The component documents itself: what a run reads, what a run reports, and what a
+# plugin has to say to join one.
+docs:
+  title: Static analysis
+  section: components
+  order: "46"
+  index: docs/index.md
+  sources:
+    - docs/index.md

@@ -42,7 +42,7 @@ by hand.
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
+- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-lint`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
 - `src/ide/` - What an editor reads, rendered from what a project declares (`rho ide`)
 - `src/sysdep/` - What a module needs from the machine: `system_deps`, versions, the fetched-toolchain layout
 - `src/privilege/` - Saying something when a run has more authority than it needs
@@ -188,6 +188,28 @@ something is missing. `rho keeper` acts on that report — `sync`, `fix`, `insta
 and prefers a fetch into `~/.rho/toolchains/` over a package manager, asking for
 root only for a udev rule and only for that one file. Both commands read the
 doctor's JSON, so a terminal and the dashboard cannot disagree.
+
+## Static analysis
+
+`rho lint` runs every static analyzer a project has over one compilation database and
+writes what they find as SARIF. It reads `compile_commands.json` when a build wrote
+one — which the generated C project makes happen by setting
+`CMAKE_EXPORT_COMPILE_COMMANDS` — and derives one from `module.yml` and the board's
+target spec when nothing has, saying which of the two it used.
+
+The analyzers are plugins (`extends: rho-lint`, the `engine` contract) that name a
+*program* and how its output is read: `gcc`, `cppcheck`, `sarif` or this component's
+own shape. The two it carries itself are the rules over Rho sources, through the
+compiler's own parser, and over the C a build compiles — which is why one command
+covers a Rho application and a hand-written C program alike.
+
+```sh
+rho lint                              # the run
+rho lint engines                      # what this machine can lint with
+rho lint check                        # which of it is installed, and where the database is
+rho lint compile-commands             # put a compilation database in place
+rho lint . --tree-plugins             # also run the plugins this project's tree carries
+```
 
 `rho` warns when it is run as root and never refuses: a container is root.
 

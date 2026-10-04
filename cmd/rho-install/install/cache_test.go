@@ -12,9 +12,9 @@
 package install
 
 import (
-    "os"
-    "path/filepath"
-    "testing"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -22,30 +22,30 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestInitCache(t *testing.T) {
-    // Ensure ~/.rho exists
-    if err := EnsurePaths(); err != nil {
-        t.Fatalf("EnsurePaths failed: %v", err)
-    }
+	// Ensure ~/.rho exists
+	if err := EnsurePaths(); err != nil {
+		t.Fatalf("EnsurePaths failed: %v", err)
+	}
 
-    // Create cache
-    if err := InitCache(); err != nil {
-        t.Fatalf("InitCache failed: %v", err)
-    }
+	// Create cache
+	if err := InitCache(); err != nil {
+		t.Fatalf("InitCache failed: %v", err)
+	}
 
-    cachePath, _ := GetMetadataCachePath()
+	cachePath, _ := GetMetadataCachePath()
 
-    expected := []string{
-        "registry.json",
-        "modules.json",
-        "active_plugins.json",
-    }
+	expected := []string{
+		"registry.json",
+		"modules.json",
+		"active_plugins.json",
+	}
 
-    for _, f := range expected {
-        file := filepath.Join(cachePath, f)
-        if _, err := os.Stat(file); os.IsNotExist(err) {
-            t.Fatalf("cache file missing: %s", file)
-        }
-    }
+	for _, f := range expected {
+		file := filepath.Join(cachePath, f)
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			t.Fatalf("cache file missing: %s", file)
+		}
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -53,11 +53,11 @@ func TestInitCache(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestCacheExists(t *testing.T) {
-    // Ensure ~/.rho exists
-    EnsurePaths()
-    InitCache()
+	// Ensure ~/.rho exists
+	EnsurePaths()
+	InitCache()
 
-    if !CacheExists() {
-        t.Fatalf("CacheExists returned false but cache files exist")
-    }
+	if !CacheExists() {
+		t.Fatalf("CacheExists returned false but cache files exist")
+	}
 }

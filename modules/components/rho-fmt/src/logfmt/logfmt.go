@@ -1,4 +1,3 @@
-//
 // @file logfmt.go
 // @brief Shared formatting core for Rho log records.
 //
@@ -26,7 +25,6 @@
 //
 // A caller that cannot allocate formats into a buffer it owns, so the same code
 // serves a logger with a fixed static buffer and one using the heap.
-//
 package logfmt
 
 import (

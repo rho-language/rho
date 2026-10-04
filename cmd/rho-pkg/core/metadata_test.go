@@ -16,11 +16,11 @@
 package core
 
 import (
-    "archive/tar"
-    "compress/gzip"
-    "os"
-    "path/filepath"
-    "testing"
+	"archive/tar"
+	"compress/gzip"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -28,12 +28,12 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func createMetaArchive(path string) error {
-    f, _ := os.Create(path)
-    gz := gzip.NewWriter(f)
-    tw := tar.NewWriter(gz)
+	f, _ := os.Create(path)
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
 
-    // module.yml
-    content := `
+	// module.yml
+	content := `
 module:
   name: hello-rho
   type: rho
@@ -41,17 +41,17 @@ module:
 
 main: src/main.rho
 `
-    tw.WriteHeader(&tar.Header{
-        Name: "module.yml",
-        Mode: 0644,
-        Size: int64(len(content)),
-    })
-    tw.Write([]byte(content))
+	tw.WriteHeader(&tar.Header{
+		Name: "module.yml",
+		Mode: 0644,
+		Size: int64(len(content)),
+	})
+	tw.Write([]byte(content))
 
-    tw.Close()
-    gz.Close()
-    f.Close()
-    return nil
+	tw.Close()
+	gz.Close()
+	f.Close()
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -59,19 +59,19 @@ main: src/main.rho
 /* -------------------------------------------------------------------------- */
 
 func TestReadPackageMetadata(t *testing.T) {
-    tmp := t.TempDir()
-    archive := filepath.Join(tmp, "test.rho-pkg")
+	tmp := t.TempDir()
+	archive := filepath.Join(tmp, "test.rho-pkg")
 
-    createMetaArchive(archive)
+	createMetaArchive(archive)
 
-    meta, err := ReadPackageMetadata(archive)
-    if err != nil {
-        t.Fatalf("ReadPackageMetadata failed: %v", err)
-    }
+	meta, err := ReadPackageMetadata(archive)
+	if err != nil {
+		t.Fatalf("ReadPackageMetadata failed: %v", err)
+	}
 
-    if meta.Module.Name != "hello-rho" {
-        t.Fatalf("wrong module name")
-    }
+	if meta.Module.Name != "hello-rho" {
+		t.Fatalf("wrong module name")
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -79,18 +79,18 @@ func TestReadPackageMetadata(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestReadPackageMetadataMissing(t *testing.T) {
-    tmp := t.TempDir()
-    archive := filepath.Join(tmp, "test.rho-pkg")
+	tmp := t.TempDir()
+	archive := filepath.Join(tmp, "test.rho-pkg")
 
-    // Create empty archive
-    f, _ := os.Create(archive)
-    gz := gzip.NewWriter(f)
-    tw := tar.NewWriter(gz)
-    tw.Close()
-    gz.Close()
-    f.Close()
+	// Create empty archive
+	f, _ := os.Create(archive)
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	tw.Close()
+	gz.Close()
+	f.Close()
 
-    if _, err := ReadPackageMetadata(archive); err == nil {
-        t.Fatalf("expected error for missing module.yml")
-    }
+	if _, err := ReadPackageMetadata(archive); err == nil {
+		t.Fatalf("expected error for missing module.yml")
+	}
 }

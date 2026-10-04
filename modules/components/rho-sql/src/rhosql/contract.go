@@ -83,7 +83,7 @@ type ContractField struct {
 	// read by.
 	Column string `json:"column"`
 	// GoType is how the value is read.
-	GoType   string `json:"goType"`
+	GoType    string `json:"goType"`
 	IsInteger bool   `json:"integer,omitempty"`
 	IsFloat   bool   `json:"float,omitempty"`
 	IsText    bool   `json:"text,omitempty"`
@@ -111,8 +111,8 @@ func (r Result) GoContract() (string, error) {
 				// parameter under its own spelling, and the compiler is what
 				// lowers that to Go. Spelling it a second time here would give
 				// the port a parameter name no call site uses.
-				Name:     rhoFieldName(parameter.Name),
-				GoType:   parameter.Type.GoType(),
+				Name:      rhoFieldName(parameter.Name),
+				GoType:    parameter.Type.GoType(),
 				IsInteger: parameter.Type == TypeInteger,
 				IsFloat:   parameter.Type == TypeFloat,
 				IsText:    isTextType(parameter.Type),

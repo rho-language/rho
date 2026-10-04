@@ -12,9 +12,9 @@
 package install
 
 import (
-    "os"
-    "path/filepath"
-    "testing"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -22,22 +22,22 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func TestInitLocalRegistry(t *testing.T) {
-    // Ensure ~/.rho exists
-    if err := EnsurePaths(); err != nil {
-        t.Fatalf("EnsurePaths failed: %v", err)
-    }
+	// Ensure ~/.rho exists
+	if err := EnsurePaths(); err != nil {
+		t.Fatalf("EnsurePaths failed: %v", err)
+	}
 
-    // Create registry
-    if err := InitLocalRegistry(); err != nil {
-        t.Fatalf("InitLocalRegistry failed: %v", err)
-    }
+	// Create registry
+	if err := InitLocalRegistry(); err != nil {
+		t.Fatalf("InitLocalRegistry failed: %v", err)
+	}
 
-    regPath, _ := GetRegistryPath()
-    file := filepath.Join(regPath, "registry.yaml")
+	regPath, _ := GetRegistryPath()
+	file := filepath.Join(regPath, "registry.yaml")
 
-    if _, err := os.Stat(file); os.IsNotExist(err) {
-        t.Fatalf("registry.yaml missing: %s", file)
-    }
+	if _, err := os.Stat(file); os.IsNotExist(err) {
+		t.Fatalf("registry.yaml missing: %s", file)
+	}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -45,15 +45,15 @@ func TestInitLocalRegistry(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestRegistryExists(t *testing.T) {
-    // Ensure ~/.rho exists
-    if err := EnsurePaths(); err != nil {
-        t.Fatalf("EnsurePaths failed: %v", err)
-    }
+	// Ensure ~/.rho exists
+	if err := EnsurePaths(); err != nil {
+		t.Fatalf("EnsurePaths failed: %v", err)
+	}
 
-    // Create registry
-    InitLocalRegistry()
+	// Create registry
+	InitLocalRegistry()
 
-    if !RegistryExists() {
-        t.Fatalf("RegistryExists returned false but registry.yaml exists")
-    }
+	if !RegistryExists() {
+		t.Fatalf("RegistryExists returned false but registry.yaml exists")
+	}
 }

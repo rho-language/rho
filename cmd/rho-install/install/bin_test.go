@@ -12,9 +12,9 @@
 package install
 
 import (
-    "os"
-    "path/filepath"
-    "testing"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 /* -------------------------------------------------------------------------- */
