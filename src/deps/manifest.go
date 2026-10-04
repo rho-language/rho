@@ -407,6 +407,9 @@ type Manifest struct {
 	// program's output is reached is a fact about the program, and it does not
 	// change when its dependencies resolve to different builds.
 	Monitor *MonitorConfig
+	// Bench is what this project says its performance budgets are, or nil when it
+	// says nothing.
+	Bench *BenchConfig
 	// BuildPresets are the boards this program is written for, when it is not
 	// written for one.
 	//
@@ -796,6 +799,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	m.Config = parseConfigManifest(doc.Map["config"])
 	m.Mem = parseMemConfig(doc.Map["mem"])
 	m.Monitor = parseMonitorConfig(doc.Map["monitor"])
+	m.Bench = parseBenchConfig(doc.Map["bench"])
 	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
@@ -1281,6 +1285,84 @@ func parsePercent(raw string) (float64, bool) {
 		return value * 100, true
 	}
 	return value, true
+}
+
+// BenchConfig is what a project says about measuring itself.
+//
+// Iterations and warm-up are here because how many times something is run changes
+// what the number means, and a benchmark that ran each function once is not
+// comparable with one that ran it ten thousand times. The budgets are here because
+// a measurement nobody compares against anything is a number in a log.
+type BenchConfig struct {
+	// DefaultIterations is how many times each benchmark function runs when the
+	// command line names none.
+	DefaultIterations int
+	// WarmupRuns are discarded before measuring.
+	//
+	// Discarded because the first call is not the steady state: a cold
+	// instruction cache, a branch predictor with nothing in it, and on a host a
+	// page fault for code nobody has run yet. A benchmark that measured those
+	// would report the cost of starting up as the cost of the work.
+	WarmupRuns int
+	// StackWatermark asks for the stack's high-water mark to be measured.
+	StackWatermark bool
+	// Budgets are the limits a check enforces.
+	Budgets BenchBudgets
+	// Targets are the boards or hosts this project is measured on, in preference
+	// order. `host` means this machine.
+	Targets []string
+}
+
+// BenchBudgets are the limits a benchmark check enforces.
+type BenchBudgets struct {
+	// MaxStackBytes is the most stack a benchmark may use.
+	MaxStackBytes uint64
+	// MaxHeapBytes is the most heap a benchmark may use.
+	MaxHeapBytes uint64
+	// MaxCyclesPerIteration is the most cycles one iteration may take, which is
+	// the limit that catches a change nobody would notice in a wall-clock number.
+	MaxCyclesPerIteration uint64
+	// FailOnRegressionPercent is how much slower a benchmark may get before the
+	// check fails, as a percentage.
+	FailOnRegressionPercent float64
+	// FailOnRegressionDeclared says whether one was written, so that an absent
+	// limit is not read as a limit of zero — which would fail everything.
+	FailOnRegressionDeclared bool
+}
+
+// parseBenchConfig reads what a project says about measuring itself.
+func parseBenchConfig(node yaml.Value) *BenchConfig {
+	if node.Kind != yaml.KindMap || len(node.Map) == 0 {
+		return nil
+	}
+	out := &BenchConfig{
+		DefaultIterations: 1000,
+		WarmupRuns:        10,
+		StackWatermark:    true,
+	}
+	if iterations, err := strconv.Atoi(strings.TrimSpace(yamlString(node, "default_iterations"))); err == nil && iterations > 0 {
+		out.DefaultIterations = iterations
+	}
+	if warmup, err := strconv.Atoi(strings.TrimSpace(yamlString(node, "warmup_runs"))); err == nil && warmup >= 0 {
+		out.WarmupRuns = warmup
+	}
+	if watermark, declared := yamlBool(node, "stack_watermark"); declared {
+		out.StackWatermark = watermark
+	}
+	out.Targets = yamlStrings(node.Map["targets"])
+
+	if budgets := node.Map["budgets"]; budgets.Kind == yaml.KindMap {
+		out.Budgets.MaxStackBytes = parseByteCount(yamlString(budgets, "max_stack_bytes"))
+		out.Budgets.MaxHeapBytes = parseByteCount(yamlString(budgets, "max_heap_bytes"))
+		if cycles, err := strconv.ParseUint(strings.TrimSpace(yamlString(budgets, "max_cycles_per_iteration")), 0, 64); err == nil {
+			out.Budgets.MaxCyclesPerIteration = cycles
+		}
+		if percent, ok := parsePercent(yamlString(budgets, "fail_on_regression_percent")); ok {
+			out.Budgets.FailOnRegressionPercent = percent
+			out.Budgets.FailOnRegressionDeclared = true
+		}
+	}
+	return out
 }
 
 // MonitorConfig is what a project says its output should be read through.

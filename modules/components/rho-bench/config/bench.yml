@@ -1,0 +1,4 @@
+# A suite of a hundred microbenchmarks runs in well under a second, and the report
+# is wider than a table that names every one of them.
+iterations: 20000
+warmup_runs: 100
