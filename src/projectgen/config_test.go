@@ -103,8 +103,14 @@ func TestAProjectWithNoConfigurationGetsAPlainBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitCProject: %v", err)
 	}
-	if len(artifacts.Extra) != 0 {
-		t.Errorf("expected no configuration files, got %+v", artifacts.Extra)
+	// The stack record is a fact about the program rather than configuration, and
+	// it is written whatever the project configured — so this is about the files a
+	// configuration would bring, not about every generated file.
+	for name := range artifacts.Extra {
+		if name == StackRecordFile {
+			continue
+		}
+		t.Errorf("expected no configuration files, got %q", name)
 	}
 	for _, unwanted := range []string{"rho-config", "RHO_CONFIG", "autoconf.h"} {
 		if strings.Contains(artifacts.Build, unwanted) {

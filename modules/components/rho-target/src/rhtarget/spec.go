@@ -111,6 +111,16 @@ type Spec struct {
 	// LinkerScript names the script a project supplies, when the target needs one
 	// that is not generated from the memory map.
 	LinkerScript string `json:"linker_script,omitempty"`
+	// Linker is how this target's program is laid out in memory: where its regions
+	// are, how much stack and heap it gets, and anything the generated script does
+	// not place on its own.
+	//
+	// Declarative rather than a script, because the common reasons to want a
+	// different linker script are not "a different linker script" — they are a
+	// bigger stack, a region in tightly coupled memory, a section of one's own.
+	// Each of those is a value here, and a program that needs something this cannot
+	// express writes a `.ld` and names it in `Script` instead.
+	Linker Linker `json:"linker,omitempty"`
 	// VendorLibrary is the library that implements this board's interfaces, which
 	// is what a build links.
 	VendorLibrary string `json:"vendor_library,omitempty"`
@@ -137,6 +147,81 @@ type Toolchain struct {
 	Size     string `json:"size,omitempty"`
 	// Flags are the architecture's own: the ones that say what the core is.
 	Flags []string `json:"flags,omitempty"`
+}
+
+// Linker is how a target's program is laid out in memory.
+//
+// Every field is optional and every one of them converges onto the same generated
+// script a target with no `linker` block gets. That is the point: a project that
+// wants a larger stack says so and gets the script it would otherwise have had,
+// with that number changed — rather than a mechanism that replaces the script and
+// so silently loses every improvement made to it since.
+type Linker struct {
+	// Script names a `.ld` file to use instead of the generated one, for the
+	// layouts this cannot express.
+	//
+	// Absolute, or relative to the file that declared it. When it is set nothing
+	// else here is used: a script that replaces the generated one also replaces
+	// what it would have been generated with, and merging the two would produce a
+	// script that is neither.
+	Script string `json:"script,omitempty"`
+	// StackBytes is how much stack the program gets. Zero means "as it would
+	// otherwise have been" — which, for a Rho program, is the bound the compiler
+	// computed from the call graph rather than a number somebody guessed.
+	StackBytes uint64 `json:"stack_bytes,omitempty"`
+	// HeapBytes is how much heap the program gets, and zero means as before.
+	HeapBytes uint64 `json:"heap_bytes,omitempty"`
+	// Entry is the symbol the program starts at. Empty is `Reset_Handler`, or the
+	// entry the startup assembly declares.
+	Entry string `json:"entry,omitempty"`
+	// Regions are further places a program may be put, keyed by name. They are
+	// declared, not placed: the generated script emits a `MEMORY` entry for each,
+	// so a program may address them, and anything that wants to live in one names
+	// it in `Sections`.
+	Regions map[string]Region `json:"regions,omitempty"`
+	// Sections are placements the generated script does not make on its own.
+	Sections []LinkerSection `json:"sections,omitempty"`
+	// Symbols are extra values the script defines, for a program or a library
+	// that reads them. `name: value`, both written as they are in the script.
+	Symbols map[string]string `json:"symbols,omitempty"`
+	// ForeignFrames is what a call into this target's own C costs, by name.
+	//
+	// This is what makes a computed stack a bound rather than an estimate. The
+	// compiler can see every frame it emitted and every call between them; it
+	// cannot see inside a library written in C, because nothing holds that call
+	// graph. So a target declares what its own functions cost, the analysis adds
+	// those to what it read, and the number stops being a guess.
+	//
+	// Declared here rather than left as a single "external calls cost N" because
+	// the functions are not alike: a platform's clock bring-up is deep and its
+	// getter is not, and one number for both is the same guess wearing a
+	// declaration's clothes.
+	ForeignFrames map[string]uint64 `json:"foreign_frames,omitempty"`
+}
+
+// LinkerSection is one section placed in one region.
+type LinkerSection struct {
+	// Name is the output section, as the script spells it.
+	Name string `json:"name"`
+	// Region is where it goes, by the name a `MEMORY` entry has.
+	Region string `json:"region"`
+	// Sources are the input patterns it collects, as the script spells them:
+	// `*(.mydata)`. Written out rather than derived because which sections exist
+	// is a fact about the program, not about the linker.
+	Sources []string `json:"sources,omitempty"`
+	// Flags are what the script says about it: `KEEP`, `ALIGN(4)`. Left as words
+	// because they are the script's own, and a tool that validated them would
+	// reject the next one the linker grows.
+	Flags []string `json:"flags,omitempty"`
+	// Align is the alignment the section starts at, as a number. Zero is the
+	// linker's own choice.
+	Align uint64 `json:"align,omitempty"`
+	// At is a load region for a section whose contents are stored somewhere other
+	// than where they run, as `.data` is. Empty is "wherever it runs".
+	At string `json:"at,omitempty"`
+	// Noload marks a section that reserves address space without storing anything
+	// there, which is what a stack or a heap is.
+	Noload bool `json:"noload,omitempty"`
 }
 
 // Memory is the address space of a chip.

@@ -388,3 +388,43 @@ func TestDiagnosticNamesAnUnlocatedProblem(t *testing.T) {
 		t.Fatalf("expected the located form, got %q", got)
 	}
 }
+
+// A colon and a code span next to each other is prose, not the classic role
+// spelling.
+//
+// `: `Some“ has the same shape as `:ref:`Some“ — a colon, a name, a backtick,
+// a target, a backtick — and the only thing that tells them apart is what the name
+// is. A sentence that puts a code span, a colon and another code span together is
+// ordinary English about code, and reading it as a role turned `Option[T]`:
+// `Some` into a cross-reference to a target called "Some" that no page declares:
+// a false alarm in a normal build and a hard failure under `-strict`.
+func TestAColonBeforeACodeSpanIsProseAndNotARole(t *testing.T) {
+	document := Parse("docs/index.md",
+		"# Types\n\n| M | F |\n|---|---|\n| `core.option` | `Option[T]`: `Some`, `None` |\n"+
+			"There is no `else if`: an `else` whose block is one `if`.\n")
+
+	page := RenderPage(document)
+	if strings.Contains(page.Body, "class=\"xref\"") {
+		t.Fatalf("prose was read as a cross-reference:\n%s", page.Body)
+	}
+	for _, wanted := range []string{"Some", "None", "else"} {
+		if !strings.Contains(page.Body, wanted) {
+			t.Errorf("expected %q to survive as text, got:\n%s", wanted, page.Body)
+		}
+	}
+}
+
+// The two spellings of a role are still roles, including one whose name carries a
+// digit or a dash, which is how a namespaced role is written.
+func TestARoleNameMayCarryDigitsAndDashes(t *testing.T) {
+	for _, name := range []string{"ref", "doc", "py-class", "myst_role", "x2"} {
+		if !isRoleName(name) {
+			t.Errorf("%q should name a role", name)
+		}
+	}
+	for _, name := range []string{"", " ", " ref", "re f", "re:f", "-ref", "2ref"} {
+		if isRoleName(name) {
+			t.Errorf("%q should not name a role", name)
+		}
+	}
+}

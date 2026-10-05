@@ -112,7 +112,7 @@ func render(path, target string, breadcrumb []string) (*Docs, error) {
 		// on a generated site is not right here: there, a cross-reference is
 		// resolved against the site the pages were written into; here, a page is
 		// addressed by this dashboard's own route.
-		Body:       rewriteReferences(page.Body),
+		Body:       rewriteReferences(page.Body, Routes()),
 		Breadcrumb: breadcrumb,
 	}
 	for _, section := range page.Sections {
@@ -150,36 +150,114 @@ func ProjectDocs() []DocFile {
 		out = append(out, DocFile{
 			Path:    strings.TrimSuffix(filepath.ToSlash(relative), ".md"),
 			Title:   docTitle(path, relative),
-			Section: filepath.ToSlash(filepath.Dir(relative)),
-		})
+			Section: filepath.ToSlash(filepath.Dir(relative))})
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 
+// DocRoutes maps the generator's page targets to this dashboard's routes.
+//
+// The two are not the same, and assuming they are is what makes every link in the
+// documentation wrong here:
+//
+//   - A page the *generator* writes has a **target**. For the project's own
+//     documentation the target carries the section a page lives in, so
+//     `docs/getting-started.md` is the target `documentation/getting-started`, and
+//     a module's front page is `<module>/index`.
+//   - A page *this dashboard* serves has a **route**, which is the path a reader
+//     sends: `getting-started` for the project's own page, and the module's own
+//     name — `rho-flash` — for a module, because that is the only page of a
+//     module's documentation this dashboard reads.
+//
+// So `{ref}`getting-started <documentation/getting-started>“ resolves to
+// `#/docs/documentation/getting-started` if the target is used as the route, and
+// the page behind it does not exist: the file is `docs/getting-started.md`.
+// Every such link lands on a 404 while looking entirely plausible.
+//
+// Built from what is actually here rather than from a rule, because the two
+// schemes differ in more than one place and a rule would be a guess about the next
+// difference. A target this dashboard has no page for is simply absent from the
+// map, and is then left alone rather than turned into a link to nothing.
+type DocRoutes map[string]string
+
+// Routes is every target this dashboard can reach, and where it lives.
+//
+// Read once per render. It walks the documentation tree and the installed
+// modules, which is a directory listing rather than work: a dashboard renders one
+// page at a time and this is cheap enough that caching it would be a thing to
+// invalidate.
+func Routes() DocRoutes {
+	routes := DocRoutes{}
+
+	// The project's own pages: the route is the path, and the target is that path
+	// under the section the file is in — with the pages written directly in the
+	// documentation root belonging to the section the generator calls them.
+	for _, file := range ProjectDocs() {
+		target := file.Path
+		if !strings.Contains(file.Path, "/") {
+			target = repositorySection + "/" + file.Path
+		}
+		routes[target] = file.Path
+	}
+
+	// A module's documentation is served at its own name, whichever of the two it
+	// keeps. Both spellings of the target are registered, because a cross-reference
+	// may name either and both mean the same page.
+	for _, module := range Read().Modules {
+		if !HasDocs(module.Name) {
+			continue
+		}
+		routes[module.Name] = module.Name
+		routes[module.Name+"/index"] = module.Name
+	}
+	return routes
+}
+
+// repositorySection is the section the generator files the pages written directly
+// in a repository's documentation root under.
+//
+// It is the generator's own name for them, read from its source rather than
+// repeated here, so that the two cannot drift: a reference is written with this
+// name because that is the name the generator gives the page.
+const repositorySection = rhodoc.RepositorySection
+
 // rewriteReferences turns the generator's cross-references into this page's
 // routes.
 //
-// A cross-reference is written as `#handbook/ports` — the name of another page —
-// because on a generated site a page is addressed by its target. Here a page is
-// addressed by a route, and a link left as it is would be read by the browser as
-// an anchor inside the page being read: the page would appear not to link
-// anywhere at all, which is worse than a link that is plainly wrong.
+// A cross-reference is written as `#handbook/ports` — the *target* of another
+// page, which is what the generator resolves a reference against — and this
+// dashboard addresses pages by route. So the target is looked up in the map of
+// what is here and replaced by the route for it.
 //
-// A link whose fragment *is* an identifier on this page is an anchor and is left
-// alone, because that is what it is.
-func rewriteReferences(body string) string {
+// Two things are left alone, both deliberately:
+//
+//   - A link whose fragment is an identifier on this page is an anchor. That is
+//     what it is, and rewriting it would send a reader to another page.
+//   - A target with no page here is left as the fragment it already is. A link to
+//     a page this dashboard does not serve is a link that goes nowhere either way;
+//     turning it into a route that does not exist makes it a dead one instead of
+//     an inert one, and an inert link is visibly inert in the source.
+//
+// A cross-reference left as `#target` renders as an anchor on this page, so it does
+// not look like navigation — which is why the map is built from what is installed
+// rather than left to chance.
+func rewriteReferences(body string, routes DocRoutes) string {
 	onPage := map[string]bool{}
 	for _, match := range anchorID.FindAllStringSubmatch(body, -1) {
 		onPage[match[1]] = true
 	}
 	return crossReference.ReplaceAllStringFunc(body, func(fragment string) string {
-		target := strings.TrimSuffix(strings.TrimPrefix(fragment, "#"), "")
+		target := strings.TrimSuffix(strings.TrimPrefix(fragment, "#"), ".md")
 		if onPage[target] {
 			return fragment
 		}
-		return "#/docs/" + strings.TrimSuffix(target, ".md")
+		route, reachable := routes[target]
+		if !reachable {
+			return fragment
+		}
+		return "#/docs/" + route
 	})
 }
 

@@ -191,6 +191,14 @@ func reference(payload SitePayload) (*Page, *Diagnostic) {
 	}
 	result, err := rhorouter.Read(rhorouter.ReadOptions{Root: payload.Root})
 	if err != nil {
+		// A directory that is not a module has no HTTP API, which is the ordinary
+		// state of a repository root and of every build directory in a tree — not a
+		// broken one. Reporting it would put a warning on every module in a build
+		// and fail a strict build over a directory that was never meant to be a
+		// module.
+		if rhorouter.IsNotAModule(err) {
+			return nil, nil
+		}
 		return nil, &Diagnostic{
 			Level:   "warning",
 			Message: "the HTTP API could not be read: " + err.Error(),
