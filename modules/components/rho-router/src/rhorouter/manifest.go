@@ -22,6 +22,7 @@
 package rhorouter
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,11 +46,28 @@ type manifestInfo struct {
 }
 
 // readManifest reads a project's manifest.
+// ErrNotAModule says a directory is not a Rho module, so it declares no HTTP API.
+//
+// A sentinel rather than an ordinary read error, because the two mean opposite
+// things to a caller: "this directory has no manifest, so there is no API to
+// describe" is the ordinary state of a repository root or a build directory, while
+// "this module's manifest could not be read" is a real problem. A caller that
+// treats both as an error reports a missing manifest as a broken API — which is a
+// warning on every module in a tree and a hard failure under a strict build.
+var ErrNotAModule = errors.New("not a rho module")
+
+// IsNotAModule reports whether an error is the sentinel, so a caller can tell
+// "there is nothing here" from "something here is wrong".
+func IsNotAModule(err error) bool { return errors.Is(err, ErrNotAModule) }
+
 func readManifest(root string) (manifestInfo, error) {
 	info := manifestInfo{}
 	path := filepath.Join(root, "module.yml")
 	content, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return info, fmt.Errorf("%s: %w", path, ErrNotAModule)
+		}
 		return info, fmt.Errorf("read %s: %w", path, err)
 	}
 	document, err := yaml.Load(string(content))
@@ -58,7 +76,7 @@ func readManifest(root string) (manifestInfo, error) {
 	}
 	section, ok := document.Map["module"]
 	if !ok || section.Kind != yaml.KindMap {
-		return info, fmt.Errorf("%s has no module: section", path)
+		return info, fmt.Errorf("%s: %w", path, ErrNotAModule)
 	}
 	info.Module = section.Map["name"].Str
 	info.Description = section.Map["description"].Str

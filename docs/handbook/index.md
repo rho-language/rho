@@ -4,6 +4,8 @@ How the Rho toolchain is put together, and how a project uses it.
 
 ## Pages
 
+- {ref}`getting-started <documentation/getting-started>` — install, write a
+  program, build it and run it.
 - {ref}`handbook/installing` — what is needed, and how the toolchain is installed.
 - {ref}`handbook/modules` — the three kinds of module, and what each is for.
 - {ref}`handbook/registries` — the local and remote registries, and who may

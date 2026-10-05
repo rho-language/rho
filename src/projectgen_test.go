@@ -410,12 +410,12 @@ func TestGeneratedGoProjectMatchesC(t *testing.T) {
 
 	// Build the C target to learn the expected output.
 	cDir := dirs[0]
+	// The generator's own app.c and runtime.c, not a fresh compile of the entry:
+	// the single-file output carries the runtime inside it, and linking that
+	// beside the project's runtime.c would define every helper twice.
 	cOut := filepath.Join(cDir, "app.c")
-	if err := CompileProjectTo(entry, cOut); err != nil {
-		t.Fatalf("CompileProjectTo failed: %v", err)
-	}
 	cBinary := filepath.Join(t.TempDir(), "appc")
-	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	gcc := exec.Command("gcc", "-o", cBinary, filepath.Join(cDir, "main.c"), cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
 	if out, err := gcc.CombinedOutput(); err != nil {
 		t.Skipf("cannot build the C target here: %v\n%s", err, out)
 	}
@@ -468,12 +468,12 @@ func TestStringEscapesMatchAcrossBackends(t *testing.T) {
 
 	// C target.
 	cDir := dirs[0]
+	// The generator's own app.c and runtime.c, not a fresh compile of the entry:
+	// the single-file output carries the runtime inside it, and linking that
+	// beside the project's runtime.c would define every helper twice.
 	cOut := filepath.Join(cDir, "app.c")
-	if err := CompileProjectTo(entry, cOut); err != nil {
-		t.Fatalf("CompileProjectTo failed: %v", err)
-	}
 	cBinary := filepath.Join(t.TempDir(), "appc")
-	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	gcc := exec.Command("gcc", "-o", cBinary, filepath.Join(cDir, "main.c"), cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
 	if out, err := gcc.CombinedOutput(); err != nil {
 		t.Fatalf("C target did not build: %v\n%s", err, out)
 	}
@@ -551,12 +551,12 @@ func TestGenericProgramMatchesAcrossBackends(t *testing.T) {
 	}
 
 	cDir := dirs[0]
+	// The generator's own app.c and runtime.c, not a fresh compile of the entry:
+	// the single-file output carries the runtime inside it, and linking that
+	// beside the project's runtime.c would define every helper twice.
 	cOut := filepath.Join(cDir, "app.c")
-	if err := CompileProjectTo(entry, cOut); err != nil {
-		t.Fatalf("CompileProjectTo failed: %v", err)
-	}
 	cBinary := filepath.Join(t.TempDir(), "appc")
-	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	gcc := exec.Command("gcc", "-o", cBinary, filepath.Join(cDir, "main.c"), cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
 	if out, err := gcc.CombinedOutput(); err != nil {
 		t.Fatalf("C target did not build: %v\n%s", err, out)
 	}
@@ -664,12 +664,12 @@ func TestInferredGenericsMatchAcrossBackends(t *testing.T) {
 	}
 
 	cDir := dirs[0]
+	// The generator's own app.c and runtime.c, not a fresh compile of the entry:
+	// the single-file output carries the runtime inside it, and linking that
+	// beside the project's runtime.c would define every helper twice.
 	cOut := filepath.Join(cDir, "app.c")
-	if err := CompileProjectTo(entry, cOut); err != nil {
-		t.Fatalf("CompileProjectTo failed: %v", err)
-	}
 	cBinary := filepath.Join(t.TempDir(), "appc")
-	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	gcc := exec.Command("gcc", "-o", cBinary, filepath.Join(cDir, "main.c"), cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
 	if out, err := gcc.CombinedOutput(); err != nil {
 		t.Fatalf("C target did not build: %v\n%s", err, out)
 	}
@@ -795,12 +795,12 @@ func TestUnannotatedProgramMatchesAcrossBackends(t *testing.T) {
 	}
 
 	cDir := dirs[0]
+	// The generator's own app.c and runtime.c, not a fresh compile of the entry:
+	// the single-file output carries the runtime inside it, and linking that
+	// beside the project's runtime.c would define every helper twice.
 	cOut := filepath.Join(cDir, "app.c")
-	if err := CompileProjectTo(entry, cOut); err != nil {
-		t.Fatalf("CompileProjectTo failed: %v", err)
-	}
 	cBinary := filepath.Join(t.TempDir(), "appc")
-	gcc := exec.Command("gcc", "-o", cBinary, cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
+	gcc := exec.Command("gcc", "-o", cBinary, filepath.Join(cDir, "main.c"), cOut, filepath.Join(cDir, "runtime.c"), "-I", cDir)
 	if out, err := gcc.CombinedOutput(); err != nil {
 		t.Fatalf("C target did not build: %v\n%s", err, out)
 	}

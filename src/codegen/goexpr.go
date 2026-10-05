@@ -121,13 +121,20 @@ var goCasts = map[string]string{
 	"PtrUnit": "PtrUnit",
 }
 
-// cLibraryCalls maps C stdio helpers to their Go equivalents.
+// cLibraryCalls maps the helpers the C backend emits to their Go equivalents.
+//
+// `rho_print` is in this list because the C backend emits it for `print` — it is
+// the runtime's own sink, written so that a firmware does not pay for the C
+// library's formatted output. The Go backend has no such constraint and has always
+// had a print, so it maps to `fmt.Print`, which adds no newline and is therefore
+// the same function rather than an approximation of it.
 var cLibraryCalls = map[string]string{
-	"printf":  "fmt.Printf",
-	"sprintf": "fmt.Sprintf",
-	"fprintf": "fmt.Fprintf",
-	"puts":    "fmt.Println",
-	"putchar": "fmt.Print",
+	"rho_print": "fmt.Print",
+	"printf":    "fmt.Printf",
+	"sprintf":   "fmt.Sprintf",
+	"fprintf":   "fmt.Fprintf",
+	"puts":      "fmt.Println",
+	"putchar":   "fmt.Print",
 }
 
 // goKeywords are reserved words that must never be rewritten. They cannot

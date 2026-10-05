@@ -50,7 +50,12 @@ func shimInclude(ctx Context) string {
 func EmitCProject(ctx Context) (Artifacts, error) {
 	artifacts := Artifacts{}
 
-	appC := codegen.EmitC(ctx.IR)
+	// The program and the runtime it calls, as the two translation units a
+	// generated project is made of. Taking them apart here rather than cutting one
+	// emitted file in half is what keeps a runtime change from silently moving the
+	// boundary.
+	compiled := codegen.Emit(ctx.IR)
+	appC := compiled.Program
 	appC = strings.ReplaceAll(appC, "int main(", "int app_main(")
 	appC = cBanner(ctx.ModuleName, "app.c", "Generated Rho application implementation.") +
 		"#define _POSIX_C_SOURCE 200809L\n#include \"app.h\"\n" + shimInclude(ctx) + "\n" + appC
@@ -83,35 +88,52 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 	}
 	appC += "\nvoid app_init(void)\n{\n" + initCall + "}\n\n"
 
-	// Split the generated runtime helpers into their own translation unit so
-	// app.c stays focused on the application.
-	runtimeStart := strings.Index(appC, "static char* rho_concat(const char* a, const char* b) {")
-	initStart := strings.Index(appC, "\nvoid app_init(void)")
-	if runtimeStart < 0 || initStart < runtimeStart {
-		return artifacts, fmt.Errorf("generated runtime section is missing")
-	}
-	runtimeBody := appC[runtimeStart:initStart]
-	appC = appC[:runtimeStart] + appC[initStart:]
-	appC = strings.ReplaceAll(appC, "static char* rho_", "char* rho_")
+	// The runtime comes from the code generator as its own translation unit.
+	//
+	// It used to be cut out of the application source by searching for the text
+	// `static char* rho_concat(`, which is a way of finding a boundary that the
+	// code being cut is free to change. A rename, a reformat, or a runtime that
+	// simply stopped having that function first would have produced an app.c with
+	// no runtime and a runtime.c with none either — and the failure would have
+	// been a linker error naming a missing symbol rather than anything that pointed
+	// at the split.
+	//
+	// The generator knows where the boundary is because it is the one that put the
+	// runtime there, so it says so rather than being asked to find it again.
+	// The runtime the generator already produced, not a second pass over the same
+	// IR. `RuntimeFor` compiles the module again to answer the same question, which
+	// is both a duplicated cost on every build and a way for this project's two
+	// translation units to describe different programs if the two passes ever
+	// diverged.
+	runtimeBody := compiled.Runtime
 	runtimeBody = strings.ReplaceAll(runtimeBody, "static char* rho_", "char* rho_")
+	runtimeBody = strings.ReplaceAll(runtimeBody, "static const char* rho_", "char* rho_")
 
-	// `_init` and `_fini` belong to the runtime file, not to the application.
+	// The stack, computed rather than guessed.
 	//
-	// A bare-metal build passes `-nostartfiles`, which excludes the two files that
-	// define them, and the startup assembly reaches them through the C library's
-	// initializer. Weak, because the same generated project is also what a hosted
-	// target builds and there the library defines them properly; a strong
-	// definition would collide, a weak one yields.
+	// The generator emitted every function in this program and in the runtime it
+	// calls, so it knows every call between them and can add up the deepest path.
+	// A C program cannot know this about itself: it is many translation units
+	// compiled separately, and nothing holds the whole call graph until after the
+	// linker has already fixed the layout — which is why every embedded C project
+	// reserves a stack by guessing.
 	//
-	// Placed here rather than in the code generation that produces them, because
-	// this is where the file is assembled: the section cut out of the application
-	// source and written here as the runtime is not where they were emitted.
-	runtimeBody = "// Weak: a bare-metal build excludes the C library's own definitions of these\n" +
-		"// with -nostartfiles, and the startup reaches them through the library's\n" +
-		"// initializer. A hosted library defines them itself, so these yield to it.\n" +
-		"__attribute__((weak)) void _init(void);\n__attribute__((weak)) void _init(void) {}\n" +
-		"__attribute__((weak)) void _fini(void);\n__attribute__((weak)) void _fini(void) {}\n\n" +
-		runtimeBody
+	// Recorded in the project rather than in the linker script, because the linker
+	// script belongs to rho-target and this is a fact about the program in front of
+	// it. `rho target` reads it and puts it in the script; a project that declares
+	// its own stack size overrides it.
+	stack := codegen.ComputeStack(appC+"\n"+compiled.Runtime, "app_main", codegen.StackBinding{})
+	if stack.Bytes > 0 {
+		// A program with no `app_main` is a C program this toolchain is building
+		// rather than compiling: there is no Rho entry point, so there is nothing
+		// for the analysis to start at and a record saying `bytes: 0` is a record
+		// that reads as a program needing no stack. Written only when the analysis
+		// found somewhere to start.
+		if artifacts.Extra == nil {
+			artifacts.Extra = map[string]string{}
+		}
+		artifacts.Extra[StackRecordFile] = stackRecord(stack)
+	}
 
 	artifacts.Implementation = appC
 	artifacts.Runtime = cBanner(ctx.ModuleName, "runtime.c", "Generated Rho C runtime support.") +
@@ -134,7 +156,9 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		"\nint app_main(void);\nvoid app_init(void);\n\n#ifdef __cplusplus\n}\n#endif\n"
 	artifacts.Entrypoint = cBanner(ctx.ModuleName, "main.c", "Generated native system entry point for a Rho application.") +
 		"#include \"app.h\"\n\nint main(void)\n{\n    app_init();\n    return app_main();\n}\n"
-	artifacts.Extra = map[string]string{}
+	if artifacts.Extra == nil {
+		artifacts.Extra = map[string]string{}
+	}
 	artifacts.Build = emitCMakeLists(ctx)
 
 	// A project that declared a Kconfig bridge gets the configuration it
@@ -848,4 +872,48 @@ func emitEnabledConfig(ctx Context) (string, bool) {
 		}
 	}
 	return b.String(), true
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The stack record                                                          */
+/* -------------------------------------------------------------------------- */
+
+// StackRecordFile is where the computed stack requirement is written, in the
+// generated project.
+//
+// A file rather than a line in the CMake, because what it is is a *fact about the
+// program* and CMake is a build description: a fact that lives in the build
+// description cannot be read without running the build that produces it, and the
+// point is to know the stack before anybody runs it.
+//
+// Plain `key: value` text, because a file another component reads should not need
+// this project's YAML loader to be understood, and because a person debugging a
+// stack overflow should be able to `cat` it.
+const StackRecordFile = "rho-stack.txt"
+
+// stackRecord is the computed requirement, in the form `rho target` reads.
+//
+// `bound` is in it because the difference matters more than the number: a bound
+// means nothing was left out, and an estimate means something was and is named.
+// A project that reads a `bound: false` knows not to trust the figure the way it
+// would trust a `bound: true`.
+func stackRecord(analysis codegen.StackAnalysis) string {
+	out := &strings.Builder{}
+	fmt.Fprintf(out, "# The stack this program's deepest call path needs, computed from the\n")
+	fmt.Fprintf(out, "# generated C before anything was compiled or run. Written by\n")
+	fmt.Fprintf(out, "# `rho build`; read by `rho target` when it writes the linker script.\n")
+	fmt.Fprintf(out, "#\n")
+	fmt.Fprintf(out, "# `bound: false` means the figure is an estimate: see `notes`.\n\n")
+	fmt.Fprintf(out, "bytes: %d\n", analysis.Bytes)
+	fmt.Fprintf(out, "own_bytes: %d\n", analysis.OwnBytes)
+	fmt.Fprintf(out, "bound: %v\n", analysis.IsBound())
+	fmt.Fprintf(out, "path: %s\n", strings.Join(analysis.Path, " -> "))
+	if len(analysis.Recursive) > 0 {
+		fmt.Fprintf(out, "recursive: %s\n", strings.Join(analysis.Recursive, ", "))
+	}
+	if len(analysis.Unknown) > 0 {
+		fmt.Fprintf(out, "unseen: %s\n", strings.Join(analysis.Unknown, ", "))
+	}
+	fmt.Fprintf(out, "frames: %d\n", len(analysis.Frames))
+	return out.String()
 }
