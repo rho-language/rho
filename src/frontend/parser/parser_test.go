@@ -162,3 +162,27 @@ func TestParseFunction(t *testing.T) {
 		t.Fatalf("expected return type 'bool', got %q", fn.ReturnType)
 	}
 }
+
+func TestParseErrorCarriesPosition(t *testing.T) {
+	source := "module app\nfn main() {\n  let x :=\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+
+	_, err = Parse(tokens)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+
+	parseErr := AsError(err)
+	if parseErr == nil {
+		t.Fatalf("expected parser.Error, got %T (%v)", err, err)
+	}
+	if parseErr.Line != 4 || parseErr.Column != 2 {
+		t.Fatalf("expected parse error at 4:2, got %d:%d (%v)", parseErr.Line, parseErr.Column, parseErr)
+	}
+	if parseErr.Message != "expected expression, got \"}\"" {
+		t.Fatalf("unexpected parser message: %q", parseErr.Message)
+	}
+}

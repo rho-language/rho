@@ -1,0 +1,33 @@
+#
+# bench-crc-c — a CRC-32 benchmark written in plain C.
+#
+# The same program as examples/bench-crc/rho, written in C. Both compute
+# CRC-32 over a 1 KiB buffer, 10000 times, to exercise the CPU without any
+# platform-specific code. Built with the Rho toolchain to a native host
+# binary, so `rho mem` and `rho bench` can measure it just like the Rho version.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: bench-crc-c
+  type: module
+  version: 0.1.0
+  description: >
+    CRC-32 benchmark in C, for comparing generated code size and runtime
+    against the same program written in Rho.
+
+  maintainer: "Aurel Miron"
+  license: "Apache-2.0"
+  created: "2026-10-05"
+
+main: src/main.c
+
+build:
+  language: c
+  sources:
+    - src/main.c
+  output_dir: output
+  targets:
+    - c

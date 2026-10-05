@@ -35,6 +35,10 @@ func (p *Parser) Parse() (mod *ast.Module, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			mod = nil
+			if recoveredErr, ok := recovered.(error); ok {
+				err = recoveredErr
+				return
+			}
 			err = fmt.Errorf("%v", recovered)
 		}
 	}()
@@ -93,7 +97,7 @@ func (p *Parser) readToken() {
 
 func (p *Parser) expect(kind lexer.Kind) {
 	if p.current.Kind != kind {
-		panic(fmt.Sprintf("expected %v at byte %d, got %v (%q)", kind, p.current.Pos, p.current.Kind, p.current.Lex))
+		panic(NewErrorf(p.current, "expected %v, got %v (%q)", kind, p.current.Kind, p.current.Lex))
 	}
 }
 
@@ -103,7 +107,7 @@ func isName(kind lexer.Kind) bool {
 
 func (p *Parser) name() string {
 	if !isName(p.current.Kind) {
-		panic(fmt.Sprintf("expected name at byte %d, got %q", p.current.Pos, p.current.Lex))
+		panic(NewErrorf(p.current, "expected name, got %q", p.current.Lex))
 	}
 	name := p.current.Lex
 	p.readToken()
@@ -158,7 +162,7 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 		case lexer.TokenRoute:
 			decl = p.parseRouteDecl()
 		default:
-			panic(fmt.Sprintf("unexpected token in top-level: %q", p.current.Lex))
+			panic(NewErrorf(p.current, "unexpected token in top-level: %q", p.current.Lex))
 		}
 		p.locate(&decl, start)
 		decls = append(decls, decl)
@@ -273,7 +277,7 @@ func (p *Parser) parseType() ast.TypeExpr {
 		if p.current.Kind == lexer.TokenNumber && !afterComma {
 			length, err := strconv.Atoi(p.current.Lex)
 			if err != nil {
-				panic("invalid array length")
+				panic(NewErrorf(p.current, "invalid array length"))
 			}
 			typeExpr.ArrayLen = &length
 			p.readToken()
@@ -308,7 +312,7 @@ func (p *Parser) parseStructDecl() ast.Decl {
 	fields := []ast.Field{}
 	for p.current.Kind != lexer.TokenRBrace {
 		if p.current.Kind == lexer.TokenEOF {
-			panic("unterminated struct body")
+			panic(NewErrorf(p.current, "unterminated struct body"))
 		}
 		fieldName := p.name()
 		p.expect(lexer.TokenColon)
@@ -375,7 +379,7 @@ func (p *Parser) parseBlock() []ast.Stmt {
 	body := []ast.Stmt{}
 	for p.current.Kind != lexer.TokenRBrace {
 		if p.current.Kind == lexer.TokenEOF {
-			panic("unterminated block")
+			panic(NewErrorf(p.current, "unterminated block"))
 		}
 		body = append(body, p.parseStmt())
 	}
@@ -389,7 +393,7 @@ func blockExpr(statements []ast.Stmt) ast.Expr {
 			return exprStmt.Expr
 		}
 	}
-	panic("expression block must contain one expression")
+	panic(NewError(lexer.Token{}, "expression block must contain one expression"))
 }
 
 // parseStmt reads one statement.
@@ -551,7 +555,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		condition := p.parseExpr(0)
 		then := p.parseBlock()
 		if p.current.Kind != lexer.TokenElse {
-			panic("if expression requires else")
+			panic(NewErrorf(p.current, "if expression requires else"))
 		}
 		p.readToken()
 		var elseExpr ast.Expr
@@ -571,7 +575,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		values := []ast.Expr{}
 		for p.current.Kind != lexer.TokenRBracket {
 			if p.current.Kind == lexer.TokenEOF {
-				panic("unterminated array literal")
+				panic(NewErrorf(p.current, "unterminated array literal"))
 			}
 			values = append(values, p.parseExpr(0))
 			if p.current.Kind == lexer.TokenComma {
@@ -584,7 +588,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		expression = ast.IdentifierExpr{Name: p.current.Lex}
 		p.readToken()
 	default:
-		panic(fmt.Sprintf("expected expression, got %q", p.current.Lex))
+		panic(NewErrorf(p.current, "expected expression, got %q", p.current.Lex))
 	}
 	// Postfix calls and field accesses extend what was read, so they are applied
 	// before the position is: `a.b()` is one expression that begins at `a`.

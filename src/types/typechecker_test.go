@@ -283,3 +283,85 @@ func TestGenericFieldSubstitution(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPtrIndexPassesElementTypeToCall(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.FuncDecl{
+			Name: "crc32_byte",
+			Params: []ast.Param{
+				{Name: "crc", Type: "u32"},
+				{Name: "b", Type: "u8"},
+			},
+			ReturnType: "u32",
+			Body: []ast.Stmt{
+				ast.ReturnStmt{Value: ast.IdentifierExpr{Name: "crc"}},
+			},
+		},
+		ast.FuncDecl{
+			Name: "crc32_buffer",
+			Params: []ast.Param{
+				{Name: "data", Type: "Ptr[u8]", TypeExpr: ast.TypeExpr{Name: "Ptr", Args: []ast.TypeExpr{{Name: "u8"}}}},
+				{Name: "length", Type: "u32"},
+			},
+			ReturnType: "u32",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "crc", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "0"}},
+				ast.LetStmt{Name: "i", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "0"}},
+				ast.WhileStmt{
+					Condition: ast.BinaryExpr{Op: "<", Left: ast.IdentifierExpr{Name: "i"}, Right: ast.IdentifierExpr{Name: "length"}},
+					Body: []ast.Stmt{
+						ast.AssignStmt{
+							Target: ast.IdentifierExpr{Name: "crc"},
+							Op:     ":=",
+							Value: ast.CallExpr{Callee: ast.IdentifierExpr{Name: "crc32_byte"}, Args: []ast.Expr{
+								ast.IdentifierExpr{Name: "crc"},
+								ast.IndexExpr{Object: ast.IdentifierExpr{Name: "data"}, Index: ast.IdentifierExpr{Name: "i"}},
+							}},
+						},
+						ast.AssignStmt{
+							Target: ast.IdentifierExpr{Name: "i"},
+							Op:     ":=",
+							Value:  ast.BinaryExpr{Op: "+", Left: ast.IdentifierExpr{Name: "i"}, Right: ast.NumberExpr{Value: "1"}},
+						},
+					},
+				},
+				ast.ReturnStmt{Value: ast.IdentifierExpr{Name: "crc"}},
+			},
+		},
+	}}
+
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddressOfIndexedElementAssignsToPointer(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "buf", Type: ast.TypeExpr{Name: "u8", ArrayLen: intPtr(16)}},
+				ast.LetStmt{
+					Name: "data",
+					Type: ast.TypeExpr{Name: "Ptr", Args: []ast.TypeExpr{{Name: "u8"}}},
+					Value: ast.UnaryExpr{
+						Op: "&",
+						Value: ast.IndexExpr{
+							Object: ast.IdentifierExpr{Name: "buf"},
+							Index:  ast.NumberExpr{Value: "0"},
+						},
+					},
+				},
+			},
+		},
+	}}
+
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func intPtr(value int) *int { return &value }
