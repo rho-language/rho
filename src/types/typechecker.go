@@ -398,6 +398,15 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if err != nil {
 			return ir.Type{}, err
 		}
+		if value.Op == "&" {
+			return ir.Type{Kind: ir.TypePtr, Name: "Ptr[" + typeName(inner) + "]", Args: []ir.Type{inner}}, nil
+		}
+		if value.Op == "*" {
+			if inner.Kind != ir.TypePtr || len(inner.Args) == 0 {
+				return ir.Type{}, fmt.Errorf("* requires pointer value")
+			}
+			return inner.Args[0], nil
+		}
 		if value.Op == "!" {
 			if inner.Kind != ir.TypeBool {
 				return ir.Type{}, fmt.Errorf("! requires bool")
@@ -720,8 +729,29 @@ func baseTypeName(name string) string {
 	return name
 }
 func elementType(value ir.Type) ir.Type {
+	if value.Kind == ir.TypePtr && len(value.Args) > 0 {
+		return value.Args[0]
+	}
+
+	if value.ArrayLen > 0 {
+		element := value
+		element.ArrayLen = 0
+		if index := strings.IndexByte(value.Name, '['); index >= 0 {
+			element.Name = value.Name[:index]
+		}
+		if kind := primitiveKind(element.Name); kind != ir.TypeInvalid {
+			element.Kind = kind
+		}
+		return element
+	}
+
 	if index := strings.IndexByte(value.Name, '['); index >= 0 {
-		return ir.Type{Kind: ir.TypeStruct, Name: value.Name[:index]}
+		base := value.Name[:index]
+		args := typeArguments(value.Name)
+		if (base == "Ptr" || base == "Array" || base == "Slice") && len(args) > 0 {
+			return args[0]
+		}
+		return ir.Type{Kind: ir.TypeStruct, Name: base}
 	}
 	return value
 }
@@ -1135,9 +1165,14 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 	}
 	base := name
 	element := ""
+	arrayLen := 0
 	if i := strings.IndexByte(base, '['); i >= 0 {
 		element = strings.TrimSuffix(base[i+1:], "]")
 		base = base[:i]
+		if n, err := strconv.Atoi(element); err == nil {
+			arrayLen = n
+			element = ""
+		}
 	}
 	// A pointer keeps the type it points at. Losing it would make every backend
 	// spell `Ptr[u8]` as a name, which is what a C compiler rejects.
@@ -1150,6 +1185,7 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 	}
 	if typ, ok := tc.types[base]; ok {
 		typ.Name = name
+		typ.ArrayLen = arrayLen
 		return typ, true
 	}
 	if (strings.Contains(name, "[") || (len(base) == 1 && base != "")) && unicodeUpper(base[0]) {
@@ -1587,28 +1623,42 @@ func cTypeForKind(kind ir.TypeKind) string {
 
 func cTypeForName(name string) string {
 	base := name
-	if i := strings.IndexByte(base, '['); i >= 0 {
-		base = base[:i]
+	arraySuffix := ""
+	bracketStart := strings.IndexByte(base, '[')
+	if bracketStart >= 0 {
+		suffix := base[bracketStart:]
+		inner := strings.TrimSuffix(suffix[1:], "]")
+		if _, err := strconv.Atoi(inner); err == nil {
+			arraySuffix = suffix
+			base = base[:bracketStart]
+		}
+	}
+	// Strip generic brackets from base for type lookup, but keep them in name
+	// for the Ptr case which uses name[len(base):].
+	if strings.IndexByte(base, '[') >= 0 && arraySuffix == "" {
+		if i := strings.IndexByte(base, '['); i >= 0 {
+			base = base[:i]
+		}
 	}
 	switch base {
 	case "u8":
-		return "uint8_t"
+		return "uint8_t" + arraySuffix
 	case "u16":
-		return "uint16_t"
+		return "uint16_t" + arraySuffix
 	case "u32":
-		return "uint32_t"
+		return "uint32_t" + arraySuffix
 	case "u64":
-		return "uint64_t"
+		return "uint64_t" + arraySuffix
 	case "i32":
-		return "int32_t"
+		return "int32_t" + arraySuffix
 	case "f64":
-		return "double"
+		return "double" + arraySuffix
 	case "bool":
-		return "bool"
+		return "bool" + arraySuffix
 	case "string":
-		return "const char*"
+		return "const char*" + arraySuffix
 	case "void", "Unit":
-		return "void"
+		return "void" + arraySuffix
 	case "Ptr":
 		// A pointer is spelled as a C pointer. Mangling the name would write
 		// `Ptr_u8`, which is not a type a C compiler knows: every foreign call
