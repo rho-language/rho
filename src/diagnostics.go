@@ -130,6 +130,15 @@ func Diagnose(path string) DocumentDiagnostics {
 // repository, so the wording cannot drift away from the reader silently. Anything
 // that arrives carrying a position already is used as it is.
 func fromCompilerError(path string, err error) []Diagnostic {
+	if parseErr := parser.AsError(err); parseErr != nil {
+		return []Diagnostic{{
+			Severity: SeverityError,
+			Message:  parseErr.Message,
+			Line:     parseErr.Line,
+			Column:   parseErr.Column,
+		}}
+	}
+
 	if positioned := types.AsError(err); positioned != nil {
 		message := positioned.Message
 		if positioned.Scope != "" && !positioned.Position.Valid() {
@@ -163,6 +172,12 @@ func fromCompilerError(path string, err error) []Diagnostic {
 
 // placeOf is the place a parser error names, when it names one.
 func placeOf(err error, path string) (line, column int) {
+	if parseErr := parser.AsError(err); parseErr != nil {
+		if parseErr.Line > 0 && parseErr.Column > 0 {
+			return parseErr.Line, parseErr.Column
+		}
+	}
+
 	source, readErr := osReadFile(path)
 	if readErr != nil {
 		return 0, 0

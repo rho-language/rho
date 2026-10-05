@@ -219,9 +219,17 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 			if i > 0 {
 				cg.b.WriteString(", ")
 			}
-			cg.b.WriteString(cTypeFor(p.Type))
-			cg.b.WriteString(" ")
-			cg.b.WriteString(p.Name)
+			ptype := cTypeFor(p.Type)
+			if arrayIdx := strings.IndexByte(ptype, '['); arrayIdx >= 0 {
+				cg.b.WriteString(ptype[:arrayIdx])
+				cg.b.WriteString(" ")
+				cg.b.WriteString(p.Name)
+				cg.b.WriteString(ptype[arrayIdx:])
+			} else {
+				cg.b.WriteString(ptype)
+				cg.b.WriteString(" ")
+				cg.b.WriteString(p.Name)
+			}
 		}
 
 		cg.b.WriteString(")")
@@ -273,9 +281,17 @@ func (cg *Codegen) emitFunctionSignature(fn ir.FuncIR) {
 		if i > 0 {
 			cg.b.WriteString(", ")
 		}
-		cg.b.WriteString(cTypeFor(p.Type))
-		cg.b.WriteString(" ")
-		cg.b.WriteString(p.Name)
+		ptype := cTypeFor(p.Type)
+		if arrayIdx := strings.IndexByte(ptype, '['); arrayIdx >= 0 {
+			cg.b.WriteString(ptype[:arrayIdx])
+			cg.b.WriteString(" ")
+			cg.b.WriteString(p.Name)
+			cg.b.WriteString(ptype[arrayIdx:])
+		} else {
+			cg.b.WriteString(ptype)
+			cg.b.WriteString(" ")
+			cg.b.WriteString(p.Name)
+		}
 	}
 	cg.b.WriteString(")")
 }
@@ -335,7 +351,12 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 		}
 
 	case ir.OpLet:
+		// An array type like "uint8_t[1024]" needs the dimension after the
+		// variable name, not after the type: C spells it "uint8_t buf[1024];".
 		line := instr.Type + " " + instr.Dest
+		if arrayIdx := strings.IndexByte(instr.Type, '['); arrayIdx >= 0 {
+			line = instr.Type[:arrayIdx] + " " + instr.Dest + instr.Type[arrayIdx:]
+		}
 		if len(instr.Args) == 1 && instr.Args[0] != "" {
 			line += " = " + cg.rewriteForeign(instr.Args[0])
 		}
@@ -420,30 +441,34 @@ func isUnitType(t ir.Type) bool {
 
 // cTypeFor maps IR types to C types.
 func cTypeFor(t ir.Type) string {
+	suffix := ""
+	if t.ArrayLen > 0 {
+		suffix = fmt.Sprintf("[%d]", t.ArrayLen)
+	}
 	switch t.Kind {
 	case ir.TypeVoid:
-		return "void"
+		return "void" + suffix
 	case ir.TypeBool:
-		return "bool"
+		return "bool" + suffix
 	case ir.TypeU8:
-		return "uint8_t"
+		return "uint8_t" + suffix
 	case ir.TypeU16:
-		return "uint16_t"
+		return "uint16_t" + suffix
 	case ir.TypeU32:
-		return "uint32_t"
+		return "uint32_t" + suffix
 	case ir.TypeU64:
-		return "uint64_t"
+		return "uint64_t" + suffix
 	case ir.TypeI32:
-		return "int32_t"
+		return "int32_t" + suffix
 	case ir.TypeI64:
-		return "int64_t"
+		return "int64_t" + suffix
 	case ir.TypeF64:
-		return "double"
+		return "double" + suffix
 	case ir.TypeString:
-		return "const char*"
+		return "const char*" + suffix
 	case ir.TypeStruct:
 		if t.Name != "" {
-			return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(t.Name)
+			return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(t.Name) + suffix
 		}
 		return "struct /* anonymous */"
 	case ir.TypePtr:

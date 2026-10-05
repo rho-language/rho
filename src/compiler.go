@@ -27,7 +27,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"rho/src/codegen"
@@ -945,6 +944,17 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 // quietly — a report with no line rather than a wrong one, and no way to tell
 // which it was.
 func sourceDiagnostic(path, source, phase string, err error) error {
+	if parseErr := parser.AsError(err); parseErr != nil {
+		if parseErr.Line > 0 && parseErr.Column > 0 {
+			return fmt.Errorf("%s %s:%d:%d: %w", phase, path, parseErr.Line, parseErr.Column, err)
+		}
+		if parseErr.Offset >= 0 {
+			line, column := compilerLineColumnAt(source, parseErr.Offset)
+			return fmt.Errorf("%s %s:%d:%d: %w", phase, path, line, column, err)
+		}
+		return fmt.Errorf("%s %s: %w", phase, path, err)
+	}
+
 	// A type error is looked for through whatever is wrapped around it: an
 	// error that has been through a `%w` on the way here is still the error a
 	// position belongs to, and asserting the outermost type misses it.
@@ -962,37 +972,48 @@ func sourceDiagnostic(path, source, phase string, err error) error {
 			phase, path, positioned.Position.Line, positioned.Position.Column, positioned)
 	}
 
-	// A parser error still says where in the text it is, because the parser
-	// reports an offset inside a message rather than as an error value. That is
-	// the one place an offset is read out of a message, and it is read from one
-	// this repository writes.
-	byteOffset := -1
-	message := err.Error()
-	if marker := strings.Index(message, "byte "); marker >= 0 {
-		begin := marker + len("byte ")
-		stop := begin
-		for stop < len(message) && message[stop] >= '0' && message[stop] <= '9' {
-			stop++
-		}
-		if stop > begin {
-			if parsed, parseErr := strconv.Atoi(message[begin:stop]); parseErr == nil {
-				byteOffset = parsed
-			}
-		}
+	if byteOffset := compilerByteOffsetInMessage(err.Error()); byteOffset >= 0 {
+		line, column := compilerLineColumnAt(source, byteOffset)
+		return fmt.Errorf("%s %s:%d:%d: %w", phase, path, line, column, err)
 	}
+
+	return fmt.Errorf("%s %s: %w", phase, path, err)
+}
+
+func compilerLineColumnAt(source string, byteOffset int) (line, column int) {
 	if byteOffset < 0 {
-		return fmt.Errorf("%s %s: %w", phase, path, err)
+		return 0, 0
 	}
 	if byteOffset > len(source) {
 		byteOffset = len(source)
 	}
 	prefix := source[:byteOffset]
-	line := 1 + strings.Count(prefix, "\n")
-	column := byteOffset + 1
+	line = 1 + strings.Count(prefix, "\n")
+	column = byteOffset + 1
 	if last := strings.LastIndex(prefix, "\n"); last >= 0 {
 		column = byteOffset - last
 	}
-	return fmt.Errorf("%s %s:%d:%d: %w", phase, path, line, column, err)
+	return line, column
+}
+
+func compilerByteOffsetInMessage(message string) int {
+	marker := strings.Index(message, "byte ")
+	if marker < 0 {
+		return -1
+	}
+	begin := marker + len("byte ")
+	stop := begin
+	for stop < len(message) && message[stop] >= '0' && message[stop] <= '9' {
+		stop++
+	}
+	if stop == begin {
+		return -1
+	}
+	var offset int
+	for i := begin; i < stop; i++ {
+		offset = offset*10 + int(message[i]-'0')
+	}
+	return offset
 }
 
 func markModuleOwnership(module *ast.Module, owner string) {
