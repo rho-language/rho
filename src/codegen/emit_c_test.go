@@ -122,11 +122,20 @@ func TestAVoidMainReturnsZero(t *testing.T) {
 	if !strings.Contains(out, "int main()") {
 		t.Fatalf("a void main should be emitted as int:\n%s", out)
 	}
-	if strings.Contains(out, "return;") {
-		t.Errorf("a void main emitted as int should not return without a value:\n%s", out)
+	// Scoped to `main` and not to the whole file. The runtime that travels with
+	// every program has returns of its own, and a check that reads the entire
+	// output reports a bare `return;` in a helper as though the entry point had
+	// been emitted without a value — which is the failure this test exists to
+	// catch, and the one it can no longer see.
+	body := mainBody(out)
+	if body == "" {
+		t.Fatalf("no main in the output:\n%s", out)
 	}
-	if !strings.Contains(out, "return 0;") {
-		t.Errorf("a void main's return should be the success status:\n%s", out)
+	if strings.Contains(body, "return;") {
+		t.Errorf("a void main emitted as int should not return without a value:\n%s", body)
+	}
+	if !strings.Contains(body, "return 0;") {
+		t.Errorf("a void main's return should be the success status:\n%s", body)
 	}
 }
 
@@ -149,4 +158,17 @@ func TestAVoidFunctionThatIsNotMainReturnsBare(t *testing.T) {
 	if !strings.Contains(out, "return;") {
 		t.Errorf("a void function's return should carry nothing:\n%s", out)
 	}
+}
+
+// mainBody is the text of the generated `main`, braces included.
+func mainBody(out string) string {
+	start := strings.Index(out, "int main()")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(out[start:], "\n}")
+	if end < 0 {
+		return out[start:]
+	}
+	return out[start : start+end+2]
 }

@@ -1224,6 +1224,35 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 	}
 }
 
+// integerPrint is `rho_print_i32(x)` when an expression is a number being turned
+// into a string only to be printed, and false when it is anything else.
+//
+// `string.from_u32` is recognised for the same reason `from_i32` is: a program
+// counting seconds has an unsigned number, and routing it through the signed
+// printer would be a conversion whose result is wrong for every value above half
+// the range — so the unsigned one exists rather than being a cast.
+func (tc *TypeChecker) integerPrint(expr ast.Expr, scope map[string]ir.Type) (string, bool) {
+	call, ok := expr.(ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return "", false
+	}
+	member, ok := call.Callee.(ast.MemberExpr)
+	if !ok {
+		return "", false
+	}
+	object, isIdentifier := member.Object.(ast.IdentifierExpr)
+	if !isIdentifier || object.Name != "string" {
+		return "", false
+	}
+	switch member.Name {
+	case "from_i32":
+		return "rho_print_i32(" + tc.lowerExpr(call.Args[0], scope) + ")", true
+	case "from_u32":
+		return "rho_print_u32(" + tc.lowerExpr(call.Args[0], scope) + ")", true
+	}
+	return "", false
+}
+
 func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string {
 	return tc.lowerExprExpected(expr, scope, ir.Type{})
 }
@@ -1316,6 +1345,24 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			return tc.zeroValueFor(typeName)
 		}
 		if callee, ok := expr.Callee.(ast.IdentifierExpr); ok && callee.Name == "print" {
+			// `print(string.from_i32(n))` becomes `rho_print_i32(n)`.
+			//
+			// The shape every program that prints a number has, and it is the shape
+			// that costs a heap: `rho_string_from_i32` asks `malloc` for four digits,
+			// formats into it, hands it to `print`, and the caller throws it away. On a
+			// board that is the allocator, the C library's `memcpy` and a `_sbrk` that
+			// grows the heap — brought into an image by four digits, and left in it
+			// afterwards because `rho_string_from_i32` is still linked for anything
+			// else that calls it.
+			//
+			// Recognised here rather than left to the optimiser because it is a
+			// whole-program fact: the string is built and dropped in one expression,
+			// and only a compiler that sees both halves of it can know that.
+			if len(expr.Args) == 1 {
+				if printed, ok := tc.integerPrint(expr.Args[0], scope); ok {
+					return printed
+				}
+			}
 			// Exactly what was given, with nothing added.
 			//
 			// A newline appended here would appear in a program's output whether
@@ -1326,10 +1373,22 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			// was built for.
 			//
 			// A program that wants a line ending writes one.
+			// `rho_print`, not `printf("%s", ...)`. The two print the same thing
+			// and one of them is nearly free: `printf` is the C library's
+			// formatted output — a conversion table, a buffer package, a stream
+			// abstraction and locks around the formatting — all of which the
+			// linker keeps because the program called `printf` once. On the
+			// `nucleo-h753zi` hello-world that is 8 kB of flash for a program that
+			// prints one string, which is most of the difference between the same
+			// program in Rho and in C.
+			//
+			// The runtime writes through the platform's own console hook, so the same
+			// bytes reach the terminal by the same sink, at the cost of a loop and a
+			// call.
 			if len(expr.Args) == 1 {
-				return "printf(\"%s\", " + tc.lowerExpr(expr.Args[0], scope) + ")"
+				return "rho_print(" + tc.lowerExpr(expr.Args[0], scope) + ")"
 			}
-			return "printf(\"%s\", \"\")"
+			return "rho_print(\"\")"
 		}
 		callee := tc.lowerExpr(expr.Callee, scope)
 		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok {

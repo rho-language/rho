@@ -52,6 +52,18 @@ provides:
       one: true
       hooks: [flash]
 
+# What this module is for, in the form the documentation generator reads.
+# A module that says nothing here is still documented — the README it
+# published is read — but a module that says so is addressed by its own
+# name, which is what lets another page link to it.
+docs:
+  title: Flashing a board
+  section: components
+  order: "55"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+
 package:
   kind: component
   binary: true

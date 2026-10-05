@@ -647,6 +647,15 @@ func buildCLI(args []string) int {
 	// directory half-removed by hand fails in ways that read like the toolchain is
 	// at fault.
 	clean := fs.Bool("clean", false, "remove this project's build directory and stop")
+	// Release unless asked otherwise.
+	//
+	// The default is Release because it is what a build is for: optimised, with
+	// the debug information kept but the assertions dropped. A Debug build is a
+	// choice somebody makes when they are chasing something, and a build that
+	// defaulted to it would ship unoptimised code to anyone who did not think
+	// about it — which is most people, most of the time.
+	buildType := fs.String("build-type", "Release",
+		"the build type: Release, Debug, RelWithDebInfo or MinSizeRel")
 	// Whether the link writes its map, which is what says where every byte of the
 	// image went. The project declares the same thing in `build.link_map`, and the
 	// flag is for one run of a build that normally does something else; the
@@ -698,6 +707,13 @@ func buildCLI(args []string) int {
 	/* ---------------------------------------------------------------------- */
 
 	manifestPath := filepath.Join(projectRoot, "rho.mod")
+
+	// Before anything is generated, so that a mistyped build type costs a
+	// sentence rather than a whole code generation and a configure.
+	if _, ok := canonicalBuildType(*buildType); !ok {
+		fmt.Fprintf(os.Stderr, "rho build: %q is not a build type; use Release, Debug, RelWithDebInfo or MinSizeRel\n", *buildType)
+		return 2
+	}
 
 	manifest, err := deps.LoadManifest(manifestPath)
 	if err != nil {
@@ -1011,7 +1027,7 @@ func buildCLI(args []string) int {
 		return 1
 	}
 
-	if err := buildTarget(generatedDir, projectRoot, targetName, linkMap); err != nil {
+	if err := buildTarget(generatedDir, projectRoot, targetName, linkMap, *buildType); err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
 	}
@@ -1071,7 +1087,28 @@ func isDescriptorBackend(name string) bool {
 // to be able to add to. The component is located the same way every other
 // command locates one, which also means a target nobody enabled is refused here
 // for the same reason it is refused everywhere else.
-func buildTarget(generatedDir, projectRoot, target string, linkMap bool) error {
+// canonicalBuildType is a build type by name, matched without regard to case, and
+// whether it is one this toolchain offers.
+//
+// Matched leniently and refused clearly, because the alternative — passing whatever
+// was typed to CMake — produces a configure error several layers down that names a
+// generator rather than the flag that was wrong.
+func canonicalBuildType(name string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "release":
+		return "Release", true
+	case "debug":
+		return "Debug", true
+	case "relwithdebinfo":
+		return "RelWithDebInfo", true
+	case "minsizerel":
+		return "MinSizeRel", true
+	}
+	return "", false
+}
+
+func buildTarget(generatedDir, projectRoot, target string, linkMap bool, buildType string) error {
+	kind, _ := canonicalBuildType(buildType)
 	module, err := modcore.LoadInstalledModule("rho-target")
 	if err != nil {
 		return fmt.Errorf("this build needs the rho-target component: %w", err)
@@ -1095,6 +1132,10 @@ func buildTarget(generatedDir, projectRoot, target string, linkMap bool) error {
 		// choice travels from the manifest to the link without being decided
 		// twice on the way.
 		"--link-map=" + map[bool]string{true: "on", false: "off"}[linkMap],
+		// One token rather than a name and a value: a value in the next
+		// element is one a caller forwarding arguments has to preserve, and
+		// `--type=Release` cannot be lost that way.
+		"--type=" + kind,
 	}, os.Stdin, os.Stdout)
 }
 

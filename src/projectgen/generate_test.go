@@ -98,17 +98,50 @@ func TestEmitCProjectFillsEveryRole(t *testing.T) {
 	}
 }
 
-// The C backend must keep splitting the runtime helpers into their own unit.
-func TestEmitCProjectSplitsRuntime(t *testing.T) {
-	artifacts, err := EmitCProject(newContext(t))
+// The runtime is its own translation unit, and it carries what the program calls
+// rather than everything the language has.
+//
+// It used to be emitted whole, and the boundary between it and the program was
+// found afterwards by searching the emitted text for `static char* rho_concat(` —
+// a boundary the code being cut was free to move. Now the generator knows where it
+// is because it put the runtime there, and emits only the fragments the program
+// reaches.
+func TestEmitCProjectSplitsRuntimeAndGatesIt(t *testing.T) {
+	// A program that calls nothing needs no runtime at all.
+	bare, err := EmitCProject(newContext(t))
 	if err != nil {
 		t.Fatalf("EmitCProject failed: %v", err)
 	}
-	if !strings.Contains(artifacts.Runtime, "rho_concat") {
-		t.Error("runtime should carry the rho_concat helper")
+	if strings.Contains(bare.Runtime, "rho_concat") {
+		t.Error("a program that calls nothing should not carry the string helpers")
 	}
-	if strings.Contains(artifacts.Implementation, "static char* rho_concat(const char* a, const char* b) {") {
-		t.Error("implementation should not keep the runtime helper definition")
+
+	// One that prints and slices gets those two fragments and not the others.
+	ctx := newContext(t)
+	ctx.IR.Funcs[0].Body = []ir.Instr{
+		{Op: ir.OpCall, Args: []string{`rho_print("hello")`}},
+		{Op: ir.OpCall, Args: []string{`rho_str_slice("hello", 0, 2)`}},
+	}
+	used, err := EmitCProject(ctx)
+	if err != nil {
+		t.Fatalf("EmitCProject failed: %v", err)
+	}
+	for _, wanted := range []string{"rho_print", "rho_str_slice"} {
+		if !strings.Contains(used.Runtime, wanted) {
+			t.Errorf("the program calls %s, so the runtime should carry it", wanted)
+		}
+	}
+	if !strings.Contains(used.Implementation, "rho_print(\"hello\")") {
+		t.Error("the application should keep the call")
+	}
+	if strings.Contains(used.Implementation, "void rho_print(const char* s)\n{") {
+		t.Error("the application should not carry the runtime's definition")
+	}
+	// Neither YAML nor the environment: nothing here reaches them.
+	for _, unwanted := range []string{"rho_yaml_load", "rho_env_or"} {
+		if strings.Contains(used.Runtime, unwanted) {
+			t.Errorf("nothing calls %s, so it should not be emitted", unwanted)
+		}
 	}
 }
 

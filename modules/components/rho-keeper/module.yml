@@ -96,6 +96,18 @@ commands:
     run: rho-keeper
     hook: status
 
+# What this module is for, in the form the documentation generator reads.
+# A module that says nothing here is still documented — the README it
+# published is read — but a module that says so is addressed by its own
+# name, which is what lets another page link to it.
+docs:
+  title: The installation dashboard
+  section: components
+  order: "48"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+
 package:
   kind: component
   binary: true

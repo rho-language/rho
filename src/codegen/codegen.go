@@ -34,7 +34,11 @@ import (
 
 // Codegen is the main C backend for the Rho compiler.
 type Codegen struct {
-	b strings.Builder
+	// b is the emitter, not a builder: it knows how deep it is, which is what
+	// stops indentation from being four spaces written at every call site — and
+	// what removed the child generator that used to re-indent a nested block by
+	// splitting what it had written and prefixing every line.
+	b *Emitter
 	// foreign maps a qualified function name to the symbol its C header declares.
 	// A call site is lowered once for every backend and says the qualified name;
 	// this is where C reads it as the name that exists.
@@ -46,6 +50,11 @@ type Codegen struct {
 	// instruction: Rho's `main` has nothing to return, so its `return` carries no
 	// value, while the C function it became is expected to give one back.
 	hostMain bool
+	// runtime is the C the compiled program calls into, assembled from the
+	// fragments it actually uses. Kept beside the program rather than inside it
+	// because they are two translation units, and a caller that wants them
+	// separately should not have to cut one file apart at a marker.
+	runtime string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -54,16 +63,13 @@ type Codegen struct {
 
 // New creates a new C code generator.
 func New() *Codegen {
-	return &Codegen{
-		b: strings.Builder{},
-	}
+	return &Codegen{b: NewEmitter()}
 }
 
 // EmitModule generates C code for a given IR module and returns it as a string.
 func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	cg.b.Reset()
 
-	cg.emitHeader(m)
 	// A call site is lowered once, for every backend, and carries the qualified
 	// name. Go wants that — every module of a program compiles into one package,
 	// where two same-named functions would collide. C cannot use it, because an
@@ -82,8 +88,31 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	cg.emitFuncPrototypes(m.Funcs)
 	cg.emitFuncs(m.Funcs)
 
+	// The runtime, assembled from the fragments the program actually calls.
+	//
+	// Detected from what was just emitted rather than from the manifest's feature
+	// list, because the question is not "what did the project say it uses" but
+	// "what does this program call". A program whose declaration is incomplete
+	// still gets what it uses, and a program that declares a feature it does not
+	// use does not carry the code.
+	cg.runtime = runtimeFor(cg.b.String())
+
+	// The header goes in front, once the program is known, so that the runtime
+	// prototypes it needs can be gated to the ones it calls.
+	body := cg.b.String()
+	cg.b.Reset()
+	cg.emitHeader(m)
+	if decls := runtimeDecls(body); decls != "" {
+		cg.b.WriteString("\n")
+		cg.b.WriteString(decls)
+	}
+	cg.b.WriteString(body)
+
 	return cg.b.String()
 }
+
+// Runtime is the C the compiled program calls into, feature-gated.
+func (cg *Codegen) Runtime() string { return cg.runtime }
 
 func (cg *Codegen) emitFuncPrototypes(funcs []ir.FuncIR) {
 	for _, fn := range funcs {
@@ -109,67 +138,22 @@ func (cg *Codegen) emitFuncPrototypes(funcs []ir.FuncIR) {
 /* -------------------------------------------------------------------------- */
 
 func (cg *Codegen) emitHeader(m ir.ModuleIR) {
-	cg.b.WriteString("/* Rho → C backend: module ")
+	features := make([]string, 0, len(m.Features))
+	for _, feature := range m.Features {
+		features = append(features,
+			strings.ToUpper(strings.NewReplacer(".", "_", "-", "_", "/", "_").Replace(feature)))
+	}
+	// The preamble is a real C header in the repository, embedded and rendered.
+	// It is a template with two substitutions and no logic, because it has no
+	// logic: a file an editor can highlight and clang-format can rewrite is worth
+	// more than one assembled from Go strings, and the parts that do have logic
+	// are the parts that are emitted programmatically.
+	cg.b.WriteString("/* Rho \u2192 C backend: module ")
 	cg.b.WriteString(m.Name)
 	cg.b.WriteString(" */\n\n")
-	cg.b.WriteString("#define _POSIX_C_SOURCE 200809L\n")
-	cg.b.WriteString("#include <stdint.h>\n")
-	cg.b.WriteString("#include <stdbool.h>\n")
-	cg.b.WriteString("#include <stdio.h>\n")
-	cg.b.WriteString("#include <stdlib.h>\n")
-	cg.b.WriteString("#include <string.h>\n")
-	cg.b.WriteString("#include <stddef.h>\n\n")
-	for _, feature := range m.Features {
-		name := strings.ToUpper(strings.NewReplacer(".", "_", "-", "_", "/", "_").Replace(feature))
-		cg.b.WriteString("#define RHO_FEATURE_")
-		cg.b.WriteString(name)
-		cg.b.WriteString(" 1\n")
-	}
-	if len(m.Features) > 0 {
-		cg.b.WriteString("\n")
-	}
-	// `_init` and `_fini` are the C library's hooks for code that runs before and
-	// after everything else. A board's startup assembly calls the library's
-	// initializer, which calls them, and a build with `-nostartfiles` — which a
-	// bare-metal build has, so that its own startup is the entry point rather than
-	// the compiler's — has excluded the two files that define them.
-	//
-	// Weak, because the same generated project is also what a hosted target
-	// builds, and there the C library defines them properly. A strong definition
-	// would collide with it; a weak one yields to it and is used only where
-	// nothing else provides them, which is exactly the bare-metal case and exactly
-	// when they are needed.
-	//
-	// Empty, which is what they are for on a board: there is nothing to do before
-	// a program's own initializers, and the library's own work is done by
-	// `__libc_init_array`, which the startup calls separately.
-	cg.b.WriteString("// Weak: -nostartfiles excludes the C library's own definitions of these, and a\n")
-	cg.b.WriteString("// hosted C library defines them itself. Used only where nothing else does,\n")
-	cg.b.WriteString("// which is a board, where the startup assembly reaches them through the\n")
-	cg.b.WriteString("// library's initializer.\n")
-	cg.b.WriteString("__attribute__((weak)) void _init(void);\n__attribute__((weak)) void _init(void) {}\n")
-	cg.b.WriteString("__attribute__((weak)) void _fini(void);\n__attribute__((weak)) void _fini(void) {}\n\n")
-	cg.b.WriteString("static char* rho_concat(const char* a, const char* b);\n")
-	cg.b.WriteString("static char* rho_yaml_load(const char* path);\n\n")
-	cg.b.WriteString("static char* rho_string_from_i32(int32_t value);\n\n")
-	cg.b.WriteString("static bool rho_str_eq(const char* a, const char* b);\n\n")
-	cg.b.WriteString("static void panicf(const char* msg);\n\n")
-	cg.b.WriteString("static uint32_t rho_strlen(const char* s);\n\n")
-	cg.b.WriteString("static bool rho_str_starts_with(const char* s, const char* prefix);\n\n")
-	cg.b.WriteString("static const char* rho_str_trim_prefix(const char* s, const char* prefix);\n\n")
-	cg.b.WriteString("static bool rho_str_contains(const char* haystack, const char* needle);\n\n")
-	cg.b.WriteString("static const char* rho_env_or(const char* name, const char* fallback);\n\n")
-	cg.b.WriteString("static uint8_t rho_str_at(const char* s, uint32_t i);\n\n")
-	cg.b.WriteString("static int32_t rho_str_index_of(const char* haystack, const char* needle);\n\n")
-	cg.b.WriteString("static const char* rho_str_slice(const char* s, uint32_t start, uint32_t length);\n\n")
-	cg.b.WriteString("static const char* rho_int_to_str(uint32_t n);\n\n")
-	cg.b.WriteString("static const char* rho_str_from_byte(uint8_t b);\n\n")
-	cg.b.WriteString("static uint32_t rho_int_from_str(const char* s);\n\n")
+	cg.b.WriteString(renderPreamble(m.Name, features))
+	cg.b.WriteString("\n")
 }
-
-/* -------------------------------------------------------------------------- */
-/*  Internal: Structs                                                         */
-/* -------------------------------------------------------------------------- */
 
 func (cg *Codegen) emitStructs(structs []ir.StructIR) {
 	for _, s := range structs {
@@ -241,7 +225,12 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 		}
 
 		cg.b.WriteString(")")
-		cg.b.WriteString(" {\n")
+		cg.b.EmitLine(" {")
+		// The body is emitted one level in, which is the emitter's whole job: the
+		// instructions no longer carry their own leading spaces, and a nested block
+		// is deeper because the emitter was told it was, not because every line it
+		// wrote was prefixed again on the way out.
+		cg.b.Indent()
 
 		// body (Rho 0.1: minimal, based on IR instructions)
 		cg.hostMain = hostMain
@@ -259,133 +248,15 @@ func (cg *Codegen) emitFuncs(funcs []ir.FuncIR) {
 			// return register, and that becomes the process's exit status: a
 			// program that printed exactly what it should have still reported
 			// failure to whatever ran it.
-			cg.b.WriteString("    return 0;\n")
+			cg.b.EmitLine("return 0;")
 		} else if len(fn.Body) == 0 && fn.ReturnType.Kind != ir.TypeVoid {
-			cg.b.WriteString("    return ")
-			cg.b.WriteString(defaultValueFor(returnType))
-			cg.b.WriteString(";\n")
+			cg.b.EmitLine("return " + defaultValueFor(returnType) + ";")
 		}
 
-		cg.b.WriteString("}\n\n")
+		cg.b.Dedent()
+		cg.b.EmitLine("}")
+		cg.b.EmitLine("")
 	}
-
-	cg.b.WriteString("static char* rho_concat(const char* a, const char* b) {\n")
-	cg.b.WriteString("    size_t len_a = strlen(a);\n")
-	cg.b.WriteString("    size_t len_b = strlen(b);\n")
-	cg.b.WriteString("    char* out = malloc(len_a + len_b + 1);\n")
-	cg.b.WriteString("    if (!out) return NULL;\n")
-	cg.b.WriteString("    memcpy(out, a, len_a);\n")
-	cg.b.WriteString("    memcpy(out + len_a, b, len_b + 1);\n")
-	cg.b.WriteString("    return out;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static const char* rho_int_to_str(uint32_t n) {\n")
-	cg.b.WriteString("    char buf[16];\n")
-	cg.b.WriteString("    int len = snprintf(buf, sizeof(buf), \"%u\", n);\n")
-	cg.b.WriteString("    char* out = (char*)malloc(len + 1);\n")
-	cg.b.WriteString("    if (!out) return \"\";\n")
-	cg.b.WriteString("    memcpy(out, buf, len);\n")
-	cg.b.WriteString("    out[len] = 0;\n")
-	cg.b.WriteString("    return out;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static const char* rho_str_from_byte(uint8_t b) {\n")
-	cg.b.WriteString("    char* out = (char*)malloc(2);\n")
-	cg.b.WriteString("    if (!out) return \"\";\n")
-	cg.b.WriteString("    out[0] = (char)b;\n")
-	cg.b.WriteString("    out[1] = 0;\n")
-	cg.b.WriteString("    return out;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static uint32_t rho_int_from_str(const char* s) {\n")
-	cg.b.WriteString("    if (!s || !*s) return 0;\n")
-	cg.b.WriteString("    uint32_t total = 0;\n")
-	cg.b.WriteString("    for (const char* p = s; *p; p++) {\n")
-	cg.b.WriteString("        if (*p < '0' || *p > '9') return 0;\n")
-	cg.b.WriteString("        total = total * 10 + (uint32_t)(*p - '0');\n")
-	cg.b.WriteString("    }\n")
-	cg.b.WriteString("    return total;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static bool rho_str_eq(const char* a, const char* b) {\n")
-	cg.b.WriteString("    return a != NULL && b != NULL && strcmp(a, b) == 0;\n")
-	cg.b.WriteString("}\n\n")
-	// The panic intrinsic, so a test module can fail through the assert
-	// library. abort() itself comes from libc.
-	cg.b.WriteString("static void panicf(const char* msg) {\n")
-	cg.b.WriteString("    fprintf(stderr, \"rho: %s\\n\", msg ? msg : \"panic\");\n")
-	cg.b.WriteString("    exit(1);\n")
-	cg.b.WriteString("}\n\n")
-	// String and environment intrinsics, so the same Rho code builds and
-	// behaves the same for every target.
-	cg.b.WriteString("static uint32_t rho_strlen(const char* s) {\n")
-	cg.b.WriteString("    return s ? (uint32_t)strlen(s) : 0;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static bool rho_str_starts_with(const char* s, const char* prefix) {\n")
-	cg.b.WriteString("    if (!s || !prefix) return false;\n")
-	cg.b.WriteString("    size_t n = strlen(prefix);\n")
-	cg.b.WriteString("    return strncmp(s, prefix, n) == 0;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static const char* rho_str_trim_prefix(const char* s, const char* prefix) {\n")
-	cg.b.WriteString("    if (!s || !prefix) return s;\n")
-	cg.b.WriteString("    size_t n = strlen(prefix);\n")
-	cg.b.WriteString("    return strncmp(s, prefix, n) == 0 ? s + n : s;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static bool rho_str_contains(const char* haystack, const char* needle) {\n")
-	cg.b.WriteString("    if (!haystack || !needle) return false;\n")
-	cg.b.WriteString("    return strstr(haystack, needle) != NULL;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static const char* rho_env_or(const char* name, const char* fallback) {\n")
-	cg.b.WriteString("    const char* value = name ? getenv(name) : NULL;\n")
-	cg.b.WriteString("    return value ? value : fallback;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static uint8_t rho_str_at(const char* s, uint32_t i) {\n")
-	cg.b.WriteString("    if (!s) return 0;\n")
-	cg.b.WriteString("    size_t n = strlen(s);\n")
-	cg.b.WriteString("    return i < n ? (uint8_t)s[i] : 0;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static int32_t rho_str_index_of(const char* haystack, const char* needle) {\n")
-	cg.b.WriteString("    if (!haystack || !needle) return -1;\n")
-	cg.b.WriteString("    const char* found = strstr(haystack, needle);\n")
-	cg.b.WriteString("    return found ? (int32_t)(found - haystack) : -1;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static const char* rho_str_slice(const char* s, uint32_t start, uint32_t length) {\n")
-	cg.b.WriteString("    if (!s) return \"\";\n")
-	cg.b.WriteString("    size_t n = strlen(s);\n")
-	cg.b.WriteString("    if (start >= n) return \"\";\n")
-	cg.b.WriteString("    size_t avail = n - start;\n")
-	cg.b.WriteString("    size_t take = length < avail ? length : avail;\n")
-	cg.b.WriteString("    char* out = (char*)malloc(take + 1);\n")
-	cg.b.WriteString("    if (!out) return \"\";\n")
-	cg.b.WriteString("    memcpy(out, s + start, take);\n")
-	cg.b.WriteString("    out[take] = 0;\n")
-	cg.b.WriteString("    return out;\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static char* rho_yaml_load(const char* path) {\n")
-	cg.b.WriteString("    FILE* f = fopen(path, \"r\");\n")
-	cg.b.WriteString("    char line[4096];\n")
-	cg.b.WriteString("    char* result = NULL;\n")
-	cg.b.WriteString("    int in_user = 0;\n")
-	cg.b.WriteString("    if (!f) return strdup(\"unknown\");\n")
-	cg.b.WriteString("    while (fgets(line, sizeof(line), f) != NULL) {\n")
-	cg.b.WriteString("        char* trimmed = line;\n")
-	cg.b.WriteString("        while (*trimmed == ' ' || *trimmed == '\\t' || *trimmed == '\\n' || *trimmed == '\\r') trimmed++;\n")
-	cg.b.WriteString("        if (*trimmed == '\\0' || *trimmed == '#') continue;\n")
-	cg.b.WriteString("        if (strncmp(trimmed, \"user:\", 5) == 0) { in_user = 1; continue; }\n")
-	cg.b.WriteString("        if (in_user && strncmp(trimmed, \"name:\", 5) == 0) {\n")
-	cg.b.WriteString("            char* value = trimmed + 5;\n")
-	cg.b.WriteString("            while (*value == ' ' || *value == '\\t') value++;\n")
-	cg.b.WriteString("            size_t len = strlen(value);\n")
-	cg.b.WriteString("            while (len > 0 && (value[len - 1] == '\\n' || value[len - 1] == '\\r')) { value[--len] = '\\0'; }\n")
-	cg.b.WriteString("            result = strdup(value);\n")
-	cg.b.WriteString("            break;\n")
-	cg.b.WriteString("        }\n")
-	cg.b.WriteString("    }\n")
-	cg.b.WriteString("    fclose(f);\n")
-	cg.b.WriteString("    if (result != NULL) return result;\n")
-	cg.b.WriteString("    return strdup(\"unknown\");\n")
-	cg.b.WriteString("}\n\n")
-	cg.b.WriteString("static char* rho_string_from_i32(int32_t value) {\n")
-	cg.b.WriteString("    char buffer[32];\n")
-	cg.b.WriteString("    snprintf(buffer, sizeof(buffer), \"%d\", value);\n")
-	cg.b.WriteString("    return strdup(buffer);\n")
-	cg.b.WriteString("}\n\n")
 }
 
 func (cg *Codegen) emitFunctionSignature(fn ir.FuncIR) {
@@ -427,6 +298,11 @@ func defaultValueFor(t ir.Type) string {
 /* -------------------------------------------------------------------------- */
 
 func (cg *Codegen) emitInstr(instr ir.Instr) {
+	// Every line goes through `EmitLine`, which puts it at the current depth. The
+	// four spaces that used to start every one of these strings were the whole of
+	// the indentation scheme, and they had to be written again at each site — and
+	// again, differently, by the child generator that re-indented a nested block by
+	// prefixing what it had already written.
 	switch instr.Op {
 	case ir.OpReturn:
 		// A `return` with no expression is lowered with one operand, and that
@@ -438,115 +314,94 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 		}
 		switch {
 		case value != "":
-			cg.b.WriteString("    return ")
-			cg.b.WriteString(value)
-			cg.b.WriteString(";\n")
+			cg.b.EmitLine("return " + value + ";")
 		case cg.hostMain:
 			// A `main` declared void has nothing to hand back, and the `int` it was
 			// emitted as is expected to hand something back. Zero, because reaching
 			// the end of a void `main` is the same thing as saying so: the program
 			// ran to completion, which is success.
-			cg.b.WriteString("    return 0;\n")
+			cg.b.EmitLine("return 0;")
 		default:
-			cg.b.WriteString("    return;\n")
+			cg.b.EmitLine("return;")
 		}
 
 	case ir.OpAssign:
 		if len(instr.Args) == 1 {
-			cg.b.WriteString("    ")
-			cg.b.WriteString(instr.Dest)
+			operator := " = "
 			if strings.HasSuffix(instr.Dest, "=") {
-				cg.b.WriteString(" ")
-			} else {
-				cg.b.WriteString(" = ")
+				operator = " "
 			}
-			cg.b.WriteString(instr.Args[0])
-			cg.b.WriteString(";\n")
+			cg.b.EmitLine(instr.Dest + operator + instr.Args[0] + ";")
 		}
+
 	case ir.OpLet:
-		cg.b.WriteString("    ")
-		cg.b.WriteString(instr.Type)
-		cg.b.WriteString(" ")
-		cg.b.WriteString(instr.Dest)
+		line := instr.Type + " " + instr.Dest
 		if len(instr.Args) == 1 && instr.Args[0] != "" {
-			cg.b.WriteString(" = ")
-			cg.b.WriteString(cg.rewriteForeign(instr.Args[0]))
+			line += " = " + cg.rewriteForeign(instr.Args[0])
 		}
-		cg.b.WriteString(";\n")
+		cg.b.EmitLine(line + ";")
 
 	case ir.OpExpr:
 		if len(instr.Args) == 1 {
-			cg.b.WriteString("    ")
-			cg.b.WriteString(cg.rewriteForeign(instr.Args[0]))
-			cg.b.WriteString(";\n")
+			cg.b.EmitLine(cg.rewriteForeign(instr.Args[0]) + ";")
 		}
+
 	case ir.OpIf:
-		cg.b.WriteString("    if (")
-		cg.b.WriteString(instr.Condition)
-		cg.b.WriteString(") {\n")
-		cg.emitNested(instr.Then)
-		cg.b.WriteString("    }")
+		cg.b.EmitLine("if (" + instr.Condition + ") {")
+		cg.b.Indent()
+		cg.emitBlock(instr.Then)
+		cg.b.Dedent()
 		if len(instr.Else) > 0 {
-			cg.b.WriteString(" else {\n")
-			cg.emitNested(instr.Else)
-			cg.b.WriteString("    }")
+			cg.b.EmitLine("} else {")
+			cg.b.Indent()
+			cg.emitBlock(instr.Else)
+			cg.b.Dedent()
 		}
-		cg.b.WriteString("\n")
+		cg.b.EmitLine("}")
 
 	case ir.OpWhile:
-		cg.b.WriteString("    while (")
-		cg.b.WriteString(instr.Condition)
-		cg.b.WriteString(") {\n")
-		cg.emitNested(instr.Then)
-		cg.b.WriteString("    }\n")
+		cg.b.EmitLine("while (" + instr.Condition + ") {")
+		cg.b.Indent()
+		cg.emitBlock(instr.Then)
+		cg.b.Dedent()
+		cg.b.EmitLine("}")
 
 	case ir.OpBreak:
-		cg.b.WriteString("    break;\n")
+		cg.b.EmitLine("break;")
 
 	case ir.OpCall:
-		cg.b.WriteString("    ")
+		line := ""
 		if instr.Dest != "" {
-			cg.b.WriteString(instr.Dest)
-			cg.b.WriteString(" = ")
+			line = instr.Dest + " = "
 		}
 		if len(instr.Args) > 0 {
-			cg.b.WriteString(instr.Args[0])
-			cg.b.WriteString("(")
-			for i := 1; i < len(instr.Args); i++ {
-				if i > 1 {
-					cg.b.WriteString(", ")
-				}
-				cg.b.WriteString(instr.Args[i])
-			}
-			cg.b.WriteString(");\n")
+			line += instr.Args[0] + "(" + strings.Join(instr.Args[1:], ", ") + ");"
+			cg.b.EmitLine(line)
 		}
 
 	case ir.OpNop:
-		cg.b.WriteString("    /* nop */\n")
+		cg.b.EmitLine("/* nop */")
+
 	case ir.OpRaw:
-		cg.b.WriteString(instr.Dest)
-		cg.b.WriteString("\n")
+		// `OpRaw` carries text that is already a whole line, so it is emitted at
+		// the current depth rather than being written verbatim: a raw statement
+		// inside a block belongs at that block's indentation like any other.
+		cg.b.EmitLine(instr.Dest)
 
 	default:
-		cg.b.WriteString("    /* unknown op */\n")
+		cg.b.EmitLine("/* unknown op */")
 	}
 }
 
-func (cg *Codegen) emitNested(instructions []ir.Instr) {
-	// The child is given what this function needs to know, and not only the empty
-	// buffer. A nested `return` is lowered by the same rules as any other one, and
-	// a `main` emitted as `int` has to supply a value for every one of them, not
-	// only the ones at the top level of its body.
-	child := New()
-	child.hostMain = cg.hostMain
-	child.foreign = cg.foreign
+// emitBlock is a nested block of instructions, at the caller's indentation.
+//
+// It used to need a generator of its own and a pass over what that child had
+// written, prefixing four spaces to every line to move it inwards. An emitter that
+// knows its depth needs neither: the instructions are emitted where they are, at
+// the depth the caller set.
+func (cg *Codegen) emitBlock(instructions []ir.Instr) {
 	for _, instruction := range instructions {
-		child.emitInstr(instruction)
-	}
-	for _, line := range strings.Split(strings.TrimSuffix(child.b.String(), "\n"), "\n") {
-		cg.b.WriteString("    ")
-		cg.b.WriteString(line)
-		cg.b.WriteString("\n")
+		cg.emitInstr(instruction)
 	}
 }
 

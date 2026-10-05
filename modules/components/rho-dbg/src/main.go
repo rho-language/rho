@@ -97,10 +97,17 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --target NAME         the board, as its target spec names it")
 	fmt.Fprintln(os.Stderr, "  --engine NAME         a debugger this machine has (see `rho dbg engines`)")
 	fmt.Fprintln(os.Stderr, "  --cwd DIR             the project directory")
+	fmt.Fprintln(os.Stderr, "  --build-type NAME     which build to attach to: Release (the default), Debug, ...")
+	fmt.Fprintln(os.Stderr, "                         resolves --program from that build's output directory")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "The board's target spec says which debugger and which probe to use, and a")
 	fmt.Fprintln(os.Stderr, "plugin may offer another. `rho ide vscode` writes the launch configuration")
 	fmt.Fprintln(os.Stderr, "an editor needs.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "A session attaches to a program somebody built; it does not build one. The")
+	fmt.Fprintln(os.Stderr, "build type says which, and Release is the default for the same reason it is")
+	fmt.Fprintln(os.Stderr, "everywhere else: a Debug build is something a person asks for while chasing")
+	fmt.Fprintln(os.Stderr, "something, not what a session should quietly assume.")
 }
 
 // options are what a session may be started with.

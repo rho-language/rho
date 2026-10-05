@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"rho/src/sysdep"
 	"testing"
 
@@ -762,3 +763,89 @@ func TestARecipeNamesTheDirectoryAndTheBinaryWithinIt(t *testing.T) {
 		t.Errorf("expected bin/thing, got %q", got)
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Documentation                                                             */
+/* -------------------------------------------------------------------------- */
+
+// A cross-reference is written as the *target* of another page, and this dashboard
+// addresses pages by *route*. The two are not the same, and when the target was used
+// as the route every link in the documentation landed on a page that does not exist:
+//
+//   - a page the generator wrote is `documentation/getting-started`, because the
+//     target carries the section it is in, and this dashboard serves it at
+//     `getting-started`;
+//   - a module's front page is `rho-flash/index`, and this dashboard serves it at
+//     `rho-flash`.
+//
+// So a target is looked up rather than reused, and this is what checks that the two
+// lists still agree.
+func TestEveryCrossReferenceInTheDocumentationResolves(t *testing.T) {
+	if !ProjectDocsAvailable() {
+		t.Skip("no project documentation is installed")
+	}
+	checked := 0
+	for _, file := range ProjectDocs() {
+		page, err := ReadProjectDoc(file.Path)
+		if err != nil {
+			t.Fatalf("read %s: %v", file.Path, err)
+		}
+		for _, match := range docLinkPattern.FindAllStringSubmatch(page.Body, -1) {
+			route := strings.TrimPrefix(match[1], "#/docs/")
+			if _, err := ReadProjectDoc(route); err == nil {
+				continue
+			}
+			if _, err := ReadModuleDoc(route); err == nil {
+				continue
+			}
+			t.Errorf("%s links to %s, which is not a page this dashboard serves", file.Path, route)
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Log("the documentation has no cross-references to check")
+	}
+}
+
+// The map is what makes the above work, and it is worth testing directly: a target
+// that resolves to a route with no page behind it is the bug this replaced.
+func TestRoutesMapEveryTargetToAPageThatExists(t *testing.T) {
+	if !ProjectDocsAvailable() {
+		t.Skip("no project documentation is installed")
+	}
+	for target, route := range Routes() {
+		if _, err := ReadProjectDoc(route); err == nil {
+			continue
+		}
+		if _, err := ReadModuleDoc(route); err == nil {
+			continue
+		}
+		t.Errorf("target %q maps to %s, which is not a page this dashboard serves", target, route)
+	}
+}
+
+// A link whose fragment is an identifier on this page is an anchor, and rewriting
+// it would send the reader to another page.
+func TestAReferenceToSomethingOnThisPageIsLeftAlone(t *testing.T) {
+	routes := DocRoutes{"somewhere-else": "elsewhere"}
+	body := `<a class="xref" href="#a-section">a section</a>`
+	got := rewriteReferences(body, routes)
+	if !strings.Contains(got, `href="#a-section"`) {
+		t.Errorf("an in-page anchor was rewritten into navigation: %s", got)
+	}
+}
+
+// A target this dashboard has no page for is left as the fragment it already is,
+// rather than turned into a route that does not exist: a link to a page it does not
+// serve is a link that goes nowhere either way, and this one is at least visibly
+// inert rather than a dead route.
+func TestAReferenceToAPageThisDashboardDoesNotServeIsLeftAlone(t *testing.T) {
+	body := `<a class="xref" href="#a-page-it-does-not-have">elsewhere</a>`
+	got := rewriteReferences(body, DocRoutes{})
+	if !strings.Contains(got, `href="#a-page-it-does-not-have"`) {
+		t.Errorf("an unreachable reference was turned into a route: %s", got)
+	}
+}
+
+// docLinkPattern is a link to another page as this dashboard writes one.
+var docLinkPattern = regexp.MustCompile(`href="(#/docs/[^"]+)"`)

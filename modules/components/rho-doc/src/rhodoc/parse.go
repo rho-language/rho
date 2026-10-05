@@ -852,6 +852,28 @@ func readBracket(text string) (inner string, rest string, ok bool) {
 //
 //	[text]{ref}`label`      the MyST spelling
 //	:ref:`label`            the classic spelling
+//
+// isRoleName is whether a word can name a role.
+//
+// Letters, digits and the punctuation a role name is written with, and a first
+// character that is not a digit. That is the whole of the rule, and it exists so
+// that a sentence is not a role: `: `Some“ is the same shape as `:ref:`Some“,
+// and only the shape of the name tells them apart.
+func isRoleName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index, char := range name {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char == '_':
+		case index > 0 && (char >= '0' && char <= '9' || char == '-' || char == '.' || char == '+'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func parseRole(text string) (*Node, int, bool) {
 	if strings.HasPrefix(text, ":") {
 		closing := strings.Index(text, "`")
@@ -859,7 +881,19 @@ func parseRole(text string) (*Node, int, bool) {
 			return nil, 0, false
 		}
 		name := strings.TrimSuffix(text[1:closing], ":")
-		if name == "" {
+		// A role name is an identifier, and the classic spelling depends on it.
+		//
+		// Without this, ordinary prose is read as a role: a sentence carrying
+		// ``an `Option[T]`: `Some` `` puts a colon and a backtick next to each
+		// other, and `: `Some`` is exactly the shape of `:ref:`Some`` — a role
+		// named " " pointing at a target called "Some". The page then builds and
+		// reports a cross-reference to a target nobody declared, which is both a
+		// false alarm and a real failure under `-strict`.
+		//
+		// Rejecting a name that is not identifier-shaped is what separates the two:
+		// every role this generator or its plugins declares is a word, and prose
+		// between a colon and a code span is not.
+		if !isRoleName(name) {
 			return nil, 0, false
 		}
 		label := text[closing+1:]

@@ -102,7 +102,12 @@ func build(args []string) int {
 	// be reading a relationship it had not been told.
 	forProject := fs.String("for", "", "the project whose dependencies declare the target (default: the generated project)")
 	buildDir := fs.String("build-dir", "", "where the build tree goes (default: <project>/build/<target>)")
-	kind := fs.String("type", "Release", "the CMake build type")
+	// Release unless asked otherwise, validated here rather than passed to CMake.
+	//
+	// CMake's own error for an unknown build type names a generator and a cache
+	// variable several layers from the flag that was wrong, so the refusal happens
+	// where the flag is.
+	kind := fs.String("type", "Release", "the build type: Release, Debug, RelWithDebInfo or MinSizeRel")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
 	treePlugins := fs.Bool("tree-plugins", false, "also read the plugins the tree carries")
 	// Whether the link writes its map. On by default, because the map is how a
@@ -151,7 +156,13 @@ func build(args []string) int {
 		fmt.Fprintf(os.Stderr, "rho target build: no target named %q. `rho target list` names the ones there are.\n", *target)
 		return 1
 	}
+	if !knownBuildType(*kind) {
+		fmt.Fprintf(os.Stderr,
+			"rho target build: %q is not a build type; use Release, Debug, RelWithDebInfo or MinSizeRel\n", *kind)
+		return 2
+	}
 	spec.LinkMap = *linkMap
+	applyStackRequirement(*project, &spec)
 
 	// Checked before the project's files are written: a target whose compiler is
 	// not installed cannot be built by anything that follows, and finding out
@@ -265,6 +276,73 @@ func build(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// knownBuildType is whether a name is a build type this toolchain offers.
+func knownBuildType(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "release", "debug", "relwithdebinfo", "minsizerel":
+		return true
+	}
+	return false
+}
+
+// applyStackRequirement is the stack the project computed, unless something
+// declared otherwise.
+//
+// The order is the whole of the precedence. A declared number wins, because
+// somebody chose it and a tool cannot overrule a choice. Then the computed one,
+// but only when it is a bound. Then the target's default. An estimate is reported
+// and not used: a figure the analysis knows is short of the truth is no better
+// than an honest default, and using one quietly would leave a program believing
+// its stack had been measured when it had been guessed, which is the situation
+// this whole exercise exists to end.
+func applyStackRequirement(project string, spec *rhtarget.Spec) {
+	if spec.Linker.StackBytes != 0 {
+		return
+	}
+	requirement, found := ReadStackRequirement(project)
+	if !found {
+		return
+	}
+
+	bytes, bound := requirement.Bytes, requirement.Bound
+	if !bound {
+		// The analysis read every frame it emitted and could not see inside the
+		// target's own C. A target that declares what those calls cost turns the
+		// figure into a bound — and it is the only thing that can, because the calls
+		// it is being asked about are its own.
+		if corrected, declared := correctForForeignFrames(requirement, spec.Linker.ForeignFrames); declared {
+			bytes, bound = corrected, true
+		}
+	}
+	if !bound {
+		fmt.Fprintf(os.Stderr, "rho target: %s; the target's own stack size stands\n", requirement.Describe())
+		return
+	}
+	spec.Linker.StackBytes = bytes
+	fmt.Fprintf(os.Stderr, "rho target: %d bytes of stack, %s\n", bytes, requirement.Basis(spec.Linker.ForeignFrames))
+}
+
+// correctForForeignFrames is the analysis's own total plus what the target declares
+// its unseen calls cost, and whether every one of them is declared.
+//
+// All or nothing on purpose. A figure that corrected the calls it had been told
+// about and charged the default for the rest would look like a bound and be a
+// guess with extra steps, and a stack that is too small does not report itself.
+func correctForForeignFrames(requirement StackRequirement, declared map[string]uint64) (uint64, bool) {
+	if len(requirement.Unseen) == 0 {
+		return requirement.OwnBytes, true
+	}
+	total := requirement.OwnBytes
+	for _, name := range requirement.Unseen {
+		cost, known := declared[strings.TrimSpace(name)]
+		if !known {
+			return 0, false
+		}
+		total += cost
+	}
+	return total, true
 }
 
 // writeTargetFiles writes the CMake and linker files a target needs into a

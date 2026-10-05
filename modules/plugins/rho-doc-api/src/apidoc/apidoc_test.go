@@ -148,12 +148,36 @@ func TestABuildWithNoProjectGetsNothing(t *testing.T) {
 	}
 }
 
-func TestAProjectThatCannotBeReadIsReported(t *testing.T) {
-	// A missing page is worth a reason in the log: an API reference that is
-	// silently absent is a reference nobody knows is missing.
+func TestADirectoryThatIsNotAModuleGetsNothing(t *testing.T) {
+	// A directory with no manifest is not a broken project; it is not a project.
+	// Every repository root and every build directory in a tree is one, so
+	// reporting it puts a warning on every module in the build and fails a strict
+	// build over a directory nobody meant to be a module.
 	response := answer(t, siteRequest(t, SitePayload{
-		Site: "Broken", Root: filepath.Join(t.TempDir(), "nowhere"),
+		Site: "NotAModule", Root: filepath.Join(t.TempDir(), "nowhere"),
 	}))
+	if len(response.Pages) != 0 || len(response.Diagnostics) != 0 {
+		t.Errorf("a directory that is not a module was answered with %+v", response)
+	}
+}
+
+// A manifest that exists but cannot be read is a real problem, and a silently
+// absent API reference is a reference nobody knows is missing. This is the case
+// the warning is for, and it is a different case from a directory that is simply
+// not a module — which is silent, because every repository root and every build
+// directory in a tree is one.
+//
+// The manifest here is a directory, so the read fails for a reason no amount of
+// tolerance in the reader can absorb. That is deliberately the hardest case: a
+// manifest that is merely malformed is something the loader absorbs, and a project
+// whose routes still describe a page is not a broken project.
+func TestAModuleThatCannotBeReadIsReported(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "module.yml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	response := answer(t, siteRequest(t, SitePayload{Site: "Broken", Root: root}))
 	if len(response.Pages) != 0 {
 		t.Errorf("a project that could not be read was described anyway: %+v", response.Pages)
 	}

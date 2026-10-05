@@ -29,6 +29,7 @@ package rhtarget
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -149,11 +150,26 @@ func TargetCMake(spec Spec, linkerScript string) string {
 		fmt.Fprintf(&b, "set(RHO_FLASH_LENGTH %s)\n\n", spec.Memory.Flash.Length)
 	}
 
-	// The script comes from the target's own file when it names one, and from the
-	// memory map when it does not.
-	if spec.LinkerScript != "" {
+	// The script comes from the target's own file when it names one, from the
+	// `linker:` block when that names one, and from the memory map when neither
+	// does.
+	//
+	// Three ways to get a script, in the order a person reaches for them: the
+	// generated one, which is right for most programs; the `linker:` block, which
+	// changes numbers in it; and a `.ld` of one's own, for the layouts that cannot
+	// be reached by changing numbers at all.
+	switch {
+	case spec.LinkerScript != "":
 		fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", spec.LinkerScript)
-	} else if len(spec.LinkRegions()) > 0 {
+	case spec.Linker.Script != "":
+		// A path outside the project is taken as written, so that a platform can
+		// ship one script and every project that uses it points at the same file.
+		if filepath.IsAbs(spec.Linker.Script) {
+			fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT %s)\n", spec.Linker.Script)
+		} else {
+			fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", spec.Linker.Script)
+		}
+	case len(spec.LinkRegions()) > 0:
 		fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", linkerScript)
 	}
 	b.WriteString("if(DEFINED RHO_LINKER_SCRIPT)\n")
@@ -243,20 +259,27 @@ func LinkerScript(spec Spec) string {
 	}
 	fmt.Fprintf(&b, " *\n * Regenerate with:\n *\n *     rho target generate <project> --target %s\n */\n\n", spec.Name)
 
-	regions := spec.LinkRegions()
+	regions := convergeRegions(spec)
 	b.WriteString("MEMORY\n{\n")
 	for _, region := range regions {
 		suffix := ""
 		if region.Region.Comment != "" {
 			suffix = " /* " + firstSentence(region.Region.Comment) + " */"
 		}
+		if region.Declared {
+			suffix += " /* set by the target's linker block */"
+		}
 		fmt.Fprintf(&b, "    %s (r%s): ORIGIN = %s, LENGTH = %s%s\n",
 			region.Name, access(region.Kind), region.Region.Origin, region.Region.Length, suffix)
 	}
 	b.WriteString("}\n\n")
 
-	flash, hasFlash := flashRegion(regions)
-	ram, hasRAM := ramRegion(regions)
+	named := make([]NamedRegion, 0, len(regions))
+	for _, region := range regions {
+		named = append(named, region.NamedRegion)
+	}
+	flash, hasFlash := flashRegion(named)
+	ram, hasRAM := ramRegion(named)
 	if hasFlash {
 		fmt.Fprintf(&b, "/* The stack grows down from the end of %s. */\n", ram.Name)
 		fmt.Fprintf(&b, "_estack = ORIGIN(%s) + LENGTH(%s);\n", ram.Name, ram.Name)
@@ -292,7 +315,11 @@ func LinkerScript(spec Spec) string {
 			fmt.Fprintf(&b, "EXTERN(%s)\n", handler)
 		}
 		b.WriteString("\n")
-		fmt.Fprintf(&b, "ENTRY(Reset_Handler)\n\n")
+		entry := strings.TrimSpace(spec.Linker.Entry)
+		if entry == "" {
+			entry = "Reset_Handler"
+		}
+		fmt.Fprintf(&b, "ENTRY(%s)\n\n", entry)
 	}
 	if hasRAM {
 		// The stack and the heap share what is left of RAM after the static data,
@@ -301,7 +328,8 @@ func LinkerScript(spec Spec) string {
 		// symbol and the linker rejects one that is not inside a section — which
 		// is a syntax error in the generated script rather than anything to do
 		// with the memory map.
-		fmt.Fprintf(&b, "_Min_Heap_Size  = 0x200;\n_Min_Stack_Size = 0x400;\n\n")
+		fmt.Fprintf(&b, "_Min_Heap_Size  = %s;\n_Min_Stack_Size = %s;\n\n",
+			hexBytes(spec.Linker.HeapBytes, DefaultHeapBytes), hexBytes(spec.Linker.StackBytes, DefaultStackBytes))
 	}
 
 	b.WriteString("SECTIONS\n{\n")
@@ -319,6 +347,16 @@ func LinkerScript(spec Spec) string {
 		b.WriteString("    .fini_array :\n    {\n        PROVIDE_HIDDEN(__fini_array_start = .);\n        KEEP(*(SORT(.fini_array.*)))\n        KEEP(*(.fini_array*))\n        PROVIDE_HIDDEN(__fini_array_end = .);\n    } > " + flash.Name + "\n\n")
 		fmt.Fprintf(&b, "    .ARM.extab :\n    { *(.ARM.extab* .gnu.linkonce.armextab.*) } > %s\n", flash.Name)
 		fmt.Fprintf(&b, "    .ARM.exidx :\n    { __exidx_start = .; *(.ARM.exidx* .gnu.linkonce.armexidx.*) __exidx_end = .; } > %s\n\n", flash.Name)
+	}
+	// Sections the project declared, placed where it said.
+	//
+	// After the sections the toolchain owns and before the heap and stack, so
+	// that a declared section lands above the automatic ones: a project adding a
+	// region of its own means it, not the C library's `.bss`, that is at risk of
+	// running out of room, and a section placed below the stack would be laid out
+	// in memory the stack can reach.
+	for _, section := range spec.Linker.Sections {
+		writeDeclaredSection(&b, section)
 	}
 	if hasFlash && hasRAM {
 		// Initialised data lives in RAM and is copied out of the flash before
@@ -353,7 +391,127 @@ func LinkerScript(spec Spec) string {
 		fmt.Fprintf(&b, "    ._user_heap_stack :\n    {\n        . = ALIGN(8);\n        PROVIDE(end = .);\n        PROVIDE(_end = .);\n        . = . + _Min_Heap_Size;\n        . = . + _Min_Stack_Size;\n        . = ALIGN(8);\n    } > %s\n\n", ram.Name)
 	}
 	b.WriteString("}\n")
+	for _, name := range sortedKeys(spec.Linker.Symbols) {
+		fmt.Fprintf(&b, "\n/* Declared by the target's linker block. */\n%s = %s;\n", name, spec.Linker.Symbols[name])
+	}
 	return b.String()
+}
+
+// writeDeclaredSection is one section a project placed for itself.
+//
+// Written the way the generated sections are written rather than through a
+// template of its own, so that a declared section and a generated one are
+// indistinguishable in the script — which is what keeps a reader of a generated
+// linker script able to read it.
+func writeDeclaredSection(b *strings.Builder, section LinkerSection) {
+	fmt.Fprintf(b, "\n    %s :\n    {\n", section.Name)
+	for _, flag := range section.Flags {
+		fmt.Fprintf(b, "        %s\n", flag)
+	}
+	for _, source := range section.Sources {
+		fmt.Fprintf(b, "        %s\n", source)
+	}
+	if section.Align > 0 {
+		fmt.Fprintf(b, "        . = ALIGN(%s);\n", hexBytes(section.Align, 0))
+	}
+	fmt.Fprintf(b, "    } > %s", section.Region)
+	if section.At != "" {
+		fmt.Fprintf(b, " AT> %s", section.At)
+	}
+	if section.Noload {
+		// A section that reserves address space and stores nothing there, which
+		// is what a stack is. Without this the linker would write zeroes into it.
+		b.WriteString(" (NOLOAD)")
+	}
+	b.WriteString("\n\n")
+}
+
+// The stack and heap a target gets when it says nothing.
+//
+// A guess, and the one this project exists to stop making: 1 kB of stack is
+// enough for most programs and silently too little for a deep call graph or a
+// large local array, and a program that overruns it does not fail — it corrupts
+// whatever is below it and carries on. For a Rho program the stack is computed
+// from the call graph instead; these are what a target with no such analysis
+// falls back to.
+const (
+	// DefaultStackBytes is the stack a target gets when nothing says otherwise.
+	DefaultStackBytes = 0x400
+	// DefaultHeapBytes is the heap a target gets when nothing says otherwise.
+	DefaultHeapBytes = 0x200
+)
+
+// hexBytes is a size as the linker script writes one: a hexadecimal number.
+func hexBytes(value, fallback uint64) string {
+	if value == 0 {
+		value = fallback
+	}
+	return fmt.Sprintf("0x%x", value)
+}
+
+// sortedKeys is a map's keys in order, so that a generated script is the same
+// file on every machine.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// convergedRegion is one `MEMORY` entry and where it came from.
+//
+// A `NamedRegion` with one extra bit: `Declared` says the target's `linker:`
+// block supplied or changed this entry, which the script says in a comment
+// because a reader of a generated linker script is entitled to know which numbers
+// came from the chip and which from the project.
+type convergedRegion struct {
+	NamedRegion
+	Declared bool
+}
+
+// convergeRegions is the chip's own memory map with the target's `linker:` block
+// applied to it.
+//
+// Converged rather than appended, and that is the whole of the rule: a block that
+// names a region the chip already has *changes* it, and a block that names one it
+// does not *adds* it. Appending either would emit two `MEMORY` entries of the same
+// name, which is a linker syntax error naming a line of a generated file — and
+// would do so for the most ordinary thing a project could write, which is "this
+// board's second bank is half the size the chip datasheet says".
+//
+// Order is the chip's own, with anything new appended, so that a script generated
+// with a block and one generated without it differ only where the block says.
+func convergeRegions(spec Spec) []convergedRegion {
+	out := []convergedRegion{}
+	byName := map[string]int{}
+	for _, region := range spec.LinkRegions() {
+		byName[region.Name] = len(out)
+		out = append(out, convergedRegion{NamedRegion: region})
+	}
+	for _, name := range sortedKeys(spec.Linker.Regions) {
+		declared := spec.Linker.Regions[name]
+		if at, existing := byName[name]; existing {
+			// A region the chip has, restated. A length of zero means "leave the
+			// chip's figure alone", so a block can change one number without having
+			// to restate the other.
+			if strings.TrimSpace(declared.Length) != "" && declared.Length != "0" {
+				out[at].Region.Length = declared.Length
+			}
+			if strings.TrimSpace(declared.Origin) != "" && declared.Origin != "0" {
+				out[at].Region.Origin = declared.Origin
+			}
+			out[at].Declared = true
+			continue
+		}
+		byName[name] = len(out)
+		out = append(out, convergedRegion{
+			NamedRegion: NamedRegion{Name: name, Kind: "rw", Region: declared},
+			Declared:    true,
+		})
+	}
+	return out
 }
 
 // access is the linker's letter for what a region may be used for: a program is

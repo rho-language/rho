@@ -31,11 +31,35 @@ import (
 /*  Public API                                                                */
 /* -------------------------------------------------------------------------- */
 
+// Parts is a module compiled: the program, and the runtime it calls into.
+//
+// Two translation units rather than one file with a marker in it, because that is
+// what the build wants and because a caller that has to find the boundary by
+// searching for the text `static char* rho_concat` is a caller one runtime change
+// away from producing two files that do not compile.
+type Parts struct {
+	// Program is the application: its structs, its functions, its foreign calls.
+	Program string
+	// Runtime is the C those functions call, feature-gated to what they use.
+	Runtime string
+}
+
+// Emit compiles a module into its two translation units.
+func Emit(m ir.ModuleIR) Parts {
+	cg := New()
+	program := cg.EmitModule(m)
+	return Parts{Program: program, Runtime: cg.Runtime()}
+}
+
 // EmitC generates C code for a given IR module.
 // This is the stable API used by the compiler pipeline.
+//
+// The whole thing — program then runtime — because that is what a caller
+// compiling one file wants. A caller generating a project wants `Emit`, which
+// keeps them apart.
 func EmitC(m ir.ModuleIR) string {
-	cg := New()
-	return cg.EmitModule(m)
+	parts := Emit(m)
+	return parts.Program + "\n" + parts.Runtime
 }
 
 // EmitCToFile writes the generated C code to a file.
@@ -44,9 +68,11 @@ func EmitCToFile(path string, m ir.ModuleIR) error {
 	if err := ValidateModule(m); err != nil {
 		return err
 	}
-	cg := New()
-	out := cg.EmitModule(m)
-	return writeFile(path, out)
+	// Program and runtime into one file, because this is the single-file entry
+	// point: a caller that wants them apart is generating a project and uses
+	// `Emit`.
+	parts := Emit(m)
+	return writeFile(path, parts.Program+"\n"+parts.Runtime)
 }
 
 func ValidateModule(m ir.ModuleIR) error {
