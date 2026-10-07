@@ -382,7 +382,17 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 		fmt.Fprintf(b, "%s%s = %s\n", pad, goFieldName(strings.TrimSpace(dest)), ToGoExpr(instr.Args[0]))
 
 	case ir.OpLet:
-		goType := goTypeForCName(instr.Type)
+		// The Rho type is preferred when it was carried, because a dynamic
+		// array `[T]` and a pointer `Ptr[T]` share the C spelling `T*` and
+		// differ in Go, where the slice is `[]T`. Reading the C spelling alone
+		// would declare a slice as a pointer.
+		goType := ""
+		if instr.TypeName != "" {
+			goType = goTypeForRhoName(instr.TypeName)
+		}
+		if goType == "" {
+			goType = goTypeForCName(instr.Type)
+		}
 		if goType == "" {
 			goType = "any"
 		}
@@ -390,7 +400,13 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 		declared[name] = true
 		// Go has no `T name = v` form, so a typed local always needs `var`.
 		if len(instr.Args) == 1 && instr.Args[0] != "" {
-			fmt.Fprintf(b, "%svar %s %s = %s\n", pad, name, goType, ToGoExpr(instr.Args[0]))
+			value := ToGoExpr(instr.Args[0])
+			// A bare initializer needs its type in Go: C writes `{ 0 }` where Go
+			// writes `[N]T{ 0 }`, and the type is what the declaration names.
+			if strings.HasPrefix(strings.TrimSpace(value), "{") {
+				value = goType + value
+			}
+			fmt.Fprintf(b, "%svar %s %s = %s\n", pad, name, goType, value)
 			return
 		}
 		fmt.Fprintf(b, "%svar %s %s\n", pad, name, goType)
@@ -632,6 +648,22 @@ func EmitGoRuntime(implementation string) string {
 	body.WriteString("\treturn fallback\n}\n\n")
 	imports = addGoImport(imports, "strconv")
 	imports = addGoImport(imports, "strings")
+
+	// File and argument builtins.
+	body.WriteString("// rhoReadFile reads a whole file into a byte slice, or nil when it cannot.\n")
+	body.WriteString("func rhoReadFile(path string) []byte {\n")
+	body.WriteString("\tdata, err := os.ReadFile(path)\n")
+	body.WriteString("\tif err != nil {\n\t\treturn nil\n\t}\n")
+	body.WriteString("\treturn data\n}\n\n")
+	body.WriteString("// rhoWriteFile writes a byte slice to a file.\n")
+	body.WriteString("func rhoWriteFile(path string, data []byte) {\n")
+	body.WriteString("\tos.WriteFile(path, data, 0644)\n}\n\n")
+	body.WriteString("// rhoGetArgs returns the command-line arguments as one space-joined string.\n")
+	body.WriteString("func rhoGetArgs() string {\n")
+	body.WriteString("\treturn strings.Join(os.Args[1:], \" \")\n}\n\n")
+	body.WriteString("// rhoPrintI32 writes a signed number to stdout.\n")
+	body.WriteString("func rhoPrintI32(value int32) { fmt.Print(value) }\n\n")
+	imports = addGoImport(imports, "fmt")
 
 	needed := []struct {
 		call    string

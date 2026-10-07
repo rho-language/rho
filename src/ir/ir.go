@@ -45,6 +45,11 @@ const (
 	// takes `const char*` where Rho takes `Ptr[u8]`, and a backend that spelled a
 	// pointer as a name would generate something that does not compile.
 	TypePtr
+	// TypeSlice is a dynamic array, written `[T]`. It is distinct from a pointer
+	// because the two are the same in C — both are `T*` with a length the
+	// program tracks — but not in Go, where a slice is `[]T` and a pointer is
+	// `*T`. Keeping them apart is what lets both backends spell their own.
+	TypeSlice
 )
 
 // Type represents a concrete type in the IR.
@@ -150,7 +155,8 @@ const (
 type Instr struct {
 	Op        OpCode
 	Dest      string   // destination symbol
-	Type      string   // declared type for OpLet
+	Type      string   // declared type for OpLet, in the C spelling
+	TypeName  string   // the Rho type as written, when the C spelling is lossy
 	Args      []string // argument symbols
 	Condition string
 	Then      []Instr

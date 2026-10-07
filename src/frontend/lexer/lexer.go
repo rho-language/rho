@@ -61,6 +61,8 @@ const (
 	TokenReverse
 	TokenStep
 	TokenLet
+	TokenConst
+	TokenVar
 	TokenWhile
 	TokenElse
 	TokenBreak
@@ -664,6 +666,10 @@ func lookupKeyword(ident string) Kind {
 		return TokenStep
 	case "let":
 		return TokenLet
+	case "const":
+		return TokenConst
+	case "var":
+		return TokenVar
 	case "while":
 		return TokenWhile
 	case "else":

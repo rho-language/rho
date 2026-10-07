@@ -365,6 +365,18 @@ func TestPlatformIsRecognizedFromTheModuleGraph(t *testing.T) {
 	if got := Platform(t.TempDir()); got != "" {
 		t.Fatalf("expected no platform for a project that names none, got %q", got)
 	}
+
+	// The root is where a platform's own tools are found, so it is the module
+	// that declares the platform rather than the project that names it.
+	if got := PlatformRoot(app); got != platform {
+		t.Fatalf("expected the platform module's directory %q, got %q", platform, got)
+	}
+	if got := PlatformRoot(common); got != platform {
+		t.Fatalf("expected the platform directory through the interfaces module, got %q", got)
+	}
+	if got := PlatformRoot(t.TempDir()); got != "" {
+		t.Fatalf("expected no platform root for a project that names none, got %q", got)
+	}
 }
 
 func TestLoadYAMLManifestReadsWhatAComponentOffers(t *testing.T) {

@@ -299,6 +299,7 @@ func (i *Interface) params(params []Param) string {
 func (i *Interface) ShimHeader(headers []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, Generated, "ffi_shim.h")
+	b.WriteString("#ifndef FFI_SHIM_H\n#define FFI_SHIM_H\n\n")
 	b.WriteString("#pragma once\n\n")
 	b.WriteString("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n")
 	for _, header := range headers {
@@ -316,6 +317,7 @@ func (i *Interface) ShimHeader(headers []string) string {
 		b.WriteString(strings.Join(parts, ", ") + ");\n")
 	}
 	b.WriteString("\n#ifdef __cplusplus\n}\n#endif\n")
+	b.WriteString("\n#endif /* FFI_SHIM_H */\n")
 	return b.String()
 }
 

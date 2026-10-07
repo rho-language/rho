@@ -342,6 +342,15 @@ func emitCMakeLists(ctx Context) string {
 	if hasAssembly(ctx) {
 		b.WriteString("enable_language(ASM)\n")
 	}
+	// A platform may need more languages than the project's own sources imply —
+	// a framework's startup is assembly and its runtime is C++ — and names them
+	// from its prelude, which has run by now. They are enabled here rather than
+	// there because the compiler has to be chosen first: a language enabled
+	// before that uses the host's toolchain, and a framework's assembly does
+	// not assemble with it.
+	b.WriteString("if(DEFINED RHO_PROGRAM_LANGUAGES)\n")
+	b.WriteString("  enable_language(${RHO_PROGRAM_LANGUAGES})\n")
+	b.WriteString("endif()\n")
 
 	fmt.Fprintf(&b, "project(%s C)\n\n", name)
 	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/target.cmake)\n")
@@ -492,6 +501,15 @@ func emitCMakeLists(ctx Context) string {
 		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(source))
 	}
 	b.WriteString(")\n\n")
+
+	// Some targets need something said about the program itself once it exists —
+	// a board whose console is a driver registered on the program rather than
+	// on a dependency, say. The platform says it, in a fragment placed beside
+	// this file; this generator includes it and knows nothing of what is in it,
+	// because which vendor's SDK a board uses is not a fact about Rho.
+	b.WriteString("# Whatever the platform needs to say about the program, said once it exists.\n")
+	b.WriteString("set(RHO_PROGRAM " + name + ")\n")
+	b.WriteString("include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/program.cmake OPTIONAL)\n\n")
 
 	if configured {
 		// The generated configuration is built before the sources that include

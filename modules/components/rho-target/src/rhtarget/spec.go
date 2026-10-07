@@ -132,6 +132,14 @@ type Spec struct {
 	Flash Flash `json:"flash,omitempty"`
 	// Debug is how a program's execution is inspected on this target.
 	Debug Debug `json:"debug,omitempty"`
+	// Program is a CMake fragment to place beside the generated build and
+	// include once the program target exists, relative to the file that
+	// declared it.
+	//
+	// It is where a platform says what a program needs said about itself —
+	// which of a framework's stdio drivers it registers, say — without the
+	// generator having to know which framework, or that there is one.
+	Program string `json:"program,omitempty"`
 	// Source is the file the spec was read from, so a report can say where it
 	// came from.
 	Source string `json:"-"`
@@ -147,6 +155,15 @@ type Toolchain struct {
 	Size     string `json:"size,omitempty"`
 	// Flags are the architecture's own: the ones that say what the core is.
 	Flags []string `json:"flags,omitempty"`
+	// Prelude is a CMake file to include before `project()`, relative to the
+	// file that declared it.
+	//
+	// It exists for a target whose toolchain is a framework's: the vendor's
+	// import has to run before `project()` chooses a compiler, and it brings
+	// its own from there. When it is set the rest of this block is left out —
+	// the prelude owns the toolchain, and two of them setting a compiler is
+	// one of them being ignored without saying so.
+	Prelude string `json:"prelude,omitempty"`
 }
 
 // Linker is how a target's program is laid out in memory.

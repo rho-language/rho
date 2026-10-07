@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"rho/src/frontend/ast"
+	"rho/src/ir"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -361,6 +362,178 @@ func TestAddressOfIndexedElementAssignsToPointer(t *testing.T) {
 
 	if err := tc.CheckModule(m); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStringConcatenation(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "a", Value: ast.StringExpr{Value: "hello"}},
+				ast.LetStmt{Name: "b", Value: ast.StringExpr{Value: "world"}},
+				ast.LetStmt{
+					Name: "c",
+					Value: ast.BinaryExpr{
+						Op:    "+",
+						Left:  ast.IdentifierExpr{Name: "a"},
+						Right: ast.IdentifierExpr{Name: "b"},
+					},
+				},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("string concatenation should succeed: %v", err)
+	}
+}
+
+func TestStringEquality(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "a", Value: ast.StringExpr{Value: "hello"}},
+				ast.LetStmt{
+					Name: "eq",
+					Value: ast.BinaryExpr{
+						Op:    "==",
+						Left:  ast.IdentifierExpr{Name: "a"},
+						Right: ast.StringExpr{Value: "hello"},
+					},
+				},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("string == should succeed: %v", err)
+	}
+}
+
+func TestStringInequality(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "a", Value: ast.StringExpr{Value: "hello"}},
+				ast.LetStmt{
+					Name: "ne",
+					Value: ast.BinaryExpr{
+						Op:    "!=",
+						Left:  ast.IdentifierExpr{Name: "a"},
+						Right: ast.StringExpr{Value: "world"},
+					},
+				},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("string != should succeed: %v", err)
+	}
+}
+
+func TestDynamicArrayTypeResolves(t *testing.T) {
+	tc := New()
+	typ, ok := tc.resolveType("[u8]")
+	if !ok {
+		t.Fatal("expected [u8] to resolve")
+	}
+	if len(typ.Args) != 1 || typ.Args[0].Kind != ir.TypeU8 {
+		t.Fatalf("expected [u8] with a u8 element, got %+v", typ)
+	}
+}
+
+func TestLenAcceptsStringAndArray(t *testing.T) {
+	signature := intrinsicSignatures["len"]
+	if len(signature.params) != 1 {
+		t.Fatalf("len should take one argument, got %d", len(signature.params))
+	}
+	if !assignable(signature.params[0], ir.Type{Kind: ir.TypeString, Name: "string"}) {
+		t.Fatal("len should accept a string")
+	}
+	array := ir.Type{Kind: ir.TypeSlice, Name: "[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}}
+	if !assignable(signature.params[0], array) {
+		t.Fatal("len should accept a dynamic array")
+	}
+}
+
+func TestElementTypeOfStringIsU8(t *testing.T) {
+	elem := elementType(ir.Type{Kind: ir.TypeString, Name: "string"})
+	if elem.Kind != ir.TypeU8 {
+		t.Fatalf("string element type should be u8, got %v", elem.Kind)
+	}
+}
+
+func TestModuleConstKeepsDeclaredType(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.ConstDecl{Name: "MAX", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "512"}},
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "n", Type: ast.TypeExpr{Name: "u32"}, Value: ast.IdentifierExpr{Name: "MAX"}},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("const should check: %v", err)
+	}
+	// A `0` literal infers as i32 on its own; the written u32 has to win, or a
+	// comparison with a u32 would be promoted to a signed type.
+	if got := tc.moduleConstTypes["MAX"]; got.Kind != ir.TypeU32 {
+		t.Fatalf("expected the declared u32, got %v", got.Kind)
+	}
+}
+
+func TestModuleConstVisibleInFunction(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.ConstDecl{Name: "MAGIC", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "305419896"}},
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "u32",
+			Body: []ast.Stmt{
+				ast.ReturnStmt{Value: ast.IdentifierExpr{Name: "MAGIC"}},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("a function should see a module constant: %v", err)
+	}
+}
+
+func TestModuleConstIsInlined(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.ConstDecl{Name: "MAGIC", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "42"}},
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "u32",
+			Body: []ast.Stmt{
+				ast.ReturnStmt{Value: ast.IdentifierExpr{Name: "MAGIC"}},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("const should check: %v", err)
+	}
+	moduleIR := tc.ToIR(m)
+	if len(moduleIR.Funcs) == 0 {
+		t.Fatal("expected the function to be lowered")
+	}
+	body := moduleIR.Funcs[0].Body
+	if len(body) == 0 {
+		t.Fatal("expected a body")
+	}
+	if got := body[0].Args; len(got) == 0 || got[0] != "42" {
+		t.Fatalf("expected the constant to be inlined as 42, got %v", got)
 	}
 }
 

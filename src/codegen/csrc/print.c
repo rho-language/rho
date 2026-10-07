@@ -35,10 +35,19 @@ int rho_write(int fd, const char* data, uint32_t len) __attribute__((weak));
  */
 #if defined(__arm__) || defined(__thumb__) || defined(__riscv)
 extern int _write(int fd, const char* data, int len);
-#define RHO_DEFAULT_WRITE _write
+/* _write has no warn_unused_result on bare-metal targets. */
+#define RHO_DEFAULT_WRITE(fd, data, len) _write((fd), (data), (len))
 #else
 #include <unistd.h>
-#define RHO_DEFAULT_WRITE write
+/* write() is declared __attribute__((warn_unused_result)) in glibc, and
+ * (void)write(...) does not suppress it on all GCC versions. A static
+ * wrapper that discards the return value once is the portable fix. */
+static inline void rho_write_stdout(const char* data, int len)
+{
+    ssize_t r = write(1, data, (size_t)len);
+    (void)r;
+}
+#define RHO_DEFAULT_WRITE(fd, data, len) rho_write_stdout((data), (len))
 #endif
 
 /* Everything `print` says, and nothing else. */
@@ -52,7 +61,7 @@ void rho_print(const char* s)
         if (rho_write != NULL) {
             rho_write(1, s, len);
         } else {
-            RHO_DEFAULT_WRITE(1, s, (int)len);
+            (void)RHO_DEFAULT_WRITE(1, s, (int)len);
         }
     }
 }
@@ -105,7 +114,7 @@ void rho_print_i32(int32_t value)
     if (rho_write != NULL) {
         rho_write(1, forward, (uint32_t)at);
     } else {
-        RHO_DEFAULT_WRITE(1, forward, (int)at);
+        (void)RHO_DEFAULT_WRITE(1, forward, (int)at);
     }
 }
 
@@ -131,6 +140,6 @@ void rho_print_u32(uint32_t value)
     if (rho_write != NULL) {
         rho_write(1, forward, (uint32_t)at);
     } else {
-        RHO_DEFAULT_WRITE(1, forward, (int)at);
+        (void)RHO_DEFAULT_WRITE(1, forward, (int)at);
     }
 }

@@ -29,10 +29,10 @@ func RunFileWithDependencies(path string, dependencyRoots []string) error {
 		return fmt.Errorf("rho compile failed: %w", err)
 	}
 
-	exe := replaceExt(abs, "") + "_bin"
-	defer os.Remove(exe)
-
 	workDir := src.ProjectRoot(abs)
+	exe := filepath.Join(workDir, "build", "run", filepath.Base(replaceExt(abs, "")))
+	os.MkdirAll(filepath.Dir(exe), 0755)
+	defer os.Remove(exe)
 	// A connected project compiles C of its own — the shim a generated binding
 	// needs, and the host C a Rho program writes — so those files are part of the
 	// program and are compiled with it. Without them a binding that declares
@@ -79,6 +79,7 @@ func RunFileWithDependencies(path string, dependencyRoots []string) error {
 
 	run := commandRunner(exe)
 	run.Dir = workDir
+	run.Stdin = os.Stdin
 	run.Stdout = os.Stdout
 	run.Stderr = os.Stderr
 	if err := run.Run(); err != nil {

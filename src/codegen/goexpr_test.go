@@ -18,6 +18,8 @@ package codegen
 import (
 	"strings"
 	"testing"
+
+	"rho/src/ir"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -181,9 +183,10 @@ func TestToGoExprEscapesReservedName(t *testing.T) {
 }
 
 // Predeclared names that Go allows shadowing are left alone, so a genuine
-// call to a builtin still resolves.
+// call to a builtin still resolves. `len` is not among them: Rho types it as a
+// u32 while Go's returns an int, so its call carries a conversion.
 func TestToGoExprKeepsShadowableBuiltins(t *testing.T) {
-	for _, expr := range []string{"min(a, b)", "len(s)", "append(s, t)"} {
+	for _, expr := range []string{"min(a, b)", "append(s, t)"} {
 		if got := ToGoExpr(expr); got != expr {
 			t.Fatalf("%s: got %q, want unchanged", expr, got)
 		}
@@ -348,5 +351,78 @@ func TestToGoExprFloatLiteralNotSelector(t *testing.T) {
 func TestToGoExprUnsignedCharCast(t *testing.T) {
 	if got := ToGoExpr("(unsigned char)value"); got != "uint8(value)" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestToGoExprLenIsUint32(t *testing.T) {
+	// Rho types len as u32, but Go's len returns an int, so the result is
+	// converted or a comparison against a u32 will not compile.
+	if got := ToGoExpr("len(data)"); got != "uint32(len(data))" {
+		t.Fatalf("expected uint32(len(data)), got %q", got)
+	}
+}
+
+func TestToGoExprFileBuiltins(t *testing.T) {
+	if got := ToGoExpr("read_file(path)"); got != "rhoReadFile(path)" {
+		t.Fatalf("expected rhoReadFile(path), got %q", got)
+	}
+	if got := ToGoExpr("write_file(path, data)"); got != "rhoWriteFile(path, data)" {
+		t.Fatalf("expected rhoWriteFile(path, data), got %q", got)
+	}
+	if got := ToGoExpr("get_args()"); got != "rhoGetArgs()" {
+		t.Fatalf("expected rhoGetArgs(), got %q", got)
+	}
+}
+
+func TestToGoExprCastCoversCall(t *testing.T) {
+	// A C cast binds to the whole postfix call, so the operand is `len(data)`
+	// and the Go conversion has to wrap all of it. `len` itself converts to
+	// Rho's u32, so the result is a double conversion, which is correct.
+	got := ToGoExpr("(int32_t)len(data)")
+	if got != "int32(uint32(len(data)))" {
+		t.Fatalf("expected int32(uint32(len(data))), got %q", got)
+	}
+}
+
+func TestToGoExprCastCoversIndexedExpr(t *testing.T) {
+	got := ToGoExpr("(int32_t)values[0]")
+	if got != "int32(values[0])" {
+		t.Fatalf("expected int32(values[0]), got %q", got)
+	}
+}
+
+func TestGoTypeForRhoNameSlice(t *testing.T) {
+	if got := goTypeForRhoName("[u8]"); got != "[]uint8" {
+		t.Fatalf("expected []uint8, got %q", got)
+	}
+	if got := goTypeForRhoName("[u32]"); got != "[]uint32" {
+		t.Fatalf("expected []uint32, got %q", got)
+	}
+}
+
+func TestGoTypeForRhoNamePrimitive(t *testing.T) {
+	cases := map[string]string{
+		"u8":     "uint8",
+		"u32":    "uint32",
+		"i32":    "int32",
+		"f64":    "float64",
+		"bool":   "bool",
+		"string": "string",
+	}
+	for name, want := range cases {
+		if got := goTypeForRhoName(name); got != want {
+			t.Fatalf("%s: expected %q, got %q", name, want, got)
+		}
+	}
+}
+
+func TestGoTypeForIRSliceIsSliceNotPointer(t *testing.T) {
+	slice := ir.Type{Kind: ir.TypeSlice, Name: "[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}}
+	if got := goTypeForIR(slice); got != "[]uint8" {
+		t.Fatalf("expected []uint8 for a slice, got %q", got)
+	}
+	pointer := ir.Type{Kind: ir.TypePtr, Name: "Ptr[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}}
+	if got := goTypeForIR(pointer); got != "*uint8" {
+		t.Fatalf("expected *uint8 for a pointer, got %q", got)
 	}
 }

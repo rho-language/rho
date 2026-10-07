@@ -58,13 +58,15 @@ func TestLexerIdentifiers(t *testing.T) {
 }
 
 func TestLexerKeywords(t *testing.T) {
-	src := "module import struct enum fn config extern if for match return reverse step"
+	src := "module import struct enum fn config extern if for match return reverse step let const var while else break true false"
 	l := New(src)
 
 	expectedKinds := []Kind{
 		TokenModule, TokenImport, TokenStruct, TokenEnum, TokenFn,
 		TokenConfig, TokenExtern, TokenIf, TokenFor, TokenMatch,
 		TokenReturn, TokenReverse, TokenStep,
+		TokenLet, TokenConst, TokenVar, TokenWhile, TokenElse, TokenBreak,
+		TokenTrue, TokenFalse,
 		TokenEOF,
 	}
 
