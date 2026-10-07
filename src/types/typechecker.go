@@ -70,6 +70,12 @@ type TypeChecker struct {
 	// currentReturnHint is the enclosing function's declared return type, used
 	// as a deduction hint while lowering a return expression.
 	currentReturnHint ir.Type
+
+	// moduleConsts are the module-level bindings, by name. A module has no
+	// run-time initialisation order, so each one is inlined at every use rather
+	// than emitted as a variable.
+	moduleConsts map[string]ast.ConstDecl
+	moduleConstTypes map[string]ir.Type
 }
 
 type functionType struct {
@@ -108,6 +114,8 @@ func New() *TypeChecker {
 		emitted:            map[string]bool{},
 		monomorphicStructs: map[string]ir.StructIR{},
 		monomorphicFuncs:   map[string]ir.FuncIR{},
+		moduleConsts:       map[string]ast.ConstDecl{},
+		moduleConstTypes:   map[string]ir.Type{},
 	}
 
 	// Built-in types
@@ -248,12 +256,51 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 		}
 	}
 
+	// Module-level bindings are registered before any body is checked, so a
+	// function may name one. Each is a constant: a module has no run-time
+	// initialisation order to assign a variable in, so the value is inlined at
+	// every use rather than emitted as storage.
+	constScope := map[string]ir.Type{}
+	for _, decl := range m.Decls {
+		d, ok := decl.(ast.ConstDecl)
+		if !ok {
+			continue
+		}
+		declared := tc.declaredType(d.Type.String())
+		if d.Type.String() == "" && d.Value != nil {
+			if inferred, err := tc.exprType(d.Value, constScope); err == nil {
+				declared = inferred
+			}
+		}
+		tc.moduleConsts[d.Name] = d
+		tc.moduleConstTypes[d.Name] = declared
+		constScope[d.Name] = declared
+	}
+
 	// Second pass: validate declarations
 	for _, decl := range m.Decls {
 		switch d := decl.(type) {
 		case ast.StructDecl:
 			if err := tc.checkStruct(d); err != nil {
 				return locate(err, d.Pos, "struct "+d.Name)
+			}
+		case ast.ConstDecl:
+			if d.Value == nil {
+				return locate(fmt.Errorf("const %q has no value", d.Name), d.Pos, "const "+d.Name)
+			}
+			declared := tc.moduleConstTypes[d.Name]
+			actual, err := tc.exprTypeExpected(d.Value, constScope, tc.expectedHint(d.Type.String(), declared))
+			if err != nil {
+				return locate(err, d.Pos, "const "+d.Name)
+			}
+			if declared.Kind != ir.TypeInvalid && !assignable(declared, actual) {
+				return locate(fmt.Errorf("cannot assign %s to %s", typeName(actual), typeName(declared)), d.Pos, "const "+d.Name)
+			}
+			// A written type stands: only a constant that inferred its type
+			// takes the value's, because `0` on its own is an i32 whatever the
+			// declaration says the binding is.
+			if d.Type.String() == "" {
+				tc.moduleConstTypes[d.Name] = actual
 			}
 		case ast.FuncDecl:
 			if standaloneStdlib || strings.HasPrefix(d.Owner, "std.") {
@@ -380,6 +427,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if typ, ok := scope[value.Name]; ok {
 			return typ, nil
 		}
+		// A module-level constant is visible in every function, because it is
+		// inlined at each use rather than captured from an enclosing scope.
+		if typ, ok := tc.moduleConstTypes[value.Name]; ok {
+			return typ, nil
+		}
 		if _, ok := tc.funcs[value.Name]; ok {
 			return ir.Type{Kind: ir.TypeStruct, Name: "function"}, nil
 		}
@@ -428,7 +480,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		if value.Op == "==" || value.Op == "!=" || value.Op == "<" || value.Op == "<=" || value.Op == ">" || value.Op == ">=" {
 			if !comparable(left, right) {
-				return ir.Type{}, fmt.Errorf("incompatible comparison")
+				return ir.Type{}, locate(
+					fmt.Errorf("incompatible comparison: %s %s %s", typeName(left), value.Op, typeName(right)),
+					value.Position(), "")
 			}
 			return ir.Type{Kind: ir.TypeBool, Name: "bool"}, nil
 		}
@@ -617,7 +671,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				want = tc.substituteType(want, subs)
 			}
 			if !assignable(want, actual) && !(foreign && stringToC(actual, want)) {
-				return ir.Type{}, fmt.Errorf("argument %d has type %s, want %s", i+1, typeName(actual), typeName(want))
+				return ir.Type{}, locate(
+					fmt.Errorf("argument %d has type %s, want %s", i+1, typeName(actual), typeName(want)),
+					arg.Position(), "")
 			}
 		}
 		result := signature.result
@@ -643,6 +699,15 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		return typ, nil
 	case ast.ArrayLiteralExpr:
+		// A repeat or empty literal adopts the array type it is written
+		// against: `[0; 512]` is how a u8[512] buffer starts, and `[]` is how an
+		// empty [u8] does. The element type is the declared one, which a bare
+		// numeric literal could not supply on its own.
+		if value.Repeat != nil || len(value.Values) == 0 {
+			if expected.ArrayLen > 0 || expected.Kind == ir.TypeSlice {
+				return expected, nil
+			}
+		}
 		if len(value.Values) == 0 {
 			return ir.Type{Kind: ir.TypeStruct, Name: "Array"}, nil
 		}
@@ -729,7 +794,10 @@ func baseTypeName(name string) string {
 	return name
 }
 func elementType(value ir.Type) ir.Type {
-	if value.Kind == ir.TypePtr && len(value.Args) > 0 {
+	if value.Kind == ir.TypeString {
+		return ir.Type{Kind: ir.TypeU8, Name: "u8"}
+	}
+	if (value.Kind == ir.TypePtr || value.Kind == ir.TypeSlice) && len(value.Args) > 0 {
 		return value.Args[0]
 	}
 
@@ -923,6 +991,15 @@ func assignable(want, got ir.Type) bool {
 	// NULL still arrives as `None`.
 	if IsOptionalPointer(want.Name) && got.Kind == ir.TypePtr {
 		return true
+	}
+	// A fixed-size array decays to a dynamic array of the same element: the
+	// storage is one run of bytes, and the length is what the callee reads. It
+	// is how `u8[512]` is passed to a function that takes `[u8]`.
+	if want.Kind == ir.TypeSlice && got.ArrayLen > 0 {
+		if len(want.Args) == 0 {
+			return true
+		}
+		return assignable(want.Args[0], elementType(got))
 	}
 	return want.Kind == got.Kind || (numeric(want) && numeric(got))
 }
@@ -1163,6 +1240,14 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 	if typ, ok := tc.types[name]; ok {
 		return typ, true
 	}
+	// Dynamic array type: [u8], [u32], etc.
+	if strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]") {
+		inner := strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
+		if inner != "" {
+			elem := tc.typeFor(inner)
+			return ir.Type{Kind: ir.TypeSlice, Name: name, Args: []ir.Type{elem}}, true
+		}
+	}
 	base := name
 	element := ""
 	arrayLen := 0
@@ -1238,7 +1323,13 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		// Record the binding so later expressions see its type.
 		scope[stmt.Name] = tc.typeFor(declaredName)
-		return []ir.Instr{{Op: ir.OpLet, Dest: stmt.Name, Type: tc.cTypeForTypeName(declaredName), Args: []string{value}}}
+		return []ir.Instr{{
+			Op:       ir.OpLet,
+			Dest:     stmt.Name,
+			Type:     tc.cTypeForTypeName(declaredName),
+			TypeName: declaredName,
+			Args:     []string{value},
+		}}
 	case ast.AssignStmt:
 		return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{tc.lowerExpr(stmt.Value, scope)}}}
 	case ast.ExprStmt:
@@ -1299,6 +1390,11 @@ func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string
 func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type, expected ir.Type) string {
 	switch expr := expr.(type) {
 	case ast.IdentifierExpr:
+		// A module-level constant is inlined where it is named. There is no
+		// storage to read, because a module has no initialisation order.
+		if decl, ok := tc.moduleConsts[expr.Name]; ok && decl.Value != nil {
+			return tc.lowerExpr(decl.Value, map[string]ir.Type{})
+		}
 		return expr.Name
 	case ast.NumberExpr:
 		// A Rho number may be written with separators — 1_000_000 — and the
@@ -1343,6 +1439,13 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			right = "(" + cTypeForKind(target) + ")" + right
 		}
 
+		// String comparison: s == t becomes rho_str_eq(s, t) for C.
+		if (expr.Op == "==" || expr.Op == "!=") && tc.isStringExpr(expr, scope) {
+			if expr.Op == "==" {
+				return "rho_str_eq(" + left + ", " + right + ")"
+			}
+			return "!rho_str_eq(" + left + ", " + right + ")"
+		}
 		return "(" + left + " " + expr.Op + " " + right + ")"
 	case ast.MemberExpr:
 		object, isIdentifier := expr.Object.(ast.IdentifierExpr)
@@ -1544,6 +1647,27 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return "(" + mangleTypeName(name) + "){ " + strings.Join(values, ", ") + " }"
 	case ast.ArrayLiteralExpr:
+		if expr.Repeat != nil {
+			// `[value; count]` fills a fixed-size array. The count is written
+			// as a literal, so it expands here; the C and Go backends both read
+			// the resulting initializer.
+			element := tc.lowerExpr(expr.Values[0], scope)
+			// Zero-filling is what both C and Go do with a short initializer, so
+			// a zero repeat is written once and the rest is implied. A non-zero
+			// value has to be repeated, because neither language fills with it.
+			if element == "0" {
+				return "{ 0 }"
+			}
+			if countExpr, ok := (*expr.Repeat).(ast.NumberExpr); ok {
+				if count, err := strconv.Atoi(countExpr.Value); err == nil {
+					parts := make([]string, count)
+					for i := 0; i < count; i++ {
+						parts[i] = element
+					}
+					return "{ " + strings.Join(parts, ", ") + " }"
+				}
+			}
+		}
 		values := make([]string, len(expr.Values))
 		for index, value := range expr.Values {
 			values[index] = tc.lowerExpr(value, scope)
@@ -1622,6 +1746,16 @@ func cTypeForKind(kind ir.TypeKind) string {
 }
 
 func cTypeForName(name string) string {
+	// A dynamic array `[T]` is a pointer to its element in C. The brackets lead
+	// the name, which is what tells it from a fixed-size `T[N]`, whose brackets
+	// trail the element type.
+	if strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]") {
+		inner := strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
+		if inner != "" {
+			return cTypeForName(inner) + "*"
+		}
+		return "uint8_t*"
+	}
 	base := name
 	arraySuffix := ""
 	bracketStart := strings.IndexByte(base, '[')
@@ -1774,12 +1908,38 @@ func init() {
 		params: twoStrings,
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	}
+	// len returns the length of a slice or string. Its argument is typed as
+	// invalid, which assignable treats as compatible with anything, so one
+	// signature covers strings, dynamic arrays and fixed-size arrays alike.
+	intrinsicSignatures["len"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeInvalid}},
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	}
+	// read_file reads a file into a byte slice.
+	intrinsicSignatures["read_file"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeSlice, Name: "[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}},
+	}
+	// write_file writes a byte slice to a file.
+	intrinsicSignatures["write_file"] = functionType{
+		params: []ir.Type{
+			{Kind: ir.TypeString, Name: "string"},
+			{Kind: ir.TypeSlice, Name: "[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}},
+		},
+		result: ir.Type{Kind: ir.TypeVoid, Name: "void"},
+	}
+	// get_args returns command-line arguments as a space-joined string.
+	intrinsicSignatures["get_args"] = functionType{
+		params: []ir.Type{},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
 	for _, name := range []string{
 		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
 		"template_get", "template_has", "template_fill", "env_or",
 		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",
 		"auth_required", "auth_open_tokens", "auth_issue", "int_from_str", "emit",
+		"len", "read_file", "write_file", "get_args", "append",
 		"store_list", "store_meta", "store_detail", "store_latest", "store_data_dir",
 		"registry_data_dir", "registry_access", "config_get", "clock_year",
 		"registry_title", "registry_version", "registry_site_url", "registry_url", "registry_token_days",
@@ -1889,6 +2049,14 @@ func (tc *TypeChecker) cTypeFor(t ir.Type) string {
 	case ir.TypePtr:
 		if len(t.Args) == 0 || isUnitOrVoid(t.Args[0]) {
 			return "void*"
+		}
+		return tc.cTypeFor(t.Args[0]) + "*"
+	case ir.TypeSlice:
+		// A dynamic array is a pointer to its element in C, with the length
+		// carried separately. A slice of nothing is a byte pointer, which is
+		// what a buffer is.
+		if len(t.Args) == 0 || isUnitOrVoid(t.Args[0]) {
+			return "uint8_t*"
 		}
 		return tc.cTypeFor(t.Args[0]) + "*"
 	case ir.TypeStruct:

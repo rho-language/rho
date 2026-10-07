@@ -15,6 +15,17 @@ type Parser struct {
 	nextTok lexer.Token
 	tokens  []lexer.Token
 	tokenAt int
+
+	// valueNames are the names the module binds at the top level. A brace after
+	// one of them opens a block, not a struct literal: `while i < MAX {` is a
+	// loop, and reading `MAX {` as a literal would swallow its body.
+	valueNames map[string]bool
+	// applyNames are the names that can take type arguments: the types and the
+	// functions, plus the ones the language supplies. Only a name here can be
+	// applied, so `a[i] {` is an index before a block and `Box[u8] {` is a
+	// literal. A parameter named `a` is in neither set, which is what tells the
+	// two apart.
+	applyNames map[string]bool
 }
 
 func New(lx *lexer.Lexer) *Parser {
@@ -25,10 +36,68 @@ func New(lx *lexer.Lexer) *Parser {
 }
 
 func Parse(tokens []lexer.Token) (mod *ast.Module, err error) {
-	p := &Parser{tokens: tokens}
+	p := &Parser{
+		tokens:     tokens,
+		valueNames: collectValueNames(tokens),
+		applyNames: collectApplyNames(tokens),
+	}
 	p.readToken()
 	p.readToken()
 	return p.Parse()
+}
+
+// protocolAndBuiltinTypes are the types and constructors the language supplies,
+// which a module uses without declaring. A literal or an application of one has
+// no declaration for a scan to find, so the names are carried here.
+var protocolAndBuiltinTypes = []string{
+	"Request", "Response",
+	"String", "Slice", "Ptr", "Option", "Result", "Array", "Map", "Range",
+	"RS485", "UART", "I2C", "SPI", "GPIO", "Timer", "Modbus", "TimeSpec",
+	"Some", "None", "Ok", "Err",
+}
+
+// collectApplyNames scans for the names that can take a type argument: what the
+// module declares as a type or a function, and what the language supplies.
+func collectApplyNames(tokens []lexer.Token) map[string]bool {
+	names := map[string]bool{}
+	for _, name := range protocolAndBuiltinTypes {
+		names[name] = true
+	}
+	for i := 0; i+1 < len(tokens); i++ {
+		switch tokens[i].Kind {
+		case lexer.TokenStruct, lexer.TokenType, lexer.TokenFn, lexer.TokenExtern:
+			if tokens[i+1].Kind == lexer.TokenIdent {
+				names[tokens[i+1].Lex] = true
+			}
+		}
+	}
+	return names
+}
+
+// collectValueNames scans the token stream for the names a module binds at the
+// top level, so a brace after one can be told from a block.
+//
+// Nesting is tracked because a local binding inside a function is not a
+// module-level one, and treating it as such would stop its name from ever being
+// a type.
+func collectValueNames(tokens []lexer.Token) map[string]bool {
+	names := map[string]bool{}
+	depth := 0
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i].Kind {
+		case lexer.TokenLBrace:
+			depth++
+		case lexer.TokenRBrace:
+			if depth > 0 {
+				depth--
+			}
+		case lexer.TokenConst, lexer.TokenLet, lexer.TokenVar:
+			if depth == 0 && i+1 < len(tokens) && tokens[i+1].Kind == lexer.TokenIdent {
+				names[tokens[i+1].Lex] = true
+			}
+		}
+	}
+	return names
 }
 
 func (p *Parser) Parse() (mod *ast.Module, err error) {
@@ -161,6 +230,8 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 			decl = p.parseTypeDecl()
 		case lexer.TokenRoute:
 			decl = p.parseRouteDecl()
+		case lexer.TokenLet, lexer.TokenConst, lexer.TokenVar:
+			decl = p.parseConstDecl()
 		default:
 			panic(NewErrorf(p.current, "unexpected token in top-level: %q", p.current.Lex))
 		}
@@ -228,6 +299,49 @@ func (p *Parser) parseTypeDecl() ast.Decl {
 	return ast.TypeDecl{Name: name, Type: p.parseType()}
 }
 
+// parseIfStmt parses an if statement, including `else if` and `else`.
+//
+// The cursor is on `if`. An `else if` is an `else` whose body is a single `if`,
+// which is how it is written and how the two-branch form both backends emit
+// already expresses it — so it nests rather than becoming a third shape.
+func (p *Parser) parseIfStmt() ast.Stmt {
+	p.readToken()
+	condition := p.parseExpr(0)
+	thenBody := p.parseBlock()
+	elseBody := []ast.Stmt{}
+	if p.current.Kind == lexer.TokenElse {
+		p.readToken()
+		if p.current.Kind == lexer.TokenIf {
+			elseBody = []ast.Stmt{p.parseIfStmt()}
+		} else {
+			elseBody = p.parseBlock()
+		}
+	}
+	return ast.IfStmt{Condition: condition, Then: thenBody, Else: elseBody}
+}
+
+// parseConstDecl parses a module-level binding:
+//
+//	const NAME: T = value
+//
+// The type annotation is optional, matching a local binding.
+func (p *Parser) parseConstDecl() ast.Decl {
+	p.readToken()
+	name := p.name()
+	var declaredType ast.TypeExpr
+	if p.current.Kind == lexer.TokenColon {
+		p.readToken()
+		declaredType = p.parseType()
+	}
+	var value ast.Expr
+	if p.current.Kind == lexer.TokenAssign {
+		p.readToken()
+		value = p.parseExpr(0)
+	}
+	p.consumeSemi()
+	return ast.ConstDecl{Name: name, Type: declaredType, Value: value}
+}
+
 // parseTypeParams parses a bracketed type parameter list, including any
 // defaults: `[T, E = Unit]`.
 func (p *Parser) parseTypeParams() ([]string, map[string]string) {
@@ -254,6 +368,16 @@ func (p *Parser) parseTypeParams() ([]string, map[string]string) {
 }
 
 func (p *Parser) parseType() ast.TypeExpr {
+	// Dynamic array type: [u8], [u32], etc.
+	if p.current.Kind == lexer.TokenLBracket {
+		p.readToken()
+		inner := p.parseType()
+		p.expect(lexer.TokenRBracket)
+		p.readToken()
+		return ast.TypeExpr{
+			Name: "[" + inner.Name + "]",
+		}
+	}
 	typeExpr := ast.TypeExpr{Name: p.name()}
 	closing := lexer.TokenRBracket
 	if p.current.Kind == lexer.TokenLess {
@@ -406,7 +530,7 @@ func (p *Parser) parseStmt() ast.Stmt {
 	start := p.position()
 	var stmt ast.Stmt
 	switch p.current.Kind {
-	case lexer.TokenLet:
+	case lexer.TokenLet, lexer.TokenConst, lexer.TokenVar:
 		p.readToken()
 		name := p.name()
 		// The type annotation is optional: `let x = expr` infers it, while
@@ -434,15 +558,7 @@ func (p *Parser) parseStmt() ast.Stmt {
 		p.consumeSemi()
 		stmt = ast.ReturnStmt{Value: value}
 	case lexer.TokenIf:
-		p.readToken()
-		condition := p.parseExpr(0)
-		thenBody := p.parseBlock()
-		elseBody := []ast.Stmt{}
-		if p.current.Kind == lexer.TokenElse {
-			p.readToken()
-			elseBody = p.parseBlock()
-		}
-		stmt = ast.IfStmt{Condition: condition, Then: thenBody, Else: elseBody}
+		stmt = p.parseIfStmt()
 	case lexer.TokenWhile:
 		p.readToken()
 		condition := p.parseExpr(0)
@@ -522,8 +638,11 @@ func (p *Parser) parseExpr(minPrecedence int) ast.Expr {
 			break
 		}
 		op := p.current.Lex
+		start := left.Position()
 		p.readToken()
-		left = ast.BinaryExpr{Op: op, Left: left, Right: p.parseExpr(currentPrecedence + 1)}
+		left = p.placeExpr(
+			ast.BinaryExpr{Op: op, Left: left, Right: p.parseExpr(currentPrecedence+1)},
+			start)
 	}
 	return left
 }
@@ -572,15 +691,31 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.readToken()
 	case lexer.TokenLBracket:
 		p.readToken()
-		values := []ast.Expr{}
+		// An empty dynamic-array literal carries no element type.
+		if p.current.Kind == lexer.TokenRBracket {
+			p.readToken()
+			expression = ast.ArrayLiteralExpr{Values: []ast.Expr{}}
+			break
+		}
+		first := p.parseExpr(0)
+		// A repeat literal fills a fixed-size array: `[value; count]`.
+		if p.current.Kind == lexer.TokenSemicolon {
+			p.readToken()
+			count := p.parseExpr(0)
+			p.expect(lexer.TokenRBracket)
+			p.readToken()
+			expression = ast.ArrayLiteralExpr{Values: []ast.Expr{first}, Repeat: &count}
+			break
+		}
+		values := []ast.Expr{first}
 		for p.current.Kind != lexer.TokenRBracket {
 			if p.current.Kind == lexer.TokenEOF {
 				panic(NewErrorf(p.current, "unterminated array literal"))
 			}
-			values = append(values, p.parseExpr(0))
 			if p.current.Kind == lexer.TokenComma {
 				p.readToken()
 			}
+			values = append(values, p.parseExpr(0))
 		}
 		p.readToken()
 		expression = ast.ArrayLiteralExpr{Values: values}
@@ -658,8 +793,9 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			p.readToken()
 			expression = ast.MemberExpr{Object: expression, Name: p.name()}
 		case lexer.TokenLBracket:
+			application := p.bracketOpensApplication(expression)
 			p.readToken()
-			if p.current.Kind == lexer.TokenNumber || !isTypeApplication(expression) {
+			if p.current.Kind == lexer.TokenNumber || !application {
 				index := p.parseExpr(0)
 				p.expect(lexer.TokenRBracket)
 				p.readToken()
@@ -702,7 +838,7 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			}
 		case lexer.TokenLBrace:
 			identifier, isIdentifier := expression.(ast.IdentifierExpr)
-			if !isIdentifier || len(identifier.Name) < 2 || identifier.Name[0] < 'A' || identifier.Name[0] > 'Z' {
+			if !isIdentifier || !p.isTypeName(identifier.Name) {
 				return expression
 			}
 			p.readToken()
@@ -732,7 +868,83 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 	}
 }
 
+// isTypeApplication reports whether `name[...]` names a generic type rather
+// than indexing a value.
+//
+// Rho spells a type with a leading capital, so `Ptr[u8]` is an application and
+// `data[offset]` is an index. Without the case test every indexed value would
+// be read as a type and its index parsed as a type argument, which fails as
+// soon as the index is arithmetic.
+// isTypeName reports whether a name can be the head of a struct literal.
+//
+// A type is written with a leading capital, so that is the test. The exception
+// is a module-level binding: `MAX {` after a comparison opens a block, and a
+// capitalised constant is exactly how that is written.
+func (p *Parser) isTypeName(name string) bool {
+	if p.valueNames != nil && p.valueNames[name] {
+		return false
+	}
+	return len(name) >= 2 && name[0] >= 'A' && name[0] <= 'Z'
+}
+
 func isTypeApplication(expression ast.Expr) bool {
-	_, ok := expression.(ast.IdentifierExpr)
-	return ok
+	identifier, ok := expression.(ast.IdentifierExpr)
+	if !ok || identifier.Name == "" {
+		return false
+	}
+	first := identifier.Name[0]
+	return first >= 'A' && first <= 'Z'
+}
+
+// bracketOpensApplication reports whether the bracket at the cursor opens a
+// type-argument list rather than an index.
+//
+// The two share a spelling, so the decision is made by what follows the closing
+// bracket: a call or a brace is an application — `twice[u32](1)`, `Box[u32]{v}`
+// — and anything else is an index, `data[offset]`. It is a lookahead because
+// the contents cannot tell them apart: `u32` is a type when applied and a name
+// when indexed.
+func (p *Parser) bracketOpensApplication(expression ast.Expr) bool {
+	identifier, isIdentifier := expression.(ast.IdentifierExpr)
+	if !isIdentifier {
+		// Only a bare name can be applied: `suffix.ptr[i]` indexes a field.
+		return false
+	}
+	if p.valueNames != nil && p.valueNames[identifier.Name] {
+		// A module-level binding is a value, so a bracket on it is an index.
+		return false
+	}
+	if p.tokens == nil {
+		// A streamed parse has no lookahead, so the leading capital is the best
+		// that can be said.
+		return isTypeApplication(expression)
+	}
+	if p.applyNames != nil && !p.applyNames[identifier.Name] {
+		// A name that cannot take a type argument — a parameter, a local — has
+		// its bracket read as an index. `if data[i] {` is an index before a
+		// block, not a literal whose body is the block.
+		return false
+	}
+	// current is `[` at tokens[tokenAt-2]; nextTok is the first token inside.
+	open := p.tokenAt - 2
+	if open < 0 || open >= len(p.tokens) || p.tokens[open].Kind != lexer.TokenLBracket {
+		return false
+	}
+	depth := 0
+	for i := open; i < len(p.tokens); i++ {
+		switch p.tokens[i].Kind {
+		case lexer.TokenLBracket:
+			depth++
+		case lexer.TokenRBracket:
+			depth--
+			if depth == 0 {
+				if i+1 < len(p.tokens) {
+					next := p.tokens[i+1].Kind
+					return next == lexer.TokenLParen || next == lexer.TokenLBrace
+				}
+				return false
+			}
+		}
+	}
+	return false
 }

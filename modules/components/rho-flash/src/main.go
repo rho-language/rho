@@ -184,11 +184,17 @@ func resolve(name, project string) (Flash, error) {
 
 // flashRequest is what a platform plugin is asked: which board is being reached,
 // for which project, with which binary, and what its target spec already says.
+//
+// PlatformRoot is the platform module's own directory. It is handed over so a
+// plugin can name a tool that travels with the platform — a converter the
+// platform ships — by a path resolved the same way every time, rather than by a
+// name that has to be found on PATH and might not be the platform's.
 type flashRequest struct {
-	Target  string `json:"target"`
-	Project string `json:"project"`
-	Binary  string `json:"binary"`
-	Flash   Flash  `json:"flash"`
+	Target       string `json:"target"`
+	Project      string `json:"project"`
+	Binary       string `json:"binary"`
+	PlatformRoot string `json:"platform_root,omitempty"`
+	Flash        Flash  `json:"flash"`
 }
 
 // flashResponse is what a plugin answers: the flash block to use in place of,
@@ -207,7 +213,11 @@ func platformFlash(project, target, binary string, current Flash) Flash {
 		return current
 	}
 	answer := plugins.RunHooks(found, ComponentName, HookFlash, flashRequest{
-		Target: target, Project: project, Binary: binary, Flash: current,
+		Target:       target,
+		Project:      project,
+		Binary:       binary,
+		PlatformRoot: deps.PlatformRoot(project),
+		Flash:        current,
 	})
 	for _, diagnostic := range answer.Diagnostics {
 		fmt.Fprintf(os.Stderr, "rho flash: %s\n", diagnostic)

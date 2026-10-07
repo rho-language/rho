@@ -137,6 +137,24 @@ func (TypeDecl) declNode() {}
 
 func (n TypeDecl) Position() Position { return n.Pos }
 
+// ConstDecl is a module-level constant:
+//
+//	const NAME: T = value
+//
+// The keyword may be `const`, `let` or `var`; a top-level binding is a constant
+// whichever word introduced it, because a module has no run-time initialisation
+// order to assign one in. Its value is inlined at every use.
+type ConstDecl struct {
+	Node
+	Name  string
+	Type  TypeExpr
+	Value Expr
+}
+
+func (ConstDecl) declNode() {}
+
+func (n ConstDecl) Position() Position { return n.Pos }
+
 /* -------------------------------------------------------------------------- */
 /*  HTTP Routes                                                               */
 /* -------------------------------------------------------------------------- */
@@ -448,6 +466,9 @@ func (n StructLiteralExpr) Position() Position { return n.Pos }
 type ArrayLiteralExpr struct {
 	Node
 	Values []Expr
+	// Repeat carries the count of a `[value; count]` literal, which fills a
+	// fixed-size array with one value. It is nil for an ordinary list.
+	Repeat *Expr
 }
 
 func (ArrayLiteralExpr) exprNode() {}

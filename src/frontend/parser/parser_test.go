@@ -163,6 +163,191 @@ func TestParseFunction(t *testing.T) {
 	}
 }
 
+func TestParseVarAndConst(t *testing.T) {
+	source := "module app\nfn main() {\n  var x = 1\n  const y = 2\n  let z = 3\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn, ok := mod.Decls[0].(ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function declaration, got %T", mod.Decls[0])
+	}
+	if len(fn.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(fn.Body))
+	}
+	for i, want := range []string{"x", "y", "z"} {
+		let, ok := fn.Body[i].(ast.LetStmt)
+		if !ok {
+			t.Fatalf("statement %d: expected let, got %T", i, fn.Body[i])
+		}
+		if let.Name != want {
+			t.Fatalf("statement %d: expected name %q, got %q", i, want, let.Name)
+		}
+	}
+}
+
+func TestParseDynamicArrayType(t *testing.T) {
+	source := "module app\nextern fn read_file(path: string) -> [u8]\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn, ok := mod.Decls[0].(ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function declaration, got %T", mod.Decls[0])
+	}
+	if fn.ReturnType != "[u8]" {
+		t.Fatalf("expected return type [u8], got %q", fn.ReturnType)
+	}
+}
+
+func TestParseTopLevelConst(t *testing.T) {
+	source := "module app\nconst MAX: u32 = 512\nconst NAME = \"x\"\nfn main() {}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(mod.Decls) != 3 {
+		t.Fatalf("expected 3 declarations, got %d", len(mod.Decls))
+	}
+	first, ok := mod.Decls[0].(ast.ConstDecl)
+	if !ok {
+		t.Fatalf("expected a const declaration, got %T", mod.Decls[0])
+	}
+	if first.Name != "MAX" || first.Type.Name != "u32" {
+		t.Fatalf("unexpected const: %+v", first)
+	}
+}
+
+func TestParseRepeatArrayLiteral(t *testing.T) {
+	source := "module app\nfn main() {\n  var b: u8[8] = [0; 8]\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn, ok := mod.Decls[0].(ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected a function, got %T", mod.Decls[0])
+	}
+	let, ok := fn.Body[0].(ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected a binding, got %T", fn.Body[0])
+	}
+	literal, ok := let.Value.(ast.ArrayLiteralExpr)
+	if !ok {
+		t.Fatalf("expected an array literal, got %T", let.Value)
+	}
+	if literal.Repeat == nil {
+		t.Fatal("expected a repeat count")
+	}
+}
+
+func TestParseIndexNotTypeApplication(t *testing.T) {
+	source := "module app\nfn main() {\n  let i: u32 = 1\n  let x: u32 = data[i + 1]\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err != nil {
+		t.Fatalf("an arithmetic index should parse: %v", err)
+	}
+}
+
+func TestParseGenericCall(t *testing.T) {
+	source := "module app\nfn twice[T](v: T) T { return v }\nfn main() {\n  let x: u32 = twice[u32](1)\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err != nil {
+		t.Fatalf("a generic call should parse: %v", err)
+	}
+}
+
+func TestParseConstBeforeBlock(t *testing.T) {
+	// A capitalised constant before a block must not be read as a struct
+	// literal whose body is the loop.
+	source := "module app\nconst MAX: u32 = 8\nfn main() {\n  let i: u32 = 0\n  while i < MAX {\n    i = i + 1\n  }\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err != nil {
+		t.Fatalf("a constant before a block should parse: %v", err)
+	}
+}
+
+func TestParseElseIf(t *testing.T) {
+	source := "module app\nfn main() {\n  if a {\n    x = 1\n  } else if b {\n    x = 2\n  } else {\n    x = 3\n  }\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("an else-if chain should parse: %v", err)
+	}
+	fn, ok := mod.Decls[0].(ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected a function, got %T", mod.Decls[0])
+	}
+	outer, ok := fn.Body[0].(ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected an if statement, got %T", fn.Body[0])
+	}
+	if len(outer.Else) != 1 {
+		t.Fatalf("expected one statement in the else, got %d", len(outer.Else))
+	}
+	inner, ok := outer.Else[0].(ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected the else to hold an if, got %T", outer.Else[0])
+	}
+	if len(inner.Else) != 1 {
+		t.Fatalf("expected the nested if to keep its else, got %d", len(inner.Else))
+	}
+}
+
+func TestParseIndexBeforeBlock(t *testing.T) {
+	// `a[i] {` is an index and then a block, not an application and a struct
+	// literal: `a` is a parameter, which cannot take a type argument.
+	source := "module app\nfn f(a: [u32], i: u32) {\n  if a[i] {\n    i = 1\n  }\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err != nil {
+		t.Fatalf("an indexed condition before a block should parse: %v", err)
+	}
+}
+
+func TestParseGenericLiteralStillParses(t *testing.T) {
+	source := "module app\nstruct Box[T] { v: T }\nfn f() {\n  let b: Box[u32] = Box[u32] { 1 }\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err != nil {
+		t.Fatalf("a generic struct literal should still parse: %v", err)
+	}
+}
+
 func TestParseErrorCarriesPosition(t *testing.T) {
 	source := "module app\nfn main() {\n  let x :=\n}\n"
 	tokens, err := lexer.Lex(source)

@@ -1,0 +1,31 @@
+#
+# tic-tac-toe/c — an interactive Tic-Tac-Toe game in C.
+#
+# The same game as examples/tic-tac-toe/rho, written in C. Uses the minimax
+# algorithm for the computer opponent, 2D board arrays, user input via scanf,
+# and srand/rand for move shuffling.
+#
+# Built with the Rho toolchain to a native host binary.
+#
+# Example from https://www.geeksforgeeks.org/c/tic-tac-toe-game-in-c/
+#
+
+module:
+  name: tic-tac-toe-c
+  type: module
+  version: 0.1.0
+  description: >
+    Interactive Tic-Tac-Toe game in C with minimal AI.
+
+  maintainer: "Aurel Miron"
+  created: "2026-10-06"
+
+main: src/main.c
+
+build:
+  language: c
+  sources:
+    - src/main.c
+  output_dir: output
+  targets:
+    - c

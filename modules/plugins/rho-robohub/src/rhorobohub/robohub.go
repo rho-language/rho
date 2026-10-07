@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -264,13 +265,14 @@ type MapResponse struct {
 /*  rho-flash — the flash hook                                                 */
 /* -------------------------------------------------------------------------- */
 
-// FlashRequest is rho-flash's payload: which board is being reached and what its
-// target spec already says.
+// FlashRequest is rho-flash's payload: which board is being reached, what its
+// target spec already says, and where the platform's own tree is.
 type FlashRequest struct {
-	Target  string `json:"target,omitempty"`
-	Project string `json:"project,omitempty"`
-	Binary  string `json:"binary,omitempty"`
-	Flash   struct {
+	Target       string `json:"target,omitempty"`
+	Project      string `json:"project,omitempty"`
+	Binary       string `json:"binary,omitempty"`
+	PlatformRoot string `json:"platform_root,omitempty"`
+	Flash        struct {
 		Tool      string   `json:"tool,omitempty"`
 		Command   string   `json:"command,omitempty"`
 		Arguments []string `json:"arguments,omitempty"`
@@ -282,13 +284,62 @@ type FlashRequest struct {
 
 // FlashResponse is what this plugin answers the flash hook with.
 //
-// Empty of an override, and deliberately. Every RoboHub board names the tool
-// and the command that reach it in its own target spec, and a flash hook that
-// supplied a second command would be a board described twice — which is the
-// fault this toolchain removed a switch over part names to end. The contract is
-// implemented because a board reached in a way a spec cannot state needs it.
+// A board names the tool that programs it. When the platform ships that tool —
+// an RP2350's UF2 converter is the platform's own, because what reaches an
+// RP2350 is a file on a mounted drive and that is a fact about the board rather
+// than about a chip vendor's program — the command is rewritten to the tool's
+// path inside the platform.
+//
+// The path is derived from the platform's own directory, so it is the same
+// answer on every machine and every run: a tool found on PATH could be another
+// build's, and a board programmed by the wrong converter is a board programmed
+// with the wrong bytes.
+//
+// Empty otherwise, and deliberately: a board whose flashing is a system tool's
+// job names that tool and command in its spec, and a hook that supplied a second
+// command would be a board described twice.
 type FlashResponse struct {
 	Flash map[string]any `json:"flash,omitempty"`
+}
+
+// flashAnswer bridges a RoboHub board onto rho-flash's command.
+//
+// A tool the platform ships is a directory of its own under `tools/`, holding a
+// `flash` entry point. The tool's name is the board's, so the two cannot drift:
+// the spec says `elf2uf2` and the platform's `tools/elf2uf2/flash` is what runs.
+func flashAnswer(request FlashRequest) FlashResponse {
+	tool := strings.TrimSpace(request.Flash.Tool)
+	if tool == "" || strings.TrimSpace(request.PlatformRoot) == "" {
+		return FlashResponse{}
+	}
+	// A tool name with a path or a space in it is not one of the platform's.
+	if strings.ContainsAny(tool, `/\ `) {
+		return FlashResponse{}
+	}
+	entry := filepath.Join(request.PlatformRoot, "tools", tool, "flash")
+	info, err := os.Stat(entry)
+	if err != nil || info.IsDir() {
+		return FlashResponse{}
+	}
+	// Only the program is replaced. What the board declared after it — the
+	// family ID the bootrom checks, a mount the caller pinned — belongs to the
+	// board and is carried through unchanged. Replacing the whole command would
+	// drop those, and a UF2 that names the wrong part is one the bootrom
+	// refuses.
+	rest := ""
+	switch command := strings.TrimSpace(request.Flash.Command); {
+	case command == tool:
+	case strings.HasPrefix(command, tool+" "):
+		rest = command[len(tool):]
+	default:
+		// A command that does not begin with the tool is not one this can
+		// rewrite without guessing what it means.
+		return FlashResponse{}
+	}
+	return FlashResponse{Flash: map[string]any{
+		"tool":    tool,
+		"command": entry + rest,
+	}}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -356,7 +407,7 @@ func answer(request Request) Response {
 		if err := decode(request.Payload, &flash); err != nil {
 			return badRequest(request, err)
 		}
-		payload = FlashResponse{}
+		payload = flashAnswer(flash)
 	default:
 		return unsupported(request)
 	}

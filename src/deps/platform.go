@@ -31,31 +31,52 @@ import (
 // Platform returns the platform identity a project is built for, or "" when its
 // module graph names none.
 func Platform(projectRoot string) string {
+	root, manifest := platformModule(projectRoot)
+	if root == "" {
+		return ""
+	}
+	return strings.TrimSpace(manifest.Platform)
+}
+
+// PlatformRoot returns the directory of the module that declares the project's
+// platform, or "" when its graph names none.
+//
+// The directory is what a platform's own tools are found through: a board's
+// flash block can name one relative to the platform rather than to the project,
+// because the tool travels with the platform and not with whatever is built.
+func PlatformRoot(projectRoot string) string {
+	root, _ := platformModule(projectRoot)
+	return root
+}
+
+// platformModule walks the module graph for the module that declares the
+// platform, returning its directory and its manifest.
+func platformModule(projectRoot string) (string, *Manifest) {
 	seen := map[string]bool{}
-	var walk func(dir string, depth int) string
-	walk = func(dir string, depth int) string {
+	var walk func(dir string, depth int) (string, *Manifest)
+	walk = func(dir string, depth int) (string, *Manifest) {
 		if dir == "" || depth > 8 {
-			return ""
+			return "", nil
 		}
 		if absolute, err := filepath.Abs(dir); err == nil {
 			if seen[absolute] {
-				return ""
+				return "", nil
 			}
 			seen[absolute] = true
 		}
 		manifest, err := LoadManifest(ManifestPath(dir))
 		if err != nil || manifest == nil {
-			return ""
+			return "", nil
 		}
-		if identity := strings.TrimSpace(manifest.Platform); identity != "" {
-			return identity
+		if strings.TrimSpace(manifest.Platform) != "" {
+			return dir, manifest
 		}
 		for _, dependency := range manifest.Deps {
 			if dependency.Path == "" {
 				continue
 			}
-			if identity := walk(resolveFrom(dir, dependency.Path), depth+1); identity != "" {
-				return identity
+			if root, declared := walk(resolveFrom(dir, dependency.Path), depth+1); root != "" {
+				return root, declared
 			}
 		}
 		// An interfaces module enumerates the platforms that implement it, so
@@ -64,11 +85,11 @@ func Platform(projectRoot string) string {
 			if platform.Path == "" {
 				continue
 			}
-			if identity := walk(resolveFrom(dir, platform.Path), depth+1); identity != "" {
-				return identity
+			if root, declared := walk(resolveFrom(dir, platform.Path), depth+1); root != "" {
+				return root, declared
 			}
 		}
-		return ""
+		return "", nil
 	}
 	return walk(projectRoot, 0)
 }

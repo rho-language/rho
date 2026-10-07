@@ -30,6 +30,7 @@
 package codegen
 
 import (
+	"strconv"
 	"strings"
 
 	"rho/src/ir"
@@ -173,6 +174,21 @@ var goMustEscape = map[string]bool{
 // recognise them. `rho_concat` is rewritten as a whole call, not a name.
 var goPassThroughWords = map[string]bool{
 	"rho_concat": true,
+	"read_file":  true,
+	"write_file": true,
+	"get_args":   true,
+	"append":     true,
+	"len":        true,
+}
+
+// goBuiltinCalls maps a Rho builtin to the Go call that carries it. The file
+// and argument builtins are supplied by the Go runtime, so a call site has to
+// name the runtime function rather than the Rho spelling.
+var goBuiltinCalls = map[string]string{
+	"read_file":  "rhoReadFile",
+	"write_file": "rhoWriteFile",
+	"get_args":   "rhoGetArgs",
+	"append":     "append",
 }
 
 // escapeGoName makes a Rho name safe to use in generated Go.
@@ -281,9 +297,6 @@ func translateWord(word string) string {
 // translateKnownCall rewrites a whole call whose name is spelled in C. It is
 // invoked at the identifier, before the name can be renamed.
 func translateKnownCall(src []byte, start, nameEnd int, name string) (int, string, bool) {
-	if name != "rho_concat" {
-		return 0, "", false
-	}
 	pos := nameEnd
 	for pos < len(src) && (src[pos] == ' ' || src[pos] == '\t') {
 		pos++
@@ -295,14 +308,27 @@ func translateKnownCall(src []byte, start, nameEnd int, name string) (int, strin
 	if close < 0 {
 		return 0, "", false
 	}
-	// Go's + covers both the numeric and the string case that rho_concat
-	// joined in C.
 	args := splitTopLevel(string(src[pos+1 : close]))
 	parts := make([]string, 0, len(args))
 	for _, arg := range args {
 		parts = append(parts, ToGoExpr(arg))
 	}
-	return close + 1, "(" + strings.Join(parts, " + ") + ")", true
+
+	if name == "rho_concat" {
+		// Go's + covers both the numeric and the string case that rho_concat
+		// joined in C.
+		return close + 1, "(" + strings.Join(parts, " + ") + ")", true
+	}
+	if name == "len" {
+		// Rho's len is a u32; Go's is an int, so the result is converted. A
+		// program that compares it with a u32 needs the same width on both
+		// sides.
+		return close + 1, "uint32(len(" + strings.Join(parts, ", ") + "))", true
+	}
+	if goName, ok := goBuiltinCalls[name]; ok {
+		return close + 1, goName + "(" + strings.Join(parts, ", ") + ")", true
+	}
+	return 0, "", false
 }
 
 // translateParen inspects a '(' and decides whether it opens a C cast, a
@@ -464,6 +490,15 @@ func scanPrimaryExpr(src []byte, start int) (int, bool) {
 			end = scanIdent(src, next)
 		case '[':
 			closed := matchBracket(src, end)
+			if closed < 0 {
+				return end, true
+			}
+			end = closed + 1
+		case '(':
+			// A call suffix is part of the primary expression: in C the cast
+			// `(int32_t)len(data)` applies to the whole call, because a
+			// postfix call binds tighter than a cast.
+			closed := matchParen(src, end)
 			if closed < 0 {
 				return end, true
 			}
@@ -673,6 +708,16 @@ func isValidGoIdent(name string) bool {
 
 // goTypeForIR maps an IR type to its Go spelling.
 func goTypeForIR(t ir.Type) string {
+	// A fixed-size array `T[N]` is `[N]T` in Go. The length is carried on the
+	// type, and the element type is the same type with the length cleared.
+	if t.ArrayLen > 0 {
+		element := t
+		element.ArrayLen = 0
+		if open := strings.IndexByte(t.Name, '['); open >= 0 {
+			element.Name = t.Name[:open]
+		}
+		return "[" + strconv.Itoa(t.ArrayLen) + "]" + goTypeForIR(element)
+	}
 	switch t.Kind {
 	case ir.TypeBool:
 		return "bool"
@@ -708,6 +753,17 @@ func goTypeForIR(t ir.Type) string {
 			return "unsafe.Pointer"
 		}
 		return "*" + element
+	case ir.TypeSlice:
+		// A dynamic array is a Go slice. This is the difference from a pointer
+		// that makes the two kinds worth telling apart.
+		if len(t.Args) == 0 {
+			return "[]byte"
+		}
+		element := goTypeForIR(t.Args[0])
+		if element == "" {
+			return "[]byte"
+		}
+		return "[]" + element
 	default:
 		return ""
 	}
@@ -739,4 +795,61 @@ func goTypeForCName(name string) string {
 		return converted
 	}
 	return goTypeName(trimmed)
+}
+
+// goRhoPrimitives maps a Rho primitive as written to the Go type that carries
+// it. The C spellings differ — Rho writes `u8`, C writes `uint8_t` — so a name
+// that reaches the backend as written needs its own table.
+var goRhoPrimitives = map[string]string{
+	"void":   "",
+	"Unit":   "",
+	"bool":   "bool",
+	"u8":     "uint8",
+	"u16":    "uint16",
+	"u32":    "uint32",
+	"u64":    "uint64",
+	"i32":    "int32",
+	"i64":    "int64",
+	"f64":    "float64",
+	"string": "string",
+}
+
+// goTypeForRhoName maps a Rho type as written to the Go type that carries it.
+//
+// It exists for the spellings the C form loses. A dynamic array `[T]` is a Go
+// slice, while a pointer `Ptr[T]` is `*T`; both are `T*` in C, so a backend
+// handed only the C spelling would declare one as the other.
+func goTypeForRhoName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+	if mapped, ok := goRhoPrimitives[trimmed]; ok {
+		return mapped
+	}
+	// Fixed-size array: T[N] becomes [N]T. The brackets trail the element type,
+	// which is what tells it from the dynamic form.
+	if open := strings.IndexByte(trimmed, '['); open > 0 && strings.HasSuffix(trimmed, "]") {
+		count := trimmed[open+1 : len(trimmed)-1]
+		if _, err := strconv.Atoi(count); err == nil {
+			element := goTypeForRhoName(trimmed[:open])
+			if element == "" {
+				element = "byte"
+			}
+			return "[" + count + "]" + element
+		}
+	}
+	// Dynamic array: [T] becomes []T.
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		inner := strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		element := goTypeForRhoName(inner)
+		if element == "" {
+			element = goTypeForCName(inner)
+		}
+		if element == "" {
+			return "[]byte"
+		}
+		return "[]" + element
+	}
+	return goTypeForCName(trimmed)
 }
