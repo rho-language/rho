@@ -74,7 +74,7 @@ type TypeChecker struct {
 	// moduleConsts are the module-level bindings, by name. A module has no
 	// run-time initialisation order, so each one is inlined at every use rather
 	// than emitted as a variable.
-	moduleConsts map[string]ast.ConstDecl
+	moduleConsts     map[string]ast.ConstDecl
 	moduleConstTypes map[string]ir.Type
 }
 
@@ -128,6 +128,7 @@ func New() *TypeChecker {
 	tc.types["i32"] = ir.Type{Kind: ir.TypeI32, Name: "i32"}
 	tc.types["i64"] = ir.Type{Kind: ir.TypeI64, Name: "i64"}
 	tc.types["f64"] = ir.Type{Kind: ir.TypeF64, Name: "f64"}
+	tc.types["f32"] = ir.Type{Kind: ir.TypeF32, Name: "f32"}
 	tc.types["string"] = ir.Type{Kind: ir.TypeString, Name: "string"}
 	for _, name := range []string{"String", "Slice", "Ptr", "Option", "Result", "Array", "Map", "Range", "RS485", "UART", "I2C", "SPI", "GPIO", "Timer", "Modbus", "TimeSpec"} {
 		tc.types[name] = ir.Type{Kind: ir.TypeStruct, Name: name}
@@ -510,6 +511,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if left.Kind == ir.TypeF64 || right.Kind == ir.TypeF64 {
 			return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
 		}
+		if left.Kind == ir.TypeF32 || right.Kind == ir.TypeF32 {
+			return ir.Type{Kind: ir.TypeF32, Name: "f32"}, nil
+		}
 		return left, nil
 	case ast.MemberExpr:
 		if object, ok := value.Object.(ast.IdentifierExpr); ok && ((object.Name == "yaml" && value.Name == "load") || (object.Name == "string" && value.Name == "from_i32")) {
@@ -856,6 +860,8 @@ func primitiveKind(name string) ir.TypeKind {
 		return ir.TypeI64
 	case "f64":
 		return ir.TypeF64
+	case "f32":
+		return ir.TypeF32
 	case "string":
 		return ir.TypeString
 	default:
@@ -928,7 +934,7 @@ func numeric(value ir.Type) bool {
 	return value.Kind == ir.TypeI32 || value.Kind == ir.TypeI64 ||
 		value.Kind == ir.TypeU8 || value.Kind == ir.TypeU16 ||
 		value.Kind == ir.TypeU32 || value.Kind == ir.TypeU64 ||
-		value.Kind == ir.TypeF64
+		value.Kind == ir.TypeF64 || value.Kind == ir.TypeF32
 }
 func comparable(left, right ir.Type) bool { return assignable(left, right) || assignable(right, left) }
 
@@ -1740,6 +1746,8 @@ func cTypeForKind(kind ir.TypeKind) string {
 		return "int64_t"
 	case ir.TypeF64:
 		return "double"
+	case ir.TypeF32:
+		return "float"
 	default:
 		return "double"
 	}
@@ -1787,6 +1795,8 @@ func cTypeForName(name string) string {
 		return "int32_t" + arraySuffix
 	case "f64":
 		return "double" + arraySuffix
+	case "f32":
+		return "float" + arraySuffix
 	case "bool":
 		return "bool" + arraySuffix
 	case "string":
@@ -2044,6 +2054,8 @@ func (tc *TypeChecker) cTypeFor(t ir.Type) string {
 		return cTypeForName(t.Name)
 	case ir.TypeF64:
 		return "double"
+	case ir.TypeF32:
+		return "float"
 	case ir.TypeString:
 		return "const char*"
 	case ir.TypePtr:
