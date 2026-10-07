@@ -140,9 +140,40 @@ type Spec struct {
 	// which of a framework's stdio drivers it registers, say — without the
 	// generator having to know which framework, or that there is one.
 	Program string `json:"program,omitempty"`
+	// Layout is how a framework arranges a program's sources, when that is not
+	// the plain arrangement of one executable in the project root.
+	//
+	// A framework that builds by component — ESP-IDF, Zephyr — expects a
+	// program to be a directory of sources with a build file that registers
+	// them, not an `add_executable` at the top. The platform says so here, and
+	// the generator emits that shape without knowing which framework asked for
+	// it.
+	Layout *Layout `json:"layout,omitempty"`
 	// Source is the file the spec was read from, so a report can say where it
 	// came from.
 	Source string `json:"-"`
+}
+
+// Layout is the shape a program's sources take in a framework's project.
+type Layout struct {
+	// Dir is the directory the program's sources are built from, relative to
+	// the generated project — the directory a component-based framework
+	// expects a program to be.
+	Dir string `json:"dir,omitempty"`
+	// Register is a CMake file beside the spec that is copied into Dir and
+	// included there, once the sources have been listed in
+	// `RHO_PROGRAM_SOURCES` and their include directories in
+	// `RHO_PROGRAM_INCLUDE_DIRS`.
+	//
+	// It is what turns a list of sources into whatever the framework calls a
+	// buildable unit — `idf_component_register` for ESP-IDF — so that name
+	// belongs to the platform and not to Rho.
+	Register string `json:"register,omitempty"`
+	// Sources are files beside the spec copied into Dir, for a component that
+	// needs code the program does not bring — the bridge from a framework's
+	// entry name to a program's, say. They travel with the register file
+	// because the build file names them by a path in Dir.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // Toolchain is the programs and flags a chip is built with.

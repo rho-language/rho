@@ -160,6 +160,12 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		artifacts.Extra = map[string]string{}
 	}
 	artifacts.Build = emitCMakeLists(ctx)
+	// A framework that builds by component wants the program as a directory of
+	// sources with a build file of its own, so that is written where it belongs
+	// and the project above it only says where the framework's project is.
+	if ctx.LayoutDir != "" {
+		artifacts.Extra[filepath.ToSlash(filepath.Join(ctx.LayoutDir, "CMakeLists.txt"))] = emitProgramComponent(ctx)
+	}
 
 	// A project that declared a Kconfig bridge gets the configuration it
 	// declared: the merge runs as part of the build, and the sources see what it
@@ -314,6 +320,57 @@ func cmakeString(value string) string {
 	return "\"" + strings.ReplaceAll(value, "\"", "\\\"") + "\""
 }
 
+// emitProgramComponent lists a program's sources for a framework that builds by
+// component.
+//
+// The sources and their include directories go into variables, and the
+// platform's own build file — placed beside this one — turns them into the unit
+// that framework builds. Which call does that is the platform's business: the
+// generator knows only that the sources are a list and the platform wants them.
+func emitProgramComponent(ctx Context) string {
+	name := cmakeProjectName(ctx.ModuleName)
+	_, includePaths := connectionCMake(ctx, name)
+	dependencyRoots := cDependencyRoots(ctx.ProjectRoot)
+
+	var b strings.Builder
+	b.WriteString("# The program, arranged as the component this framework builds.\n")
+	b.WriteString("# The sources are listed for the platform's own build file, included at the\n")
+	b.WriteString("# end, which is what knows how to register them.\n\n")
+
+	b.WriteString("set(RHO_PROGRAM_SOURCES\n")
+	for _, source := range ctx.SourceFiles {
+		resolved := resolveProjectSource(ctx, source)
+		if within(ctx.ProjectRoot, resolved) {
+			fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(resolved))
+			continue
+		}
+		if ownedBy(resolved, dependencyRoots) {
+			continue
+		}
+		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(resolved))
+	}
+	for _, source := range ctx.ShimSources {
+		if ctx.excludes(source) {
+			continue
+		}
+		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(source))
+	}
+	b.WriteString(")\n\n")
+
+	b.WriteString("set(RHO_PROGRAM_INCLUDE_DIRS\n")
+	b.WriteString("    ${CMAKE_CURRENT_SOURCE_DIR}\n")
+	for _, include := range ctx.IncludePaths {
+		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(include))
+	}
+	for _, include := range includePaths {
+		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(include))
+	}
+	b.WriteString(")\n\n")
+
+	b.WriteString("include(${CMAKE_CURRENT_LIST_DIR}/component.cmake)\n")
+	return b.String()
+}
+
 func emitCMakeLists(ctx Context) string {
 	name := cmakeProjectName(ctx.ModuleName)
 	var b strings.Builder
@@ -444,6 +501,15 @@ func emitCMakeLists(ctx Context) string {
 	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps-aliases.cmake)\n")
 	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/deps-aliases.cmake)\n")
 	b.WriteString("endif()\n\n")
+
+	// A program a framework builds as a component is not an executable at this
+	// level: its sources are listed for the component's own build file, which
+	// `EmitCProject` writes into the directory the framework expects. What is
+	// left here is the framework's project, which the platform's prelude has
+	// already made this file into.
+	if ctx.LayoutDir != "" {
+		return b.String()
+	}
 
 	// A C project brought its own `main`, so the wrapper that calls into a Rho
 	// program's `app_main` is left out: two entry points would be one too many,
@@ -615,14 +681,22 @@ func cDependencyRoots(projectRoot string) []string {
 		return nil
 	}
 	roots := []string{}
+	// Seen is keyed by the resolved root, not by the directory being walked. A
+	// dependency reached through two parents — a platform and a driver that both
+	// depend on the common module — is one root to add, and adding it twice is
+	// two `add_subdirectory` calls for one source tree and two targets of one
+	// name. Keying by the walked directory does not catch that: the second
+	// parent is a different directory with the same child.
 	seen := map[string]bool{}
+	if abs, err := filepath.Abs(projectRoot); err == nil {
+		seen[filepath.Clean(abs)] = true
+	}
 
 	var walk func(base string, manifest *deps.Manifest, depth int)
 	walk = func(base string, manifest *deps.Manifest, depth int) {
-		if depth > 16 || seen[base] {
+		if depth > 16 {
 			return
 		}
-		seen[base] = true
 		for _, dep := range manifest.Deps {
 			if dep.Type != deps.DepTypeC || dep.Path == "" {
 				continue
@@ -631,9 +705,17 @@ func cDependencyRoots(projectRoot string) []string {
 			if !filepath.IsAbs(root) {
 				root = filepath.Join(base, root)
 			}
+			if abs, err := filepath.Abs(root); err == nil {
+				root = abs
+			}
+			root = filepath.Clean(root)
+			if seen[root] {
+				continue
+			}
 			if _, err := os.Stat(filepath.Join(root, "CMakeLists.txt")); err != nil {
 				continue
 			}
+			seen[root] = true
 			roots = append(roots, root)
 			if child, err := deps.LoadManifest(deps.ManifestPath(root)); err == nil {
 				walk(root, child, depth+1)

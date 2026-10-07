@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"rho/src/deps"
@@ -260,6 +261,30 @@ func mergeFlash(base, over Flash) Flash {
 /*  Flashing                                                                   */
 /* -------------------------------------------------------------------------- */
 
+// platformToolEntry is the entry point a platform ships for a tool its board
+// spec names, or "" when it ships none.
+//
+// It is the fixed place the platform documents — `tools/<tool>/flash` under the
+// platform module — so that a board is reached the same way on every machine,
+// and so that a platform's peculiarities (which converter, which drive, which
+// host can write to it) live with the platform rather than in a toolchain that
+// would have to know about every one of them.
+func platformToolEntry(project, tool string) string {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return ""
+	}
+	root := deps.PlatformRoot(project)
+	if root == "" {
+		return ""
+	}
+	entry := filepath.Join(root, "tools", tool, "flash")
+	if info, err := os.Stat(entry); err == nil && !info.IsDir() {
+		return entry
+	}
+	return ""
+}
+
 // FlashFile writes a binary to a board, using whatever the target says.
 //
 // The target is named rather than a family of parts, because "STM32" is not an
@@ -288,6 +313,16 @@ func FlashFile(binary string, targetName string, project string) error {
 	program, args, err := flash.invocation(binary)
 	if err != nil {
 		return fmt.Errorf("the target %q: %w", targetName, err)
+	}
+	// A platform may ship the entry point for the tool its spec names, at
+	// tools/<tool>/flash under the platform module. Reaching a board is the
+	// platform's business — an RP2350 is programmed by writing a file onto the
+	// bootrom's drive, and converting that file and getting it there is the
+	// platform's to say — so the platform's entry point is preferred over a tool
+	// of the same name found on PATH. The arguments are the converter's either
+	// way; only the program changes.
+	if entry := platformToolEntry(project, flash.Tool); entry != "" {
+		program = entry
 	}
 	if _, lookErr := exec.LookPath(program); lookErr != nil {
 		return fmt.Errorf("the target %q reaches its board with %s, which is not installed: %w", targetName, program, lookErr)

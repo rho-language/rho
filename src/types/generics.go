@@ -281,6 +281,8 @@ func resolveTypeName(name string) (ir.Type, error) {
 		return ir.Type{Kind: ir.TypeI64, Name: "i64"}, nil
 	case "f64":
 		return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
+	case "f32":
+		return ir.Type{Kind: ir.TypeF32, Name: "f32"}, nil
 	case "string":
 		return ir.Type{Kind: ir.TypeString, Name: "string"}, nil
 	}

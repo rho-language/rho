@@ -582,7 +582,7 @@ func runGeneratedTarget(abs, projectRoot string, dependencyRoots, includePaths, 
 		os.Exit(1)
 	}
 
-	targets, err := src.GenerateAllTargetsDetailed(abs, "", includePaths, sourceFiles, dependencyRoots, "")
+	targets, err := src.GenerateAllTargetsDetailed(abs, "", includePaths, sourceFiles, dependencyRoots, "", "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho run:", err)
 		os.Exit(1)
@@ -684,6 +684,26 @@ func runBinary(binary, dir string, args []string) {
 /* -------------------------------------------------------------------------- */
 /*  rho build (with full dependency integration)                              */
 /* -------------------------------------------------------------------------- */
+
+// usableIncludeDirs drops include directories that are not paths a compiler can
+// open, which today is an entry still holding an unexpanded CMake variable such
+// as `${CMAKE_BINARY_DIR}/generated`. Such an entry is the module's own build
+// detail: generated headers are written into the build tree and the generated
+// project adds that directory, so carrying the entry into a dependency's include
+// list only produces a path that cannot exist.
+func usableIncludeDirs(dirs []string) []string {
+	if len(dirs) == 0 {
+		return nil
+	}
+	usable := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if strings.Contains(dir, "${") {
+			continue
+		}
+		usable = append(usable, dir)
+	}
+	return usable
+}
 
 func buildCLI(args []string) int {
 	fs := flag.NewFlagSet("rho build", flag.ExitOnError)
@@ -854,7 +874,12 @@ func buildCLI(args []string) int {
 		}
 		// C deps only
 		if node.Type == deps.DepTypeC {
-			includePaths = append(includePaths, node.IncludeDirs...)
+			// An include directory that is not a path a compiler can open is not
+			// put on the path. A manifest may carry a build-relative entry of its
+			// own; joining it to the module's root makes a path under the source
+			// tree that does not exist. Generated headers live in the build tree,
+			// and the generated project puts that directory on the path itself.
+			includePaths = append(includePaths, usableIncludeDirs(node.IncludeDirs)...)
 			sourceFiles = append(sourceFiles, node.SourceFiles...)
 		}
 	}
@@ -983,7 +1008,21 @@ func buildCLI(args []string) int {
 	// could have produced it.
 	includePaths = append(includePaths, readLines(filepath.Join(generatedTree, "modules", "preset-sources-config-includes.txt"))...)
 
-	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, descriptorTarget, shimSources)
+	// A `-target` that names a build target rather than a descriptor backend
+	// (`pico2w`, `stm32`) still emits a descriptor's project; what it changes is
+	// which libraries that project links, which the connection declares as a
+	// variant keyed by that name. The name has to be handed to generation for the
+	// variant to be found, and it is handed over as the `only` emitter: a name
+	// the connection declares as a variant is emitted by the connection-variant
+	// emitter, and the backend it stands for is what gets generated.
+	only := descriptorTarget
+	if only == "" && targetName != "" && manifest != nil && manifest.Connection != nil {
+		if _, isVariant := manifest.Connection.Variant(targetName); isVariant {
+			only = targetName
+		}
+	}
+
+	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, only, programLayout(projectRoot, targetName), shimSources)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
@@ -1155,6 +1194,53 @@ func canonicalBuildType(name string) (string, bool) {
 		return "MinSizeRel", true
 	}
 	return "", false
+}
+
+// programLayout asks the target component where a framework wants a program's
+// sources, and returns "" for the plain arrangement of one executable at the
+// project root.
+//
+// The layout is a fact about the framework a board builds with, which the
+// platform declares in its target spec. Asking rho-target for it, rather than
+// reading the spec here, keeps the reading of specs in the one place that
+// resolves them — the same reason every other question about a target is asked
+// of that component.
+func programLayout(projectRoot, target string) string {
+	module, err := modcore.LoadInstalledModule("rho-target")
+	if err != nil {
+		return ""
+	}
+	entry := module.Entry()
+	if entry == nil {
+		return ""
+	}
+	// The component writes to a file rather than a buffer — its output is
+	// normally the build's own — so it is given one here and read back.
+	tmp, err := os.CreateTemp("", "rho-layout-*.json")
+	if err != nil {
+		return ""
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	if err := entry.Run([]string{"show", "-json", "-project", projectRoot, target}, nil, tmp); err != nil {
+		return ""
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(tmp)
+	if err != nil {
+		return ""
+	}
+	var spec struct {
+		Layout *struct {
+			Dir string `json:"dir"`
+		} `json:"layout"`
+	}
+	if err := json.Unmarshal(data, &spec); err != nil || spec.Layout == nil {
+		return ""
+	}
+	return spec.Layout.Dir
 }
 
 func buildTarget(generatedDir, projectRoot, target string, linkMap bool, buildType string) error {

@@ -104,6 +104,36 @@ func TestAFragmentDeclaresItsSymbols(t *testing.T) {
 	}
 }
 
+// A help body is indented prose, and the reader skips it by indentation. Read
+// as declarations, its first word on each line is an unknown keyword, so a
+// fragment copied from a kernel Kconfig produced a diagnostic per line.
+func TestAHelpBodyIsSkipped(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "kconfig/board.Kconfig", `
+config CONFIG_SPI_MASTER
+	bool "SPI master"
+	default y
+	help
+	  Drive the SPI bus.
+	  The text below is prose and is not declarations.
+
+config CONFIG_UART_BAUD
+	int "UART baud rate"
+	default 115200
+`)
+
+	read, diagnostics := ReadFragments(root, []string{"kconfig/board.Kconfig"})
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected a help body to be skipped, got %+v", diagnostics)
+	}
+	if len(read.Symbols) != 2 {
+		t.Fatalf("expected two symbols, got %d: %+v", len(read.Symbols), read.Symbols)
+	}
+	if _, found := read.Fragment("CONFIG_UART_BAUD"); !found {
+		t.Fatal("the symbol after a help body was not declared")
+	}
+}
+
 func TestACommentIsNotPartOfAValue(t *testing.T) {
 	// A `#` starts a comment, so a fragment written by a person stays readable
 	// and a value never carries one.

@@ -324,6 +324,13 @@ type Context struct {
 	// EnabledConfigs are the configuration symbols that ended up set, by name
 	// without the `CONFIG_` prefix.
 	EnabledConfigs map[string]bool
+	// LayoutDir is the directory a program's sources are built from when the
+	// framework arranges a program as a component rather than as one executable
+	// at the project root. Empty means the plain arrangement.
+	//
+	// It comes from the target spec, so which shape a framework wants is the
+	// platform's to say and not this generator's to know.
+	LayoutDir string
 	// GuardedSources maps a source file's name to the symbol that governs it, from
 	// the manifests of everything the project depends on.
 	GuardedSources map[string]string
