@@ -47,6 +47,50 @@ func TestPlatformBoardIsAValidModuleType(t *testing.T) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  a device driver is a module type, and so is its board                      */
+/* -------------------------------------------------------------------------- */
+
+// A driver is a layer of its own, between a platform and an application: code
+// for one device, written against the HAL a platform implements and the driver
+// interface its kind declares. It is not a platform, which implements a family
+// of peripherals, and it is not the interfaces, which declare what a platform
+// implements and carry no code.
+func TestDriverIsAValidModuleType(t *testing.T) {
+	for _, candidate := range ValidModuleTypes {
+		if candidate == "driver" {
+			return
+		}
+	}
+	t.Errorf("driver is not a valid module type; got %v", ValidModuleTypes)
+}
+
+// A driver board is an eval or breakout module's support package, the way a
+// platform-board is an MCU board's. It describes an IC on a carrier rather than
+// the carrier's MCU, so collapsing it into platform-board would leave a reader
+// unable to tell which pins are the module's and which are the board's.
+func TestDriverBoardIsAValidModuleType(t *testing.T) {
+	for _, candidate := range ValidModuleTypes {
+		if candidate == "driver-board" {
+			return
+		}
+	}
+	t.Errorf("driver-board is not a valid module type; got %v", ValidModuleTypes)
+}
+
+// A runtime is the layer an application is built on: the event bus, the
+// scheduler, the app lifecycle and the diagnostics a program runs its modules
+// with. It is native — compiled and linked, never launched — so it declares no
+// entry point, exactly as a platform does.
+func TestRuntimeIsAValidModuleType(t *testing.T) {
+	for _, candidate := range ValidModuleTypes {
+		if candidate == "runtime" {
+			return
+		}
+	}
+	t.Errorf("runtime is not a valid module type; got %v", ValidModuleTypes)
+}
+
+/* -------------------------------------------------------------------------- */
 /*  native types declare no main                                               */
 /* -------------------------------------------------------------------------- */
 
@@ -54,7 +98,7 @@ func TestPlatformBoardIsAValidModuleType(t *testing.T) {
 // entry point. The distinction is what lets a hardware platform be published
 // without inventing a file to call its main.
 func TestNativeTypesAreInterfacesAndPlatform(t *testing.T) {
-	for _, moduleType := range []string{"interfaces", "platform", "platform-board"} {
+	for _, moduleType := range []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime"} {
 		if !IsNativeType(moduleType) {
 			t.Errorf("%s is not a native type", moduleType)
 		}

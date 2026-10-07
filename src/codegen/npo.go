@@ -87,6 +87,8 @@ func cPrimitive(name string) (string, bool) {
 		return "int64_t", true
 	case "f64":
 		return "double", true
+	case "f32":
+		return "float", true
 	case "bool":
 		return "bool", true
 	case "string":

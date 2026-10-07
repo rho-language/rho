@@ -735,6 +735,8 @@ func goTypeForIR(t ir.Type) string {
 		return "int64"
 	case ir.TypeF64:
 		return "float64"
+	case ir.TypeF32:
+		return "float32"
 	case ir.TypeString:
 		return "string"
 	case ir.TypeStruct:

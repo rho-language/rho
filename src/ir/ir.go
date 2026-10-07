@@ -50,6 +50,12 @@ const (
 	// program tracks — but not in Go, where a slice is `[]T` and a pointer is
 	// `*T`. Keeping them apart is what lets both backends spell their own.
 	TypeSlice
+	// TypeF32 is a 32-bit float. It is a width of its own rather than the
+	// default float, because a value that crosses a foreign boundary has the
+	// width the C function declared: `float` and `double` return in different
+	// registers on an ARM EABI target, so spelling an `f32` as a `double` is a
+	// declaration that compiles and a call that reads the wrong register.
+	TypeF32
 )
 
 // Type represents a concrete type in the IR.

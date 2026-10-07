@@ -538,3 +538,30 @@ func TestModuleConstIsInlined(t *testing.T) {
 }
 
 func intPtr(value int) *int { return &value }
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: f32 is a type of its own                                            */
+/* -------------------------------------------------------------------------- */
+
+// f32 is a 32-bit float, and it is not f64. The two return in different
+// registers on an ARM EABI target, so a foreign function declared to return one
+// and reached as the other reads the wrong register — a bug that surfaces as a
+// wrong number rather than as a link error.
+func TestF32IsItsOwnType(t *testing.T) {
+	tc := New()
+	typ, ok := tc.resolveType("f32")
+	if !ok {
+		t.Fatal("f32 did not resolve to a type")
+	}
+	if typ.Kind != ir.TypeF32 {
+		t.Fatalf("f32 resolved to kind %v, want TypeF32", typ.Kind)
+	}
+
+	f64, ok := tc.resolveType("f64")
+	if !ok || f64.Kind != ir.TypeF64 {
+		t.Fatal("f64 no longer resolves to TypeF64")
+	}
+	if typ.Kind == f64.Kind {
+		t.Fatal("f32 and f64 resolved to the same kind")
+	}
+}

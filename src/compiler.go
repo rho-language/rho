@@ -142,7 +142,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 // When module.yml declares no build.targets the C target is generated, which
 // preserves the behaviour of builds that predate multi-target support.
 func GenerateAllTargets(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string) ([]string, error) {
-	generated, err := GenerateAllTargetsDetailed(path, outputRoot, includePaths, sourceFiles, dependencyRoots, "")
+	generated, err := GenerateAllTargetsDetailed(path, outputRoot, includePaths, sourceFiles, dependencyRoots, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ type GeneratedTarget struct {
 // GenerateAllTargetsDetailed generates one project per requested target and
 // reports how each is built. An only value restricts the build to that single
 // target, which is how a test module asks for the backend it can run.
-func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only string, shim ...[]string) ([]GeneratedTarget, error) {
+func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only, layoutDir string, shim ...[]string) ([]GeneratedTarget, error) {
 	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots)
 	projectRoot := ProjectRoot(path)
 	// A project that declared SQL gets its statements generated before anything
@@ -271,6 +271,7 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 			SQL:            sqlBridge(projectRoot),
 			Connection:     connection,
 			Variant:        variants[target.ID],
+			LayoutDir:      layoutDir,
 		}
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err

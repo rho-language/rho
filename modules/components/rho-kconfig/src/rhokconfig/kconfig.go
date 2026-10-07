@@ -166,11 +166,23 @@ func readText(text, path string, out *Fragment, seen map[string]bool, diagnostic
 		}
 		return &out.Symbols[len(out.Symbols)-1]
 	}
+	// A help body is prose indented below its `help` line, not declarations.
+	// The reader skips it by indentation until a line returns to the help's own
+	// level; without that the body's first word on each line is read as a
+	// keyword and reported as one it cannot read.
+	helpIndent := -1
 	for number, raw := range lines {
 		line := number + 1
 		trimmed := strings.TrimSpace(stripComment(raw))
 		if trimmed == "" {
 			continue
+		}
+
+		if helpIndent >= 0 {
+			if leadingIndent(raw) > helpIndent {
+				continue
+			}
+			helpIndent = -1
 		}
 
 		// A quoted string on a line of its own is the help of the symbol
@@ -236,6 +248,7 @@ func readText(text, path string, out *Fragment, seen map[string]bool, diagnostic
 			if symbol := last(); symbol != nil {
 				symbol.Help = unquote(rest)
 			}
+			helpIndent = leadingIndent(raw)
 
 		case "default":
 			if symbol := last(); symbol != nil {
@@ -326,6 +339,24 @@ func split(line string) (string, string) {
 		return fields[0], ""
 	}
 	return fields[0], strings.TrimSpace(fields[1])
+}
+
+// leadingIndent is the width of a line's leading whitespace, for telling a help
+// body from the declarations around it. A tab counts as eight columns, which is
+// how Kconfig's own examples are indented.
+func leadingIndent(line string) int {
+	width := 0
+	for _, r := range line {
+		switch r {
+		case ' ':
+			width++
+		case '\t':
+			width += 8
+		default:
+			return width
+		}
+	}
+	return width
 }
 
 // unquote removes the quotes a value may be written in, and keeps the text

@@ -505,7 +505,7 @@ func goZeroValue(t ir.Type) string {
 	switch t.Kind {
 	case ir.TypeBool:
 		return "false"
-	case ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeI64, ir.TypeF64:
+	case ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeI64, ir.TypeF64, ir.TypeF32:
 		return "0"
 	case ir.TypeString:
 		return "\"\""

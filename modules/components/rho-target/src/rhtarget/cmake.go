@@ -65,6 +65,31 @@ func Files(spec Spec, directory string) []File {
 			files = append(files, File{Path: prefix + "program.cmake", Content: string(content)})
 		}
 	}
+	// What registers a program as the buildable unit a component-based
+	// framework wants, placed in the directory that framework expects.
+	if spec.Layout != nil && spec.Layout.Dir != "" {
+		if register := resolveBeside(spec.Source, spec.Layout.Register); register != "" {
+			if content, err := os.ReadFile(register); err == nil {
+				// Relative to the *project*, not to this file's own directory:
+				// the layout is where the program is, and the program is not
+				// inside `cmake/`.
+				dir := strings.TrimSuffix(spec.Layout.Dir, "/")
+				files = append(files, File{Path: dir + "/component.cmake", Content: string(content)})
+				for _, source := range spec.Layout.Sources {
+					resolved := resolveBeside(spec.Source, source)
+					if resolved == "" {
+						continue
+					}
+					if body, readErr := os.ReadFile(resolved); readErr == nil {
+						files = append(files, File{
+							Path:    dir + "/" + filepath.Base(resolved),
+							Content: string(body),
+						})
+					}
+				}
+			}
+		}
+	}
 	return files
 }
 
@@ -245,11 +270,16 @@ func TargetCMake(spec Spec, linkerScript string) string {
 		if spec.Flash.Offset != "" {
 			fmt.Fprintf(&b, "set(RHO_FLASH_OFFSET %s)\n", spec.Flash.Offset)
 		}
-		b.WriteString("add_custom_target(flash\n")
-		b.WriteString("  COMMAND ${RHO_FLASH_TOOL} ${RHO_FLASH_COMMAND}\n")
-		b.WriteString("  COMMENT \"Writing the program to the board\"\n")
-		b.WriteString("  VERBATIM\n")
-		b.WriteString(")\n")
+		// A framework may define `flash` itself — ESP-IDF does, because it
+		// knows which images it built and where they go — and two targets of
+		// one name is a configure error. The one that already knows wins.
+		b.WriteString("if(NOT TARGET flash)\n")
+		b.WriteString("  add_custom_target(flash\n")
+		b.WriteString("    COMMAND ${RHO_FLASH_TOOL} ${RHO_FLASH_COMMAND}\n")
+		b.WriteString("    COMMENT \"Writing the program to the board\"\n")
+		b.WriteString("    VERBATIM\n")
+		b.WriteString("  )\n")
+		b.WriteString("endif()\n")
 	}
 	return b.String()
 }

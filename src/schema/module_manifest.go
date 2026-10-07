@@ -32,6 +32,8 @@ import (
 var ValidModuleTypes = []string{
 	"rho", "module", "component", "plugin",
 	"interfaces", "platform", "platform-board",
+	"driver", "driver-board",
+	"runtime",
 }
 
 // ValidVisibilities lists the visibilities a module may be published under.
@@ -62,6 +64,28 @@ var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
 //     configuration and the startup that make a platform usable on the piece of
 //     hardware it is fitted to.
 //
+// Two more are the layers of a device rather than of a board, and they sit
+// between a platform and an application:
+//
+//   - `driver` is a device driver: code for one part — a temperature sensor, a
+//     display, a radio — written against the HAL interfaces a platform
+//     implements, and against the driver interface its own kind declares. It is
+//     platform-agnostic, which is the point: the same DS18B20 driver runs on an
+//     RP2350 or an STM32 because it reaches the bus through a contract and not
+//     through a vendor's SDK.
+//   - `driver-board` is one eval or breakout module's support package: which
+//     driver it carries and how the module's pins are named, the way a
+//     platform-board is one MCU board's pin map. It is not a platform-board
+//     because it describes an IC on a carrier rather than the carrier's MCU.
+//
+// One more sits above both, and it is what a program is built on rather than
+// what it is built from:
+//
+//   - `runtime` is the application runtime: the event bus, the scheduler, the
+//     application lifecycle and the diagnostics a program uses to run several
+//     modules together. It is native and platform-agnostic, and it declares no
+//     entry point because it is linked into a program, not run as one.
+//
 // They are kept apart because they are not the same thing, and a module that
 // implements a platform while claiming to be its interfaces — or a board that
 // claims to be a platform — describes itself as something it is not, in the
@@ -83,7 +107,7 @@ var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
 //
 // None of them declares `main`: each is native code a project links rather than
 // something it runs.
-var NativeModuleTypes = []string{"interfaces", "platform", "platform-board"}
+var NativeModuleTypes = []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime"}
 
 // IsRhoSourceType reports whether a module type is written in Rho.
 func IsRhoSourceType(moduleType string) bool {
