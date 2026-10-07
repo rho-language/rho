@@ -33,7 +33,7 @@ var ValidModuleTypes = []string{
 	"rho", "module", "component", "plugin",
 	"interfaces", "platform", "platform-board",
 	"driver", "driver-board",
-	"runtime",
+	"runtime", "middleware",
 }
 
 // ValidVisibilities lists the visibilities a module may be published under.
@@ -85,6 +85,11 @@ var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
 //     application lifecycle and the diagnostics a program uses to run several
 //     modules together. It is native and platform-agnostic, and it declares no
 //     entry point because it is linked into a program, not run as one.
+//   - `middleware` plugs an outside system into the ecosystem — an RTOS, a
+//     filesystem, a network stack. It implements a contract the interfaces
+//     declare (the OSAL, say) and is linked in place of the default that ships
+//     with the runtime, so the program above it is unchanged whether the
+//     middleware is there or not.
 //
 // They are kept apart because they are not the same thing, and a module that
 // implements a platform while claiming to be its interfaces — or a board that
@@ -107,7 +112,7 @@ var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
 //
 // None of them declares `main`: each is native code a project links rather than
 // something it runs.
-var NativeModuleTypes = []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime"}
+var NativeModuleTypes = []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime", "middleware"}
 
 // IsRhoSourceType reports whether a module type is written in Rho.
 func IsRhoSourceType(moduleType string) bool {

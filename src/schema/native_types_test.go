@@ -90,6 +90,18 @@ func TestRuntimeIsAValidModuleType(t *testing.T) {
 	t.Errorf("runtime is not a valid module type; got %v", ValidModuleTypes)
 }
 
+// A middleware plugs an outside system into the ecosystem — an RTOS, a
+// filesystem — by implementing a contract the interfaces declare. It is native:
+// linked in place of the default, never launched.
+func TestMiddlewareIsAValidModuleType(t *testing.T) {
+	for _, candidate := range ValidModuleTypes {
+		if candidate == "middleware" {
+			return
+		}
+	}
+	t.Errorf("middleware is not a valid module type; got %v", ValidModuleTypes)
+}
+
 /* -------------------------------------------------------------------------- */
 /*  native types declare no main                                               */
 /* -------------------------------------------------------------------------- */
@@ -98,7 +110,7 @@ func TestRuntimeIsAValidModuleType(t *testing.T) {
 // entry point. The distinction is what lets a hardware platform be published
 // without inventing a file to call its main.
 func TestNativeTypesAreInterfacesAndPlatform(t *testing.T) {
-	for _, moduleType := range []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime"} {
+	for _, moduleType := range []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime", "middleware"} {
 		if !IsNativeType(moduleType) {
 			t.Errorf("%s is not a native type", moduleType)
 		}

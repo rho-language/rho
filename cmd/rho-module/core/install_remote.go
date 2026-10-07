@@ -152,7 +152,7 @@ func archiveKind(archive []byte) (string, error) {
 		// A Rho application is installed as a module, which is what the
 		// toolchain resolves a dependency against.
 		return KindModule, nil
-	case "interfaces", "platform", "platform-board", "driver", "driver-board", "runtime":
+	case "interfaces", "platform", "platform-board", "driver", "driver-board", "runtime", "middleware":
 		// All of them are native code a project links rather than something it
 		// runs, so all of them install as a library.
 		return KindLibrary, nil
