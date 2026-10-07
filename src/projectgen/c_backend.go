@@ -480,6 +480,23 @@ func emitCMakeLists(ctx Context) string {
 	}
 
 	dependencyRoots := cDependencyRoots(ctx.ProjectRoot)
+
+	// rho knows where every dependency is; a module's own build file does not.
+	// Each directory is written down under the name its manifest declares, so a
+	// module locates the modules it depends on by name rather than by a path
+	// that is true on the one machine it was written on. A module built outside
+	// rho falls back to its environment, a sibling checkout, and then a fetch.
+	b.WriteString("# Where each dependency is, by the name its manifest declares. A module's\n")
+	b.WriteString("# build file reads these instead of guessing a path.\n")
+	for _, root := range dependencyRoots {
+		child, loadErr := deps.LoadManifest(deps.ManifestPath(root))
+		if loadErr != nil || child == nil || child.ModuleName == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "set(%s %s)\n", dependencyDirVariable(child.ModuleName), cmakePath(root))
+	}
+	b.WriteString("\n")
+
 	for index, root := range dependencyRoots {
 		// Where this build's resolved configuration is, for the dependencies whose own build
 		// files compile their own sources and so cannot be given a source list here.
@@ -788,6 +805,16 @@ func ownedBy(source string, roots []string) bool {
 // cmakePath writes an absolute path as a CMake string literal.
 func cmakePath(path string) string {
 	return `"` + filepath.ToSlash(path) + `"`
+}
+
+// dependencyDirVariable is the CMake variable a module's directory is published
+// under: its name, upper-cased, with dashes for underscores and `_DIR` appended.
+// `robohub-common` becomes `ROBOHUB_COMMON_DIR`, which is the name a module's
+// build file looks for and the name an environment variable could carry.
+func dependencyDirVariable(module string) string {
+	name := strings.ToUpper(module)
+	name = strings.ReplaceAll(name, "-", "_")
+	return name + "_DIR"
 }
 
 func connectionCMake(ctx Context, name string) (link string, includes []string) {
