@@ -516,7 +516,57 @@ func runCLI(args []string) {
 		return
 	}
 
+	// A C project: compile the C source files directly and run.
+	if filepath.Ext(abs) == ".c" {
+		runCProject(abs, projectRoot)
+		return
+	}
+
 	if err := RunFileWithDependencies(abs, dependencyRoots); err != nil {
+		fmt.Fprintln(os.Stderr, "rho run:", err)
+		os.Exit(1)
+	}
+}
+
+// runCProject compiles a C source file with gcc and runs the binary.
+func runCProject(abs, projectRoot string) {
+	exe := filepath.Join(projectRoot, "build", "run", filepath.Base(replaceExt(abs, "")))
+	os.MkdirAll(filepath.Dir(exe), 0755)
+	defer os.Remove(exe)
+
+	var sources []string
+	if manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot)); err == nil && manifest != nil {
+		sources = append(sources, manifest.BuildSources...)
+	}
+	// Only add the entry point if it is not already in the build sources.
+	hasEntry := false
+	for _, s := range sources {
+		if s == abs || filepath.Base(s) == filepath.Base(abs) {
+			hasEntry = true
+			break
+		}
+	}
+	if !hasEntry {
+		sources = append(sources, abs)
+	}
+
+	arguments := []string{"-O2", "-std=c11", "-o", exe}
+	arguments = append(arguments, sources...)
+	compile := commandRunner("gcc", arguments...)
+	compile.Dir = projectRoot
+	compile.Stdout = os.Stdout
+	compile.Stderr = os.Stderr
+	if err := compile.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "rho run:", err)
+		os.Exit(1)
+	}
+
+	run := commandRunner(exe)
+	run.Dir = projectRoot
+	run.Stdin = os.Stdin
+	run.Stdout = os.Stdout
+	run.Stderr = os.Stderr
+	if err := run.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "rho run:", err)
 		os.Exit(1)
 	}

@@ -29,6 +29,7 @@ package rhtarget
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,6 +56,15 @@ func Files(spec Spec, directory string) []File {
 	if spec.LinkerScript == "" && len(spec.LinkRegions()) > 0 {
 		files = append(files, File{Path: prefix + "linker.ld", Content: LinkerScript(spec)})
 	}
+	// What the platform says about the program, carried into the generated
+	// build under the name that build includes it by. A fragment named but not
+	// readable is left out rather than fatal: it is the platform's own file,
+	// and a build that cannot read it says so when it fails to include it.
+	if program := resolveBeside(spec.Source, spec.Program); program != "" {
+		if content, err := os.ReadFile(program); err == nil {
+			files = append(files, File{Path: prefix + "program.cmake", Content: string(content)})
+		}
+	}
 	return files
 }
 
@@ -70,6 +80,17 @@ func Files(spec Spec, directory string) []File {
 func ToolchainCMake(spec Spec) string {
 	var b strings.Builder
 	banner(&b, "toolchain.cmake", spec, "What makes CMake cross-compile for this target.")
+
+	// A target whose toolchain is a framework's names its import here. It runs
+	// before `project()`, which is the only place the framework can be located,
+	// and what it sets up is added to the compiler and flags below rather than
+	// replacing them: the framework supplies its targets' flags, and this file
+	// still has to say which compiler they are for.
+	if prelude := resolveBeside(spec.Source, spec.Toolchain.Prelude); prelude != "" {
+		b.WriteString("# The framework's own import, which locates it and defines its targets.\n")
+		b.WriteString("include(" + cmakeQuote(prelude) + ")\n\n")
+	}
+
 	b.WriteString("# The system is not the one CMake runs on, so nothing is looked for in the\n")
 	b.WriteString("# host's libraries and nothing is run to test a feature.\n")
 	b.WriteString("set(CMAKE_SYSTEM_NAME Generic)\n")
@@ -84,6 +105,20 @@ func ToolchainCMake(spec Spec) string {
 	// search finds the host's, which then fails to link.
 	b.WriteString("set(CMAKE_C_FLAGS_INIT \"-ffreestanding\")\n")
 	return b.String()
+}
+
+// resolveBeside resolves a path a spec declares relative to that spec's own
+// file, so a platform names a file beside its manifest rather than an absolute
+// path that holds on one machine.
+func resolveBeside(source, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) || source == "" {
+		return path
+	}
+	return filepath.Join(filepath.Dir(source), path)
 }
 
 // processor is what CMake calls the processor: the core, which is the fact that

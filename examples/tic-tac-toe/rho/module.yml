@@ -1,0 +1,32 @@
+#
+# tic-tac-toe/rho — an interactive Tic-Tac-Toe game in Rho.
+#
+# The same game as examples/tic-tac-toe/c, written in Rho. Uses the minimax
+# algorithm for the computer opponent, with a 1D board array (u8[9]),
+# recursive function calls, struct for moves, extern C calls for input
+# (getchar) and random numbers (rand/srand).
+#
+# Built with the Rho toolchain to a native host binary.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: tic-tac-toe-rho
+  type: rho
+  version: 0.1.0
+  description: >
+    Interactive Tic-Tac-Toe game in Rho with minimal AI.
+
+  maintainer: "Aurel Miron"
+  license: "Apache-2.0"
+  created: "2026-10-06"
+
+main: src/main.rho
+
+build:
+  language: c
+  output_dir: output
+  targets:
+    - c

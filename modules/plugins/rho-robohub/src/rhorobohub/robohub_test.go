@@ -13,6 +13,8 @@ package rhorobohub
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -132,6 +134,77 @@ func TestEachContractIsAnsweredByTheOneProgram(t *testing.T) {
 		}
 		if one.reads != "" && !strings.Contains(string(response.Payload), one.reads) {
 			t.Errorf("%s: expected the payload to carry %q, got %s", one.component, one.reads, response.Payload)
+		}
+	}
+}
+
+// A tool the platform ships is resolved to its own entry point, derived from
+// the platform's directory rather than found on PATH. The answer is the same on
+// every machine, which is what keeps a board programmed with the platform's own
+// converter and not another build's.
+func TestAPlatformToolResolvesToThePlatformsOwnEntryPoint(t *testing.T) {
+	root := t.TempDir()
+	entry := filepath.Join(root, "tools", "elf2uf2", "flash")
+	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entry, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	request := FlashRequest{PlatformRoot: root}
+	request.Flash.Tool = "elf2uf2"
+	request.Flash.Command = "elf2uf2 {binary} --family-id 0xe48bff59"
+	answer := flashAnswer(request)
+
+	command, _ := answer.Flash["command"].(string)
+	if command != entry+" {binary} --family-id 0xe48bff59" {
+		t.Fatalf("expected only the program replaced, got %q", command)
+	}
+}
+
+// What the board declared after the tool is the board's and is carried through:
+// the family ID is what the bootrom checks the image against, and dropping it
+// would produce a UF2 the part refuses.
+func TestTheBoardsOwnArgumentsAreKept(t *testing.T) {
+	root := t.TempDir()
+	entry := filepath.Join(root, "tools", "elf2uf2", "flash")
+	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entry, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	request := FlashRequest{PlatformRoot: root}
+	request.Flash.Tool = "elf2uf2"
+	request.Flash.Command = "elf2uf2 {binary} --family-id 0xdeadbeef --mount /media/board"
+	command, _ := flashAnswer(request).Flash["command"].(string)
+	if !strings.HasSuffix(command, "{binary} --family-id 0xdeadbeef --mount /media/board") {
+		t.Fatalf("expected the board's arguments kept, got %q", command)
+	}
+}
+
+// A tool the platform does not ship is left to the spec: an STM32 board names
+// openocd, which is the machine's program and not the platform's.
+func TestAToolThePlatformDoesNotShipIsLeftToTheSpec(t *testing.T) {
+	root := t.TempDir()
+	request := FlashRequest{PlatformRoot: root}
+	request.Flash.Tool = "openocd"
+	if answer := flashAnswer(request); len(answer.Flash) != 0 {
+		t.Fatalf("expected no override for a system tool, got %+v", answer.Flash)
+	}
+}
+
+// A tool name that is a path or a space is not one of the platform's, so it
+// cannot be turned into one.
+func TestAToolNameThatIsNotABareNameIsNotResolved(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"../evil", "sh -c"} {
+		request := FlashRequest{PlatformRoot: root}
+		request.Flash.Tool = name
+		if answer := flashAnswer(request); len(answer.Flash) != 0 {
+			t.Fatalf("expected %q to be refused, got %+v", name, answer.Flash)
 		}
 	}
 }
