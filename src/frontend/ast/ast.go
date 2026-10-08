@@ -66,11 +66,12 @@ type Node struct {
 // Module is the root AST node for a Rho source file.
 type Module struct {
 	Node
-	Name     string
-	Imports  []Import
-	Includes []Include
-	Features []string
-	Decls    []Decl
+	Name      string
+	Namespace string
+	Imports   []Import
+	Includes  []Include
+	Features  []string
+	Decls     []Decl
 }
 
 // TypeExpr represents a named type with optional generic arguments and array
@@ -214,6 +215,74 @@ type Field struct {
 	Type     string
 	TypeExpr TypeExpr
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Enum Declaration                                                          */
+/* -------------------------------------------------------------------------- */
+
+// EnumDecl represents a named set of integer values:
+//
+//	enum Severity {
+//	    INFO = 0
+//	    WARN = 1
+//	}
+//
+// The values are explicit: a wire protocol numbers its values and two builds
+// that disagree about the numbering are two builds that cannot talk, so the
+// number is written rather than counted.
+type EnumDecl struct {
+	Node
+	Name     string
+	Variants []EnumVariant
+}
+
+func (EnumDecl) declNode() {}
+
+func (n EnumDecl) Position() Position { return n.Pos }
+
+// EnumVariant is one value of an enum.
+type EnumVariant struct {
+	Name  string
+	Value int
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Message Declaration                                                       */
+/* -------------------------------------------------------------------------- */
+
+// MessageDecl is a schema message: a named, ordered set of fields that crosses a
+// wire. It is a struct that makes a promise a struct does not — a byte layout
+// and a version — which is why it is written with a keyword of its own.
+type MessageDecl struct {
+	Node
+	Name   string
+	Fields []Field
+}
+
+func (MessageDecl) declNode() {}
+
+func (n MessageDecl) Position() Position { return n.Pos }
+
+/* -------------------------------------------------------------------------- */
+/*  RPC Declaration                                                           */
+/* -------------------------------------------------------------------------- */
+
+// RpcDecl is a request/response contract between two sides:
+//
+//	rpc SetMotorSpeed {
+//	    request  { ... }
+//	    response { ... }
+//	}
+type RpcDecl struct {
+	Node
+	Name     string
+	Request  []Field
+	Response []Field
+}
+
+func (RpcDecl) declNode() {}
+
+func (n RpcDecl) Position() Position { return n.Pos }
 
 /* -------------------------------------------------------------------------- */
 /*  Function Declaration                                                       */

@@ -14,6 +14,8 @@ rather than copied here.
   expressions.
 - {ref}`types <language/types>` — the types, generics, and the shapes a program
   builds values out of.
+- {ref}`protocol <language/protocol>` — schemas, and the C and Go generated from
+  one of them.
 - {ref}`stdlib <language/stdlib>` — what the standard library carries.
 
 ## What Rho is

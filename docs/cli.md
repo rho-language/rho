@@ -71,6 +71,18 @@ rho install --update    # rebuild the toolchain and refresh installed modules fr
 rho install --force     # empty the local registry first
 ```
 
+## rho protocol
+
+Turns a schema — enums, messages and rpcs — into the code both ends of a link
+need: packed little-endian C for a node, Go with the same wire and JSON for a
+service. It is a command of its own because the two ends are built apart by
+different toolchains. See {ref}`language/protocol`.
+
+```sh
+rho protocol generate --target c  --out build/protocol/c  schema/
+rho protocol generate --target go --out build/protocol/go --package telemetry schema/
+```
+
 ## Everything else
 
 A command that is not in the list above is a component: `rho doc`, `rho mem`,
