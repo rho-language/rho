@@ -115,11 +115,43 @@ func (p *Parser) Parse() (mod *ast.Module, err error) {
 		return nil, fmt.Errorf("expected module declaration")
 	}
 	mod = p.parseModuleDecl()
+	mod.Namespace = p.parseNamespace()
 	mod.Includes = p.parseIncludes()
 	mod.Imports = p.parseImports()
 	mod.Features = p.parseFeatures()
 	mod.Decls = p.parseTopLevelDecls()
 	return mod, nil
+}
+
+// parseNamespace reads an optional `namespace a.b.c;` after the module name. It
+// is the version a schema's names are qualified by, and it is written once for
+// the file rather than repeated on every declaration. `namespace` is contextual,
+// so a program may still use the word as an ordinary name.
+func (p *Parser) parseNamespace() string {
+	if p.current.Kind != lexer.TokenIdent || p.current.Lex != "namespace" {
+		return ""
+	}
+	p.readToken()
+	parts := []string{p.name()}
+	for p.current.Kind == lexer.TokenDot {
+		p.readToken()
+		parts = append(parts, p.name())
+	}
+	if p.current.Kind == lexer.TokenSemicolon {
+		p.readToken()
+	}
+	return strings.Join(parts, ".")
+}
+
+// intLiteral reads an integer literal. An enum's values are written, not counted,
+// so a value that is not a number is an error where it is written.
+func (p *Parser) intLiteral() int {
+	value, err := strconv.Atoi(p.current.Lex)
+	if err != nil {
+		panic(NewErrorf(p.current, "expected an integer, got %q", p.current.Lex))
+	}
+	p.readToken()
+	return value
 }
 
 func (p *Parser) parseFeatures() []string {
@@ -222,6 +254,20 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 		switch p.current.Kind {
 		case lexer.TokenStruct:
 			decl = p.parseStructDecl()
+		case lexer.TokenEnum:
+			decl = p.parseEnumDecl()
+		// `message` and `rpc` are contextual keywords: they name a declaration
+		// only where one begins, so a field or a variable may still be called
+		// one. Reserving them would rename code that already used the words.
+		case lexer.TokenIdent:
+			switch p.current.Lex {
+			case "message":
+				decl = p.parseMessageDecl()
+			case "rpc":
+				decl = p.parseRpcDecl()
+			default:
+				panic(NewErrorf(p.current, "unexpected token in top-level: %q", p.current.Lex))
+			}
 		case lexer.TokenFn:
 			decl = p.parseFuncDecl()
 		case lexer.TokenExtern:
@@ -451,6 +497,103 @@ func (p *Parser) parseStructDecl() ast.Decl {
 	return ast.StructDecl{Name: name, Fields: fields, TypeParams: typeParams, TypeParamDefaults: typeDefaults}
 }
 
+// parseFieldList reads `name: Type` entries until the closing brace, which it
+// consumes. It is the body of a struct, a message, and an rpc's request and
+// response, because a field is a field wherever it is written.
+func (p *Parser) parseFieldList() []ast.Field {
+	fields := []ast.Field{}
+	for p.current.Kind != lexer.TokenRBrace {
+		if p.current.Kind == lexer.TokenEOF {
+			panic(NewErrorf(p.current, "unterminated field list"))
+		}
+		fieldName := p.name()
+		p.expect(lexer.TokenColon)
+		p.readToken()
+		fieldType := p.parseType()
+		fields = append(fields, ast.Field{Name: fieldName, Type: fieldType.String(), TypeExpr: fieldType})
+		if p.current.Kind == lexer.TokenComma || p.current.Kind == lexer.TokenSemicolon {
+			p.readToken()
+		}
+	}
+	p.readToken() // the closing brace
+	return fields
+}
+
+// parseEnumDecl reads:
+//
+//	enum Severity {
+//	    INFO = 0
+//	    WARN = 1
+//	}
+func (p *Parser) parseEnumDecl() ast.Decl {
+	p.readToken()
+	name := p.name()
+	p.expect(lexer.TokenLBrace)
+	p.readToken()
+	variants := []ast.EnumVariant{}
+	for p.current.Kind != lexer.TokenRBrace {
+		if p.current.Kind == lexer.TokenEOF {
+			panic(NewErrorf(p.current, "unterminated enum body"))
+		}
+		variantName := p.name()
+		value := 0
+		if p.current.Kind == lexer.TokenAssign {
+			p.readToken()
+			p.expect(lexer.TokenNumber)
+			value = p.intLiteral()
+		}
+		variants = append(variants, ast.EnumVariant{Name: variantName, Value: value})
+		if p.current.Kind == lexer.TokenComma || p.current.Kind == lexer.TokenSemicolon {
+			p.readToken()
+		}
+	}
+	p.readToken()
+	return ast.EnumDecl{Name: name, Variants: variants}
+}
+
+// parseMessageDecl reads `message Name { fields }`.
+func (p *Parser) parseMessageDecl() ast.Decl {
+	p.readToken()
+	name := p.name()
+	p.expect(lexer.TokenLBrace)
+	p.readToken()
+	return ast.MessageDecl{Name: name, Fields: p.parseFieldList()}
+}
+
+// parseRpcDecl reads:
+//
+//	rpc SetMotorSpeed {
+//	    request  { fields }
+//	    response { fields }
+//	}
+func (p *Parser) parseRpcDecl() ast.Decl {
+	p.readToken()
+	name := p.name()
+	request := ast.RpcDecl{Name: name}
+
+	p.expect(lexer.TokenLBrace)
+	p.readToken()
+	for p.current.Kind != lexer.TokenRBrace {
+		if p.current.Kind == lexer.TokenEOF {
+			panic(NewErrorf(p.current, "unterminated rpc body"))
+		}
+		section := p.name()
+		p.expect(lexer.TokenLBrace)
+		p.readToken()
+		fields := p.parseFieldList()
+		switch section {
+		case "request":
+			request.Request = fields
+		case "response":
+			request.Response = fields
+		default:
+			panic(NewErrorf(p.current, "expected request or response in rpc %s, got %q", name, section))
+		}
+	}
+	p.readToken()
+	return request
+}
+
 func (p *Parser) parseFuncDecl() ast.Decl {
 	return p.parseFuncDeclWithExtern()
 }
@@ -641,7 +784,7 @@ func (p *Parser) parseExpr(minPrecedence int) ast.Expr {
 		start := left.Position()
 		p.readToken()
 		left = p.placeExpr(
-			ast.BinaryExpr{Op: op, Left: left, Right: p.parseExpr(currentPrecedence+1)},
+			ast.BinaryExpr{Op: op, Left: left, Right: p.parseExpr(currentPrecedence + 1)},
 			start)
 	}
 	return left
