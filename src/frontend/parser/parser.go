@@ -26,6 +26,11 @@ type Parser struct {
 	// literal. A parameter named `a` is in neither set, which is what tells the
 	// two apart.
 	applyNames map[string]bool
+	// noStructLiteral is set while a condition is read: the `{` after
+	// `if x == NAME` opens the body, never a struct literal. It is the only
+	// context where the two are ambiguous, and a name declared in another file
+	// cannot be told from a type by the leading-capital rule alone.
+	noStructLiteral bool
 }
 
 func New(lx *lexer.Lexer) *Parser {
@@ -352,7 +357,7 @@ func (p *Parser) parseTypeDecl() ast.Decl {
 // already expresses it — so it nests rather than becoming a third shape.
 func (p *Parser) parseIfStmt() ast.Stmt {
 	p.readToken()
-	condition := p.parseExpr(0)
+	condition := p.parseCondition()
 	thenBody := p.parseBlock()
 	elseBody := []ast.Stmt{}
 	if p.current.Kind == lexer.TokenElse {
@@ -640,6 +645,20 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 	return ast.FuncDecl{Name: name, Params: params, ReturnType: returnType.String(), TypeParams: typeParams, TypeParamDefaults: typeDefaults, Extern: extern, Body: body}
 }
 
+// parseCondition reads an if or while condition. The brace that follows it
+// opens the body, so a name at the end of the condition is not the head of a
+// struct literal — `if id == MESSAGE_ID_TELEMETRY {` is a comparison and a
+// block, and reading `MESSAGE_ID_TELEMETRY {` as a literal would swallow the
+// body. The name could not be resolved here even in principle: it may be a
+// constant declared in another file, which this parser never sees.
+func (p *Parser) parseCondition() ast.Expr {
+	previous := p.noStructLiteral
+	p.noStructLiteral = true
+	condition := p.parseExpr(0)
+	p.noStructLiteral = previous
+	return condition
+}
+
 func (p *Parser) parseBlock() []ast.Stmt {
 	p.expect(lexer.TokenLBrace)
 	p.readToken()
@@ -704,7 +723,7 @@ func (p *Parser) parseStmt() ast.Stmt {
 		stmt = p.parseIfStmt()
 	case lexer.TokenWhile:
 		p.readToken()
-		condition := p.parseExpr(0)
+		condition := p.parseCondition()
 		stmt = ast.WhileStmt{Condition: condition, Body: p.parseBlock()}
 	case lexer.TokenBreak:
 		p.readToken()
@@ -980,6 +999,11 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 				expression = ast.IndexExpr{Object: expression, Index: index}
 			}
 		case lexer.TokenLBrace:
+			// A condition's brace opens the body, whatever the name before it
+			// looks like.
+			if p.noStructLiteral {
+				return expression
+			}
 			identifier, isIdentifier := expression.(ast.IdentifierExpr)
 			if !isIdentifier || !p.isTypeName(identifier.Name) {
 				return expression

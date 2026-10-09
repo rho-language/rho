@@ -337,6 +337,22 @@ func TestParseIndexBeforeBlock(t *testing.T) {
 	}
 }
 
+func TestParseConditionIdentifierBeforeBlock(t *testing.T) {
+	// `if id == MESSAGE_ID_TELEMETRY {` is a comparison and then a block, not a
+	// comparison and a struct literal. The name is written with a capital
+	// because it is a constant, and the parser cannot tell a capitalised
+	// constant declared in another file from a type: the `{` after a condition
+	// opens the body whatever the name looks like.
+	source := "module app\nfn f(id: u32) {\n  if id == MESSAGE_ID_TELEMETRY {\n    id = 1\n  }\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err != nil {
+		t.Fatalf("a named condition before a block should parse: %v", err)
+	}
+}
+
 func TestParseGenericLiteralStillParses(t *testing.T) {
 	source := "module app\nstruct Box[T] { v: T }\nfn f() {\n  let b: Box[u32] = Box[u32] { 1 }\n}\n"
 	tokens, err := lexer.Lex(source)

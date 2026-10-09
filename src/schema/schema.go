@@ -130,6 +130,11 @@ const (
 	KindString = "string"
 	KindMap    = "map"
 	KindList   = "list"
+	// KindAny accepts an item of any kind. It exists for a list whose entries
+	// are either a name or a definition — a build target, which may be named to
+	// select the descriptor's own or written out to define one — because a list
+	// schema can otherwise state only one item kind.
+	KindAny = "any"
 	// KindBool is a flag rather than a value. It exists so that a field which is
 	// a decision can say so, and a manifest that writes a word where a decision
 	// belongs is told rather than read as one.
@@ -318,6 +323,8 @@ func validateValue(val yaml.Value, field FieldSchema, path string, result *Valid
 						Severity: SeverityError,
 					})
 				}
+			} else if field.ItemSchema.Kind == KindAny {
+				// Any item: the consumer validates its own shape.
 			}
 		}
 	}

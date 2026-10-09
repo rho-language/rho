@@ -423,14 +423,54 @@ func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (i
 	return irModule, nil
 }
 
-// ResolveDescriptor returns the project's own project.yml when present, and
-// the built-in descriptor otherwise.
+// ResolveDescriptor returns the descriptor a build uses: the built-in one, a
+// project.yml when a project still keeps one, and then the targets a module.yml
+// defines are merged in. A manifest's `build.targets` may name a descriptor
+// target or define one, so a project carries its build layout in the same file
+// as the rest of what it declares; project.yml remains for a project that keeps
+// its descriptor apart.
 func ResolveDescriptor(projectRoot string) (*projectgen.Descriptor, error) {
+	descriptor, err := baseDescriptor(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	defined, err := moduleTargetDefs(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	return descriptor.WithTargets(defined), nil
+}
+
+// baseDescriptor is a project.yml when present, and the built-in otherwise.
+func baseDescriptor(projectRoot string) (*projectgen.Descriptor, error) {
 	candidate := filepath.Join(projectRoot, projectgen.DescriptorFileName)
 	if _, err := os.Stat(candidate); err == nil {
 		return projectgen.ParseDescriptorFile(candidate)
 	}
 	return projectgen.DefaultDescriptor()
+}
+
+// moduleTargetDefs reads the targets a module manifest wrote out under
+// build.targets. A project with no manifest, or with only names there, returns
+// none and the descriptor stands as it is.
+func moduleTargetDefs(projectRoot string) ([]projectgen.Target, error) {
+	manifestPath := deps.ManifestPath(projectRoot)
+	if _, err := os.Stat(manifestPath); err != nil {
+		return nil, nil
+	}
+	manifest, err := deps.LoadManifest(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read project manifest: %w", err)
+	}
+	targets := make([]projectgen.Target, 0, len(manifest.BuildTargetDefs))
+	for _, node := range manifest.BuildTargetDefs {
+		target, err := projectgen.ParseTarget(node)
+		if err != nil {
+			return nil, fmt.Errorf("build.targets: %w", err)
+		}
+		targets = append(targets, target)
+	}
+	return targets, nil
 }
 
 // BuildTargetIDs returns the target ids a project requests through

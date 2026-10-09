@@ -438,6 +438,34 @@ func TestStringInequality(t *testing.T) {
 	}
 }
 
+// A function-style conversion names its type, so it is a numeric operand of
+// arithmetic like any other. Before the conversion was typed, `x % u32(y)` was
+// refused with "operator % requires numeric values" while `u32(y)` alone in a
+// let was accepted — a difference a reader could not see in the source.
+func TestConversionCallIsNumericOperand(t *testing.T) {
+	tc := New()
+	m := ast.Module{Name: "numeric", Decls: []ast.Decl{
+		ast.FuncDecl{
+			Name:       "mask",
+			Params:     []ast.Param{{Name: "b", Type: "u8"}},
+			ReturnType: "u32",
+			Body: []ast.Stmt{
+				ast.ReturnStmt{Value: ast.BinaryExpr{
+					Op: "%",
+					Left: ast.CallExpr{
+						Callee: ast.IdentifierExpr{Name: "u32"},
+						Args:   []ast.Expr{ast.IdentifierExpr{Name: "b"}},
+					},
+					Right: ast.NumberExpr{Value: "255"},
+				}},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("a conversion call should be a numeric operand: %v", err)
+	}
+}
+
 func TestDynamicArrayTypeResolves(t *testing.T) {
 	tc := New()
 	typ, ok := tc.resolveType("[u8]")

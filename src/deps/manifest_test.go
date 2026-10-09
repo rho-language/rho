@@ -635,3 +635,22 @@ func TestLoadYAMLManifestReadsTheLinkMapSetting(t *testing.T) {
 		t.Errorf("expected an explicit off, got %v", m.BuildLinkMap)
 	}
 }
+
+// build.targets entries are a name or a definition: a name selects a target the
+// descriptor already declares, and a definition is a target the project wrote.
+func TestYamlTargetsAcceptsNamesAndDefinitions(t *testing.T) {
+	list := yaml.Value{Kind: yaml.KindList, List: []yaml.Value{
+		{Kind: yaml.KindString, Str: "c"},
+		{Kind: yaml.KindMap, Map: map[string]yaml.Value{
+			"id":      {Kind: yaml.KindString, Str: "go-server"},
+			"emitter": {Kind: yaml.KindString, Str: "go"},
+		}},
+	}}
+	names, defs := yamlTargets(list)
+	if len(names) != 2 || names[0] != "c" || names[1] != "go-server" {
+		t.Fatalf("names = %v", names)
+	}
+	if len(defs) != 1 || defs[0].Map["id"].Str != "go-server" {
+		t.Fatalf("a definition should be returned as written: %v", defs)
+	}
+}
