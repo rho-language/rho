@@ -221,174 +221,184 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 
 	seenIDs := map[string]bool{}
 	for _, targetNode := range targetsNode.List {
-		if targetNode.Kind != yaml.KindMap {
-			return nil, fmt.Errorf("project descriptor target entries must be maps")
-		}
-
-		target := Target{
-			ID:          targetNode.Map["id"].Str,
-			Emitter:     targetNode.Map["emitter"].Str,
-			Description: targetNode.Map["description"].Str,
-			Kind:        targetNode.Map["kind"].Str,
-			ModulePath:  targetNode.Map["module_path"].Str,
-			OutputDir:   targetNode.Map["output_dir"].Str,
-			Requires:    []string{},
-			BuildFlags:  []string{},
-			Ports:       []string{},
-			Router:      targetNode.Map["router"].Str,
-			Middleware:  []Middleware{},
-			Templates:   []Template{},
-			Copy:        []CopyEntry{},
-			Files:       []DescriptorFile{},
-		}
-
-		if target.OutputDir != "" && !isSafeRelativeDir(target.OutputDir) {
-			return nil, fmt.Errorf("target %q output_dir must stay inside the project: %q", target.ID, target.OutputDir)
-		}
-
-		if target.ID == "" {
-			return nil, fmt.Errorf("project descriptor target is missing an id")
+		target, err := ParseTarget(targetNode)
+		if err != nil {
+			return nil, err
 		}
 		if seenIDs[target.ID] {
 			return nil, fmt.Errorf("project descriptor declares target %q more than once", target.ID)
 		}
 		seenIDs[target.ID] = true
-
-		if target.Emitter == "" {
-			return nil, fmt.Errorf("target %q is missing an emitter", target.ID)
-		}
-
-		filesNode, ok := targetNode.Map["files"]
-		if !ok || filesNode.Kind != yaml.KindList || len(filesNode.List) == 0 {
-			return nil, fmt.Errorf("target %q declares no files", target.ID)
-		}
-
-		for _, item := range targetNode.Map["requires"].List {
-			if item.Str != "" {
-				target.Requires = append(target.Requires, item.Str)
-			}
-		}
-		for _, item := range targetNode.Map["build_flags"].List {
-			if item.Str != "" {
-				target.BuildFlags = append(target.BuildFlags, item.Str)
-			}
-		}
-
-		// Page templates placed in the generated project.
-		for _, entry := range targetNode.Map["templates"].List {
-			if entry.Kind != yaml.KindMap {
-				continue
-			}
-			item := Template{
-				Name: entry.Map["name"].Str,
-				File: entry.Map["file"].Str,
-			}
-			if item.Name == "" || item.File == "" {
-				return nil, fmt.Errorf("target %q has a template entry without a name and file", target.ID)
-			}
-			if filepath.IsAbs(item.File) || strings.Contains(item.File, "..") {
-				return nil, fmt.Errorf("target %q template file must stay inside the project: %q",
-					target.ID, item.File)
-			}
-			target.Templates = append(target.Templates, item)
-		}
-
-		// Built-in port implementations the backend generates.
-		for _, item := range targetNode.Map["ports"].List {
-			if item.Str != "" {
-				target.Ports = append(target.Ports, item.Str)
-			}
-		}
-
-		// The middleware pipeline, in the order it was declared. A wrapper with
-		// no options is composed with that wrapper's defaults, so the common
-		// case stays a single name.
-		seenMiddleware := map[string]bool{}
-		for _, entry := range targetNode.Map["middleware"].List {
-			if entry.Kind != yaml.KindMap {
-				continue
-			}
-			item := Middleware{Name: entry.Map["name"].Str, Options: map[string]string{}}
-			if item.Name == "" {
-				return nil, fmt.Errorf("target %q has a middleware entry without a name", target.ID)
-			}
-			if seenMiddleware[item.Name] {
-				return nil, fmt.Errorf("target %q declares middleware %q more than once", target.ID, item.Name)
-			}
-			seenMiddleware[item.Name] = true
-			for key, value := range entry.Map["options"].Map {
-				if value.Kind != yaml.KindString {
-					return nil, fmt.Errorf("target %q middleware %q option %q must be a string",
-						target.ID, item.Name, key)
-				}
-				item.Options[key] = value.Str
-			}
-			target.Middleware = append(target.Middleware, item)
-		}
-
-		// A pipeline is a property of the router it wraps, so it only means
-		// something on a target that routes at all.
-		if len(target.Middleware) > 0 && target.Router == "" {
-			return nil, fmt.Errorf("target %q composes middleware but names no router", target.ID)
-		}
-		if target.Router != "" && target.TargetKind() != "server" {
-			return nil, fmt.Errorf("target %q names a router but its kind is %q", target.ID, target.TargetKind())
-		}
-
-		// Hand-written files placed in the generated project.
-		for _, entry := range targetNode.Map["copy"].List {
-			if entry.Kind != yaml.KindMap {
-				continue
-			}
-			item := CopyEntry{
-				From: entry.Map["from"].Str,
-				To:   entry.Map["to"].Str,
-			}
-			if item.To == "" {
-				item.To = item.From
-			}
-			if item.From == "" {
-				return nil, fmt.Errorf("target %q has a copy entry without a from path", target.ID)
-			}
-			if filepath.IsAbs(item.From) || strings.Contains(item.From, "..") ||
-				filepath.IsAbs(item.To) || strings.Contains(item.To, "..") {
-				return nil, fmt.Errorf("target %q copy paths must stay inside the project: %q -> %q",
-					target.ID, item.From, item.To)
-			}
-			target.Copy = append(target.Copy, item)
-		}
-
-		seenPaths := map[string]bool{}
-		for _, fileNode := range filesNode.List {
-			if fileNode.Kind != yaml.KindMap {
-				return nil, fmt.Errorf("target %q file entries must be maps", target.ID)
-			}
-			file := DescriptorFile{
-				Path:     fileNode.Map["path"].Str,
-				Kind:     fileNode.Map["kind"].Str,
-				Role:     fileNode.Map["role"].Str,
-				Optional: isTrueWord(fileNode.Map["optional"].Str),
-			}
-			if file.Kind == "" {
-				file.Kind = "file"
-			}
-			if file.Path == "" {
-				return nil, fmt.Errorf("target %q has a file without a path", target.ID)
-			}
-			if filepath.IsAbs(file.Path) || strings.Contains(file.Path, "..") {
-				return nil, fmt.Errorf("target %q file path must stay inside the generated project: %q", target.ID, file.Path)
-			}
-			if seenPaths[file.Path] {
-				return nil, fmt.Errorf("target %q declares file %q more than once", target.ID, file.Path)
-			}
-			seenPaths[file.Path] = true
-			target.Files = append(target.Files, file)
-		}
-
 		descriptor.Targets = append(descriptor.Targets, target)
 	}
-
 	return descriptor, nil
+}
+
+// ParseTarget reads one target. A project descriptor's own entry and a
+// `build.targets` definition in a module manifest are the same shape, so both
+// are read here and a project can carry its build layout in one file.
+func ParseTarget(targetNode yaml.Value) (Target, error) {
+	if targetNode.Kind != yaml.KindMap {
+		return Target{}, fmt.Errorf("target entries must be maps")
+	}
+
+	target := Target{
+		ID:          targetNode.Map["id"].Str,
+		Emitter:     targetNode.Map["emitter"].Str,
+		Description: targetNode.Map["description"].Str,
+		Kind:        targetNode.Map["kind"].Str,
+		ModulePath:  targetNode.Map["module_path"].Str,
+		OutputDir:   targetNode.Map["output_dir"].Str,
+		Requires:    []string{},
+		BuildFlags:  []string{},
+		Ports:       []string{},
+		Router:      targetNode.Map["router"].Str,
+		Middleware:  []Middleware{},
+		Templates:   []Template{},
+		Copy:        []CopyEntry{},
+		Files:       []DescriptorFile{},
+	}
+
+	if target.OutputDir != "" && !isSafeRelativeDir(target.OutputDir) {
+		return Target{}, fmt.Errorf("target %q output_dir must stay inside the project: %q", target.ID, target.OutputDir)
+	}
+
+	if target.ID == "" {
+		return Target{}, fmt.Errorf("a target is missing an id")
+	}
+
+	if target.Emitter == "" {
+		return Target{}, fmt.Errorf("target %q is missing an emitter", target.ID)
+	}
+
+	filesNode, ok := targetNode.Map["files"]
+	if !ok || filesNode.Kind != yaml.KindList || len(filesNode.List) == 0 {
+		return Target{}, fmt.Errorf("target %q declares no files", target.ID)
+	}
+
+	for _, item := range targetNode.Map["requires"].List {
+		if item.Str != "" {
+			target.Requires = append(target.Requires, item.Str)
+		}
+	}
+	for _, item := range targetNode.Map["build_flags"].List {
+		if item.Str != "" {
+			target.BuildFlags = append(target.BuildFlags, item.Str)
+		}
+	}
+
+	// Page templates placed in the generated project.
+	for _, entry := range targetNode.Map["templates"].List {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		item := Template{
+			Name: entry.Map["name"].Str,
+			File: entry.Map["file"].Str,
+		}
+		if item.Name == "" || item.File == "" {
+			return Target{}, fmt.Errorf("target %q has a template entry without a name and file", target.ID)
+		}
+		if filepath.IsAbs(item.File) || strings.Contains(item.File, "..") {
+			return Target{}, fmt.Errorf("target %q template file must stay inside the project: %q",
+				target.ID, item.File)
+		}
+		target.Templates = append(target.Templates, item)
+	}
+
+	// Built-in port implementations the backend generates.
+	for _, item := range targetNode.Map["ports"].List {
+		if item.Str != "" {
+			target.Ports = append(target.Ports, item.Str)
+		}
+	}
+
+	// The middleware pipeline, in the order it was declared. A wrapper with
+	// no options is composed with that wrapper's defaults, so the common
+	// case stays a single name.
+	seenMiddleware := map[string]bool{}
+	for _, entry := range targetNode.Map["middleware"].List {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		item := Middleware{Name: entry.Map["name"].Str, Options: map[string]string{}}
+		if item.Name == "" {
+			return Target{}, fmt.Errorf("target %q has a middleware entry without a name", target.ID)
+		}
+		if seenMiddleware[item.Name] {
+			return Target{}, fmt.Errorf("target %q declares middleware %q more than once", target.ID, item.Name)
+		}
+		seenMiddleware[item.Name] = true
+		for key, value := range entry.Map["options"].Map {
+			if value.Kind != yaml.KindString {
+				return Target{}, fmt.Errorf("target %q middleware %q option %q must be a string",
+					target.ID, item.Name, key)
+			}
+			item.Options[key] = value.Str
+		}
+		target.Middleware = append(target.Middleware, item)
+	}
+
+	// A pipeline is a property of the router it wraps, so it only means
+	// something on a target that routes at all.
+	if len(target.Middleware) > 0 && target.Router == "" {
+		return Target{}, fmt.Errorf("target %q composes middleware but names no router", target.ID)
+	}
+	if target.Router != "" && target.TargetKind() != "server" {
+		return Target{}, fmt.Errorf("target %q names a router but its kind is %q", target.ID, target.TargetKind())
+	}
+
+	// Hand-written files placed in the generated project.
+	for _, entry := range targetNode.Map["copy"].List {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		item := CopyEntry{
+			From: entry.Map["from"].Str,
+			To:   entry.Map["to"].Str,
+		}
+		if item.To == "" {
+			item.To = item.From
+		}
+		if item.From == "" {
+			return Target{}, fmt.Errorf("target %q has a copy entry without a from path", target.ID)
+		}
+		if filepath.IsAbs(item.From) || strings.Contains(item.From, "..") ||
+			filepath.IsAbs(item.To) || strings.Contains(item.To, "..") {
+			return Target{}, fmt.Errorf("target %q copy paths must stay inside the project: %q -> %q",
+				target.ID, item.From, item.To)
+		}
+		target.Copy = append(target.Copy, item)
+	}
+
+	seenPaths := map[string]bool{}
+	for _, fileNode := range filesNode.List {
+		if fileNode.Kind != yaml.KindMap {
+			return Target{}, fmt.Errorf("target %q file entries must be maps", target.ID)
+		}
+		file := DescriptorFile{
+			Path:     fileNode.Map["path"].Str,
+			Kind:     fileNode.Map["kind"].Str,
+			Role:     fileNode.Map["role"].Str,
+			Optional: isTrueWord(fileNode.Map["optional"].Str),
+		}
+		if file.Kind == "" {
+			file.Kind = "file"
+		}
+		if file.Path == "" {
+			return Target{}, fmt.Errorf("target %q has a file without a path", target.ID)
+		}
+		if filepath.IsAbs(file.Path) || strings.Contains(file.Path, "..") {
+			return Target{}, fmt.Errorf("target %q file path must stay inside the generated project: %q", target.ID, file.Path)
+		}
+		if seenPaths[file.Path] {
+			return Target{}, fmt.Errorf("target %q declares file %q more than once", target.ID, file.Path)
+		}
+		seenPaths[file.Path] = true
+		target.Files = append(target.Files, file)
+	}
+
+	return target, nil
 }
 
 // ParseDescriptorFile reads and validates a descriptor from disk.
@@ -402,6 +412,32 @@ func ParseDescriptorFile(path string) (*Descriptor, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return descriptor, nil
+}
+
+// WithTargets returns a descriptor with the given targets merged in by id: a
+// target that names one the descriptor already declares replaces it, and one it
+// does not is appended. A module manifest defines its targets this way, so the
+// descriptor's own and the manifest's are one list.
+func (d *Descriptor) WithTargets(overrides []Target) *Descriptor {
+	if len(overrides) == 0 {
+		return d
+	}
+	merged := *d
+	merged.Targets = append([]Target(nil), d.Targets...)
+	for _, override := range overrides {
+		replaced := false
+		for i, target := range merged.Targets {
+			if target.ID == override.ID {
+				merged.Targets[i] = override
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			merged.Targets = append(merged.Targets, override)
+		}
+	}
+	return &merged
 }
 
 // Target returns the named target, or false when the descriptor lacks it.

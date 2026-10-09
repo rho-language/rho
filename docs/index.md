@@ -40,8 +40,7 @@ built, and what its configuration and its memory budget are.
 
 ```
 my-service/
-  module.yml        what this is, what it needs, what it generates
-  project.yml       how it is generated, optionally
+  module.yml        what this is, what it needs, what it generates and builds
   src/main.rho      the program
   tests/            Rho tests
   config/           declared configuration, if it has any

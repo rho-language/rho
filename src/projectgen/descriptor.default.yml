@@ -19,7 +19,9 @@
 #   requires     - extra Go module requirements
 #   build_flags  - extra flags recorded for the build role
 #
-# A project can override this by placing its own project.yml at the root.
+# A project writes its targets out in module.yml, under build.targets: an entry
+# that is a map defines a target, replacing one of the same id here. A project
+# that keeps its descriptor apart can still place a project.yml at the root.
 
 version: 1
 

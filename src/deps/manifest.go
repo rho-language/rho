@@ -370,7 +370,14 @@ type Manifest struct {
 	Features      []string
 	Deps          []DepSpec
 	BuildLanguage string
-	BuildTargets  []string
+	// BuildTargets are the target ids a project requests, in order. An entry
+	// may name a target a descriptor already declares or define one, and a
+	// definition's id is what lands here.
+	BuildTargets []string
+	// BuildTargetDefs are the `build.targets` entries written as maps rather
+	// than names. They are the same shape a project descriptor's target is, and
+	// the descriptor merge reads them from here so a project needs one file.
+	BuildTargetDefs []yaml.Value
 	// BuildDir is where this project keeps everything a build generates. Empty
 	// means `build`, which is the convention rather than a rule.
 	BuildDir string
@@ -726,7 +733,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		if err := escape("build.dir", m.BuildDir); err != nil {
 			return nil, fmt.Errorf("%s: %w", m.ModuleName, err)
 		}
-		m.BuildTargets = yamlStrings(build.Map["targets"])
+		m.BuildTargets, m.BuildTargetDefs = yamlTargets(build.Map["targets"])
 		m.BuildToolchain = yamlString(build, "toolchain")
 		if linkMap, declared := yamlBool(build, "link_map"); declared {
 			m.BuildLinkMap = &linkMap
@@ -1736,6 +1743,27 @@ func yamlStrings(value yaml.Value) []string {
 		}
 	}
 	return values
+}
+
+// yamlTargets reads a `build.targets` list, whose entries are a name or a
+// definition. It returns the ids in order and the definitions themselves, which
+// a descriptor merge turns into targets: a name selects what the descriptor
+// already declares, and a definition is a target the project wrote.
+func yamlTargets(value yaml.Value) ([]string, []yaml.Value) {
+	names := []string{}
+	defs := []yaml.Value{}
+	for _, item := range value.List {
+		switch item.Kind {
+		case yaml.KindString:
+			names = append(names, yamlUnquote(item.Str))
+		case yaml.KindMap:
+			if id, ok := item.Map["id"]; ok && id.Kind == yaml.KindString {
+				names = append(names, yamlUnquote(id.Str))
+			}
+			defs = append(defs, item)
+		}
+	}
+	return names, defs
 }
 
 // yamlBool is a boolean a manifest declared, and whether it declared one at all.

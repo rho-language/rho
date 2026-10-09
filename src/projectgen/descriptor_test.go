@@ -522,3 +522,30 @@ func parseDescriptorErr(t *testing.T, src string) error {
 	_, err := ParseDescriptor([]byte(src))
 	return err
 }
+
+// A target a module manifest defines replaces the descriptor's target of the
+// same id, and one the descriptor does not declare is appended. The base is not
+// mutated, because the merged descriptor is built once per call.
+func TestWithTargetsReplacesAndAppends(t *testing.T) {
+	base := &Descriptor{Targets: []Target{
+		{ID: "go", Emitter: "go"},
+		{ID: "go-server", Emitter: "go", Kind: "server"},
+	}}
+	merged := base.WithTargets([]Target{
+		{ID: "go-server", Emitter: "go", Kind: "server", Ports: []string{"gateway"}},
+		{ID: "go-web", Emitter: "go", Kind: "server"},
+	})
+	if len(merged.Targets) != 3 {
+		t.Fatalf("want 3 targets, got %d", len(merged.Targets))
+	}
+	server, ok := merged.Target("go-server")
+	if !ok || len(server.Ports) != 1 || server.Ports[0] != "gateway" {
+		t.Errorf("a manifest target should replace the default: %+v", server)
+	}
+	if _, ok := merged.Target("go-web"); !ok {
+		t.Errorf("a target the descriptor does not declare should be appended")
+	}
+	if base.Targets[1].Ports != nil {
+		t.Errorf("the base descriptor must not be mutated")
+	}
+}

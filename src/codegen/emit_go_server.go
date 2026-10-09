@@ -50,6 +50,13 @@ func EmitGoServerEntrypoint(m ir.ModuleIR) string {
 	if hasGoInit(m) {
 		fmt.Fprintf(&b, "\t%s()\n", AppInitName)
 	}
+	// A service that also does something other than answer requests — reading a
+	// link, sampling a board — declares `background()`, and it runs here on its
+	// own goroutine. Startup runs first, so whatever background reaches for is
+	// already there.
+	if hasGoBackground(m) {
+		b.WriteString("\tgo background()\n")
+	}
 	b.WriteString("\taddr := serverAddr()\n")
 	fmt.Fprintf(&b, "\tfmt.Printf(\"rho %s listening on %%s\\n\", addr)\n", m.Name)
 	b.WriteString("\tif err := StartServer(addr); err != nil {\n")
@@ -647,6 +654,17 @@ func goRouteHandlers(m ir.ModuleIR) string {
 		fmt.Fprintf(&b, "\t%s(*newRequest(r)).write(w)\n}\n\n", goFuncName(handler))
 	}
 	return b.String()
+}
+
+// hasGoBackground reports whether the module declares a `background()` for the
+// generated service to run beside its listener.
+func hasGoBackground(m ir.ModuleIR) bool {
+	for _, fn := range m.Funcs {
+		if fn.Name == "background" && !fn.Extern && len(fn.Params) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // hasGoFunc reports whether a function name is emitted in this module.

@@ -3,8 +3,10 @@
 // @brief Built-in project descriptor for the C and Go backends.
 //
 // The default descriptor ships with the compiler so `rho build` works with no
-// project files. A project may override it by adding project.yml at its root;
-// the two descriptors use the same schema and the same roles.
+// project files. A project writes its own targets out in module.yml under
+// build.targets, in the same schema and with the same roles, and a target of
+// the same id replaces the default's; a project that keeps its descriptor apart
+// can add a project.yml at its root instead.
 //
 // @project Rho Programming Language
 // @version 0.1

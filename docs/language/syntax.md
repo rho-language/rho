@@ -144,7 +144,8 @@ build:
 
 The backend generates the implementation. What the project declares and what
 the backend supplies are separate, so a project stays Rho and still gets
-storage. The ports available today are `fsstore`, `logemit` and `docemit`.
+storage. The ports available today are `fsstore`, `logemit`, `docemit`,
+`openapiemit`, `sql`, `httproute` and `gateway`.
 
 :::{warning}
 A port is a promise the backend makes. A program written against `fsstore` and

@@ -612,8 +612,12 @@ func ModuleSchema() Schema {
 					{Name: "link_map", Required: false, Kind: KindBool},
 					{Name: "language", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidBuildLanguages},
 					// targets lists the generated-project backends to emit for
-					// this application (for example c and go).
-					{Name: "targets", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// this application. An entry is either a name — `c`, `go`, or
+					// a target a descriptor already declares — or a map that
+					// defines a target, the same shape a project descriptor uses.
+					// A name selects; a definition is the whole target, so a
+					// project carries its build layout in one file.
+					{Name: "targets", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindAny}},
 					{Name: "include_dirs", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "source_dirs", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "sources", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},

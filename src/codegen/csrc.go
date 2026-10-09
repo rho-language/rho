@@ -58,6 +58,9 @@ var envSource string
 //go:embed csrc/yaml.c
 var yamlSource string
 
+//go:embed csrc/bits.c
+var bitsSource string
+
 // RuntimeFragment is one piece of the runtime, and the symbols that pull it in.
 //
 // `provides` is what a program has to name for this fragment to be worth
@@ -143,6 +146,17 @@ var runtimeFragments = []RuntimeFragment{
 			"uint8_t rho_str_at(const char* s, uint32_t i);",
 			"int32_t rho_str_index_of(const char* haystack, const char* needle);",
 			"char* rho_str_slice(const char* s, uint32_t start, uint32_t length);",
+		},
+	},
+	{
+		Name:     "bits",
+		Source:   bitsSource,
+		Provides: []string{"rho_f32_to_bits", "rho_f32_from_bits", "rho_f64_to_bits", "rho_f64_from_bits"},
+		Decls: []string{
+			"uint32_t rho_f32_to_bits(float value);",
+			"float rho_f32_from_bits(uint32_t bits);",
+			"uint64_t rho_f64_to_bits(double value);",
+			"double rho_f64_from_bits(uint64_t bits);",
 		},
 	},
 	{

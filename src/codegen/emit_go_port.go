@@ -169,6 +169,7 @@ type SQLField struct {
 var portGenerators = map[string]portGenerator{
 	"docemit":     emitDocPort,
 	"fsstore":     emitFSStorePort,
+	"gateway":     emitGatewayPort,
 	"logemit":     emitLogPort,
 	"httproute":   emitHTTPRoutePort,
 	"openapiemit": emitOpenAPIPort,
