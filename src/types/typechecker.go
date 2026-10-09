@@ -602,6 +602,16 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				// function that was never declared.
 				return ir.Type{}, fmt.Errorf("undefined function %q", identifier.Name)
 			}
+			// A function-style conversion names its result: `u32(x)` is a u32.
+			// It has to say so here, because arithmetic operands are required to
+			// be numeric and an untyped conversion would be refused — `x + u32(y)`
+			// would fail a check that `u32(y)` is well formed. A conversion to a
+			// pointer element or alias resolves the same way a cast target does.
+			if !exists && tc.isTypeName(identifier.Name) {
+				if converted, isType := tc.resolveType(identifier.Name); isType {
+					return converted, nil
+				}
+			}
 			if identifier.Name == "print" {
 				if len(value.Args) != 1 {
 					return ir.Type{}, fmt.Errorf("print expects one argument")
@@ -898,6 +908,10 @@ var intrinsicLowering = map[string]string{
 	"str_slice":       "rho_str_slice",
 	"int_to_str":      "rho_int_to_str",
 	"int_from_str":    "rho_int_from_str",
+	"f32_to_bits":     "rho_f32_to_bits",
+	"f32_from_bits":   "rho_f32_from_bits",
+	"f64_to_bits":     "rho_f64_to_bits",
+	"f64_from_bits":   "rho_f64_from_bits",
 	"template_get":    "template_get",
 	"template_has":    "template_has",
 	"template_fill":   "template_fill",
@@ -1901,6 +1915,25 @@ func init() {
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
 		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
 	}
+	// f32_to_bits and f32_from_bits are the bit cast a wire protocol needs: a
+	// float on the wire is its IEEE-754 bits in little-endian order, and Rho has
+	// no cast between a word and a float.
+	intrinsicSignatures["f32_to_bits"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeF32, Name: "f32"}},
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	}
+	intrinsicSignatures["f32_from_bits"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeU32, Name: "u32"}},
+		result: ir.Type{Kind: ir.TypeF32, Name: "f32"},
+	}
+	intrinsicSignatures["f64_to_bits"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeF64, Name: "f64"}},
+		result: ir.Type{Kind: ir.TypeU64, Name: "u64"},
+	}
+	intrinsicSignatures["f64_from_bits"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeU64, Name: "u64"}},
+		result: ir.Type{Kind: ir.TypeF64, Name: "f64"},
+	}
 	// str_from_byte renders one byte as a one-character string.
 	intrinsicSignatures["str_from_byte"] = functionType{
 		params: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}},
@@ -1946,6 +1979,7 @@ func init() {
 	for _, name := range []string{
 		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
+		"f32_to_bits", "f32_from_bits", "f64_to_bits", "f64_from_bits",
 		"template_get", "template_has", "template_fill", "env_or",
 		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",
 		"auth_required", "auth_open_tokens", "auth_issue", "int_from_str", "emit",

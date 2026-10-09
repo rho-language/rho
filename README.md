@@ -292,29 +292,31 @@ APIs and REST backends. Add project routes in `registerRoutes` in the generated
 `server.go`.
 
 **Project descriptors.** The file layout of every target is data, not code,
-held in `src/projectgen/descriptor.default.yml`. A project overrides it by
-adding its own `project.yml` at the root:
+held in `src/projectgen/descriptor.default.yml`. A project writes its targets
+out in `module.yml`, under `build.targets`: an entry is a name that selects a
+descriptor target, or a map that defines one (which replaces a target of the
+same id in the default). A project that keeps its descriptor apart can still
+put one in `project.yml`.
 
 ```yaml
-version: 1
-output_dir: build/generated   # where generated projects go
-build_dir: build              # where compiled artefacts go
-
-targets:
-  - id: api
-    emitter: go
-    kind: server               # cli or server
-    module_path: example.com/org/api
-    requires:
-      - github.com/go-chi/chi/v5
-    output_dir: dist/api       # overrides the descriptor default
-    files:
-      - path: app.go
-        role: implementation
-      - path: server.go
-        role: server
-      - path: static
-        kind: dir              # creates a folder
+# module.yml
+build:
+  language: go
+  targets:
+    - id: api
+      emitter: go
+      kind: server               # cli or server
+      module_path: example.com/org/api
+      requires:
+        - github.com/go-chi/chi/v5
+      output_dir: dist/api       # overrides the descriptor default
+      files:
+        - path: app.go
+          role: implementation
+        - path: server.go
+          role: server
+        - path: static
+          kind: dir              # creates a folder
 ```
 
 Roles are `implementation`, `interface`, `runtime`, `entrypoint`, `server` and

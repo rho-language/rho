@@ -74,6 +74,9 @@ rho protocol generate --target c --out build/protocol/c .
 
 # Go for the edge: protocol.go
 rho protocol generate --target go --out build/protocol/go --package telemetry .
+
+# Rho for an edge written in Rho: protocol.rho, included from the program
+rho protocol generate --target rho --out src/gateway schemas/telemetry.rho
 ```
 
 Every `.rho` under the given paths is read into one schema, so messages may live
@@ -94,3 +97,17 @@ handler is reached by an event rather than a call.
 enum value, and `MarshalBinary`/`UnmarshalBinary` that write the same little-endian
 bytes the C side reads. Each rpc gets a `RegisterName(mux, path, handler)` that
 puts the handler on an `http.ServeMux`, JSON on the outside and the wire beneath.
+
+### The Rho side
+
+`protocol.rho` is a Rho module a program `include`s. Each message becomes a
+`struct`, its `_marshal`/`_unmarshal` written field by field with the same
+little-endian order, and `_valid` to reject a payload that is short or of another
+schema version. An enum becomes `u32` constants, because the wire is a 32-bit
+value and Rho has no cast from an enum to a number.
+
+It also carries the transport — `_frame` and `_unframe`, with COBS and the
+Fletcher-16 check — so a Rho edge speaks the same framing a node's
+`robohub-transport` library does, from one description rather than from a second
+implementation that must be kept in step. A `TransportFrame` returns `ok`, the
+header and the payload, and the program decides what each message id means.

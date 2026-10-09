@@ -18,7 +18,7 @@ import (
 // toolchain and a server toolchain that never see each other.
 func protocolCLI(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: rho protocol generate [--target c|go] [--out DIR] [--package NAME] <file-or-dir>...")
+		fmt.Fprintln(os.Stderr, "usage: rho protocol generate [--target c|go|rho] [--out DIR] [--package NAME] <file-or-dir>...")
 		return 2
 	}
 	switch args[0] {
@@ -32,7 +32,7 @@ func protocolCLI(args []string) int {
 
 func protocolGenerate(args []string) int {
 	fs := flag.NewFlagSet("protocol generate", flag.ContinueOnError)
-	target := fs.String("target", "c", "the code to generate: c or go")
+	target := fs.String("target", "c", "the code to generate: c, go or rho")
 	out := fs.String("out", "", "where to write it (default build/protocol/<target>)")
 	packageName := fs.String("package", "protocol", "the Go package name")
 	if err := fs.Parse(args); err != nil {
@@ -105,6 +105,17 @@ func protocolGenerate(args []string) int {
 				fmt.Fprintln(os.Stderr, "protocol generate:", err)
 				return 1
 			}
+		}
+	case "rho":
+		source, emitErr := merged.EmitRho()
+		if emitErr != nil {
+			fmt.Fprintln(os.Stderr, "protocol generate:", emitErr)
+			return 1
+		}
+		written = []string{filepath.Join(outDir, "protocol.rho")}
+		if err := os.WriteFile(written[0], []byte(source), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "protocol generate:", err)
+			return 1
 		}
 	case "go":
 		source := []byte(merged.EmitGo(*packageName))

@@ -675,6 +675,28 @@ func EmitGoRuntime(implementation string) string {
 			define: "func rhoStrEq(a, b string) bool {\n\treturn a == b\n}\n",
 		},
 		{
+			// The bit cast a wire protocol needs: a float on the wire is its
+			// IEEE-754 bits little-endian, and Rho has no cast to a word.
+			call:    "rhoF32ToBits(",
+			define:  "func rhoF32ToBits(value float32) uint32 { return math.Float32bits(value) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoF32FromBits(",
+			define:  "func rhoF32FromBits(bits uint32) float32 { return math.Float32frombits(bits) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoF64ToBits(",
+			define:  "func rhoF64ToBits(value float64) uint64 { return math.Float64bits(value) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoF64FromBits(",
+			define:  "func rhoF64FromBits(bits uint64) float64 { return math.Float64frombits(bits) }\n",
+			imports: []string{"math"},
+		},
+		{
 			call:    "rhoStringFromI32(",
 			define:  "func rhoStringFromI32(value int32) string {\n\treturn strconv.Itoa(int(value))\n}\n",
 			imports: []string{"strconv"},

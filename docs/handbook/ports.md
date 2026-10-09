@@ -23,11 +23,13 @@ module, where a reader of the module sees it.
 A project asks the backend for the implementation by name:
 
 ```yaml
-# project.yml
-targets:
-  - id: go
-    ports:
-      - fsstore
+# module.yml
+build:
+  language: go
+  targets:
+    - id: go
+      ports:
+        - fsstore
 ```
 
 The backend generates the implementation into the project, and the generated
@@ -41,6 +43,7 @@ to see what it does.
 | `fsstore` | A module store on the filesystem: put, get, search, list | the registry |
 | `logemit` | Writing a log record, with the formatter's own shape | any project that logs |
 | `docemit` | The documentation generator, as a page or a site | a project that serves documentation |
+| `gateway` | A serial link, UDP delivery, a monotonic clock, shared state and tx-id correlation | an edge gateway that reads a node and streams what it reads |
 
 ## A worked example
 
@@ -60,11 +63,9 @@ fn info(subject: string, message: string) void {
 ```
 
 ```yaml
-# the project's project.yml
-deps:
-  rho-log: ">=0.1.0"
-
+# the project's module.yml
 build:
+  language: go
   targets:
     - id: go
       ports:
@@ -91,6 +92,36 @@ backend, so:
 :::{note}
 A port is a promise the backend makes, checked when the port is generated rather
 than at the call. A project that declares a port no backend supplies fails at
-the call site rather than at the manifest, so the list of ports in a
-`project.yml` is the honest record of what a project needs.
+the call site rather than at the manifest, so the list of ports a project's
+targets declare in `module.yml` is the honest record of what a project needs.
 :::
+
+## A service that also does something else
+
+An HTTP service answers requests, but an edge gateway also reads a link while it
+answers, and a program has no threads of its own. A server-kind module declares
+`fn background() void`, and the generated service runs it on its own goroutine,
+after `init()` and beside the listener:
+
+```rho
+fn init() void {
+    print("gateway: starting\n")
+}
+
+fn background() void {
+    if !gateway_serial_start() {
+        return
+    }
+    while true {
+        let frame: string = gateway_serial_read(100)
+        if strlen(frame) > 0 {
+            ingest_frame(frame)
+        }
+    }
+}
+```
+
+The state `background()` writes and a handler reads is what the `gateway` port
+is for: a value a program cannot declare as a global is one the host holds, and
+the port's mutex is what makes it safe to share. The frame grammar itself stays
+in Rho — the port supplies the link, not the protocol.
