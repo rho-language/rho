@@ -59,13 +59,15 @@ with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
     archive.writestr('[Content_Types].xml', content_types)
     archive.writestr('extension.vsixmanifest', manifest)
     
-    # Copy all extension files
+    # Copy all extension files. `out` is copied whole: the client is several
+    # modules, and shipping only the entry point made an extension that could
+    # not require the ones beside it.
     for path in [
         Path('package.json'),
         Path('language-configuration.json'),
         Path('README.md'),
         Path('syntaxes/rho.tmLanguage.json'),
-        Path('out/extension.js'),
+        Path('out'),
     ]:
         if path.is_dir():
             for f in path.rglob('*'):
@@ -74,16 +76,16 @@ with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         else:
             archive.write(path, Path('extension') / path)
 
-    # The language client is a runtime dependency and has to travel with the
-    # extension; the development dependencies do not, and shipping every one of
-    # them made a package ten times the size of the thing it carries.
-    for dependency in ('vscode-languageclient', 'vscode-languageserver-protocol',
-                       'vscode-jsonrpc', 'vscode-languageclient/node'):
-        source = root / 'node_modules' / dependency
-        if source.exists():
-            for f in source.rglob('*'):
-                if f.is_file() and '__pycache__' not in f.parts:
-                    archive.write(f, Path('extension/node_modules') / f.relative_to(root / 'node_modules'))
+    # The language client and everything it requires travel with the extension.
+    # The whole tree is copied rather than a hand-written list, because that
+    # list was wrong: a transitive dependency it named by hand was missing, and
+    # the extension failed to activate with a module it could not find. A
+    # package a little larger is worth an extension that starts.
+    node_modules = root / 'node_modules'
+    if node_modules.exists():
+        for f in node_modules.rglob('*'):
+            if f.is_file() and '__pycache__' not in f.parts:
+                archive.write(f, Path('extension/node_modules') / f.relative_to(node_modules))
 
 print(output.resolve())
 PY

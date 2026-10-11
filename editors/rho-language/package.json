@@ -61,6 +61,11 @@
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Whether a session builds the project before it starts. A launch configuration may say `build: false`; **one that says so is not built, which is what a person debugging a program they just flashed wants.**"
+                },
+                "rho.keeper.url": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Where `rho keeper` serves the documentation, for language help. Leave empty for the dashboard's own default (`http://127.0.0.1:8477`); the extension starts a keeper there when one is not already running."
                 }
             }
         },
@@ -136,6 +141,11 @@
                 "title": "Refresh Peripherals",
                 "category": "Rho",
                 "icon": "$(refresh)"
+            },
+            {
+                "command": "rho.syntaxHelp",
+                "title": "Language Help for the Word Here",
+                "category": "Rho"
             }
         ],
         "menus": {
@@ -184,6 +194,11 @@
                 },
                 {
                     "command": "rho.doc",
+                    "when": "editorLangId == rho",
+                    "group": "2_rho"
+                },
+                {
+                    "command": "rho.syntaxHelp",
                     "when": "editorLangId == rho",
                     "group": "2_rho"
                 },

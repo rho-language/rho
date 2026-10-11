@@ -20,6 +20,7 @@ import {
 } from './toolchain';
 import { registerDebugging } from './debugger';
 import { registerPeripherals } from './peripherals';
+import { ensureKeeper, registerSyntaxHelp } from './help';
 
 let client: LanguageClient;
 let status: vscode.StatusBarItem;
@@ -140,6 +141,12 @@ export async function activate(context: vscode.ExtensionContext) {
     // registers working anyway.
     registerDebugging(context);
     registerPeripherals(context);
+
+    // Language help: the reference for the word under the cursor, served by the
+    // keeper. The keeper is started here so the first hover is answered rather
+    // than the one after a person has opened the dashboard themselves.
+    registerSyntaxHelp(context);
+    void ensureKeeper();
 
     try {
         await client.start();
