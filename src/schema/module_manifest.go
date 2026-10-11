@@ -34,6 +34,10 @@ var ValidModuleTypes = []string{
 	"interfaces", "platform", "platform-board",
 	"driver", "driver-board",
 	"runtime", "middleware",
+	// A collection is a repository of modules rather than one module: it has no
+	// entry point of its own, and what it carries is a `generate:` section
+	// describing the projects a person starts from it.
+	"collection",
 }
 
 // ValidVisibilities lists the visibilities a module may be published under.
@@ -895,6 +899,18 @@ func ModuleSchema() Schema {
 					{Name: "module", Required: false, Kind: KindString},
 					{Name: "values", Required: false, Kind: KindMap},
 				},
+			},
+			{
+				// `generate` is how a module says what a person may start from
+				// it: drivers, examples, and the variables each one takes. The
+				// value is the definitions themselves or a path to a YAML file
+				// holding them (generate.yml), so a module with several keeps
+				// them beside its sources rather than inside the manifest.
+				// Where a module declares none, `rho init` writes a Rho
+				// application and this section is not consulted at all.
+				Name:     "generate",
+				Required: false,
+				Kind:     KindAny,
 			},
 			{
 				Name:     "tests",

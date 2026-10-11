@@ -85,6 +85,7 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	m.Funcs = cg.renameForeignInFuncs(m.Funcs)
 
 	cg.emitStructs(m.Structs)
+	cg.emitAliases(m.Aliases)
 	cg.emitFuncPrototypes(m.Funcs)
 	cg.emitFuncs(m.Funcs)
 
@@ -155,8 +156,88 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 	cg.b.WriteString("\n")
 }
 
+// orderedStructs returns the structs so that one is emitted after every struct
+// its fields name. C needs a type defined before it is used, and a nested
+// specialisation — `Box[Box[u32]]` — refers to one built from it. Go does not
+// care, and reads the same list either way.
+func orderedStructs(structs []ir.StructIR) []ir.StructIR {
+	emitted := map[string]bool{}
+	out := make([]ir.StructIR, 0, len(structs))
+	pending := append([]ir.StructIR(nil), structs...)
+	for len(pending) > 0 {
+		progress := false
+		kept := pending[:0:0]
+		for _, s := range pending {
+			ready := true
+			for _, field := range packedFields(s) {
+				// The type is compared as C spells it, because that is the name
+				// the definition has to come before: a field of `Box[u32]` is
+				// written `Box_u32` in the emitted C.
+				spelling := cTypeFor(field.Type)
+				for _, other := range structs {
+					if other.Name != s.Name && containsWord(spelling, other.Name) && !emitted[other.Name] {
+						ready = false
+						break
+					}
+				}
+				if !ready {
+					break
+				}
+			}
+			if ready {
+				out = append(out, s)
+				emitted[s.Name] = true
+				progress = true
+			} else {
+				kept = append(kept, s)
+			}
+		}
+		pending = kept
+		if !progress {
+			// A cycle of value types cannot be laid out; emit what is left so
+			// the error is the C compiler's about the cycle rather than silence.
+			out = append(out, pending...)
+			break
+		}
+	}
+	return out
+}
+
+// containsWord reports whether word occurs in text as a whole identifier, so
+// `Box_u32` matches inside `Box_u32*` and not inside `Box_u320`.
+func containsWord(text, word string) bool {
+	if word == "" {
+		return false
+	}
+	for index := 0; index+len(word) <= len(text); {
+		relative := strings.Index(text[index:], word)
+		if relative < 0 {
+			return false
+		}
+		start := index + relative
+		end := start + len(word)
+		beforeOK := start == 0 || !isIdentPart(text[start-1])
+		afterOK := end == len(text) || !isIdentPart(text[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		index = start + 1
+	}
+	return false
+}
+
+// packedFields are the fields a struct is stored as: a run of bit fields is one
+// integer, everything else is itself. A struct with no bit fields stores its
+// fields as declared.
+func packedFields(s ir.StructIR) []ir.FieldIR {
+	if len(s.Packed) > 0 {
+		return s.Packed
+	}
+	return s.Fields
+}
+
 func (cg *Codegen) emitStructs(structs []ir.StructIR) {
-	for _, s := range structs {
+	for _, s := range orderedStructs(structs) {
 		// An optional pointer is the pointer. It is declared as the C type it
 		// is represented as rather than as a struct with a tag and a payload,
 		// because that is what makes a value returned by a C library usable
@@ -170,7 +251,7 @@ func (cg *Codegen) emitStructs(structs []ir.StructIR) {
 			continue
 		}
 		cg.b.WriteString("typedef struct {\n")
-		for _, f := range s.Fields {
+		for _, f := range packedFields(s) {
 			cg.b.WriteString("    ")
 			cg.b.WriteString(cTypeFor(f.Type))
 			cg.b.WriteString(" ")
@@ -179,6 +260,22 @@ func (cg *Codegen) emitStructs(structs []ir.StructIR) {
 		}
 		cg.b.WriteString("} ")
 		cg.b.WriteString(s.Name)
+		cg.b.WriteString(";\n\n")
+	}
+}
+
+// emitAliases declares each type alias as a typedef, so a name a program gave
+// a type is a name the C compiler knows. The Go backend writes the same aliases
+// as Go aliases; here they are C typedefs.
+func (cg *Codegen) emitAliases(aliases []ir.AliasIR) {
+	for _, alias := range aliases {
+		if alias.CTarget == "" {
+			continue
+		}
+		cg.b.WriteString("typedef ")
+		cg.b.WriteString(alias.CTarget)
+		cg.b.WriteString(" ")
+		cg.b.WriteString(alias.Name)
 		cg.b.WriteString(";\n\n")
 	}
 }
@@ -358,7 +455,15 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 			line = instr.Type[:arrayIdx] + " " + instr.Dest + instr.Type[arrayIdx:]
 		}
 		if len(instr.Args) == 1 && instr.Args[0] != "" {
-			line += " = " + cg.rewriteForeign(instr.Args[0])
+			value := cg.rewriteForeign(instr.Args[0])
+			// A dynamic array `[T]` is a pointer in C, and a pointer cannot be
+			// initialised from a brace list. The literal becomes a compound
+			// array whose address the pointer takes, which lives as long as the
+			// block it is written in just as the binding does.
+			if strings.HasPrefix(strings.TrimSpace(value), "{") && strings.HasSuffix(instr.Type, "*") {
+				value = "(" + strings.TrimSuffix(instr.Type, "*") + "[])" + value
+			}
+			line += " = " + value
 		}
 		cg.b.EmitLine(line + ";")
 
@@ -458,6 +563,10 @@ func cTypeFor(t ir.Type) string {
 		return "uint32_t" + suffix
 	case ir.TypeU64:
 		return "uint64_t" + suffix
+	case ir.TypeI8:
+		return "int8_t" + suffix
+	case ir.TypeI16:
+		return "int16_t" + suffix
 	case ir.TypeI32:
 		return "int32_t" + suffix
 	case ir.TypeI64:
@@ -473,6 +582,14 @@ func cTypeFor(t ir.Type) string {
 			return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(t.Name) + suffix
 		}
 		return "struct /* anonymous */"
+	case ir.TypeSlice:
+		// A dynamic array is a pointer to its element in C: both are `T*`, and
+		// what differs — the length — is what the program tracks. The element
+		// spells the pointer.
+		if len(t.Args) > 0 {
+			return cTypeFor(t.Args[0]) + "*" + suffix
+		}
+		return "uint8_t*" + suffix
 	case ir.TypePtr:
 		// A pointer is a pointer. A pointer to nothing — `Ptr[Unit]`, which is
 		// how a foreign handle is declared — is what C calls void*, and spelling

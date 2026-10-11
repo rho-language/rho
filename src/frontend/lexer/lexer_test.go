@@ -58,12 +58,12 @@ func TestLexerIdentifiers(t *testing.T) {
 }
 
 func TestLexerKeywords(t *testing.T) {
-	src := "module import struct enum fn config extern if for match return reverse step let const var while else break true false"
+	src := "module import struct enum fn extern if for match return reverse step let const var while else break true false"
 	l := New(src)
 
 	expectedKinds := []Kind{
 		TokenModule, TokenImport, TokenStruct, TokenEnum, TokenFn,
-		TokenConfig, TokenExtern, TokenIf, TokenFor, TokenMatch,
+		TokenExtern, TokenIf, TokenFor, TokenMatch,
 		TokenReturn, TokenReverse, TokenStep,
 		TokenLet, TokenConst, TokenVar, TokenWhile, TokenElse, TokenBreak,
 		TokenTrue, TokenFalse,
@@ -75,6 +75,15 @@ func TestLexerKeywords(t *testing.T) {
 		if tok.Kind != k {
 			t.Fatalf("keyword %d mismatch: got %v, expected %v", i, tok.Kind, k)
 		}
+	}
+}
+
+// `config` is a word, not a keyword: no syntax claimed it, so a program may use
+// it as a name.
+func TestLexerConfigIsAnIdentifier(t *testing.T) {
+	l := New("config")
+	if token := l.Next(); token.Kind != TokenIdent || token.Lex != "config" {
+		t.Fatalf("expected the identifier config, got %v %q", token.Kind, token.Lex)
 	}
 }
 

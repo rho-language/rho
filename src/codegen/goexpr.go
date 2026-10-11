@@ -210,8 +210,11 @@ func ToGoExpr(expr string) string {
 	if expr == "" {
 		return ""
 	}
+	// An if expression is lowered to a C conditional, which Go does not have;
+	// rewriting it here, before the scan, keeps the rest of the translator
+	// unaware of the shape.
 	var out strings.Builder
-	src := []byte(expr)
+	src := []byte(rewriteTernaries(expr))
 
 	for i := 0; i < len(src); {
 		c := src[i]
@@ -708,6 +711,17 @@ func isValidGoIdent(name string) bool {
 
 // goTypeForIR maps an IR type to its Go spelling.
 func goTypeForIR(t ir.Type) string {
+	// More than one dimension is written into the name: `u32[2][2]` is
+	// `[2][2]uint32`. Each dimension prefixes the element type.
+	if base, dims, ok := goNameArrayDims(t.Name); ok {
+		prefix := ""
+		for _, dim := range dims {
+			prefix += "[" + strconv.Itoa(dim) + "]"
+		}
+		element := t
+		element.Name = base
+		return prefix + goTypeForIR(element)
+	}
 	// A fixed-size array `T[N]` is `[N]T` in Go. The length is carried on the
 	// type, and the element type is the same type with the length cleared.
 	if t.ArrayLen > 0 {
@@ -729,6 +743,10 @@ func goTypeForIR(t ir.Type) string {
 		return "uint32"
 	case ir.TypeU64:
 		return "uint64"
+	case ir.TypeI8:
+		return "int8"
+	case ir.TypeI16:
+		return "int16"
 	case ir.TypeI32:
 		return "int32"
 	case ir.TypeI64:
@@ -821,6 +839,33 @@ var goRhoPrimitives = map[string]string{
 // It exists for the spellings the C form loses. A dynamic array `[T]` is a Go
 // slice, while a pointer `Ptr[T]` is `*T`; both are `T*` in C, so a backend
 // handed only the C spelling would declare one as the other.
+// goNameArrayDims reads the fixed dimensions a written type name carries, as in
+// `u32[2][2]`. A bracket whose contents are not a number — `Box[u32]` — is not a
+// dimension.
+func goNameArrayDims(name string) (string, []int, bool) {
+	if !strings.HasSuffix(name, "]") {
+		return name, nil, false
+	}
+	current := name
+	dims := []int{}
+	for {
+		open := strings.LastIndexByte(current, '[')
+		if open < 0 {
+			break
+		}
+		length, err := strconv.Atoi(current[open+1 : len(current)-1])
+		if err != nil {
+			break
+		}
+		dims = append([]int{length}, dims...)
+		current = current[:open]
+	}
+	if len(dims) == 0 {
+		return name, nil, false
+	}
+	return current, dims, true
+}
+
 func goTypeForRhoName(name string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -828,6 +873,19 @@ func goTypeForRhoName(name string) string {
 	}
 	if mapped, ok := goRhoPrimitives[trimmed]; ok {
 		return mapped
+	}
+	// Every written dimension becomes a prefix in Go: `u32[2][2]` is
+	// `[2][2]uint32`.
+	if base, dims, ok := goNameArrayDims(trimmed); ok {
+		element := goTypeForRhoName(base)
+		if element == "" {
+			element = "byte"
+		}
+		prefix := ""
+		for _, dim := range dims {
+			prefix += "[" + strconv.Itoa(dim) + "]"
+		}
+		return prefix + element
 	}
 	// Fixed-size array: T[N] becomes [N]T. The brackets trail the element type,
 	// which is what tells it from the dynamic form.
@@ -854,4 +912,65 @@ func goTypeForRhoName(name string) string {
 		return "[]" + element
 	}
 	return goTypeForCName(trimmed)
+}
+
+// rewriteTernaries turns a C conditional — `(cond ? then : else)`, which is how
+// an if expression is lowered — into `rhoSelect(cond, then, else)`, because Go
+// has no conditional expression. The whole group is replaced, so what is left
+// for the scanner is an ordinary call.
+//
+// Only a parenthesised group is considered, and only its top level: a `?` and
+// its `:` deeper inside belong to a nested conditional, which its own group
+// rewrites first.
+func rewriteTernaries(expr string) string {
+	src := []byte(expr)
+	var out strings.Builder
+	for i := 0; i < len(src); {
+		if src[i] == '(' {
+			if close := matchParen(src, i); close > i {
+				if cond, thenPart, elsePart, ok := splitTernary(string(src[i+1 : close])); ok {
+					out.WriteString("rhoSelect(")
+					out.WriteString(rewriteTernaries(strings.TrimSpace(cond)))
+					out.WriteString(", ")
+					out.WriteString(rewriteTernaries(strings.TrimSpace(thenPart)))
+					out.WriteString(", ")
+					out.WriteString(rewriteTernaries(strings.TrimSpace(elsePart)))
+					out.WriteString(")")
+					i = close + 1
+					continue
+				}
+			}
+		}
+		out.WriteByte(src[i])
+		i++
+	}
+	return out.String()
+}
+
+// splitTernary splits `cond ? then : else` at its top-level `?` and `:`, which
+// is the pair a conditional is written with. A string literal is skipped, so a
+// `?` inside one is not mistaken for the operator.
+func splitTernary(inner string) (cond, thenPart, elsePart string, ok bool) {
+	src := []byte(inner)
+	depth := 0
+	question := -1
+	for i := 0; i < len(src); i++ {
+		switch src[i] {
+		case '"', '\'':
+			i = scanStringLiteral(src, i) - 1
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case '?':
+			if depth == 0 && question < 0 {
+				question = i
+			}
+		case ':':
+			if depth == 0 && question >= 0 {
+				return inner[:question], inner[question+1 : i], inner[i+1:], true
+			}
+		}
+	}
+	return "", "", "", false
 }

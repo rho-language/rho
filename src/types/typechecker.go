@@ -54,6 +54,28 @@ type TypeChecker struct {
 	// Generic declarations, kept as templates until monomorphised.
 	genericStructs map[string]ast.StructDecl
 	genericFuncs   map[string]ast.FuncDecl
+	// specialisations maps a mangled specialisation back to the generic base
+	// and the arguments it was built from. A declared type is matched against a
+	// supplied one, and a supplied one is often the mangled name — `OptionU32`
+	// where the parameter is `Option[T]` — so the arguments have to be
+	// recoverable for deduction to bind `T`.
+	specialisations map[string]specialisation
+	// foreign is non-zero while a foreign signature is being resolved: an
+	// `extern fn`'s parameters and return. `Ptr[T]` there is the C pointer the
+	// declaration means; in ordinary code it is the handle struct `std.core.ptr`
+	// declares. The two share a spelling, and the context is what tells them
+	// apart.
+	foreign int
+	// lowerSeq numbers the temporaries a `for` and a `match` introduce, so a
+	// loop inside a loop gets a name of its own.
+	lowerSeq int
+	// lowerAliases maps a name to the expression it stands for while a body is
+	// lowered — the loop variable of a `for`, which is an element and not
+	// storage.
+	lowerAliases map[string]string
+	// structIR keeps each struct as it was laid out, so a field read or written
+	// can find the storage integer a bit field lives in.
+	structIR map[string]ir.StructIR
 
 	// Monomorphisation state.
 	instantiationQueue []instantiation
@@ -125,6 +147,8 @@ func New() *TypeChecker {
 	tc.types["u16"] = ir.Type{Kind: ir.TypeU16, Name: "u16"}
 	tc.types["u32"] = ir.Type{Kind: ir.TypeU32, Name: "u32"}
 	tc.types["u64"] = ir.Type{Kind: ir.TypeU64, Name: "u64"}
+	tc.types["i8"] = ir.Type{Kind: ir.TypeI8, Name: "i8"}
+	tc.types["i16"] = ir.Type{Kind: ir.TypeI16, Name: "i16"}
 	tc.types["i32"] = ir.Type{Kind: ir.TypeI32, Name: "i32"}
 	tc.types["i64"] = ir.Type{Kind: ir.TypeI64, Name: "i64"}
 	tc.types["f64"] = ir.Type{Kind: ir.TypeF64, Name: "f64"}
@@ -192,6 +216,11 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			if len(fn.TypeParams) > 0 {
 				signatureType = tc.typeFor
 			}
+			// An extern's signature is foreign, so `Ptr[T]` in it is the C
+			// pointer it names rather than the language handle.
+			if fn.Extern {
+				tc.foreign++
+			}
 			params := make([]ir.Type, len(fn.Params))
 			for i, param := range fn.Params {
 				params[i] = signatureType(param.Type)
@@ -201,6 +230,9 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				result: signatureType(fn.ReturnType),
 				cName:  qualifiedCName(fn.Owner, fn.Name),
 				extern: fn.Extern,
+			}
+			if fn.Extern {
+				tc.foreign--
 			}
 			if fn.Owner != "" {
 				tc.funcs[fn.Owner+"."+fn.Name] = entry
@@ -319,6 +351,12 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			// validated. There is nothing to check: the target is resolved
 			// wherever it is named, and a name that resolves to nothing becomes
 			// an error at the use rather than at the declaration.
+		case ast.EnumDecl:
+			return locate(fmt.Errorf("an enum belongs to a protocol schema, which `rho protocol` reads; a Rho program names a number with const instead"), d.Pos, "enum "+d.Name)
+		case ast.MessageDecl:
+			return locate(fmt.Errorf("a message belongs to a protocol schema, which `rho protocol` reads, not to a Rho program"), d.Pos, "message "+d.Name)
+		case ast.RpcDecl:
+			return locate(fmt.Errorf("an rpc belongs to a protocol schema, which `rho protocol` reads, not to a Rho program"), d.Pos, "rpc "+d.Name)
 		default:
 			return fmt.Errorf("unknown top-level declaration")
 		}
@@ -333,11 +371,77 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 
 func (tc *TypeChecker) checkStruct(s ast.StructDecl) error {
 	for _, f := range s.Fields {
-		if _, ok := tc.resolveType(f.Type); !ok {
+		fieldType, ok := tc.resolveType(f.Type)
+		if !ok {
 			return fmt.Errorf("unknown type %q in struct %q", f.Type, s.Name)
+		}
+		if f.BitWidth == nil {
+			continue
+		}
+		// A bit field is a run of bits inside an integer, so its storage has to
+		// be an integer and its width has to fit.
+		if !isIntegerKind(fieldType.Kind) {
+			return fmt.Errorf("bit field %q must be an integer, not %s", f.Name, f.Type)
+		}
+		size, _ := typeSize(fieldType)
+		if *f.BitWidth < 1 || *f.BitWidth > size*8 {
+			return fmt.Errorf("bit field %q must be 1 to %d bits, not %d", f.Name, size*8, *f.BitWidth)
 		}
 	}
 	return nil
+}
+
+// bitfieldOf reports whether a member access names a bit field, and the storage
+// and offset it lives at. It is the one place a read and a write agree about
+// where the bits are.
+func (tc *TypeChecker) bitfieldOf(expr ast.MemberExpr, scope map[string]ir.Type) (ir.FieldIR, bool) {
+	objectType, err := tc.exprType(expr.Object, scope)
+	if err != nil {
+		return ir.FieldIR{}, false
+	}
+	layout, ok := tc.structIR[objectType.Name]
+	if !ok {
+		return ir.FieldIR{}, false
+	}
+	for _, field := range layout.Fields {
+		if field.Name == expr.Name && field.BitWidth > 0 {
+			return field, true
+		}
+	}
+	return ir.FieldIR{}, false
+}
+
+// hasBitfields reports whether a struct stores any bit field.
+func hasBitfields(layout ir.StructIR) bool {
+	for _, field := range layout.Fields {
+		if field.BitWidth > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// bitfieldsIn returns the bit fields stored in one storage integer, in the order
+// they were declared.
+func bitfieldsIn(layout ir.StructIR, unit string) []ir.FieldIR {
+	fields := []ir.FieldIR{}
+	for _, field := range layout.Fields {
+		if field.BitWidth > 0 && field.Unit == unit {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+// isIntegerKind reports whether a type kind holds a whole number, which is what
+// a bit field is packed into.
+func isIntegerKind(kind ir.TypeKind) bool {
+	switch kind {
+	case ir.TypeBool, ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64,
+		ir.TypeI8, ir.TypeI16, ir.TypeI32, ir.TypeI64:
+		return true
+	}
+	return false
 }
 
 /* -------------------------------------------------------------------------- */
@@ -345,6 +449,12 @@ func (tc *TypeChecker) checkStruct(s ast.StructDecl) error {
 /* -------------------------------------------------------------------------- */
 
 func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
+	// An extern's signature is foreign, so `Ptr[T]` in it is a C pointer rather
+	// than the language handle. The context is set for the whole declaration.
+	if fn.Extern {
+		tc.foreign++
+		defer func() { tc.foreign-- }()
+	}
 	// Check parameters
 	for _, p := range fn.Params {
 		if _, ok := tc.resolveType(p.Type); !ok {
@@ -440,6 +550,20 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 	case ast.NumberExpr:
 		if strings.Contains(value.Value, ".") {
 			return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
+		}
+		// An integer literal is typed by what it holds. A bare literal used to
+		// be i32 whatever its value, so a constant larger than the type — the
+		// all-ones sentinel `0xffffffff`, say — was typed i32 and then emitted
+		// into Go, which refuses it. The value decides, so the type is one the
+		// literal fits.
+		if integer, err := strconv.ParseInt(value.Value, 0, 64); err == nil {
+			if integer >= -2147483648 && integer <= 2147483647 {
+				return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
+			}
+			return ir.Type{Kind: ir.TypeI64, Name: "i64"}, nil
+		}
+		if _, err := strconv.ParseUint(value.Value, 0, 64); err == nil {
+			return ir.Type{Kind: ir.TypeU64, Name: "u64"}, nil
 		}
 		return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
 	case ast.StringExpr:
@@ -608,7 +732,18 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			// would fail a check that `u32(y)` is well formed. A conversion to a
 			// pointer element or alias resolves the same way a cast target does.
 			if !exists && tc.isTypeName(identifier.Name) {
-				if converted, isType := tc.resolveType(identifier.Name); isType {
+				// The application carries its type arguments: `Ptr[u32](0)` is a
+				// conversion to `Ptr[u32]`, not to `Ptr`, and resolving the bare
+				// name would build a handle of an unknown element.
+				written := identifier.Name
+				if len(value.TypeArgs) > 0 {
+					parts := make([]string, 0, len(value.TypeArgs))
+					for _, argument := range value.TypeArgs {
+						parts = append(parts, argument.String())
+					}
+					written = identifier.Name + "[" + strings.Join(parts, ", ") + "]"
+				}
+				if converted, isType := tc.resolveType(written); isType {
 					return converted, nil
 				}
 			}
@@ -718,9 +853,27 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		// empty [u8] does. The element type is the declared one, which a bare
 		// numeric literal could not supply on its own.
 		if value.Repeat != nil || len(value.Values) == 0 {
-			if expected.ArrayLen > 0 || expected.Kind == ir.TypeSlice {
+			if isArrayType(expected) {
 				return expected, nil
 			}
+		}
+		// A literal written against an array takes that array's element type, so
+		// `[1, 2, 3]` is a [u32] where a [u32] is wanted and not an Array[i32].
+		// Without this the elements are typed on their own, and the element type
+		// of a bare integer literal — i32 — is the element type the array gets,
+		// which is not assignable to any unsigned array a program declared.
+		if element, ok := arrayElementOf(expected); ok {
+			for _, item := range value.Values {
+				itemType, itemErr := tc.exprTypeExpected(item, scope, element)
+				if itemErr != nil {
+					return ir.Type{}, itemErr
+				}
+				if !assignable(element, itemType) {
+					return ir.Type{}, fmt.Errorf("array literal element is %s, want %s",
+						typeName(itemType), typeName(element))
+				}
+			}
+			return expected, nil
 		}
 		if len(value.Values) == 0 {
 			return ir.Type{Kind: ir.TypeStruct, Name: "Array"}, nil
@@ -807,6 +960,73 @@ func baseTypeName(name string) string {
 	}
 	return name
 }
+// isArrayType reports whether a type is an array: a slice, or a fixed length.
+// nameArrayDims reads the dimensions a written type name carries, as in
+// `u32[2][2]`: the base, the dimensions in written order, and whether there were
+// any. A generic application like `Box[u32]` has a bracket whose contents are
+// not a number, so it is not an array.
+func nameArrayDims(name string) (string, []int, bool) {
+	if !strings.HasSuffix(name, "]") {
+		return name, nil, false
+	}
+	current := name
+	dims := []int{}
+	for {
+		open := strings.LastIndexByte(current, '[')
+		if open < 0 {
+			break
+		}
+		length, err := strconv.Atoi(current[open+1 : len(current)-1])
+		if err != nil {
+			break
+		}
+		dims = append([]int{length}, dims...)
+		current = current[:open]
+	}
+	if len(dims) == 0 {
+		return name, nil, false
+	}
+	return current, dims, true
+}
+
+// arrayElementName is the written name of the element of a written array name:
+// one dimension fewer.
+func arrayElementName(base string, dims []int) string {
+	element := base
+	for _, dim := range dims[1:] {
+		element += fmt.Sprintf("[%d]", dim)
+	}
+	return element
+}
+
+func isArrayType(value ir.Type) bool {
+	if value.Kind == ir.TypeSlice || value.ArrayLen > 0 {
+		return true
+	}
+	_, _, ok := nameArrayDims(value.Name)
+	return ok
+}
+
+// arrayElementOf returns the element type of an array, and whether the type is
+// one: a literal is written against it so its elements take the element type
+// rather than their own.
+func arrayElementOf(value ir.Type) (ir.Type, bool) {
+	if value.Kind == ir.TypeSlice && len(value.Args) > 0 {
+		return value.Args[0], true
+	}
+	if value.ArrayLen > 0 {
+		return elementType(value), true
+	}
+	if base, dims, ok := nameArrayDims(value.Name); ok {
+		element := ir.Type{Kind: value.Kind, Name: arrayElementName(base, dims)}
+		if kind := primitiveKind(base); kind != ir.TypeInvalid {
+			element.Kind = kind
+		}
+		return element, true
+	}
+	return ir.Type{}, false
+}
+
 func elementType(value ir.Type) ir.Type {
 	if value.Kind == ir.TypeString {
 		return ir.Type{Kind: ir.TypeU8, Name: "u8"}
@@ -822,6 +1042,14 @@ func elementType(value ir.Type) ir.Type {
 			element.Name = value.Name[:index]
 		}
 		if kind := primitiveKind(element.Name); kind != ir.TypeInvalid {
+			element.Kind = kind
+		}
+		return element
+	}
+	// Dims carried in the name, which is how more than one is written.
+	if base, dims, ok := nameArrayDims(value.Name); ok {
+		element := ir.Type{Kind: value.Kind, Name: arrayElementName(base, dims)}
+		if kind := primitiveKind(base); kind != ir.TypeInvalid {
 			element.Kind = kind
 		}
 		return element
@@ -864,6 +1092,10 @@ func primitiveKind(name string) ir.TypeKind {
 		return ir.TypeU32
 	case "u64":
 		return ir.TypeU64
+	case "i8":
+		return ir.TypeI8
+	case "i16":
+		return ir.TypeI16
 	case "i32":
 		return ir.TypeI32
 	case "i64":
@@ -945,7 +1177,8 @@ func isBuiltinMemberCall(member ast.MemberExpr) bool {
 }
 
 func numeric(value ir.Type) bool {
-	return value.Kind == ir.TypeI32 || value.Kind == ir.TypeI64 ||
+	return value.Kind == ir.TypeI8 || value.Kind == ir.TypeI16 ||
+		value.Kind == ir.TypeI32 || value.Kind == ir.TypeI64 ||
 		value.Kind == ir.TypeU8 || value.Kind == ir.TypeU16 ||
 		value.Kind == ir.TypeU32 || value.Kind == ir.TypeU64 ||
 		value.Kind == ir.TypeF64 || value.Kind == ir.TypeF32
@@ -1049,7 +1282,12 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 				tc.genericStructs[decl.Name] = decl
 				continue
 			}
-			out.Structs = append(out.Structs, tc.structToIR(decl))
+			layout := tc.structToIR(decl)
+			if tc.structIR == nil {
+				tc.structIR = map[string]ir.StructIR{}
+			}
+			tc.structIR[decl.Name] = layout
+			out.Structs = append(out.Structs, layout)
 		}
 	}
 
@@ -1071,9 +1309,13 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 	// being named would leave that declaration referring to nothing.
 	for _, decl := range m.Decls {
 		if d, ok := decl.(ast.TypeDecl); ok {
+			// The target is the type as written, not a C spelling of it: a
+			// dynamic array `[u32]` is a slice in Go and a pointer in C, and one
+			// spelling cannot be both. Each backend translates the written form.
 			out.Aliases = append(out.Aliases, ir.AliasIR{
-				Name:   d.Name,
-				Target: tc.cTypeFor(tc.typeFor(d.Type.String())),
+				Name:    d.Name,
+				Target:  d.Type.String(),
+				CTarget: tc.cTypeFor(tc.typeFor(d.Type.String())),
 			})
 		}
 	}
@@ -1105,23 +1347,89 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 
 func (tc *TypeChecker) structToIR(s ast.StructDecl) ir.StructIR {
 	fields := make([]ir.FieldIR, len(s.Fields))
+	packed := []ir.FieldIR{}
+
+	// Bit fields pack into a run: consecutive fields of the same integer type
+	// share one storage integer until it fills, exactly as C lays them out. Each
+	// field keeps where it lives — the unit and the bit offset — so a read and a
+	// write can be written as the shift and mask both backends spell the same.
+	unitName := ""
+	var unitType ir.Type
+	bitsUsed := 0
+	unitIndex := 0
+	flush := func() {
+		if unitName != "" {
+			packed = append(packed, ir.FieldIR{Name: unitName, Type: unitType})
+			unitName = ""
+		}
+	}
+
 	for i, f := range s.Fields {
 		fieldType := tc.typeFromExpr(f.TypeExpr, s.TypeParams)
 		if f.TypeExpr.Name == "" {
 			fieldType = tc.typeFor(f.Type)
 		}
-		fields[i] = ir.FieldIR{
-			Name: f.Name,
-			Type: fieldType,
+		field := ir.FieldIR{Name: f.Name, Type: fieldType}
+
+		if f.BitWidth == nil {
+			flush()
+			packed = append(packed, field)
+			fields[i] = field
+			continue
 		}
+
+		width := *f.BitWidth
+		unitBits := 0
+		if isIntegerKind(fieldType.Kind) {
+			if size, ok := typeSize(fieldType); ok {
+				unitBits = size * 8
+			}
+		}
+		// A width the storage cannot hold, or a type that is not an integer, is
+		// reported by checkStruct; here the field is left ordinary rather than
+		// aborting the whole layout.
+		if unitBits == 0 {
+			flush()
+			packed = append(packed, field)
+			fields[i] = field
+			continue
+		}
+		if width < 1 {
+			width = 1
+		}
+		if width > unitBits {
+			width = unitBits
+		}
+		if unitName == "" || unitType.Name != fieldType.Name || unitType.Kind != fieldType.Kind ||
+			bitsUsed+width > unitBits {
+			flush()
+			unitIndex++
+			unitName = fmt.Sprintf("bits%d", unitIndex)
+			unitType = fieldType
+			bitsUsed = 0
+		}
+		field.BitWidth = width
+		field.Unit = unitName
+		field.Shift = bitsUsed
+		bitsUsed += width
+		fields[i] = field
 	}
+	flush()
+
 	return ir.StructIR{
 		Name:   s.Name,
 		Fields: fields,
+		Packed: packed,
 	}
 }
 
 func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
+	// An extern's signature is foreign: `Ptr[T]` in it is the C pointer the
+	// declaration means, not the handle struct the language declares.
+	if fn.Extern {
+		tc.foreign++
+		defer func() { tc.foreign-- }()
+	}
 	// A written type in a signature is resolved the way one anywhere else is, so
 	// a generic application mangles to the specialisation that was emitted for
 	// it. Resolving a parameter from its expression left the name as written —
@@ -1210,7 +1518,7 @@ func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type 
 	// before the written spelling replaces it: a backend handed a struct named
 	// `Ptr[u8]` mangles it into a name no C compiler knows, and every foreign
 	// call that passes a pointer goes through here.
-	if expr.Name == "Ptr" {
+	if expr.Name == "Ptr" && !tc.ptrIsHandle() {
 		// A pointer to nothing is a handle, and a handle is a struct carrying an
 		// address rather than a raw pointer. That is what lets a program hold
 		// one, pass it, and get one back: a pointer to an empty struct has none
@@ -1282,6 +1590,17 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 	// A pointer keeps the type it points at. Losing it would make every backend
 	// spell `Ptr[u8]` as a name, which is what a C compiler rejects.
 	if base == "Ptr" {
+		// Outside a foreign signature the name is the language handle, which is
+		// the struct `std.core.ptr` declares, so it resolves to that
+		// specialisation: the same `Ptr[u32]` is one thing wherever it is
+		// written. A bare `Ptr` is the unspecialised base.
+		if tc.ptrIsHandle() {
+			if element == "" {
+				return ir.Type{Kind: ir.TypeStruct, Name: "Ptr"}, true
+			}
+			return tc.declaredType(name), true
+		}
+		// In a foreign signature it is the C pointer the declaration means.
 		pointer := ir.Type{Kind: ir.TypePtr, Name: name}
 		if element != "" {
 			pointer.Args = []ir.Type{tc.typeFor(element)}
@@ -1351,6 +1670,22 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 			Args:     []string{value},
 		}}
 	case ast.AssignStmt:
+		// A write to a bit field clears its bits in the storage integer and puts
+		// the masked value back — what a C bit field does behind the same
+		// assignment, written so both backends read it. The bits are cleared
+		// with XOR rather than a complement, because C's `~` and Go's `^` are
+		// not the same character.
+		if target, ok := stmt.Target.(ast.MemberExpr); ok && stmt.Op == "=" {
+			if field, isBitfield := tc.bitfieldOf(target, scope); isBitfield {
+				object := tc.lowerExpr(target.Object, scope)
+				mask := (1 << uint(field.BitWidth)) - 1
+				value := tc.lowerExpr(stmt.Value, scope)
+				storage := fmt.Sprintf("(%s).%s", object, field.Unit)
+				rmw := fmt.Sprintf("((%s ^ (%s & (%d << %d))) | ((%s & %d) << %d))",
+					storage, storage, mask, field.Shift, value, mask, field.Shift)
+				return []ir.Instr{{Op: ir.OpAssign, Dest: storage, Args: []string{rmw}}}
+			}
+		}
 		return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{tc.lowerExpr(stmt.Value, scope)}}}
 	case ast.ExprStmt:
 		return []ir.Instr{{Op: ir.OpExpr, Args: []string{tc.lowerExpr(stmt.Expr, scope)}}}
@@ -1364,11 +1699,173 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		return []ir.Instr{{Op: ir.OpIf, Condition: tc.lowerExpr(stmt.Condition, scope), Then: tc.lowerStatements(stmt.Then, scope), Else: tc.lowerStatements(stmt.Else, scope)}}
 	case ast.WhileStmt:
 		return []ir.Instr{{Op: ir.OpWhile, Condition: tc.lowerExpr(stmt.Condition, scope), Then: tc.lowerStatements(stmt.Body, scope)}}
+	case ast.ForStmt:
+		return tc.lowerFor(stmt, scope)
+	case ast.MatchStmt:
+		return tc.lowerMatch(stmt, scope)
 	case ast.BreakStmt:
 		return []ir.Instr{{Op: ir.OpBreak}}
 	default:
 		return nil
 	}
+}
+
+// lowerFor rewrites `for x in xs { body }` as an index, a `while`, the element
+// binding, the body and the step — the same instructions the loop is written
+// with by hand, so a backend needs to know nothing about it.
+func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir.Instr {
+	collectionType, _ := tc.exprType(stmt.Collection, scope)
+	element, _ := arrayElementOf(collectionType)
+
+	tc.lowerSeq++
+	suffix := strconv.Itoa(tc.lowerSeq)
+	indexName := "rho_for_idx_" + suffix
+
+	// The collection is indexed where it stands rather than copied into a
+	// temporary: a fixed array cannot be copied by initialiser in C, and a
+	// loop over a variable — which is what this is for — names it each time
+	// anyway.
+	//
+	// The value is not evaluated once. A call that produced the array would run
+	// once per element, so a loop over one should name it first.
+	collectionName := "(" + tc.lowerExpr(stmt.Collection, scope) + ")"
+	out := []ir.Instr{}
+	scope[indexName] = ir.Type{Kind: ir.TypeI64, Name: "i64"}
+
+	// An i64 index, so a reverse walk can test `>= 0` without wrapping a u32.
+	// The length is cast to i64 too, so a dynamic array's `len` — a u32 — and a
+	// fixed array's written number compare as the same type.
+	length := "(int64_t)(" + tc.lengthExpr(collectionName, collectionType) + ")"
+	start := "0"
+	condition := "(" + indexName + " < " + length + ")"
+	increment := indexName + " = " + indexName + " + 1"
+	if stmt.Step != nil {
+		step := tc.lowerExpr(stmt.Step, scope)
+		increment = indexName + " = " + indexName + " + " + step
+	}
+	if stmt.Reverse {
+		start = "(" + length + " - 1)"
+		condition = "(" + indexName + " >= 0)"
+		if stmt.Step != nil {
+			increment = indexName + " = " + indexName + " - " + tc.lowerExpr(stmt.Step, scope)
+		} else {
+			increment = indexName + " = " + indexName + " - 1"
+		}
+	}
+
+	bodyScope := cloneScope(scope)
+	bodyScope[stmt.Name] = element
+	// The loop variable stands for the element, so a body that reads it reads
+	// the element. Binding it to a variable would copy the element, and C
+	// cannot copy an array by initialiser — a loop over the rows of a
+	// two-dimensional array could not be written.
+	if tc.lowerAliases == nil {
+		tc.lowerAliases = map[string]string{}
+	}
+	previous, shadowed := tc.lowerAliases[stmt.Name]
+	tc.lowerAliases[stmt.Name] = collectionName + "[" + indexName + "]"
+	body := tc.lowerStatements(stmt.Body, bodyScope)
+	if shadowed {
+		tc.lowerAliases[stmt.Name] = previous
+	} else {
+		delete(tc.lowerAliases, stmt.Name)
+	}
+	body = append(body, ir.Instr{Op: ir.OpAssign, Dest: increment})
+
+	out = append(out,
+		ir.Instr{Op: ir.OpLet, Dest: indexName, Type: "int64_t", TypeName: "i64", Args: []string{start}},
+		ir.Instr{Op: ir.OpWhile, Condition: condition, Then: body})
+	return out
+}
+
+// lowerMatch rewrites `match x { p => a, _ => b }` as a chain of ifs comparing
+// the value to each pattern, in order, with the wildcard as the fallthrough.
+func (tc *TypeChecker) lowerMatch(stmt ast.MatchStmt, scope map[string]ir.Type) []ir.Instr {
+	valueType, _ := tc.exprType(stmt.Value, scope)
+	tc.lowerSeq++
+	valueName := "rho_match_value_" + strconv.Itoa(tc.lowerSeq)
+
+	out := []ir.Instr{{
+		Op:       ir.OpLet,
+		Dest:     valueName,
+		Type:     tc.cTypeFor(valueType),
+		TypeName: typeName(valueType),
+		Args:     []string{tc.lowerExpr(stmt.Value, scope)},
+	}}
+	scope[valueName] = valueType
+
+	tail := []ir.Instr{}
+	for i := len(stmt.Arms) - 1; i >= 0; i-- {
+		arm := stmt.Arms[i]
+		body := tc.lowerStatements(arm.Body, cloneScope(scope))
+		if arm.Wildcard {
+			// The wildcard is what every earlier test falls through to.
+			tail = body
+			continue
+		}
+		// `==` is lowered the way a comparison written by hand is, so a string
+			// pattern compares with the runtime's string equality rather than a
+			// pointer comparison.
+		condition := tc.lowerExpr(ast.BinaryExpr{
+			Op:    "==",
+			Left:  ast.IdentifierExpr{Name: valueName},
+			Right: arm.Pattern,
+		}, scope)
+		tail = []ir.Instr{{Op: ir.OpIf, Condition: condition, Then: body, Else: tail}}
+	}
+	return append(out, tail...)
+}
+
+// lowerSizeof is the size in bytes of the type an argument names, as the
+// literal that size is.
+func (tc *TypeChecker) lowerSizeof(arg ast.Expr, scope map[string]ir.Type) string {
+	var typ ir.Type
+	if ident, ok := arg.(ast.IdentifierExpr); ok {
+		if resolved, isType := tc.resolveType(ident.Name); isType {
+			typ = resolved
+		}
+	}
+	if typ.Kind == ir.TypeInvalid {
+		resolved, err := tc.exprType(arg, scope)
+		if err != nil {
+			return "0"
+		}
+		typ = resolved
+	}
+	if size, ok := typeSize(typ); ok {
+		return strconv.Itoa(size)
+	}
+	return "0"
+}
+
+// typeSize is how many bytes a type occupies, for the widths the language has.
+func typeSize(typ ir.Type) (int, bool) {
+	switch typ.Kind {
+	case ir.TypeBool, ir.TypeU8, ir.TypeI8:
+		return 1, true
+	case ir.TypeU16, ir.TypeI16:
+		return 2, true
+	case ir.TypeU32, ir.TypeI32, ir.TypeF32:
+		return 4, true
+	case ir.TypeU64, ir.TypeI64, ir.TypeF64, ir.TypePtr, ir.TypeString:
+		return 8, true
+	}
+	return 0, false
+}
+
+// lengthExpr is how many elements a collection holds: a written number for a
+// fixed array, and the runtime length for a dynamic one.
+func (tc *TypeChecker) lengthExpr(name string, collectionType ir.Type) string {
+	if collectionType.ArrayLen > 0 {
+		return strconv.Itoa(collectionType.ArrayLen)
+	}
+	// A dimension written into the name — `u32[2][2]` and its row `u32[2]` — is
+	// still a length known at compile time, and a bare number is what both
+	// backends can read.
+	if _, dims, ok := nameArrayDims(collectionType.Name); ok {
+		return strconv.Itoa(dims[0])
+	}
+	return "len(" + name + ")"
 }
 
 // integerPrint is `rho_print_i32(x)` when an expression is a number being turned
@@ -1410,6 +1907,13 @@ func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string
 func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type, expected ir.Type) string {
 	switch expr := expr.(type) {
 	case ast.IdentifierExpr:
+		// A name bound to an expression rather than to storage — the element of
+		// a `for` — is written where it is used. Binding it to a variable would
+		// copy the element, and C cannot copy an array by initialiser, so a loop
+		// over rows of a two-dimensional array could not be written.
+		if alias, ok := tc.lowerAliases[expr.Name]; ok {
+			return alias
+		}
 		// A module-level constant is inlined where it is named. There is no
 		// storage to read, because a module has no initialisation order.
 		if decl, ok := tc.moduleConsts[expr.Name]; ok && decl.Value != nil {
@@ -1489,10 +1993,24 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				return "(" + receiver + ")"
 			}
 		}
+		// A bit field is a run of bits inside a storage integer, so reading it is
+		// a shift and a mask — the same in C and Go, which is why the field is
+		// not emitted as a C bit field.
+		if field, ok := tc.bitfieldOf(expr, scope); ok {
+			object := tc.lowerExpr(expr.Object, scope)
+			mask := (1 << uint(field.BitWidth)) - 1
+			return fmt.Sprintf("(((%s).%s >> %d) & %d)", object, field.Unit, field.Shift, mask)
+		}
 		return tc.lowerExpr(expr.Object, scope) + "." + expr.Name
 	case ast.IndexExpr:
 		return tc.lowerExpr(expr.Object, scope) + "[" + tc.lowerExpr(expr.Index, scope) + "]"
 	case ast.CallExpr:
+		// sizeof(T) is the size of a type, decided here rather than emitted:
+		// the number is the same on both backends, and a C `sizeof` and a Go
+		// computation of one would be two answers to a question with one.
+		if ident, ok := expr.Callee.(ast.IdentifierExpr); ok && ident.Name == "sizeof" && len(expr.Args) == 1 {
+			return tc.lowerSizeof(expr.Args[0], scope)
+		}
 		// default(T) is the zero value of T, backing Result and Option.
 		if typeName, ok := isDefaultCall(expr); ok {
 			if resolved, found := tc.currentTypeArgs[typeName]; found {
@@ -1582,14 +2100,28 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 					for _, argument := range expr.TypeArgs {
 						args = append(args, tc.cTypeFor(tc.typeFor(argument.String())))
 					}
-					written = identifier.Name + "<" + strings.Join(args, ", ") + ">"
+					// Square brackets: a type application is `Ptr[u32]`, and
+					// spelling it with angle brackets named a type nothing
+					// declares, so the conversion built the wrong thing.
+					written = identifier.Name + "[" + strings.Join(args, ", ") + "]"
 				}
-				callee = tc.cTypeFor(tc.typeFor(written))
+				resolved := tc.typeFor(written)
+				callee = tc.cTypeFor(resolved)
 				if len(expr.Args) > 0 {
+					// Building a struct from a value is a compound literal, not
+					// a conversion: `Ptr[u8](addr)` is the handle whose address
+					// that is, and neither C nor Go converts an integer into a
+					// struct. A pointer or a scalar still converts.
+					if resolved.Kind == ir.TypeStruct {
+						return "(" + mangleTypeName(resolved.Name) + "){ " + tc.lowerExpr(expr.Args[0], scope) + " }"
+					}
 					// An alias resolves to what it names, so `SqlDb(0)` is a
 					// conversion to the pointer it is rather than to a type
-					// called SqlDb that nothing defines.
-					return "(" + callee + ")" + tc.lowerExpr(expr.Args[0], scope)
+					// called SqlDb that nothing defines. The operand is
+					// parenthesised so the C cast the Go backend reads spells a
+					// conversion of a unary too: `(int8_t)(-5)` and not
+					// `(int8_t)-5`, which is not an expression in Go.
+					return "(" + callee + ")(" + tc.lowerExpr(expr.Args[0], scope) + ")"
 				}
 			case len(expr.TypeArgs) > 0 || isGenericCallee(tc, identifier.Name):
 				// A generic call names a specialisation, so emit the mangled
@@ -1661,6 +2193,33 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		// and the C emitted here would not match the C emitted for the type.
 		if IsOptionalPointer(mangleTypeName(name)) {
 			return tc.lowerOptionalPointerLiteral(expr, name, scope)
+		}
+		// A struct with bit fields is built as its storage: each run of them is
+		// one integer, and the values are shifted and OR-ed into place. The
+		// emitted type has the packed fields, so the literal supplies them in
+		// that order.
+		if layout, ok := tc.structIR[name]; ok && hasBitfields(layout) {
+			byName := map[string]string{}
+			for i, field := range layout.Fields {
+				if i < len(expr.Values) {
+					byName[field.Name] = tc.lowerExpr(expr.Values[i], scope)
+				}
+			}
+			packed := []string{}
+			for _, storage := range layout.Packed {
+				bits := bitfieldsIn(layout, storage.Name)
+				if len(bits) == 0 {
+					packed = append(packed, byName[storage.Name])
+					continue
+				}
+				parts := []string{}
+				for _, field := range bits {
+					mask := (1 << uint(field.BitWidth)) - 1
+					parts = append(parts, fmt.Sprintf("((%s & %d) << %d)", byName[field.Name], mask, field.Shift))
+				}
+				packed = append(packed, "("+strings.Join(parts, " | ")+")")
+			}
+			return "(" + mangleTypeName(name) + "){ " + strings.Join(packed, ", ") + " }"
 		}
 		for _, value := range expr.Values {
 			values = append(values, tc.lowerExpr(value, scope))
@@ -1754,6 +2313,10 @@ func cTypeForKind(kind ir.TypeKind) string {
 		return "uint32_t"
 	case ir.TypeU64:
 		return "uint64_t"
+	case ir.TypeI8:
+		return "int8_t"
+	case ir.TypeI16:
+		return "int16_t"
 	case ir.TypeI32:
 		return "int32_t"
 	case ir.TypeI64:
@@ -1777,6 +2340,15 @@ func cTypeForName(name string) string {
 			return cTypeForName(inner) + "*"
 		}
 		return "uint8_t*"
+	}
+	// Every written dimension goes after the element type in C: `u32[2][2]` is
+	// `uint32_t[2][2]`.
+	if base, dims, isArray := nameArrayDims(name); isArray {
+		suffix := ""
+		for _, dim := range dims {
+			suffix += fmt.Sprintf("[%d]", dim)
+		}
+		return cTypeForName(base) + suffix
 	}
 	base := name
 	arraySuffix := ""
@@ -1805,8 +2377,14 @@ func cTypeForName(name string) string {
 		return "uint32_t" + arraySuffix
 	case "u64":
 		return "uint64_t" + arraySuffix
+	case "i8":
+		return "int8_t" + arraySuffix
+	case "i16":
+		return "int16_t" + arraySuffix
 	case "i32":
 		return "int32_t" + arraySuffix
+	case "i64":
+		return "int64_t" + arraySuffix
 	case "f64":
 		return "double" + arraySuffix
 	case "f32":
@@ -2084,7 +2662,7 @@ func (tc *TypeChecker) cTypeFor(t ir.Type) string {
 		return "void"
 	case ir.TypeBool:
 		return "bool"
-	case ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeI64:
+	case ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI8, ir.TypeI16, ir.TypeI32, ir.TypeI64:
 		return cTypeForName(t.Name)
 	case ir.TypeF64:
 		return "double"
@@ -2187,6 +2765,13 @@ func (tc *TypeChecker) resolveTypeBounded(name string, depth int) (ir.Type, bool
 	if typ, ok := tc.types[name]; ok {
 		return typ, true
 	}
+	// A dynamic array's name is `[T]`, which begins with the bracket. Reading a
+	// base name out first would leave it empty — `type Ints = [u32]` reached
+	// here through the alias and indexed an empty string.
+	if strings.HasPrefix(name, "[") {
+		inner := strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
+		return ir.Type{Kind: ir.TypeSlice, Name: name, Args: []ir.Type{tc.typeFor(inner)}}, true
+	}
 	base := name
 	element := ""
 	if i := strings.IndexByte(base, '['); i >= 0 {
@@ -2204,7 +2789,7 @@ func (tc *TypeChecker) resolveTypeBounded(name string, depth int) (ir.Type, bool
 		typ.Name = name
 		return typ, true
 	}
-	if (strings.Contains(name, "[") || (len(base) == 1 && base != "")) && unicodeUpper(base[0]) {
+	if base != "" && (strings.Contains(name, "[") || len(base) == 1) && unicodeUpper(base[0]) {
 		return ir.Type{Kind: ir.TypeStruct, Name: name}, true
 	}
 	return ir.Type{}, false
@@ -2312,6 +2897,48 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		if _, err := tc.checkStatements(stmt.Body, cloneScope(scope), result, true); err != nil {
 			return false, err
+		}
+	case ast.ForStmt:
+		collection, err := tc.exprType(stmt.Collection, scope)
+		if err != nil {
+			return false, err
+		}
+		element, ok := arrayElementOf(collection)
+		if !ok {
+			return false, fmt.Errorf("for iterates an array, got %s", typeName(collection))
+		}
+		if stmt.Step != nil {
+			step, stepErr := tc.exprType(stmt.Step, scope)
+			if stepErr != nil {
+				return false, stepErr
+			}
+			if !numeric(step) {
+				return false, fmt.Errorf("step must be a number")
+			}
+		}
+		bodyScope := cloneScope(scope)
+		bodyScope[stmt.Name] = element
+		if _, err := tc.checkStatements(stmt.Body, bodyScope, result, true); err != nil {
+			return false, err
+		}
+	case ast.MatchStmt:
+		value, err := tc.exprType(stmt.Value, scope)
+		if err != nil {
+			return false, err
+		}
+		for _, arm := range stmt.Arms {
+			if !arm.Wildcard {
+				pattern, patternErr := tc.exprType(arm.Pattern, scope)
+				if patternErr != nil {
+					return false, patternErr
+				}
+				if !assignable(value, pattern) {
+					return false, fmt.Errorf("match pattern %s does not match %s", typeName(pattern), typeName(value))
+				}
+			}
+			if _, err := tc.checkStatements(arm.Body, cloneScope(scope), result, inLoop); err != nil {
+				return false, err
+			}
 		}
 	case ast.BreakStmt:
 		if !inLoop {
