@@ -493,6 +493,22 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 		writeJSON(w, map[string]bool{"available": ProjectDocsAvailable()})
 	})
 
+	// What an editor shows beside a keyword: the reference's section for it, and
+	// the page a person can read the rest on. One word, one request, so a hover
+	// does not have to fetch and search the whole page.
+	mux.HandleFunc("GET /api/v1/help/{word}", func(w http.ResponseWriter, r *http.Request) {
+		help, ok := HelpFor(r.PathValue("word"))
+		if !ok {
+			http.Error(w, "the reference has nothing for that word", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, help)
+	})
+	// The words help is available for, so a caller can see the set.
+	mux.HandleFunc("GET /api/v1/help", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, HelpKeywords())
+	})
+
 	// What this machine is, for somebody asking why it will not do something.
 	mux.HandleFunc("GET /api/v1/system", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, ReadSystem())

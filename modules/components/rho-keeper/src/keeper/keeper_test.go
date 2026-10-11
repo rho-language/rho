@@ -849,3 +849,32 @@ func TestAReferenceToAPageThisDashboardDoesNotServeIsLeftAlone(t *testing.T) {
 
 // docLinkPattern is a link to another page as this dashboard writes one.
 var docLinkPattern = regexp.MustCompile(`href="(#/docs/[^"]+)"`)
+
+// Help for a keyword is the reference's section for it, read from the page
+// rather than written twice, so a hover and the page cannot disagree.
+func TestHelpForAKeyword(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "language"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	page := "# Syntax\n\n## Control flow\n\n`for` walks the elements.\n\n## Structs\n\nA struct is fields.\n"
+	if err := os.WriteFile(filepath.Join(root, "language", "syntax.md"), []byte(page), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("RHO_DOCS_ROOT", root)
+
+	help, ok := HelpFor("for")
+	if !ok {
+		t.Fatalf("for should have help")
+	}
+	if help.Title != "Control flow" || !strings.Contains(help.Markdown, "`for` walks the elements.") {
+		t.Errorf("help = %#v", help)
+	}
+	if help.Route != "language/syntax" {
+		t.Errorf("route = %q, want language/syntax", help.Route)
+	}
+
+	if _, ok := HelpFor("notAKeyword"); ok {
+		t.Errorf("an unknown word has no help")
+	}
+}
