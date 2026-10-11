@@ -256,8 +256,10 @@ func validateValue(val yaml.Value, field FieldSchema, path string, result *Valid
 		return
 	}
 
-	// Check kind
-	if field.Kind != "" && field.Kind != KindBool {
+	// Check kind. KindAny is not a kind to compare against: it says the field
+	// may hold anything, which is what a value the consumer validates itself —
+	// a scaffold list, or a name of a file that holds one — needs.
+	if field.Kind != "" && field.Kind != KindBool && field.Kind != KindAny {
 		// A boolean is checked separately, below: the loader keeps `true` and
 		// `false` as text, so a strict kind comparison would reject every
 		// well-formed flag in a manifest.

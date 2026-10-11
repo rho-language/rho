@@ -648,8 +648,6 @@ func lookupKeyword(ident string) Kind {
 		return TokenEnum
 	case "fn":
 		return TokenFn
-	case "config":
-		return TokenConfig
 	case "extern":
 		return TokenExtern
 	case "if":

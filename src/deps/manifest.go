@@ -366,9 +366,14 @@ type Manifest struct {
 	Command string
 	// ImportPath is the dotted name Rho code uses to import this component's
 	// Rho sources. Empty means the component exports no Rho library.
-	ImportPath    string
-	Features      []string
-	Deps          []DepSpec
+	ImportPath string
+	Features   []string
+	// Generate is the module's `generate:` value as written: the generator
+	// definitions themselves, or a string naming a file that holds them. The
+	// scaffold package interprets it, so the manifest stays a description of
+	// the file and not a second reader of it.
+	Generate yaml.Value
+	Deps     []DepSpec
 	BuildLanguage string
 	// BuildTargets are the target ids a project requests, in order. An entry
 	// may name a target a descriptor already declares or define one, and a
@@ -810,6 +815,7 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 	m.SQL = parseSQLManifest(doc.Map["sql"])
 	m.Main = yamlString(doc, "main")
 	m.Features = yamlStrings(doc.Map["features"])
+	m.Generate = doc.Map["generate"]
 
 	// `deps` is a map of name to version constraint, which is what the schema
 	// declares:

@@ -72,7 +72,12 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	// itself an alias is resolved to the type behind it, because Go has no
 	// chain of aliases and a program that followed one would not compile.
 	for _, alias := range m.Aliases {
-		target := goTypeForCName(alias.Target)
+		// The target is the written type, so a dynamic array stays a slice
+		// rather than becoming the pointer its C spelling would name.
+		target := goTypeForRhoName(alias.Target)
+		if target == "" {
+			target = goTypeForCName(alias.Target)
+		}
 		if target == "" {
 			continue
 		}
@@ -246,7 +251,14 @@ func emitGoStructForTarget(b *strings.Builder, structure ir.StructIR, isServer b
 		name = "anon"
 	}
 	fmt.Fprintf(b, "// %s mirrors the Rho struct of the same name.\ntype %s struct {\n", name, name)
-	for _, field := range structure.Fields {
+	// Go has no bit fields, so a run of them is one storage integer here; the
+	// shift and mask a read and a write need are written where the field is
+	// used.
+	fields := structure.Packed
+	if len(fields) == 0 {
+		fields = structure.Fields
+	}
+	for _, field := range fields {
 		goType := goTypeForIR(field.Type)
 		if goType == "" {
 			goType = "any"
@@ -346,13 +358,21 @@ func unusedLocals(instructions []ir.Instr, declared map[string]bool) []string {
 
 // collectWords records every identifier-like token in a lowered expression.
 func collectWords(text string, into map[string]bool) {
-	for i := 0; i < len(text); {
-		if !isIdentStart(text[i]) {
+	src := []byte(text)
+	for i := 0; i < len(src); {
+		// A string literal's contents are not identifiers: `print("x")` does
+		// not use a local named `x`, and counting it as one left the binding
+		// undiscarded and Go rejected it as unused.
+		if src[i] == '"' || src[i] == '\'' {
+			i = scanStringLiteral(src, i)
+			continue
+		}
+		if !isIdentStart(src[i]) {
 			i++
 			continue
 		}
 		start := i
-		for i < len(text) && isIdentPart(text[i]) {
+		for i < len(src) && isIdentPart(src[i]) {
 			i++
 		}
 		into[text[start:i]] = true
@@ -673,6 +693,12 @@ func EmitGoRuntime(implementation string) string {
 		{
 			call:   "rhoStrEq(",
 			define: "func rhoStrEq(a, b string) bool {\n\treturn a == b\n}\n",
+		},
+		{
+			// An if expression, which Go has no syntax for: both branches have
+			// the same type, so one generic function answers for every one.
+			call:   "rhoSelect(",
+			define: "func rhoSelect[T any](condition bool, ifTrue, ifFalse T) T {\n\tif condition {\n\t\treturn ifTrue\n\t}\n\treturn ifFalse\n}\n",
 		},
 		{
 			// The bit cast a wire protocol needs: a float on the wire is its
