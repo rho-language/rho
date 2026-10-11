@@ -79,8 +79,10 @@ func main() {
 
 	cmd := os.Args[1]
 
-	// Commands that DO NOT require installation
-	if cmd == "help" || cmd == "--help" || cmd == "-h" || cmd == "install" {
+	// Commands that DO NOT require installation. `init` writes a new project
+	// and reads nothing from the registry, so a person with an empty directory
+	// and no installation is exactly who it is for.
+	if cmd == "help" || cmd == "--help" || cmd == "-h" || cmd == "install" || cmd == "init" {
 		// skip installation check
 		if cmd == "--help" || cmd == "-h" {
 			cmd = "help"
@@ -120,6 +122,13 @@ func main() {
 	// installed is still the one asking.
 	case "ide":
 		os.Exit(ideCLI(os.Args[2:]))
+
+	// A new application needs no project to read, so it is answered here rather
+	// than by a component: a person with an empty directory is exactly the one
+	// asking, and a command that needed an installation to be found would be a
+	// command they could not reach yet.
+	case "init":
+		os.Exit(initCLI(os.Args[2:]))
 
 	case "pkg":
 		os.Exit(pkgcli.Main(os.Args[2:]))

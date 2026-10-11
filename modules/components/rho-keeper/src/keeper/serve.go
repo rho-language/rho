@@ -404,6 +404,26 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 		act(w, r, Action{OK: false}, h, func(string) Action { return Disable(r.PathValue("name")) })
 	})
 
+	// Starting a project: the same `rho init`, through the same function. What
+	// it writes is what the project's manifest declares, so a drivers
+	// repository produces a driver and the dashboard does not have to know that.
+	mux.HandleFunc("POST /api/v1/init", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Project     string            `json:"project"`
+			Dir         string            `json:"dir"`
+			Name        string            `json:"name"`
+			Generator   string            `json:"generator"`
+			Category    string            `json:"category"`
+			Description string            `json:"description"`
+			Set         map[string]string `json:"set"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, Action{Error: err.Error()})
+			return
+		}
+		writeJSON(w, Init(body.Project, body.Dir, body.Name, body.Generator, body.Category, body.Description, body.Set))
+	})
+
 	// One module in full: what it is, what it documents, and what it is set to.
 	mux.HandleFunc("GET /api/v1/modules/{name}", func(w http.ResponseWriter, r *http.Request) {
 		detail := Detail(r.PathValue("name"))

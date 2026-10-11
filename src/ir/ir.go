@@ -32,6 +32,12 @@ const (
 	TypeU16
 	TypeU32
 	TypeU64
+	// TypeI8 and TypeI16 are the signed widths below 32 bits. They are kinds of
+	// their own rather than i32 with a narrow range, because a value crosses a
+	// foreign boundary at the width the C declaration named: an int16_t read as
+	// an int32 reads the wrong bytes.
+	TypeI8
+	TypeI16
 	TypeI32
 	// TypeI64 is a signed 64-bit integer. A database column is one, and so is
 	// anything read from a file or a clock: i32 is a width, and a value that
@@ -93,9 +99,13 @@ type ModuleIR struct {
 type AliasIR struct {
 	// Name is the alias as the program wrote it.
 	Name string
-	// Target is the type it names, already resolved to the spelling the backend
-	// renders — a C type name for the C backend, a Go one for the Go backend.
+	// Target is the type it names, as the program wrote it. Each backend
+	// translates it, because one type name can be two types: a dynamic array
+	// `[u32]` is a Go slice and a C pointer.
 	Target string
+	// CTarget is the C spelling of the target, for the backend that needs it
+	// without a translator of its own.
+	CTarget string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -107,12 +117,22 @@ type StructIR struct {
 	Name   string
 	CName  string
 	Fields []FieldIR
+	// Packed are the fields as they are stored: a run of bit fields becomes one
+	// integer of the run's type, and every other field stands alone. A struct
+	// with no bit fields has Packed equal to Fields.
+	Packed []FieldIR
 }
 
 // FieldIR represents a single field in a struct.
 type FieldIR struct {
 	Name string
 	Type Type
+	// BitWidth is the width of a bit field, 0 for an ordinary field.
+	BitWidth int
+	// Unit is the storage field a bit field lives in, and Shift its bit offset
+	// there. Both are empty and 0 for an ordinary field.
+	Unit  string
+	Shift int
 }
 
 /* -------------------------------------------------------------------------- */

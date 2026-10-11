@@ -371,6 +371,78 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	return ast.IfStmt{Condition: condition, Then: thenBody, Else: elseBody}
 }
 
+// parseForStmt parses:
+//
+//	for name in collection { body }
+//	for name in reverse collection { body }
+//	for name in collection step n { body }
+//
+// `in` is not a keyword, so it is matched as the word it is; `reverse` and
+// `step` are, and are read where they appear.
+func (p *Parser) parseForStmt() ast.Stmt {
+	p.readToken() // consume 'for'
+	name := p.name()
+	if !(p.current.Kind == lexer.TokenIdent && p.current.Lex == "in") {
+		panic(NewErrorf(p.current, "expected 'in' after the loop variable, got %q", p.current.Lex))
+	}
+	p.readToken()
+	reverse := false
+	if p.current.Kind == lexer.TokenReverse {
+		reverse = true
+		p.readToken()
+	}
+	collection := p.parseCondition()
+	var step ast.Expr
+	if p.current.Kind == lexer.TokenStep {
+		p.readToken()
+		step = p.parseCondition()
+	}
+	return ast.ForStmt{Name: name, Collection: collection, Reverse: reverse, Step: step, Body: p.parseBlock()}
+}
+
+// parseMatchStmt parses:
+//
+//	match value {
+//	    1 => print("one")
+//	    _ => print("other")
+//	}
+//
+// A pattern is a literal to compare against, or `_` for anything. The body is a
+// block or a single expression.
+func (p *Parser) parseMatchStmt() ast.Stmt {
+	p.readToken() // consume 'match'
+	value := p.parseCondition()
+	p.expect(lexer.TokenLBrace)
+	p.readToken()
+	arms := []ast.MatchArm{}
+	for p.current.Kind != lexer.TokenRBrace {
+		if p.current.Kind == lexer.TokenEOF {
+			panic(NewErrorf(p.current, "unterminated match body"))
+		}
+		arm := ast.MatchArm{}
+		if p.current.Kind == lexer.TokenIdent && p.current.Lex == "_" {
+			arm.Wildcard = true
+			p.readToken()
+		} else {
+			arm.Pattern = p.parseExpr(0)
+		}
+		p.expect(lexer.TokenFatArrow)
+		p.readToken()
+		if p.current.Kind == lexer.TokenLBrace {
+			arm.Body = p.parseBlock()
+		} else {
+			expression := p.parseExpr(0)
+			arm.Body = []ast.Stmt{ast.ExprStmt{Expr: expression}}
+		}
+		arms = append(arms, arm)
+		if p.current.Kind == lexer.TokenComma || p.current.Kind == lexer.TokenSemicolon {
+			p.readToken()
+		}
+	}
+	p.readToken()
+	return ast.MatchStmt{Value: value, Arms: arms}
+}
+
 // parseConstDecl parses a module-level binding:
 //
 //	const NAME: T = value
@@ -475,6 +547,22 @@ func (p *Parser) parseType() ast.TypeExpr {
 		}
 	}
 	p.readToken()
+	// Further dimensions: `u32[2][2]` is an array of arrays. Each is read into
+	// Dims, so the written name keeps every dimension the program wrote.
+	for p.current.Kind == lexer.TokenLBracket {
+		p.readToken()
+		if p.current.Kind != lexer.TokenNumber {
+			panic(NewErrorf(p.current, "an array dimension must be a number"))
+		}
+		dimension, err := strconv.Atoi(p.current.Lex)
+		if err != nil {
+			panic(NewErrorf(p.current, "invalid array length"))
+		}
+		typeExpr.Dims = append(typeExpr.Dims, dimension)
+		p.readToken()
+		p.expect(lexer.TokenRBracket)
+		p.readToken()
+	}
 	return typeExpr
 }
 
@@ -493,7 +581,21 @@ func (p *Parser) parseStructDecl() ast.Decl {
 		p.expect(lexer.TokenColon)
 		p.readToken()
 		fieldType := p.parseType()
-		fields = append(fields, ast.Field{Name: fieldName, Type: fieldType.String(), TypeExpr: fieldType})
+		field := ast.Field{Name: fieldName, Type: fieldType.String(), TypeExpr: fieldType}
+		// A bit field says how many bits it uses: `flag: u8 : 1`.
+		if p.current.Kind == lexer.TokenColon {
+			p.readToken()
+			if p.current.Kind != lexer.TokenNumber {
+				panic(NewErrorf(p.current, "a bit field width must be a number"))
+			}
+			width, err := strconv.Atoi(p.current.Lex)
+			if err != nil {
+				panic(NewErrorf(p.current, "invalid bit field width"))
+			}
+			field.BitWidth = &width
+			p.readToken()
+		}
+		fields = append(fields, field)
 		if p.current.Kind == lexer.TokenComma || p.current.Kind == lexer.TokenSemicolon {
 			p.readToken()
 		}
@@ -673,10 +775,23 @@ func (p *Parser) parseBlock() []ast.Stmt {
 	return body
 }
 
+// blockExpr reads a block used where an expression is wanted. The block holds
+// exactly one expression — or one `if`, which is how a nested if expression is
+// written and which is a value for the same reason the outer one is.
 func blockExpr(statements []ast.Stmt) ast.Expr {
 	if len(statements) == 1 {
-		if exprStmt, ok := statements[0].(ast.ExprStmt); ok {
-			return exprStmt.Expr
+		switch statement := statements[0].(type) {
+		case ast.ExprStmt:
+			return statement.Expr
+		case ast.IfStmt:
+			if len(statement.Else) == 0 {
+				panic(NewError(lexer.Token{}, "an if used as an expression needs an else"))
+			}
+			return ast.IfExpr{
+				Condition: statement.Condition,
+				Then:      blockExpr(statement.Then),
+				Else:      blockExpr(statement.Else),
+			}
 		}
 	}
 	panic(NewError(lexer.Token{}, "expression block must contain one expression"))
@@ -725,6 +840,10 @@ func (p *Parser) parseStmt() ast.Stmt {
 		p.readToken()
 		condition := p.parseCondition()
 		stmt = ast.WhileStmt{Condition: condition, Body: p.parseBlock()}
+	case lexer.TokenFor:
+		stmt = p.parseForStmt()
+	case lexer.TokenMatch:
+		stmt = p.parseMatchStmt()
 	case lexer.TokenBreak:
 		p.readToken()
 		p.consumeSemi()
@@ -742,6 +861,10 @@ func (p *Parser) parseStmt() ast.Stmt {
 		p.consumeSemi()
 		stmt = ast.ExprStmt{Expr: left}
 	}
+	// A semicolon is optional after any statement, including one whose body is a
+	// block: `if c { }` and `if c { };` are the same statement. The cases that
+	// need it have consumed it already, and this is a no-op for them.
+	p.consumeSemi()
 	p.place(&stmt, start)
 	return stmt
 }
@@ -763,6 +886,12 @@ func (p *Parser) place(stmt *ast.Stmt, at ast.Position) {
 		n.Pos = at
 		*stmt = n
 	case ast.WhileStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.ForStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.MatchStmt:
 		n.Pos = at
 		*stmt = n
 	case ast.BreakStmt:
@@ -1051,7 +1180,28 @@ func (p *Parser) isTypeName(name string) bool {
 	if p.valueNames != nil && p.valueNames[name] {
 		return false
 	}
-	return len(name) >= 2 && name[0] >= 'A' && name[0] <= 'Z'
+	// A leading capital is the whole test. It used to require two characters,
+	// which read `P { 1 }` as a comparison followed by a block and made a
+	// one-letter type name — `struct P` — impossible to write a literal of.
+	return len(name) >= 1 && name[0] >= 'A' && name[0] <= 'Z'
+}
+
+// isUpperName reports whether a word is written with a leading capital, which
+// is how the language writes a type name.
+func isUpperName(name string) bool {
+	return name != "" && name[0] >= 'A' && name[0] <= 'Z'
+}
+
+// isScalarTypeName reports whether a word is a built-in scalar type name, which
+// can only be a type, never a value a program could index by.
+func isScalarTypeName(name string) bool {
+	switch name {
+	case "u8", "u16", "u32", "u64",
+		"i8", "i16", "i32", "i64",
+		"f32", "f64", "bool", "string":
+		return true
+	}
+	return false
 }
 
 func isTypeApplication(expression ast.Expr) bool {
@@ -1085,6 +1235,22 @@ func (p *Parser) bracketOpensApplication(expression ast.Expr) bool {
 		// A streamed parse has no lookahead, so the leading capital is the best
 		// that can be said.
 		return isTypeApplication(expression)
+	}
+	// What is inside the bracket says what the bracket is. A scalar type name
+	// can only be a type argument — no program has a value called `u32` — so
+	// `from_u64[u32](x)` is an application even though the name is lower-case
+	// and declared in another module the parser has not read, which is what a
+	// declared name alone could not tell it.
+	if p.nextTok.Kind == lexer.TokenIdent && isScalarTypeName(p.nextTok.Lex) {
+		return true
+	}
+	// A capitalized name is a type by convention, so `f[SomeType](x)` is an
+	// application too — the case the parser could not decide before, because the
+	// function is imported and its declaration was never read. A capitalized
+	// name the module binds to a value is a constant, and an index.
+	if p.nextTok.Kind == lexer.TokenIdent && isUpperName(p.nextTok.Lex) &&
+		!(p.valueNames != nil && p.valueNames[p.nextTok.Lex]) {
+		return true
 	}
 	if p.applyNames != nil && !p.applyNames[identifier.Name] {
 		// A name that cannot take a type argument — a parameter, a local — has

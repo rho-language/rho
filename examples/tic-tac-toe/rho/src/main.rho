@@ -238,7 +238,10 @@ fn main() void {
         } else {
             print("Enter your move (1-9): ")
             let c: i32 = getchar()
-            let timeout: i32 = 0
+            // A counter that reaches all-ones and gives up. It is unsigned so
+            // the sentinel is a value the type can hold; as an i32, 0xffffffff
+            // is out of range and the comparison could not be emitted.
+            let timeout: u32 = 0
             while c == -1 { 
                 if timeout == 0xffffffff { return }
                 timeout = timeout + 1

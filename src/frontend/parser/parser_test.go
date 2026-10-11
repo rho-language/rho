@@ -387,3 +387,140 @@ func TestParseErrorCarriesPosition(t *testing.T) {
 		t.Fatalf("unexpected parser message: %q", parseErr.Message)
 	}
 }
+
+// A one-letter type name is a type name. It used to require two characters, so
+// `struct P { x: u32 }` could not be given a literal — `P { 1 }` read as a
+// comparison and a block.
+func TestParseSingleLetterTypeLiteral(t *testing.T) {
+	source := "module app\nstruct P { x: u32 }\nfn f() u32 {\n  let p: P = P { 1 }\n  return p.x\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	module, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("a one-letter type literal should parse: %v", err)
+	}
+	if len(module.Decls) != 2 {
+		t.Fatalf("want a struct and a function, got %d declarations", len(module.Decls))
+	}
+}
+
+// `g[u32](0)` is an application even though `g` is lower-case and not declared
+// in this file: a scalar type name in the brackets can only be a type argument.
+// Without that, an imported generic function could not be called with explicit
+// arguments — the parser had no way to know `g` was generic.
+func TestParseLowercaseGenericApplication(t *testing.T) {
+	source := "module app\nfn f() void {\n  g[u32](0)\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err != nil {
+		t.Fatalf("a scalar type argument should read as an application: %v", err)
+	}
+}
+
+// `for` and `match` are statements with the syntax the lexer reserved for them.
+func TestParseForAndMatch(t *testing.T) {
+	src := "module app\nfn f() void {\n" +
+		"  for x in xs { print(\"a\") }\n" +
+		"  for y in reverse ys step 2 { print(\"b\") }\n" +
+		"  match n {\n    1 => print(\"one\")\n    _ => print(\"other\")\n  }\n" +
+		"}\n"
+	tokens, err := lexer.Lex(src)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	module, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("for and match should parse: %v", err)
+	}
+	fn, ok := module.Decls[0].(ast.FuncDecl)
+	if !ok || len(fn.Body) != 3 {
+		t.Fatalf("want a function of three statements, got %#v", module.Decls[0])
+	}
+	if _, ok := fn.Body[0].(ast.ForStmt); !ok {
+		t.Errorf("first statement is %T, want ForStmt", fn.Body[0])
+	}
+	second, ok := fn.Body[1].(ast.ForStmt)
+	if !ok || !second.Reverse || second.Step == nil {
+		t.Errorf("second statement should be a reverse loop with a step: %#v", fn.Body[1])
+	}
+	match, ok := fn.Body[2].(ast.MatchStmt)
+	if !ok || len(match.Arms) != 2 || !match.Arms[1].Wildcard {
+		t.Errorf("third statement should be a match with a wildcard: %#v", fn.Body[2])
+	}
+}
+
+// A capitalized name in the brackets is a type argument even when the function
+// is imported and its declaration was never read: `f[SomeType](x)` is an
+// application, not an index followed by a call.
+func TestParseCapitalizedTypeArgument(t *testing.T) {
+	source := "module app\nfn f() void {\n  g[SomeType](0)\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	module, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("a capitalized type argument should read as an application: %v", err)
+	}
+	fn := module.Decls[0].(ast.FuncDecl)
+	call, ok := fn.Body[0].(ast.ExprStmt)
+	if !ok {
+		t.Fatalf("want an expression statement, got %T", fn.Body[0])
+	}
+	callExpr, ok := call.Expr.(ast.CallExpr)
+	if !ok || len(callExpr.TypeArgs) != 1 || callExpr.TypeArgs[0].Name != "SomeType" {
+		t.Fatalf("want a call applied to SomeType, got %#v", call.Expr)
+	}
+}
+
+// `u32[2][2]` is an array of arrays: the first dimension is the length and the
+// rest are carried so the type keeps every dimension.
+func TestParseMultiDimensionalArray(t *testing.T) {
+	source := "module app\nfn f() void {\n  let m: u32[2][3] = [[1, 2, 3], [4, 5, 6]]\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	module, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("a two-dimensional array type should parse: %v", err)
+	}
+	fn := module.Decls[0].(ast.FuncDecl)
+	let := fn.Body[0].(ast.LetStmt)
+	if let.Type.ArrayLen == nil || *let.Type.ArrayLen != 2 {
+		t.Fatalf("want a first dimension of 2, got %#v", let.Type)
+	}
+	if len(let.Type.Dims) != 1 || let.Type.Dims[0] != 3 {
+		t.Fatalf("want a second dimension of 3, got %#v", let.Type.Dims)
+	}
+}
+
+// A struct field may be a bit field: `flag: u8 : 1`.
+func TestParseBitField(t *testing.T) {
+	source := "module app\nstruct Flags {\n  a: u8 : 1\n  b: u8 : 3\n  count: u32\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	module, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("a bit field should parse: %v", err)
+	}
+	structDecl := module.Decls[0].(ast.StructDecl)
+	if len(structDecl.Fields) != 3 {
+		t.Fatalf("want three fields, got %d", len(structDecl.Fields))
+	}
+	if structDecl.Fields[0].BitWidth == nil || *structDecl.Fields[0].BitWidth != 1 {
+		t.Errorf("field a should be one bit: %#v", structDecl.Fields[0])
+	}
+	if structDecl.Fields[1].BitWidth == nil || *structDecl.Fields[1].BitWidth != 3 {
+		t.Errorf("field b should be three bits: %#v", structDecl.Fields[1])
+	}
+	if structDecl.Fields[2].BitWidth != nil {
+		t.Errorf("count is an ordinary field: %#v", structDecl.Fields[2])
+	}
+}

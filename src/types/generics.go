@@ -63,6 +63,33 @@ func (in instantiation) key() string {
 /*  Mangling                                                                  */
 /* -------------------------------------------------------------------------- */
 
+// ptrIsHandle reports whether `Ptr[T]` in the current context is the language
+// handle rather than a foreign C pointer.
+//
+// It is the handle outside a foreign signature, when the standard library has
+// declared the struct; it is the C pointer inside one, and when no struct has
+// been declared to use in its place. A handle and a C pointer share the spelling
+// `Ptr[T]`, and this is the one place that decides which is meant.
+func (tc *TypeChecker) ptrIsHandle() bool {
+	if tc.foreign > 0 {
+		return false
+	}
+	_, declared := tc.genericStructs["Ptr"]
+	return declared
+}
+
+// parameterType resolves a declared parameter or field type for unification.
+//
+// The written form is kept — `Ptr[T]` rather than the mangled `PtrT` — because
+// deduction matches a parameter's arguments against the supplied type's, and a
+// mangled name has no arguments left to match.
+func (tc *TypeChecker) parameterType(expr ast.TypeExpr, written string, params []string) ir.Type {
+	if expr.Name != "" {
+		return tc.typeFromExpr(expr, params)
+	}
+	return tc.typeFor(written)
+}
+
 // declaredType resolves a type name written in a declaration. A generic
 // application is recorded for expansion and resolved to the mangled name its
 // specialisation is emitted under, so parameter, return and field types all
@@ -88,7 +115,7 @@ func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir
 	// backend then emitted as a struct — so an extern declared to take a C string
 	// pointer declared a function taking a struct, and no call of it could
 	// compile however the argument was written.
-	if base == "Ptr" {
+	if base == "Ptr" && !tc.ptrIsHandle() {
 		return tc.substituteType(tc.typeFor(name), subs)
 	}
 	if _, ok := tc.genericStructs[base]; !ok {
@@ -113,6 +140,7 @@ func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir
 	}
 	tc.recordInstantiation(instantiation{Name: base, TypeArgs: resolved, IsStruct: true})
 	mangled := mangleGeneric(base, resolved)
+	tc.recordSpelling(mangled, base, resolved)
 	tc.registerSpecialisationFields(base, resolved)
 	return ir.Type{Kind: ir.TypeStruct, Name: mangled}
 }
@@ -154,7 +182,7 @@ func (tc *TypeChecker) cTypeForTypeName(name string) string {
 	// to do it. Mangling it first wrote `Ptr_u8`, which is a name a C compiler
 	// has never heard of, so a local declared to hold what a foreign function
 	// returned could not be declared at all.
-	if base == "Ptr" {
+	if base == "Ptr" && !tc.ptrIsHandle() {
 		return cTypeForName(name)
 	}
 	if _, ok := tc.genericStructs[base]; !ok {
@@ -340,7 +368,7 @@ func (tc *TypeChecker) deduceCallArgs(decl ast.FuncDecl, args []ast.Expr, scope 
 		if err != nil {
 			return nil
 		}
-		tc.unifyTypeArgs(decl.TypeParams, tc.typeFor(decl.Params[i].Type), actual, subs)
+		tc.unifyTypeArgs(decl.TypeParams, tc.parameterType(decl.Params[i].TypeExpr, decl.Params[i].Type, decl.TypeParams), actual, subs)
 	}
 
 	return tc.orderedArgs(decl.TypeParams, decl.TypeParamDefaults, subs)
@@ -364,7 +392,7 @@ func (tc *TypeChecker) deduceStructArgs(decl ast.StructDecl, values []ast.Expr, 
 		if err != nil {
 			return nil
 		}
-		tc.unifyTypeArgs(decl.TypeParams, tc.typeFor(decl.Fields[i].Type), actual, subs)
+		tc.unifyTypeArgs(decl.TypeParams, tc.parameterType(decl.Fields[i].TypeExpr, decl.Fields[i].Type, decl.TypeParams), actual, subs)
 	}
 
 	return tc.orderedArgs(decl.TypeParams, decl.TypeParamDefaults, subs)
@@ -392,6 +420,23 @@ func (tc *TypeChecker) unifyTypeArgs(typeParams []string, declared, actual ir.Ty
 				Args: []ir.Type{{Kind: ir.TypeStruct, Name: actual.Name[len("Option_Ptr_"):]}}},
 			subs)
 		return
+	}
+
+	// The supplied type is often the mangled name of a specialisation rather
+	// than an application spelling, so the parameter's arguments are matched
+	// against the arguments the specialisation was built from: `Option[T]`
+	// against `OptionU32` binds `T` to `u32`.
+	if declGeneric && !actualGeneric {
+		if spec, ok := tc.specialisations[actual.Name]; ok && spec.Base == declBase {
+			limit := len(declArgs)
+			if len(spec.Args) < limit {
+				limit = len(spec.Args)
+			}
+			for i := 0; i < limit; i++ {
+				tc.unifyTypeArgs(typeParams, declArgs[i], spec.Args[i], subs)
+			}
+			return
+		}
 	}
 
 	if declGeneric && actualGeneric && declBase == actualBase {
@@ -440,6 +485,25 @@ func mangleTypeName(name string) string {
 	return out
 }
 
+// specialisation is a mangled name's origin: the generic base it specialised
+// and the concrete arguments it was built with.
+type specialisation struct {
+	Base string
+	Args []ir.Type
+}
+
+// recordSpelling remembers what a mangled specialisation was built from. A
+// parameter written as an application — `Option[T]` — is matched against a
+// supplied type, and a supplied type is often the mangled name; without the
+// arguments behind it the parameter cannot bind, which is why `is_some(o)` for
+// an `Option[u32]` could not deduce `T`.
+func (tc *TypeChecker) recordSpelling(mangled, base string, args []ir.Type) {
+	if tc.specialisations == nil {
+		tc.specialisations = map[string]specialisation{}
+	}
+	tc.specialisations[mangled] = specialisation{Base: base, Args: args}
+}
+
 // mangleGeneric builds the specialised name of a generic declaration.
 func mangleGeneric(name string, args []ir.Type) string {
 	if len(args) == 0 {
@@ -461,16 +525,33 @@ func mangleGeneric(name string, args []ir.Type) string {
 // a map lookup. A nested application is rebuilt from its parts so a parameter
 // buried inside it is still replaced.
 func (tc *TypeChecker) substituteType(typ ir.Type, subs map[string]ir.Type) ir.Type {
-	if len(subs) == 0 || typ.Kind != ir.TypeStruct {
+	if len(subs) == 0 {
 		return typ
 	}
-	if replacement, ok := subs[typ.Name]; ok {
-		// The replacement may itself be an application that was carried as a
-		// name rather than as a type. A pointer is the case that matters: a
-		// generic function returning its argument, specialised at a pointer,
-		// would otherwise return a name the backend has never heard of, and every
-		// call of it would be declared against a type that does not exist.
-		return tc.resolveApplied(replacement)
+	if typ.Kind == ir.TypeStruct {
+		if replacement, ok := subs[typ.Name]; ok {
+			// The replacement may itself be an application that was carried as a
+			// name rather than as a type. A pointer is the case that matters: a
+			// generic function returning its argument, specialised at a pointer,
+			// would otherwise return a name the backend has never heard of, and
+			// every call of it would be declared against a type that does not
+			// exist.
+			return tc.resolveApplied(replacement)
+		}
+	}
+	// A pointer or a slice carries its element in its arguments rather than in
+	// its name, so a parameter or return type written `Ptr[T]` has the `T` here
+	// and nowhere else: substituting only the name would specialise the
+	// function but leave `*T` in its signature.
+	if len(typ.Args) > 0 {
+		arguments := make([]ir.Type, len(typ.Args))
+		for i, argument := range typ.Args {
+			arguments[i] = tc.substituteType(argument, subs)
+		}
+		typ.Args = arguments
+	}
+	if typ.Kind != ir.TypeStruct {
+		return typ
 	}
 	open := strings.IndexByte(typ.Name, '[')
 	if open < 0 {

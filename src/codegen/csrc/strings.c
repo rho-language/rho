@@ -82,6 +82,20 @@ uint32_t rho_int_from_str(const char* s)
     return total;
 }
 
+const char* rho_int_to_str(uint32_t value)
+{
+    /* A static buffer, because the result is a printf argument; a program that
+     * needs two at once copies the first. */
+    static char buffer[12];
+    char* end = buffer + sizeof(buffer);
+    *--end = 0;
+    do {
+        *--end = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value != 0u);
+    return end;
+}
+
 uint32_t rho_strlen(const char* s)
 {
     return s != NULL ? (uint32_t)strlen(s) : 0;

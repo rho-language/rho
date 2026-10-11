@@ -96,7 +96,7 @@ func TestACallToATypeIsAConversion(t *testing.T) {
 		Args:     []ast.Expr{ast.NumberExpr{Value: "0"}},
 	}
 	got := tc.lowerExpr(expr, map[string]ir.Type{})
-	if got != "(void*)0" {
+	if got != "(void*)(0)" {
 		t.Errorf("converting to a handle emitted %q, which is not a cast", got)
 	}
 
@@ -109,7 +109,7 @@ func TestACallToATypeIsAConversion(t *testing.T) {
 		Callee: ast.IdentifierExpr{Name: "SqlDb"},
 		Args:   []ast.Expr{ast.NumberExpr{Value: "0"}},
 	}, map[string]ir.Type{})
-	if got != "(void*)0" {
+	if got != "(void*)(0)" {
 		t.Errorf("converting to an aliased handle emitted %q", got)
 	}
 }

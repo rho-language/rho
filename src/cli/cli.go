@@ -40,6 +40,7 @@ func Core() []Command {
 	return []Command{
 		{Invocation: "run <file.rho>", Description: "Run a Rho program"},
 		{Invocation: "build <file.rho> [-o]", Description: "Compile Rho to C, and build it"},
+		{Invocation: "init [<generator>] <directory>", Description: "Start a Rho application, or a project a module knows how to generate"},
 		{Invocation: "install", Description: "Install Rho programming language"},
 		{Invocation: "pkg <command>", Description: "Package management (init, pack, unpack, inspect)"},
 		{Invocation: "module <command>", Description: "Modules in the local registry"},

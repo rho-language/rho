@@ -593,3 +593,185 @@ func TestF32IsItsOwnType(t *testing.T) {
 		t.Fatal("f32 and f64 resolved to the same kind")
 	}
 }
+
+// An array literal written against an array takes that array's element type:
+// `[1, 2]` beside `[u32]` is a [u32], not an Array[i32]. Before this the
+// elements were typed on their own, so a bare integer literal — i32 — became
+// the element type and the assignment was refused.
+func TestArrayLiteralAdoptsDeclaredElementType(t *testing.T) {
+	tc := New()
+	m := ast.Module{Name: "arr", Decls: []ast.Decl{
+		ast.FuncDecl{
+			Name:       "f",
+			ReturnType: "u32",
+			Body: []ast.Stmt{
+				ast.LetStmt{
+					Name:  "xs",
+					Type:  ast.TypeExpr{Name: "[u32]"},
+					Value: ast.ArrayLiteralExpr{Values: []ast.Expr{ast.NumberExpr{Value: "1"}, ast.NumberExpr{Value: "2"}}},
+				},
+				ast.ReturnStmt{Value: ast.IndexExpr{
+					Object: ast.IdentifierExpr{Name: "xs"},
+					Index:  ast.NumberExpr{Value: "0"},
+				}},
+			},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("an array literal should take the declared element type: %v", err)
+	}
+}
+
+// An integer literal is typed by what it holds: `0xffffffff` is not an i32, and
+// returning it as one is an error rather than a literal the backend then cannot
+// represent. Before this the literal was i32 whatever its value, and the
+// emitted Go carried a constant the type could not hold.
+func TestLargeIntegerLiteralIsNotI32(t *testing.T) {
+	tc := New()
+	small, err := tc.exprType(ast.NumberExpr{Value: "42"}, map[string]ir.Type{})
+	if err != nil {
+		t.Fatalf("typing 42: %v", err)
+	}
+	if small.Name != "i32" {
+		t.Errorf("42 is %s, want i32", small.Name)
+	}
+
+	large, err := tc.exprType(ast.NumberExpr{Value: "0xffffffff"}, map[string]ir.Type{})
+	if err != nil {
+		t.Fatalf("typing 0xffffffff: %v", err)
+	}
+	if large.Name != "i64" {
+		t.Errorf("0xffffffff is %s, want i64 (it does not fit an i32)", large.Name)
+	}
+}
+
+// A generic parameter written as an application binds against a supplied
+// specialisation: given `Wrap[u32]`, `fn get[T](w: Wrap[T])` deduces `T` is
+// `u32`. The supplied type is the mangled `WrapU32`, so the arguments behind
+// that name are what is matched — without them `is_some(o)` over an
+// `Option[u32]` could not infer `T`.
+func TestDeductionFromGenericStructArgument(t *testing.T) {
+	wrapOfT := ast.TypeExpr{Name: "Wrap", Args: []ast.TypeExpr{{Name: "T"}}}
+	wrapOfU32 := ast.TypeExpr{Name: "Wrap", Args: []ast.TypeExpr{{Name: "u32"}}}
+	m := ast.Module{Name: "app", Decls: []ast.Decl{
+		ast.StructDecl{
+			Name:       "Wrap",
+			TypeParams: []string{"T"},
+			Fields:     []ast.Field{{Name: "v", Type: "T", TypeExpr: ast.TypeExpr{Name: "T"}}},
+		},
+		ast.FuncDecl{
+			Name:       "get",
+			TypeParams: []string{"T"},
+			Params:     []ast.Param{{Name: "w", Type: "Wrap[T]", TypeExpr: wrapOfT}},
+			ReturnType: "T",
+			Body: []ast.Stmt{
+				ast.ReturnStmt{Value: ast.MemberExpr{Object: ast.IdentifierExpr{Name: "w"}, Name: "v"}},
+			},
+		},
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.LetStmt{
+					Name:  "w",
+					Type:  wrapOfU32,
+					Value: ast.StructLiteralExpr{Type: wrapOfU32, Values: []ast.Expr{ast.NumberExpr{Value: "5"}}},
+				},
+				ast.ExprStmt{Expr: ast.CallExpr{
+					Callee: ast.IdentifierExpr{Name: "get"},
+					Args:   []ast.Expr{ast.IdentifierExpr{Name: "w"}},
+				}},
+			},
+		},
+	}}
+	if err := New().CheckModule(m); err != nil {
+		t.Fatalf("deduction from Wrap[u32] should bind T: %v", err)
+	}
+}
+
+// `Ptr[T]` means two things, and the context decides which. In an `extern fn`
+// signature it is the C pointer the declaration names; in an ordinary
+// signature it is the handle struct the standard library declares. The same
+// spelling is one thing in each place, and this pins which.
+func TestPtrIsForeignPointerInExternAndHandleElsewhere(t *testing.T) {
+	ptrU8 := ast.TypeExpr{Name: "Ptr", Args: []ast.TypeExpr{{Name: "u8"}}}
+	tc := New()
+	m := ast.Module{Name: "app", Decls: []ast.Decl{
+		ast.StructDecl{
+			Name:       "Ptr",
+			TypeParams: []string{"T"},
+			Fields:     []ast.Field{{Name: "raw", Type: "u64", TypeExpr: ast.TypeExpr{Name: "u64"}}},
+		},
+		ast.FuncDecl{
+			Name:       "write",
+			Extern:     true,
+			Params:     []ast.Param{{Name: "p", Type: "Ptr[u8]", TypeExpr: ptrU8}},
+			ReturnType: "void",
+		},
+		ast.FuncDecl{
+			Name:       "keep",
+			Params:     []ast.Param{{Name: "p", Type: "Ptr[u8]", TypeExpr: ptrU8}},
+			ReturnType: "void",
+			Body:       []ast.Stmt{},
+		},
+	}}
+	if err := tc.CheckModule(m); err != nil {
+		t.Fatalf("checking: %v", err)
+	}
+	if got := tc.funcs["write"].params[0]; got.Kind != ir.TypePtr {
+		t.Errorf("an extern Ptr[u8] should be a C pointer, got kind %v name %q", got.Kind, got.Name)
+	}
+	if got := tc.funcs["keep"].params[0]; got.Kind != ir.TypeStruct {
+		t.Errorf("a Rho Ptr[u8] should be the handle struct, got kind %v name %q", got.Kind, got.Name)
+	}
+}
+
+// sizeof is decided by the type, not by either backend.
+func TestTypeSize(t *testing.T) {
+	tc := New()
+	sizes := map[string]int{"u8": 1, "i8": 1, "u16": 2, "i16": 2, "u32": 4, "i32": 4, "u64": 8, "i64": 8, "f32": 4, "f64": 8, "bool": 1}
+	for name, want := range sizes {
+		typ, ok := tc.resolveType(name)
+		if !ok {
+			t.Fatalf("resolveType(%s) failed", name)
+		}
+		if got, sized := typeSize(typ); !sized || got != want {
+			t.Errorf("sizeof(%s) = %d (ok=%v), want %d", name, got, sized, want)
+		}
+	}
+}
+
+// Each subscript of a multi-dimensional array yields the next dimension down:
+// `u32[2][2]` indexed once is `u32[2]`, and again is `u32`.
+func TestMultiDimensionalArrayElements(t *testing.T) {
+	row, ok := arrayElementOf(ir.Type{Kind: ir.TypeU32, Name: "u32[2][2]"})
+	if !ok || row.Name != "u32[2]" {
+		t.Fatalf("one subscript of u32[2][2] should be u32[2], got %#v (ok=%v)", row, ok)
+	}
+	cell, ok := arrayElementOf(row)
+	if !ok || cell.Name != "u32" || cell.Kind != ir.TypeU32 {
+		t.Fatalf("two subscripts should be u32, got %#v (ok=%v)", cell, ok)
+	}
+}
+
+// Bit fields pack into a run: consecutive ones of the same type share a storage
+// integer, and each keeps the shift it sits at.
+func TestBitFieldsPackIntoRuns(t *testing.T) {
+	width := func(n int) *int { return &n }
+	tc := New()
+	layout := tc.structToIR(ast.StructDecl{Name: "Flags", Fields: []ast.Field{
+		{Name: "a", Type: "u8", TypeExpr: ast.TypeExpr{Name: "u8"}, BitWidth: width(1)},
+		{Name: "b", Type: "u8", TypeExpr: ast.TypeExpr{Name: "u8"}, BitWidth: width(1)},
+		{Name: "c", Type: "u8", TypeExpr: ast.TypeExpr{Name: "u8"}, BitWidth: width(4)},
+		{Name: "count", Type: "u32", TypeExpr: ast.TypeExpr{Name: "u32"}},
+	}})
+	if len(layout.Packed) != 2 {
+		t.Fatalf("a run of three bit fields and a count should store two integers, got %d", len(layout.Packed))
+	}
+	if layout.Packed[0].Name != "bits1" || layout.Packed[0].Type.Name != "u8" {
+		t.Errorf("the run should be one u8: %#v", layout.Packed[0])
+	}
+	if layout.Fields[2].Shift != 2 {
+		t.Errorf("c should start at bit 2, got %d", layout.Fields[2].Shift)
+	}
+}

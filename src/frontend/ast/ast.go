@@ -80,6 +80,9 @@ type TypeExpr struct {
 	Name     string
 	Args     []TypeExpr
 	ArrayLen *int
+	// Dims are the further dimensions of a multi-dimensional array, after
+	// ArrayLen: `u32[2][2]` has ArrayLen 2 and Dims [2].
+	Dims []int
 }
 
 func (t TypeExpr) String() string {
@@ -96,6 +99,9 @@ func (t TypeExpr) String() string {
 	}
 	if t.ArrayLen != nil {
 		name += fmt.Sprintf("[%d]", *t.ArrayLen)
+	}
+	for _, dim := range t.Dims {
+		name += fmt.Sprintf("[%d]", dim)
 	}
 	return name
 }
@@ -214,6 +220,9 @@ type Field struct {
 	Name     string
 	Type     string
 	TypeExpr TypeExpr
+	// BitWidth is the width of a bit field, as in `flag: u8 : 1`. It is nil for
+	// an ordinary field.
+	BitWidth *int
 }
 
 /* -------------------------------------------------------------------------- */
@@ -412,6 +421,40 @@ type BreakStmt struct {
 func (BreakStmt) stmtNode() {}
 
 func (n BreakStmt) Position() Position { return n.Pos }
+
+// ForStmt iterates an array, binding each element to Name. `reverse` walks it
+// from the end, and `step` visits every Nth element.
+type ForStmt struct {
+	Node
+	Name       string
+	Collection Expr
+	Reverse    bool
+	Step       Expr // nil means one
+	Body       []Stmt
+}
+
+func (ForStmt) stmtNode() {}
+
+func (n ForStmt) Position() Position { return n.Pos }
+
+// MatchArm is one alternative of a match: a literal to compare against, or a
+// wildcard, and the statements to run.
+type MatchArm struct {
+	Pattern  Expr // nil when Wildcard
+	Wildcard bool
+	Body     []Stmt
+}
+
+// MatchStmt runs the first arm whose pattern equals Value, or the wildcard.
+type MatchStmt struct {
+	Node
+	Value Expr
+	Arms  []MatchArm
+}
+
+func (MatchStmt) stmtNode() {}
+
+func (n MatchStmt) Position() Position { return n.Pos }
 
 /* -------------------------------------------------------------------------- */
 /*  Expressions (Rho 0.2+)                                                    */
