@@ -451,7 +451,7 @@ func resolveReferences(site *Site, documents []*parsedPage, targets map[string]*
 
 	for index, page := range site.Pages {
 		document := documents[index]
-		resolved := resolveInBody(page.Body, byTarget, fragments, labels)
+		resolved := resolveInBody(page.Body, rootPrefix(page.Href), byTarget, fragments, labels)
 		page.Body = resolved
 		page.ambiguous = ambiguous
 		// A reference inside a page names a target; a reference that names
@@ -508,12 +508,18 @@ func resolveReferences(site *Site, documents []*parsedPage, targets map[string]*
 // `<a class="xref" href="#name">`, and matching that whole form leaves an
 // author's own `[text](#name)` link alone, which a page with a heading of that
 // name would otherwise have silently redirected.
-func resolveInBody(body string, targets map[string]*SitePage, fragments, labels map[string]string) string {
+// resolveInBody rewrites a page's cross-references to the pages they name.
+//
+// The hrefs a target resolves to are relative to the site root; this page may be
+// several directories inside it, so each is prefixed with the page's own path
+// back to the root. A link written from the root works only for a page at the
+// root, and a reference into a nested page is the normal case, not the exception.
+func resolveInBody(body string, root string, targets map[string]*SitePage, fragments, labels map[string]string) string {
 	out := body
 	rewrite := func(href, resolved string) {
 		out = strings.ReplaceAll(out,
 			"class=\"xref\" href=\"#"+html.EscapeString(href)+"\"",
-			"class=\"xref\" href=\""+html.EscapeString(resolved)+"\"")
+			"class=\"xref\" href=\""+html.EscapeString(root+resolved)+"\"")
 	}
 	for target, page := range targets {
 		if page == nil || page.Href == "" {

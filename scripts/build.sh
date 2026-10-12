@@ -4,7 +4,7 @@
 # machine without Go or the source tree.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY="${ROOT}/deploy"
 BIN="${DEPLOY}/bin"
 STD="${DEPLOY}/std"

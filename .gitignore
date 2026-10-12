@@ -1,4 +1,4 @@
-# Standalone deployment package, produced by ./build.sh
+# Standalone deployment package, produced by ./scripts/build.sh
 /deploy/
 
 # CMake build output

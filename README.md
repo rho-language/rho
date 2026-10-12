@@ -1,17 +1,22 @@
 # Rho
-Version: v0.1
 
-Rho is a small, experimental programming language. It is designed to compile
-down to portable C for host-side tooling and embedded development workflows.
+**Version 0.1.0** · [rho-lang.org](https://rho-lang.org)
 
-This repository contains the language compiler, runtime helpers, examples,
-and the minimal infrastructure needed to build and test host-side Rho code.
+Rho is a small systems programming language. It compiles to C and to Go: C for
+host tooling and embedded targets, Go for services that speak HTTP.
+
+This repository holds the compiler, the standard library, the toolchain's
+components and plugins, the official module registry, and these docs. The
+version lives in [`cmd/rho/VERSION`](cmd/rho/VERSION), beside the command it
+describes, so the number here, the number `rho --version` prints, and the number
+a released binary carries are one number rather than three that have to agree.
 
 ## Overview
 
 Rho currently focuses on a narrow, explicit subset of language features suited
 for early experimentation and simple toolchain integration. The compiler is
-written in Go and emits C for x86 host execution and embedded targets.
+written in Go and emits C and Go for host execution, embedded targets and HTTP
+services.
 
 ## Current Scope
 
@@ -225,9 +230,11 @@ A new port is a new generator, registered in `portGenerators`.
 | Application | Description |
 |-------------|-------------|
 | [`applications/registry`](applications/registry) | Remote module registry for Rho, written in Rho and compiled to a Go HTTP service |
+| [`applications/docsite`](applications/docsite) | Serves the Rho documentation as a site — an index, a menu, the pages, and the release notes |
 
 The registry speaks the endpoints the Rho module client already uses, so
-`rho module publish`, `download` and `search` work against it. See its
+`rho module publish`, `download` and `search` work against it. Rho's official
+registry runs this application at **https://registry.rho-lang.org**. See its
 [README](applications/registry/README.md) for the endpoints and configuration,
 and [docs/deployment.md](applications/registry/docs/deployment.md) for the
 deployment options.
@@ -459,11 +466,13 @@ rho module list [query]   # alias for search
 - `rho module unpublish` fails if trying to unpublish an active version that has other versions available (must switch active version first)
 - If unpublishing the only version (even if active), it succeeds and clears from active list
 
-**Remote Registry (Future):**
-- Registry configuration stored in `~/.rho/config/registry.yaml`
-- When a remote registry URL and auth token are configured, `rho module publish` uploads to remote
-- `rho module download` fetches modules from the remote registry
-- Remote results are shown with `[REMOTE]` marker in search results
+**Remote registry** — the official one is **https://registry.rho-lang.org**:
+
+- `rho config set remote.url https://registry.rho-lang.org`
+- `rho auth login` obtains a token; publishing needs one, reading does not
+- `rho module publish` uploads; `rho module search`, `install` and `download` fetch
+- Remote results are reported apart from what is installed, so the two are never
+  confused
 
 The `rho module` commands are built into the main `rho` binary - no separate
 build step required.

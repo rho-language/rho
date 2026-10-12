@@ -1,0 +1,212 @@
+module docsite.web
+
+// Rendering for the landing page and the release notes.
+//
+// Documentation pages are served as the generator built them — their layout,
+// their menu and their links are the generator's, which is what makes the links
+// point where they should — so nothing here wraps a page. This is the site's own
+// front matter: a frame, a few cards into the documentation, and the releases.
+
+import std.web.http
+import std.web.template
+
+/* -------------------------------------------------------------------------- */
+/*  The frame                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// shell wraps a body in the shared frame: a header, the body, a footer.
+fn shell(req: Request, body: string, title: string, repository: string, version: string) string {
+    let open: string = template_fill(template_get("layout-open"), vars("title", title))
+    let close: string = template_fill(
+        template_get("layout-close"),
+        vars("repository", repository_line(repository)) +
+        vars("version", version) +
+        vars("year", int_to_str(clock_year()))
+    )
+    return open + "<main>" + body + "</main>" + close
+}
+
+// repository_line is the project the pages belong to, as a link for the footer,
+// or nothing. The label is the address without its scheme, which reads as a
+// repository rather than as a URL pasted into a page.
+fn repository_line(url: string) string {
+    if url == "" {
+        return ""
+    }
+    return "<a class=\"source\" href=\"" + escape_html(url) + "\">" + escape_html(repository_label(url)) + "</a>"
+}
+
+// repository_label is an address as a name, without its scheme.
+fn repository_label(url: string) string {
+    return str_trim_prefix(url, "https://")
+}
+
+// repository_block is the project's source, as a bit of meta for the index.
+fn repository_block(url: string) string {
+    if url == "" {
+        return ""
+    }
+    return "<span class=\"meta-item\"><a href=\"" + escape_html(url) + "\">" + escape_html(repository_label(url)) + "</a></span>"
+}
+
+// version_block is the project's version, as a bit of meta for the index.
+fn version_block(version: string) string {
+    if version == "" {
+        return ""
+    }
+    return "<span class=\"meta-item\">v" + escape_html(version) + "</span>"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The landing page                                                           */
+/* -------------------------------------------------------------------------- */
+
+// card renders one link as a card.
+fn card(href: string, title: string) string {
+    return template_fill(template_get("card"), vars("href", href) + vars("title", title))
+}
+
+// start_cards are the pages a first-time reader is most likely to want, in the
+// order a reader usually wants them: a way in, then the handbook, then the
+// reference. They are the generator's own addresses, so a card goes to the page
+// the generator wrote and not to a second copy of it.
+fn start_cards() string {
+    return card("/docs/documentation/getting-started.html", "Getting started") +
+        card("/docs/handbook/index.html", "The handbook") +
+        card("/docs/language/index.html", "The language") +
+        card("/docs/documentation/cli.html", "The rho command") +
+        card("/docs/documentation/components.html", "Components and plugins") +
+        card("/docs/api.html", "API reference")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Rows                                                                       */
+/* -------------------------------------------------------------------------- */
+
+// release_rows renders the first `limit` release notes, newest first as the
+// changelog lists them.
+fn release_rows(notes: string, limit: u32) string {
+    let out: string = ""
+    let count: u32 = 0
+    let rest: string = notes
+    while guard_of(count) < 4096 {
+        if count >= limit {
+            break
+        }
+        let line: string = first_line(rest)
+        if strlen(line) == 0 {
+            break
+        }
+        out = out + template_fill(template_get("release-row"),
+            vars("version", field_of(line, 0)) +
+            vars("date", field_of(line, 1)) +
+            vars("note", field_of(line, 2)))
+        count = count + 1
+        rest = after_first_line(rest)
+    }
+    if count == 0 {
+        return empty("This project has no release notes yet.")
+    }
+    return out
+}
+
+fn empty(message: string) string {
+    return template_fill(template_get("empty"), vars("message", message))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Line helpers                                                               */
+/* -------------------------------------------------------------------------- */
+
+// A listing is tab-separated lines, so a handler can read it without needing to
+// walk a nested document.
+
+fn first_line(text: string) string {
+    let stop: i32 = str_index_of(text, "\n")
+    if stop < 0 {
+        return text
+    }
+    return str_slice(text, 0, stop as u32)
+}
+
+fn after_first_line(text: string) string {
+    let stop: i32 = str_index_of(text, "\n")
+    if stop < 0 {
+        return ""
+    }
+    let start: u32 = (stop as u32) + 1
+    return str_slice(text, start, strlen(text))
+}
+
+fn field_of(line: string, wanted: u32) string {
+    let at: u32 = 0
+    let seen: u32 = 0
+    let length: u32 = strlen(line)
+    while at <= length {
+        if seen == wanted {
+            let stop: i32 = str_index_of(str_slice(line, at, length), "\t")
+            if stop < 0 {
+                return str_slice(line, at, length)
+            }
+            return str_slice(line, at, stop as u32)
+        }
+        if at < length && str_at(line, at) == 9 {
+            seen = seen + 1
+        }
+        at = at + 1
+    }
+    return ""
+}
+
+fn line_count(listing: string) u32 {
+    let count: u32 = 0
+    let rest: string = listing
+    while guard_of(count) < 4096 {
+        if strlen(first_line(rest)) == 0 {
+            break
+        }
+        count = count + 1
+        rest = after_first_line(rest)
+    }
+    return count
+}
+
+// guard_of keeps a walk bounded, so a malformed listing cannot spin forever.
+fn guard_of(count: u32) u32 {
+    return count
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Content types                                                              */
+/* -------------------------------------------------------------------------- */
+
+fn ends_with(text: string, suffix: string) bool {
+    let n: u32 = strlen(text)
+    let m: u32 = strlen(suffix)
+    if m > n {
+        return false
+    }
+    return str_slice(text, n - m, n) == suffix
+}
+
+// content_type_of is the media type of a page the site serves. A page is HTML
+// unless it is one of the few assets a site carries beside its pages; the
+// browser applies a stylesheet only when it is served as one.
+fn content_type_of(path: string) string {
+    if ends_with(path, ".css") {
+        return "text/css; charset=utf-8"
+    }
+    if ends_with(path, ".js") {
+        return "application/javascript"
+    }
+    if ends_with(path, ".svg") {
+        return "image/svg+xml"
+    }
+    if ends_with(path, ".png") {
+        return "image/png"
+    }
+    if ends_with(path, ".json") {
+        return "application/json"
+    }
+    return "text/html; charset=utf-8"
+}

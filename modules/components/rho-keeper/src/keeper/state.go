@@ -386,16 +386,45 @@ func describe(kind string, installed deps.InstalledModule, state *deps.Enabled) 
 // so the version a person sees beside the name is the version that is running.
 func readKeeper() Keeper {
 	out := Keeper{Name: "rho-keeper"}
-	root := moduleRoot()
-	if root == "" {
-		return out
+
+	// The manifest is beside the binary when it was built into its module and run
+	// from there — the way it is installed. A binary run from anywhere else (a
+	// build directory, a copied file) still knows its version through the
+	// installation, so the page reports what is installed rather than nothing;
+	// an empty version shows as "0.0.0", which is a version this has never been.
+	roots := []string{moduleRoot()}
+	if home := deps.RhoHome(); home != "" {
+		if versions := deps.InstalledVersions(deps.KindComponent, "rho-keeper"); len(versions) > 0 {
+			// The one in use is the version this run actually is; with none enabled
+			// the newest installed one stands in. InstalledVersions is newest
+			// first, so its head is that fallback.
+			chosen := versions[0]
+			if state, err := deps.LoadEnabled(); err == nil && state != nil {
+				for _, version := range versions {
+					if state.IsEnabled(deps.KindComponent, "rho-keeper", version) {
+						chosen = version
+						break
+					}
+				}
+			}
+			roots = append(roots,
+				filepath.Join(home, "modules", "installed", deps.KindComponent, "rho-keeper@"+chosen))
+		}
 	}
-	if manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml")); err == nil && manifest != nil {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
+		if err != nil || manifest == nil {
+			continue
+		}
 		out.Name = manifest.ModuleName
 		out.Version = manifest.Version
 		if manifest.Settings != nil && manifest.Settings.File != "" {
 			out.Config = filepath.Join(root, filepath.FromSlash(manifest.Settings.File))
 		}
+		return out
 	}
 	return out
 }

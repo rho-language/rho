@@ -1,0 +1,37 @@
+module docsite.storage
+
+// The documentation store for the handbook service.
+//
+// Rho has no file I/O, so reading the documentation tree, rendering a page with
+// the documentation generator and reading the release notes sit behind this
+// port. The externs are declared here and the docstore port supplies the
+// implementation for the Go target — the same split the registry's storage uses.
+
+// The documentation tree, as tab-separated lines: path, title, section.
+//
+// The path is relative to the tree's root and is what a link is built from; the
+// section is the first path segment, which is how the documentation is laid out.
+extern fn docs_list(dir: string) string
+
+// One page of the built site, as HTML, or "" when there is none at that path.
+//
+// The site is built from the tree and served from it: a page's links to other
+// pages are resolved by the build, so a page served from here has the links a
+// build would give it. The path is a URL path, confined to the built site.
+extern fn docs_render(path: string) string
+
+// The site's own index, for the one address that needs a base of its own:
+// /docs without the trailing slash.
+extern fn docs_root_page() string
+
+// The project's release notes, as tab-separated lines: version, date, note.
+extern fn docs_releases(path: string) string
+
+// What the site calls itself, where the pages are, which release notes to read,
+// and the project the pages belong to. Each has a default, so a deployment that
+// sets none still serves.
+extern fn site_title() string
+extern fn site_docs_dir() string
+extern fn site_releases_path() string
+extern fn site_repository() string
+extern fn site_version() string

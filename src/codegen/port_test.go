@@ -25,13 +25,32 @@ import (
 // The ports a descriptor may name have to exist, so a manifest cannot ask for
 // something the backend would not generate.
 func TestBuiltInPortsAreRegistered(t *testing.T) {
-	for _, name := range []string{"docemit", "fsstore", "logemit"} {
+	for _, name := range []string{"docemit", "docstore", "fsstore", "logemit"} {
 		if !HasPort(name) {
 			t.Errorf("expected %q to be a built-in port", name)
 		}
 	}
 	if got := RegisteredPorts(); len(got) < 2 {
 		t.Errorf("expected the built-in ports to be listed, got %v", got)
+	}
+}
+
+// The documentation-store port supplies the store the handbook declares: the
+// tree walk, the renderer, the release notes, and what the site is called.
+func TestDocstorePortSuppliesTheStore(t *testing.T) {
+	imports, body := emitDocStorePort(PortContext{IR: ir.ModuleIR{Name: "handbook"}})
+	out := strings.Join(imports, " ") + "\n" + body
+	for _, want := range []string{
+		"func docsList(dir string) string",
+		"func docsRender(path string) string",
+		"func docsRootPage() string",
+		"func docsReleases(path string) string",
+		"func siteTitle() string",
+		"func siteDocsDir() string",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in the docstore port, got:\n%s", want, out)
+		}
 	}
 }
 

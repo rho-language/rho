@@ -74,7 +74,7 @@ that says so:
 | `std/` | The standard library, as Rho sources |
 | `modules/components/` | Components: tools that publish a command, such as the formatter, the test runner and the language server |
 | `modules/plugins/` | Plugins: modules that extend a tool rather than adding a command |
-| `applications/` | Applications written in Rho, such as the module registry |
+| `applications/` | Applications written in Rho: the module registry and the documentation site |
 | `cmd/` | The Rho CLI and the tools that are part of the core toolchain |
 | `editors/` | The editor extension and the language server's client |
 | `docs/` | These pages |

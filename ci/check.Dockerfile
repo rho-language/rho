@@ -15,7 +15,7 @@
 #   docker build -f ci/check.Dockerfile -t rho-check .
 #   docker run --rm rho-check
 #
-# Deliberately the same entry point as the workflow: both run ./check.sh. There is
+# Deliberately the same entry point as the workflow: both run ./scripts/check.sh. There is
 # one definition of what a check does, and this is a second way of running it
 # rather than a second thing to keep in step.
 FROM golang:1.23-bookworm
@@ -31,10 +31,10 @@ WORKDIR /src
 COPY . .
 
 # Nothing about the toolchain is set up here on purpose. No PATH entry, no tool
-# home, no registry: check.sh has to produce all of it, and anything set up now is
+# home, no registry: scripts/check.sh has to produce all of it, and anything set up now is
 # something the check would no longer be proving.
 
-RUN ./check.sh
+RUN ./scripts/check.sh
 
 # The report of what it did, so a failure here says which module failed rather
 # than only that the last line was not "Done".
