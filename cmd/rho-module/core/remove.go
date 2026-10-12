@@ -58,9 +58,11 @@ func RemoveDependency(dir, spec string) error {
 		return fmt.Errorf("cannot remove dependency directory: %w", err)
 	}
 
-	// Step 4: Update lockfile
+	// Step 4: Update lockfile, keeping the digests of what remains
+	hashes := LoadLockfileHashes(dir)
+	delete(hashes, name)
 	delete(lock, name)
-	if err := writeLockfile(dir, lock); err != nil {
+	if err := writeLockfile(dir, lock, hashes); err != nil {
 		return fmt.Errorf("cannot update rho.lock: %w", err)
 	}
 

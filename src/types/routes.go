@@ -222,6 +222,17 @@ var protocolFuncs = map[string]functionType{
 	"auth_open_tokens": {
 		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
 	},
+	"auth_bootstrap": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
+	"auth_allowed": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
+	"auth_list_configured": {
+		result: ir.Type{Kind: ir.TypeBool, Name: "bool"},
+	},
 	"auth_issue": {
 		params: []ir.Type{
 			{Kind: ir.TypeString, Name: "string"},

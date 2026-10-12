@@ -248,7 +248,9 @@ func emitFSStorePort(ctx PortContext) ([]string, string) {
 		`"archive/tar"`,
 		`"bytes"`,
 		`"compress/gzip"`,
+		`"crypto/sha256"`,
 		`"database/sql"`,
+		`"encoding/hex"`,
 		`"io"`,
 		`jsonenc "encoding/json"`,
 		`"fmt"`,
@@ -297,8 +299,12 @@ type moduleMeta struct {
 	Ownership  string ` + "`json:\"owner,omitempty\"`" + `
 	Visibility string ` + "`json:\"visibility,omitempty\"`" + `
 	Mine       bool   ` + "`json:\"mine,omitempty\"`" + `
-	Features   []string          ` + "`json:\"features\"`" + `
-	Deps       map[string]string ` + "`json:\"deps\"`" + `
+	// SHA256 is the package's digest, computed when it is published and stored
+	// with it. A client checks what it downloaded against this, so a package
+	// altered where it is kept is refused rather than installed.
+	SHA256   string            ` + "`json:\"sha256,omitempty\"`" + `
+	Features []string          ` + "`json:\"features\"`" + `
+	Deps     map[string]string ` + "`json:\"deps\"`" + `
 }
 
 // modulePublisher is who holds a module in this registry, and who may see it.
@@ -473,7 +479,7 @@ var registrySettings = []struct {
 	{"registry_url", "/", "the address this service is published under, used by generated documentation"},
 	{"token_days", "30", "how long an issued token lasts"},
 	{"token_max_days", "90", "the longest a token may ever last"},
-	{"open_tokens", "true", "whether a token can be issued without holding one"},
+	{"open_tokens", "false", "whether a token can be issued without holding one"},
 	{"max_upload_mb", "256", "the largest package accepted, in megabytes"},
 }
 
@@ -524,10 +530,11 @@ func registryTokenMaxDays() uint32 {
 
 
 
-// OpenTokens reports whether a token can be issued without holding one.
+// OpenTokens reports whether a token can be issued without holding one. Closed
+// unless the deployment says otherwise.
 func OpenTokens() bool {
-	value := strings.ToLower(configGet("open_tokens", "true"))
-	return value != "false" && value != "no" && value != "0"
+	value := strings.ToLower(configGet("open_tokens", "false"))
+	return value == "true" || value == "yes" || value == "1"
 }
 
 // configUint reads a numeric setting, falling back when it is unusable.
@@ -834,6 +841,22 @@ func (s *fsStore) versions(name string) []string {
 	out := registryVersions(db, name)
 	sort.Slice(out, func(i, j int) bool { return compareVersions(out[i], out[j]) < 0 })
 	return out
+}
+
+// meta returns one version's stored metadata, or false when it is not held.
+//
+// It is what a client checks a download against: the digest was computed at
+// publish and kept with the version, so reading it back is reading what the
+// publisher's bytes hashed to rather than hashing what is being served now.
+func (s *fsStore) meta(name, version string) (moduleMeta, bool) {
+	if safeSegment(name) != nil || safeSegment(version) != nil {
+		return moduleMeta{}, false
+	}
+	db, err := openRegistryDB()
+	if err != nil {
+		return moduleMeta{}, false
+	}
+	return registryMeta(db, name, version)
 }
 
 // writeIndex rewrites a module's index entry from what is on disk.
@@ -1204,6 +1227,11 @@ func storePut(name, version, owner string, payload string, metaJSON string) uint
 	if meta.Deps == nil {
 		meta.Deps = map[string]string{}
 	}
+	// The digest is computed here, from the bytes as received, and stored with
+	// the version. Whoever installs it later checks what they were served
+	// against it, which is what makes an altered package detectable.
+	digest := sha256.Sum256([]byte(payload))
+	meta.SHA256 = hex.EncodeToString(digest[:])
 	if _, err := newFSStore().put(name, version, owner, []byte(payload), meta); err != nil {
 		return 1
 	}
@@ -1282,16 +1310,28 @@ func storeSearch(query, viewer string, mineOnly bool) string {
 	return string(encoded)
 }
 
-// storeVersions returns a JSON document listing a module's versions.
+// storeVersions returns a JSON document listing a module's versions, each with
+// the digest its package hashed to when it was published.
+//
+// A client reads the digest here and checks what it downloaded against it: the
+// digest was computed from the bytes the publisher uploaded, so a package that
+// was altered where it is stored no longer agrees with it.
 func storeVersions(name string) string {
 	s := newFSStore()
 	versions := s.versions(name)
 	if versions == nil {
 		versions = []string{}
 	}
+	hashes := map[string]string{}
+	for _, version := range versions {
+		if meta, ok := s.meta(name, version); ok && meta.SHA256 != "" {
+			hashes[version] = meta.SHA256
+		}
+	}
 	encoded, err := jsonenc.Marshal(map[string]any{
 		"name":     name,
 		"versions": versions,
+		"sha256":   hashes,
 	})
 	if err != nil {
 		return fmt.Sprintf("{\"name\":%q,\"versions\":[]}", name)

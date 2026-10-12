@@ -157,6 +157,64 @@ func withLogging(next http.Handler) http.Handler {
 	})
 }
 
+// withSameSite refuses a request that would change something unless it came from
+// a page of this service.
+//
+// A browser will send a form post, or load an image, from any page it is showing
+// to any address it can reach — this machine's included. A service that changes
+// something on a POST without looking at where the request came from can be made
+// to change it by a page a person happens to be reading. The browser labels such
+// a request with Origin and Sec-Fetch-Site; one that says it came from
+// elsewhere, and that would change something, is refused. A command-line client
+// sends neither label, and is allowed, because it is a person's own tool.
+func withSameSite(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requestMutates(r) && !sameSite(r) {
+			http.Error(w, "this request did not come from this service", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestMutates reports whether a request changes something. A GET that carries
+// a confirm parameter does, which is how an action is asked to run rather than
+// described.
+func requestMutates(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return r.URL.Query().Has("confirm")
+	default:
+		return true
+	}
+}
+
+// sameSite reports whether a request came from a page of this service.
+func sameSite(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	// A sandboxed frame or a data: page sends the literal null.
+	if origin == "null" {
+		return false
+	}
+	// Reduce the origin to its host: scheme://host[:port] -> host[:port].
+	host := origin
+	if index := strings.Index(host, "://"); index >= 0 {
+		host = host[index+3:]
+	}
+	if index := strings.IndexByte(host, '/'); index >= 0 {
+		host = host[:index]
+	}
+	return host == r.Host
+}
+
 `)
 
 	// The banner sits above the package clause, so it is written first and the
@@ -192,7 +250,7 @@ func goServerLifecycle(cfg ServerConfig) string {
 		b.WriteString("\thandler, err := newRouter()\n\tif err != nil {\n\t\treturn err\n\t}\n\n")
 		b.WriteString("\tserver := &http.Server{\n")
 		b.WriteString("\t\tAddr:              addr,\n")
-		b.WriteString("\t\tHandler:           withLogging(handler),\n")
+		b.WriteString("\t\tHandler:           withLogging(withSameSite(handler)),\n")
 		b.WriteString("\t\tReadHeaderTimeout: 10 * time.Second,\n")
 		b.WriteString("\t}\n\n")
 	} else {
@@ -202,7 +260,7 @@ func goServerLifecycle(cfg ServerConfig) string {
 		b.WriteString("\tmux.HandleFunc(\"/\", router.serve)\n\n")
 		b.WriteString("\tserver := &http.Server{\n")
 		b.WriteString("\t\tAddr:              addr,\n")
-		b.WriteString("\t\tHandler:           withLogging(mux),\n")
+		b.WriteString("\t\tHandler:           withLogging(withSameSite(mux)),\n")
 		b.WriteString("\t\tReadHeaderTimeout: 10 * time.Second,\n")
 		b.WriteString("\t}\n\n")
 	}

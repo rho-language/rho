@@ -33,6 +33,7 @@ package gtest
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -253,13 +254,20 @@ const googletestRepository = "https://github.com/google/googletest"
 // side effects — a `--list` should not fetch anything — and because a fetch is
 // exactly the kind of thing that belongs in the run, where its output is reported.
 func fetchStep(root, framework string) Step {
+	// Already there: a step that runs nothing, so the framework is fetched once
+	// and a second run is not a second clone.
+	if info, err := os.Stat(framework); err == nil && info.IsDir() {
+		return Step{Name: "GoogleTest is present"}
+	}
+	// `git` is run directly, not through a shell. A shell here was a shell
+	// around a path the project chose, and a path with a quote in it was a path
+	// that ran something else.
 	return Step{
 		Name: "fetch GoogleTest",
 		Dir:  root,
 		Command: []string{
-			"sh", "-c",
-			fmt.Sprintf("test -d '%s' || git clone --depth 1 --quiet %s '%s'",
-				framework, googletestRepository, framework),
+			"git", "clone", "--depth", "1", "--quiet",
+			"--", googletestRepository, framework,
 		},
 	}
 }
