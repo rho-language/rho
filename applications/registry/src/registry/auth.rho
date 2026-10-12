@@ -3,9 +3,11 @@ module registry.auth
 
 // Token issuance and checking for the registry.
 //
-// Reading is public, so anyone can browse the index, search, and pull a
-// published package. Publishing is not: it needs a token, obtained by logging
-// in with `rho auth login`.
+// Reading is public: the index, search, a module's versions, its documentation
+// and its download need no credential. Publishing always needs a token, obtained
+// by logging in with `rho auth login`, because the registry records who owns a
+// module from the identity the token names. On a `secured` registry the identity
+// must also be allowlisted.
 //
 // A token is minted here rather than by the client, so the signing secret
 // never leaves this service.
@@ -108,4 +110,22 @@ fn parse_days(value: string) u32 {
         return 0
     }
     return int_from_str(value)
+}
+
+// publish_allowed reports whether an identity may publish.
+//
+// Publishing always needs a token, because the registry records who owns a
+// module from the identity the token names. `access = secured` adds a second
+// condition: the identity must be named in the allowlist, so a deployment
+// decides who may publish rather than every holder of a token it issued. A
+// secured registry with no allowlist therefore publishes nothing, which is the
+// safe reading of "only allowed users".
+//
+// Reading is never governed by this: docs, search, a version list and a download
+// stay public whatever `access` says.
+fn publish_allowed(identity: string) bool {
+    if is_secured() {
+        return auth_allowed(identity)
+    }
+    return !auth_list_configured() || auth_allowed(identity)
 }

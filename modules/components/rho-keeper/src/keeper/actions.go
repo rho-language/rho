@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"strings"
 
+	"rho/cmd/rho-module/core"
 	"rho/src/deps"
 	"rho/src/scaffold"
 )
@@ -107,6 +108,52 @@ func Disable(name string) Action {
 		OK:      true,
 		Command: command,
 		Message: fmt.Sprintf("%s %s stays installed and is not used until it is turned on again", kind, name),
+	}
+}
+
+// Uninstall removes an installed module version from this machine.
+//
+// It is refused while the version is in use: enabling is the decision to run a
+// module, and pulling the thing a run resolves to out from under it is not a
+// change anyone asked for. Turning it off first is one click, and the refusal
+// says so.
+//
+// The version the index selects is refused by the toolchain for the same reason,
+// so the selection is stepped off first — that is part of uninstalling rather
+// than a separate decision a page should make. What is removed is this machine's
+// copy only; a registry is unchanged, which is why the module is offered again
+// under the registry as soon as it is gone.
+func Uninstall(name, version string) Action {
+	name = strings.TrimSpace(name)
+	kind := kindOf(name)
+	if kind == "" {
+		return Action{Command: command("module uninstall", name), Error: fmt.Sprintf("%s is not installed, so there is nothing to remove", name)}
+	}
+	if strings.TrimSpace(version) == "" {
+		version = deps.InstalledVersions(kind, name)[0]
+	}
+	commandLine := command("module uninstall", name+"@"+version)
+
+	if state, err := deps.LoadEnabled(); err == nil && state != nil {
+		if state.IsEnabled(kind, name, version) {
+			return Action{
+				Command: commandLine,
+				Error: fmt.Sprintf("%s %s@%s is in use; turn it off first, then uninstall",
+					kind, name, version),
+			}
+		}
+	}
+
+	// `rho module uninstall` refuses the version the index selects; stepping off
+	// it first is what that refusal asks for.
+	_ = core.Deactivate(name, version)
+	if err := core.UninstallLocal(name, version); err != nil {
+		return Action{Command: commandLine, Error: err.Error()}
+	}
+	return Action{
+		OK:      true,
+		Command: commandLine,
+		Message: fmt.Sprintf("%s %s@%s was removed from the local registry", kind, name, version),
 	}
 }
 

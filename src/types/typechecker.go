@@ -960,6 +960,7 @@ func baseTypeName(name string) string {
 	}
 	return name
 }
+
 // isArrayType reports whether a type is an array: a slice, or a fixed length.
 // nameArrayDims reads the dimensions a written type name carries, as in
 // `u32[2][2]`: the base, the dimensions in written order, and whether there were
@@ -1804,8 +1805,8 @@ func (tc *TypeChecker) lowerMatch(stmt ast.MatchStmt, scope map[string]ir.Type) 
 			continue
 		}
 		// `==` is lowered the way a comparison written by hand is, so a string
-			// pattern compares with the runtime's string equality rather than a
-			// pointer comparison.
+		// pattern compares with the runtime's string equality rather than a
+		// pointer comparison.
 		condition := tc.lowerExpr(ast.BinaryExpr{
 			Op:    "==",
 			Left:  ast.IdentifierExpr{Name: valueName},
@@ -2563,10 +2564,10 @@ func init() {
 		"auth_required", "auth_open_tokens", "auth_bootstrap", "auth_allowed", "auth_list_configured",
 		"auth_issue", "int_from_str", "emit",
 		"len", "read_file", "write_file", "get_args", "append",
-		"store_list", "store_meta", "store_detail", "store_latest", "store_data_dir",
+		"store_list", "store_meta", "store_detail", "store_latest", "store_data_dir", "store_release",
 		"registry_data_dir", "registry_access", "config_get", "clock_year",
 		"registry_title", "registry_version", "registry_site_url", "registry_url", "registry_token_days",
-		"registry_token_max_days", "registry_open_tokens", "registry_max_upload_mb", "escape_html",
+		"registry_token_max_days", "registry_open_tokens", "registry_max_upload_mb", "escape_html", "json_string",
 	} {
 		isExternalBuiltinNames[name] = true
 	}

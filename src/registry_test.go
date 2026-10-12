@@ -365,7 +365,7 @@ func TestRegistrySearchResponseShape(t *testing.T) {
 /* -------------------------------------------------------------------------- */
 
 func TestRegistryRequiresTokenToPublish(t *testing.T) {
-	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
+	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = public\n")
 	issued := server.mintToken(t, "miraur")
 
 	status, body := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), "")
@@ -382,11 +382,11 @@ func TestRegistryRequiresTokenToPublish(t *testing.T) {
 	}
 }
 
-// Reading does not require a token, so a client can install without credentials.
-func TestRegistryReadsWithoutToken(t *testing.T) {
-	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
-	issued := server.mintToken(t, "miraur")
-	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), issued); status != 201 {
+// Reading on a registry needs no token, so a client installs without
+// credentials; `access` governs publishing, not reading.
+func TestRegistryPublicReadsWithoutToken(t *testing.T) {
+	server := startRegistry(t, "")
+	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), server.credential); status != 201 {
 		t.Fatalf("seed publish failed")
 	}
 	if status, _ := server.request(t, "GET", "/modules/math/1.0.0/rho-pkg", nil, ""); status != 200 {
@@ -522,9 +522,9 @@ func TestRegistryHealth(t *testing.T) {
 // credential, because a module published without one belongs to nobody and is
 // then a module nobody can add a version to or withdraw.
 //
-// The two halves are separate on purpose: `access` decides who may *read*,
-// and a credential decides who may *write*. A public registry is a registry
-// anyone can install from; it is not a registry anyone can fill.
+// The two halves are separate on purpose: `access` decides who may *publish*,
+// and reading needs no credential at all. A registry is a registry anyone can
+// install from; it is not one anyone can fill.
 func TestRegistryPublicAccessAllowsReadingAndPublishingWithACredential(t *testing.T) {
 	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = public\n")
 	issued := server.mintToken(t, "miraur")
@@ -914,16 +914,52 @@ func TestRegistryAPIIsJSON(t *testing.T) {
 	}
 }
 
-// Searching is public and needs no credential, whatever the access mode.
-func TestRegistrySearchStaysPublic(t *testing.T) {
-	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
-	seedRegistry(t, server)
-
-	if status, body := getPage(t, server.base, "/api/search?q=math"); status != 200 {
-		t.Errorf("search should stay public, got %d %q", status, body)
+// A public registry (`access = public`, the default) serves reads to anyone:
+// search, a download, and a module's documentation need no credential.
+//
+// This is a separate test from the secured one because the harness gives each
+// registry a fixed loopback port, so a test may only run one at a time.
+func TestRegistryPublicServesReadsToAnyone(t *testing.T) {
+	public := startRegistry(t, "")
+	seedRegistry(t, public)
+	if status, body := getPage(t, public.base, "/api/search?q=math"); status != 200 {
+		t.Errorf("a public registry should serve search, got %d %q", status, body)
 	}
-	if status, _ := getPage(t, server.base, "/modules/math/0.1.0/rho-pkg"); status != 200 {
-		t.Errorf("downloads should stay public, got %d", status)
+	if status, _ := getPage(t, public.base, "/modules/math/0.1.0/rho-pkg"); status != 200 {
+		t.Errorf("a public registry should serve a download, got %d", status)
+	}
+}
+
+// A secured registry (`access = secured`) keeps reads public and restricts who
+// may publish: an identity the administrator minted a token for still cannot
+// publish unless the allowlist names it.
+//
+// It is a separate test from the public one because the harness gives each
+// registry a fixed loopback port, so a test may only run one at a time.
+func TestRegistrySecuredRestrictsPublishingNotReading(t *testing.T) {
+	// The identities the harness publishes with are named, so seeding works; a
+	// stranger is deliberately not.
+	t.Setenv("RHO_REGISTRY_ALLOWED_USERS", "harness,seed")
+	secured := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = secured\n")
+	seedRegistry(t, secured)
+
+	// Reading is public on a secured registry.
+	if status, body := getPage(t, secured.base, "/api/search?q=math"); status != 200 {
+		t.Errorf("search should stay public on a secured registry, got %d %q", status, body)
+	}
+	if status, _ := getPage(t, secured.base, "/modules/math/0.1.0/rho-pkg"); status != 200 {
+		t.Errorf("a download should stay public on a secured registry, got %d", status)
+	}
+	if status, _ := getPage(t, secured.base, "/modules/math/0.1.0/docs/"); status == 401 {
+		t.Errorf("a documentation page should not require a token on a secured registry")
+	}
+
+	// A token holder the allowlist does not name may not publish. The token is
+	// minted with the administrator secret, so this tests the publish policy and
+	// not whether a token could be obtained.
+	stranger := secured.mintToken(t, "stranger")
+	if status, body := secured.publishModule(t, "other", "1.0.0", "module", "X", []byte("x"), stranger); status != 403 {
+		t.Errorf("a publisher outside the allowlist: got %d %s, want 403", status, body)
 	}
 }
 
@@ -1087,5 +1123,22 @@ func TestRegistryRecordsThePackageDigest(t *testing.T) {
 	want := hex.EncodeToString(sum[:])
 	if document.SHA256["1.0.0"] != want {
 		t.Errorf("recorded digest = %q, want %q", document.SHA256["1.0.0"], want)
+	}
+}
+
+// A page path that tries to leave the documentation is refused. The router
+// normalizes a literal "../" but not a percent-encoded one, so a request can
+// arrive with ".." in the page name — and the store, not the router, is what
+// must confine it.
+func TestRegistryRefusesAnEncodedDocsTraversal(t *testing.T) {
+	server := startRegistry(t, "")
+	seedRegistry(t, server)
+	status, body := getPage(t, server.base,
+		"/modules/math/0.1.0/docs/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd")
+	if status != 404 {
+		t.Errorf("a traversal page should not be served, got %d %q", status, body)
+	}
+	if strings.Contains(body, "root:") {
+		t.Fatalf("the docs route served a file outside the documentation")
 	}
 }

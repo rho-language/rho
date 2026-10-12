@@ -52,6 +52,7 @@ package:
   include:
     - module.yml
     - README.md
+    - CHANGELOG.md
     - docs
     - src
   require:

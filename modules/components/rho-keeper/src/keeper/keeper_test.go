@@ -948,3 +948,153 @@ func TestTokenIsRequiredWhenSet(t *testing.T) {
 		t.Errorf("a wrong token should be refused, got %d", got)
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  The remote registry                                                         */
+/* -------------------------------------------------------------------------- */
+
+// registryConfig points this Rho home at a registry URL. An empty URL is a
+// machine with the config in place and no registry in it.
+func registryConfig(t *testing.T, url string) {
+	t.Helper()
+	dir := filepath.Join(deps.RhoHome(), "config")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "remote:\n  url: " + url + "\n  token:\n"
+	if err := os.WriteFile(filepath.Join(dir, "registry.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// registryServer answers every request with the modules it was given, which is
+// what the remote registry's search endpoint returns.
+func registryServer(t *testing.T, modules []map[string]any) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(modules)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// The page shows what the registry offers and which of it is already here, so a
+// person can see the one thing that is worth acting on: a module they do not have.
+func TestReadRegistryListsWhatIsOfferedAndWhatIsHeld(t *testing.T) {
+	t.Setenv("RHO_HOME", t.TempDir())
+	installed(t, deps.KindComponent, "rho-monitor", "0.1.0", "component", "A monitor")
+
+	server := registryServer(t, []map[string]any{
+		{"name": "rho-monitor", "version": "0.1.0", "type": "component", "description": "A monitor", "author": "Aurel"},
+		{"name": "rho-extra", "version": "0.2.0", "type": "plugin", "description": "Not held here"},
+		// A second release of the same module: one module, so one row, showing
+		// the newest version rather than one row per release.
+		{"name": "rho-extra", "version": "0.3.0", "type": "plugin", "description": "Not held here"},
+	})
+	registryConfig(t, server.URL)
+
+	registry := ReadRegistry()
+	if registry.Error != "" {
+		t.Fatalf("reading the registry failed: %s", registry.Error)
+	}
+	if !registry.Configured {
+		t.Fatal("a registry was configured and was read as unconfigured")
+	}
+	if registry.URL != server.URL {
+		t.Errorf("url = %q, want %q", registry.URL, server.URL)
+	}
+	if len(registry.Modules) != 2 {
+		t.Fatalf("read %d modules, want 2: one row per module, not per version", len(registry.Modules))
+	}
+	if registry.Available != 1 {
+		t.Errorf("available = %d, want 1: only rho-extra is not held", registry.Available)
+	}
+	if held := registry.Modules[0]; !held.Installed || held.Name != "rho-monitor" {
+		t.Errorf("rho-monitor is installed here and was read as %+v", held)
+	}
+	absent := registry.Modules[1]
+	if absent.Installed {
+		t.Errorf("rho-extra is not installed and was read as installed")
+	}
+	if absent.Version != "0.3.0" {
+		t.Errorf("rho-extra shows %s; the newest release is 0.3.0", absent.Version)
+	}
+}
+
+// A machine with no registry configured is not a failure: the page says so.
+func TestReadRegistrySaysWhenNoneIsConfigured(t *testing.T) {
+	t.Setenv("RHO_HOME", t.TempDir())
+	registryConfig(t, "")
+
+	registry := ReadRegistry()
+	if registry.Configured {
+		t.Errorf("a registry with no url was read as configured: %+v", registry)
+	}
+	if registry.Available != 0 || len(registry.Modules) != 0 {
+		t.Errorf("an unconfigured registry should offer nothing: %+v", registry)
+	}
+}
+
+// Installing runs the toolchain, because the answer a page shows is meant to be
+// a command a person can repeat in a terminal.
+func TestInstallModuleRunsTheToolchain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RHO_HOME", home)
+
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(home, "invoked")
+	script := "#!/bin/sh\nprintf '%s' \"$*\" > \"" + log + "\"\necho 'Installed rho-monitor@0.1.0 from the registry'\n"
+	if err := os.WriteFile(filepath.Join(bin, "rho"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	action := InstallModule("rho-monitor", "0.1.0")
+	if !action.OK {
+		t.Fatalf("install reported failure: %+v", action)
+	}
+	if action.Command != "rho module install rho-monitor@0.1.0" {
+		t.Errorf("command = %q", action.Command)
+	}
+	got, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != "module install rho-monitor@0.1.0" {
+		t.Errorf("the toolchain was run with %q, want %q", got, "module install rho-monitor@0.1.0")
+	}
+}
+
+// Removing a copy is refused while the module is in use: a run resolves to that
+// version, and pulling it out from under a run is not a change anyone asked for.
+func TestUninstallIsRefusedWhileTheModuleIsInUse(t *testing.T) {
+	t.Setenv("RHO_HOME", t.TempDir())
+	installed(t, deps.KindComponent, "rho-monitor", "0.1.0", "component", "A monitor")
+	if err := deps.SetVersionEnabled(deps.KindComponent, "rho-monitor", "0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	action := Uninstall("rho-monitor", "0.1.0")
+	if action.OK {
+		t.Fatal("an enabled module was uninstalled")
+	}
+	if !strings.Contains(action.Error, "in use") {
+		t.Errorf("the refusal should say the module is in use, got %q", action.Error)
+	}
+}
+
+// Removing something that is not here is answered as such rather than as though
+// it had been removed.
+func TestUninstallSaysWhenThereIsNothingToRemove(t *testing.T) {
+	t.Setenv("RHO_HOME", t.TempDir())
+	action := Uninstall("rho-absent", "0.1.0")
+	if action.OK {
+		t.Fatal("a module that is not installed was reported uninstalled")
+	}
+	if !strings.Contains(action.Error, "not installed") {
+		t.Errorf("the answer should say nothing is installed, got %q", action.Error)
+	}
+}

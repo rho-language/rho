@@ -78,7 +78,7 @@ fn publish_module(req: Request) Response {
     // since the administrator is who decided. The check is here as well as at
     // issuance so that removing someone from the list takes publishing away
     // from a token they already hold.
-    if auth_list_configured() && !auth_allowed(owner) {
+    if !publish_allowed(owner) {
         warn("registry", "publish refused, " + owner + " is not allowed to publish")
         return error_json(status_forbidden(), "that identity is not allowed to publish on this registry")
     }
@@ -129,7 +129,9 @@ fn publish_module(req: Request) Response {
         request_query_param(req, "main"),
         request_query_param(req, "command"),
         author, request_query_param(req, "maintainer"),
-        owner, visibility
+        owner, visibility,
+        request_query_param(req, "release"),
+        request_query_param(req, "released")
     )
     if store_put(name, version, owner, payload, meta) != 0 {
         // The store refuses a module that is held by another identity, and a
@@ -148,13 +150,6 @@ fn publish_module(req: Request) Response {
     return published_json(name, version)
 }
 
-// docs_page serves one page of a published version's documentation.
-//
-// The path is a remainder rather than one segment, because a documentation site
-// is a directory of pages: the index, a page per module and a stylesheet. The
-// store reads the page, so a path that climbs out of the documentation
-// directory is refused by the same check that refuses a name that climbs out of
-// the data directory.
 // unpublish_module withdraws a published version.
 //
 // Only the identity that published the module may withdraw it, and that identity
@@ -168,7 +163,7 @@ fn unpublish_module(req: Request) Response {
         return error_json(status_unauthorized(), "a token is required to unpublish")
     }
     let identity: string = auth_subject(request_auth(req))
-    if auth_list_configured() && !auth_allowed(identity) {
+    if !publish_allowed(identity) {
         return error_json(status_forbidden(), "that identity is not allowed on this registry")
     }
 
@@ -208,7 +203,7 @@ fn set_visibility(req: Request) Response {
         return error_json(status_unauthorized(), "a token is required to change visibility")
     }
     let identity: string = auth_subject(request_auth(req))
-    if auth_list_configured() && !auth_allowed(identity) {
+    if !publish_allowed(identity) {
         return error_json(status_forbidden(), "that identity is not allowed on this registry")
     }
 
@@ -249,6 +244,13 @@ fn owner_of(name: string, identity: string) bool {
     return publisher_may_unpublish(held, identity)
 }
 
+// docs_page serves one page of a published version's documentation.
+//
+// The path is a remainder rather than one segment, because a documentation site
+// is a directory of pages: the index, a page per module and a stylesheet. The
+// store reads the page, so a path that climbs out of the documentation
+// directory is refused by the same check that refuses a name that climbs out of
+// the data directory.
 fn docs_page(req: Request) Response {
     return doc_page(param(req, "name"), param(req, "version"), param(req, "path"))
 }
