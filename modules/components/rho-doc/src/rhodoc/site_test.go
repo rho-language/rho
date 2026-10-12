@@ -199,7 +199,7 @@ func TestBuildSiteResolvesACrossReference(t *testing.T) {
 	if page == nil {
 		t.Fatal("expected the index page")
 	}
-	if !strings.Contains(page.Body, "href=\"app/guide.html\"") {
+	if !strings.Contains(page.Body, "href=\"../app/guide.html\"") {
 		t.Fatalf("expected the reference resolved to the page, got:\n%s", page.Body)
 	}
 	if len(site.Requests) != 0 {
@@ -451,7 +451,7 @@ func TestBuildSiteResolvesAHeadingLabel(t *testing.T) {
 	if index == nil {
 		t.Fatal("expected the index page")
 	}
-	if !strings.Contains(index.Body, "href=\"app/guide.html#declaring-it\"") {
+	if !strings.Contains(index.Body, "href=\"../app/guide.html#declaring-it\"") {
 		t.Fatalf("expected the label to resolve to the section, got:\n%s", index.Body)
 	}
 	if len(site.Requests) != 0 {

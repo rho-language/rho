@@ -11,7 +11,7 @@ which is true of the environment and says nothing about the code.
 ```sh
 # The whole procedure, in the order it has to happen. This is what CI runs and
 # what a new machine runs: build, publish, install, test.
-./check.sh
+./scripts/check.sh
 
 # Or one module at a time, once the toolchain is installed
 cd modules/components/rho-doc && go test ./...
@@ -24,7 +24,7 @@ go build -o ./bin/rho ./cmd/rho
 ./bin/rho install --update     # refresh; --force empties the registry first
 ```
 
-`check.sh` publishes every module the tree carries, at the version its own
+`scripts/check.sh` publishes every module the tree carries, at the version its own
 manifest declares, so there is no list of versions to keep and nothing to replace
 by hand.
 

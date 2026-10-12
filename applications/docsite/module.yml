@@ -1,0 +1,32 @@
+module:
+  name: docsite
+  type: rho
+  version: 0.1.0
+  author: Aurel Miron
+  maintainer: Aurel Miron
+description: Serves the Rho documentation as a site — an index, a menu, the pages, and the project's release notes
+main: src/main.rho
+
+build:
+  # A documentation site is a service, so it generates the Go server target alone
+  # and has no native build.
+  language: go
+  targets:
+    - go-server
+
+# The service renders each page with the documentation generator, so the
+# generator is a run-time dependency: the page a reader opens and the page a
+# build writes come from the same component, which is what keeps cross-references
+# resolving the same way in both.
+deps:
+  rho-log: ">=0.1.0"
+  rho-doc: ">=0.1.0"
+
+docs:
+  title: The Rho documentation site
+  section: applications
+  order: "20"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+    - docs/deployment.md

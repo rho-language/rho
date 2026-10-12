@@ -1,31 +1,14 @@
-# Modules, components and plugins
+# Modules: components and plugins
 
-Rho has three kinds of module. The distinction is what a module *is for*, and it
-decides how the toolchain treats it.
+A **module** is either a **component** or a **plugin**. Its manifest says which,
+and that decides how the toolchain treats it: a component publishes a command a
+person types, and a plugin extends a component by answering its hooks. Both are
+installed with `rho module install`, turned on with `rho module enable`, and
+published to a registry.
 
 Where a module *goes* — installed here, or published to a registry, and who may
-change it there — is {ref}`handbook/registries`.
-
-## A module is an application
-
-An application has a `main` and generates a program:
-
-```yaml
-module:
-  name: registry
-  type: rho
-  version: 0.1.0
-  description: Remote module registry for Rho
-main: src/main.rho
-
-build:
-  language: go
-  targets:
-    - go-server
-
-deps:
-  rho-log: ">=0.1.0"
-```
+change it there — is {ref}`handbook/registries`. An application is a different
+thing, and is described in its own section at the end.
 
 ## A component is a tool
 
@@ -239,15 +222,20 @@ which is the question contracts exist for. And it shows what it could not read,
 each with its reason — a list that quietly leaves things out is a list nobody
 can trust to be complete.
 
-The first version reads and does not write, deliberately. A page that looks like
-it can change something is a page a person trusts with a change they did not mean
-to make, so the dashboard shows and the commands are printed next to the things
-they change. It is also not a daemon: it runs while you run it, and stopping it
-is stopping the terminal.
+It also acts on what it reads, and every action is the command a person would
+type, run the same way and printed beside the thing it changes:
 
-`rho keeper status` is the same reading without the page, so a person in a
-terminal and a person with a browser are told the same thing. That is the reason
-the reading is a library rather than something either command reimplements.
+- enable or disable a module — the same `rho module enable` / `disable`;
+- set a value a module declares in its manifest;
+- install a module from the configured registry, or uninstall this machine's
+  copy of one that has been turned off;
+- install a system requirement `rho doctor` reports missing.
+
+A change made through the page is therefore one that can be repeated, or undone,
+in a terminal. It is not a daemon: it runs while you run it, and stopping it is
+stopping the terminal. `rho keeper status` is the same reading without the page,
+so a person in a terminal and a person with a browser are told the same thing;
+that is why the reading is a library rather than something either reimplements.
 
 ## Several versions, one of them used
 
@@ -297,6 +285,31 @@ for:
 A component that offers no hooks offers no place for a plugin to stand, and a
 plugin that names one is refused rather than installed.
 
+## Applications
+
+An **application** is the other thing a manifest can describe. It is a Rho
+program: it has a `main`, it generates a program with `rho build`, and it is what
+you build and ship.
+
+It is not a module. The toolchain does not install, enable or dispatch an
+application, so it publishes no command and is not something a registry hands to
+a machine — `rho module` never sees it. `applications/registry` and the projects
+under `examples/` are applications.
+
+```yaml
+module:
+  name: registry
+  type: rho
+  version: 0.1.0
+  description: Remote module registry for Rho
+main: src/main.rho
+
+build:
+  language: go
+  targets:
+    - go-server
+```
+
 ## The `package` block
 
 A module may say what a published package carries, so a consumer receives the
@@ -323,6 +336,25 @@ package:
   nothing else.
 - `include` is what the package carries.
 - `require` is what a consumer must have for it to work.
+
+## Release history
+
+A module's description says what it is and does not change between releases, so
+two versions of one module would read alike. Each module carries a `CHANGELOG.md`
+beside its manifest, one section per release:
+
+```markdown
+## [0.1.1] - 2026-10-12
+
+Added a remote registry section.
+```
+
+It travels inside the package, and `rho module publish` reads the section for the
+version being published and records it on the registry against that release. A
+version's page, and a version list, then show what changed rather than two
+identical descriptions; a version with no section is published without a note
+rather than refused. The note is text a publisher wrote, so it is escaped
+wherever it is shown and never treated as markup.
 
 ## Versioning
 

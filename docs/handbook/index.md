@@ -9,7 +9,7 @@ How the Rho toolchain is put together, and how a project uses it.
 - {ref}`handbook/architecture` — the whole RoboHub stack: the modules, and how a
   reading travels from a sensor to a gateway.
 - {ref}`handbook/installing` — what is needed, and how the toolchain is installed.
-- {ref}`handbook/modules` — the three kinds of module, and what each is for.
+- {ref}`handbook/modules` — components and plugins, and what an application is.
 - {ref}`handbook/registries` — the local and remote registries, and who may
   change what is in each.
 - {ref}`handbook/ports` — how a project asks for what only a host can do.

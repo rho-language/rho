@@ -1,0 +1,75 @@
+# Project descriptor for the Rho handbook service.
+#
+# Overrides the built-in descriptor so the generated Go project receives the
+# documentation-store port: the port reads the documentation tree and renders a
+# page through the rho-doc component, so the service stays pure Rho and the
+# compiler generates the Go that touches the filesystem.
+#
+# A host or image running this therefore needs the rho toolchain and the rho-doc
+# component present, the same requirement the registry has.
+
+version: 1
+
+output_dir: build/generated
+build_dir: build
+
+targets:
+  - id: go-server
+    emitter: go
+    kind: server
+    description: Documentation HTTP service
+    # The standard library's ServeMux carries the method-and-wildcard patterns
+    # these routes are declared with, so nothing is fetched to route a request.
+    router: serveMux
+    api:
+      # Reading is public: this is the project's documentation, and every page is
+      # meant to be read by anyone. The description is declared so the service
+      # describes itself, and the paths that need no credential are the whole of
+      # the surface.
+      public_paths: "/, /docs, /docs/{path...}, /releases, /healthz"
+    # The documentation-store port supplies the tree walk, the page renderer and
+    # the release notes; logemit is the service's own log.
+    ports:
+      - docstore
+      - logemit
+    middleware:
+      - name: request_id
+      - name: cors
+        options:
+          origin: "*"
+      - name: rate_limit
+        options:
+          requests: "600"
+          window: "1m"
+    # Page markup, kept out of the Rho sources and rendered by the generated
+    # template engine.
+    templates:
+      - name: layout-open
+        file: templates/layout-open.html
+      - name: layout-close
+        file: templates/layout-close.html
+      - name: index
+        file: templates/index.html
+      - name: card
+        file: templates/card.html
+      - name: releases
+        file: templates/releases.html
+      - name: release-row
+        file: templates/release-row.html
+      - name: empty
+        file: templates/empty.html
+      - name: notfound
+        file: templates/notfound.html
+    files:
+      - path: app.go
+        role: implementation
+      - path: runtime.go
+        role: runtime
+      - path: server.go
+        role: server
+      - path: main.go
+        role: entrypoint
+      - path: go.mod
+        role: build
+      - path: static
+        kind: dir

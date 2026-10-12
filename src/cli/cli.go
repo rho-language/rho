@@ -47,6 +47,7 @@ func Core() []Command {
 		{Invocation: "plugin <command>", Description: "Plugins: list, enable, disable"},
 		{Invocation: "config <command>", Description: "Read and set configuration"},
 		{Invocation: "ide <editor> [dir]", Description: "Write what an editor reads: launch.json, tasks.json"},
+		{Invocation: "version", Description: "Print the Rho version"},
 		{Invocation: "help", Description: "Show this help"},
 	}
 }

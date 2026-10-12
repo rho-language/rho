@@ -6,6 +6,15 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.1.3] - 2026-10-12
+
+Fixed the registry section listing a module once per published version; it is
+one row per module now, showing the newest release.
+
+The header reports the version that is installed and in use. A binary run from
+outside its module directory used to find no manifest and show `0.0.0`; it now
+reads the installed module's manifest instead.
+
 ## [0.1.2] - 2026-10-12
 
 Added uninstall: a module that is not in use can be removed from this machine,

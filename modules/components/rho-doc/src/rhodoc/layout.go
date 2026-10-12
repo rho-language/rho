@@ -113,32 +113,47 @@ func (site *Site) renderHeader(root string) string {
 /*  The menu                                                                  */
 /* -------------------------------------------------------------------------- */
 
-// renderSidebar writes the menu: every page of the site, grouped by section,
-// with the page being read marked as the one in view.
+// renderSidebar writes the menu: the section the reader is in, opened, and every
+// other section as a single link to its first page.
 //
-// The mark matters: a reader who has followed a reference into a page needs to
-// see where they are in the tree, which is the thing a menu of links without a
-// current item cannot tell them.
+// Opening every section of a large site is a wall rather than a menu, and the
+// section a reader is not in is somewhere to go, not a list to read. The one
+// they are in is opened with the page they are on marked, which is what tells
+// them where in the tree they are — the thing a menu of links without a current
+// item cannot do.
 func (site *Site) renderSidebar(current *SitePage, root string) string {
 	var b strings.Builder
 	b.WriteString("<nav class=\"sidebar\" id=\"menu\" aria-label=\"Documentation pages\">\n")
 	for _, group := range site.Sections {
-		title := humanise(group.Name)
+		label := humanise(group.Name)
 		b.WriteString("<div class=\"nav-group\">\n")
-		b.WriteString("<h2 class=\"nav-title\">" + html.EscapeString(title) + "</h2>\n<ul>\n")
-		for _, page := range group.Pages {
-			class := "nav-link"
-			if current != nil && page.Target == current.Target {
-				class += " current"
+		// The section the page belongs to is the one opened; with no page — the
+		// site index — none is, and every section is a link.
+		if current != nil && current.Section == group.Name && len(group.Pages) > 0 {
+			b.WriteString("<h2 class=\"nav-title\">" + html.EscapeString(label) + "</h2>\n<ul>\n")
+			for _, page := range group.Pages {
+				class := "nav-link"
+				if page.Target == current.Target {
+					class += " current"
+				}
+				badge := ""
+				if page.Generated {
+					badge = "<span class=\"nav-badge\">generated</span>"
+				}
+				b.WriteString("<li><a class=\"" + class + "\" href=\"" + root + html.EscapeString(page.Href) + "\">" +
+					html.EscapeString(page.Title) + badge + "</a></li>\n")
 			}
-			badge := ""
-			if page.Generated {
-				badge = "<span class=\"nav-badge\">generated</span>"
-			}
-			b.WriteString("<li><a class=\"" + class + "\" href=\"" + root + html.EscapeString(page.Href) + "\">" +
-				html.EscapeString(page.Title) + badge + "</a></li>\n")
+			b.WriteString("</ul>\n</div>\n")
+			continue
 		}
-		b.WriteString("</ul>\n</div>\n")
+		if len(group.Pages) > 0 {
+			href := root + html.EscapeString(group.Pages[0].Href)
+			b.WriteString("<h2 class=\"nav-title\"><a class=\"nav-section\" href=\"" + href + "\">" +
+				html.EscapeString(label) + "</a></h2>\n")
+		} else {
+			b.WriteString("<h2 class=\"nav-title\">" + html.EscapeString(label) + "</h2>\n")
+		}
+		b.WriteString("</div>\n")
 	}
 	b.WriteString("</nav>\n")
 	return b.String()
@@ -475,6 +490,11 @@ body {
   text-transform: uppercase;
   color: var(--ink-faint);
 }
+
+/* A section the reader is not in: its title is the link to the section's first
+   page, so the whole section is one line rather than a list of pages. */
+.nav-title a.nav-section { color: inherit; text-decoration: none; }
+.nav-title a.nav-section:hover { color: var(--accent); }
 
 .sidebar ul { list-style: none; margin: 0; padding: 0; }
 

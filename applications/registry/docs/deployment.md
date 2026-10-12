@@ -41,7 +41,7 @@ sudo snap install go --classic      # or install the tarball from go.dev/dl
 
 The Rho toolchain has no distribution package yet, so it is built from source.
 It is installed into the service user's home under `/opt` — not `/home`, because
-the systemd unit hides `/home` and the toolchain has to stay reachable. `check.sh`
+the systemd unit hides `/home` and the toolchain has to stay reachable. `scripts/check.sh`
 builds every component, publishes it into the local registry, installs the
 toolchain and runs the tests:
 
@@ -50,12 +50,12 @@ sudo useradd --system --create-home --home-dir /opt/rho --shell /usr/sbin/nologi
 git clone <rho-repository-url> /opt/rho-src
 sudo -u rho env HOME=/opt/rho RHO_HOME=/opt/rho/.rho \
   PATH=/snap/bin:/usr/local/go/bin:/usr/bin:/bin \
-  bash -lc 'cd /opt/rho-src && ./check.sh'
+  bash -lc 'cd /opt/rho-src && ./scripts/check.sh'
 ```
 
 After that the toolchain is `/opt/rho/.rho/bin/rho` with the components installed
 beside it. The registry needs `rho-fmt`, `rho-log`, `rho-sql`, `rho-sql-sqlite`,
-`rho-router`, `rho-openapi`, `rho-doc` and `rho-doc-api`; `./check.sh` publishes
+`rho-router`, `rho-openapi`, `rho-doc` and `rho-doc-api`; `./scripts/check.sh` publishes
 all of them. `rho-fmt`, `rho-log` and `rho-doc` are needed at *run* time (the
 service calls `rho doc` on every publish), the rest at build time.
 

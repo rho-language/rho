@@ -89,3 +89,33 @@ func LoadInstalledModule(name string) (*Module, error) {
 
 	return nil, fmt.Errorf("module not installed: %s", name)
 }
+
+// LoadInstalledModuleVersion loads one installed version of a module.
+//
+// Several versions of a module can be installed at once and only one of them
+// runs, so loading "the module by name" is loading whichever directory a scan
+// reached first — which is not the version anybody chose. A caller that has
+// decided which version it means loads that one.
+func LoadInstalledModuleVersion(name, version string) (*Module, error) {
+	modulesDir, err := paths.GetModulesInstalledPath()
+	if err != nil {
+		return nil, err
+	}
+	for _, moduleType := range []string{"component", "plugin"} {
+		modulePath := filepath.Join(modulesDir, moduleType, name+"@"+version)
+		manifestPath := filepath.Join(modulePath, "module.yml")
+		manifest, err := LoadModuleYAML(manifestPath)
+		if err != nil {
+			continue
+		}
+		if manifest.Module.Name == name {
+			return &Module{
+				Name:     name,
+				Version:  manifest.Module.Version,
+				RootPath: modulePath,
+				Manifest: manifest,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("module not installed: %s@%s", name, version)
+}

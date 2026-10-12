@@ -1,0 +1,50 @@
+# systemd unit for the Rho documentation site, RUN as a container.
+#
+# The same shape as the registry's unit: systemd pulls the image, starts the
+# container in the foreground, and restarts it. No Docker restart policy is set,
+# because systemd is the thing that restarts it.
+#
+#   sudo install -m 0644 deploy/docsite-docker.service /etc/systemd/system/docsite-docker.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now docsite-docker
+
+[Unit]
+Description=Rho documentation site
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+
+# The image to run. Replace with the published image and tag.
+Environment=IMAGE=miraur/rho-docsite:latest
+
+# The public address the site is served at: the generated pages link back to it,
+# and it is the address a reader is shown. Point it at the hostname the ISPConfig
+# site uses, and at the docs host in nginx. The rest of the site's identity —
+# title, source repository, version — travels in the image; these override it.
+Environment=RHO_SITE_HOME=https://docs.rho-lang.org
+Environment=RHO_SITE_TITLE=Rho language and toolchain
+Environment=RHO_SITE_REPOSITORY=https://github.com/rho-language/rho
+
+# Use the cached image when the pull fails, and clear a container left behind by
+# an unclean stop before starting a new one.
+ExecStartPre=-/usr/bin/docker pull ${IMAGE}
+ExecStartPre=-/usr/bin/docker rm -f docsite
+
+# Foreground, so systemd tracks the container's lifetime. The port is loopback
+# only: nginx is what faces the network.
+ExecStart=/usr/bin/docker run --rm --name docsite \
+    -p 127.0.0.1:8081:8080 \
+    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
+    ${IMAGE}
+
+Restart=on-failure
+RestartSec=5
+# The first start regenerates and compiles the project inside the container.
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

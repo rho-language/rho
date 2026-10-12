@@ -87,6 +87,11 @@ func main() {
 		if cmd == "--help" || cmd == "-h" {
 			cmd = "help"
 		}
+	} else if cmd == "--version" || cmd == "-v" || cmd == "version" {
+		// The version is answered without a registry, because a person asking
+		// which Rho they have is asking before any of it exists.
+		fmt.Printf("rho %s\n", toolchainVersion())
+		return
 	} else {
 		// Every other command needs an installation, because every other command
 		// reads or writes the local registry: it is where an installed module
@@ -164,6 +169,12 @@ func runDynamicModule(cmd string, args []string) bool {
 	rhoHome := deps.RhoHome()
 	registryPath := filepath.Join(rhoHome, "registry", "local", "registry.yaml")
 
+	// A version that answers the command but is not enabled is not a refusal
+	// until no enabled version answers it: several versions of one module can be
+	// installed, and the one that runs is the one that was turned on, not
+	// whichever directory the scan reached first.
+	refusal := ""
+
 	// Read registry to find modules with this command
 	if _, err := os.Stat(registryPath); err == nil {
 		// Parse registry to find module with matching command
@@ -206,14 +217,25 @@ func runDynamicModule(cmd string, args []string) bool {
 						os.Exit(1)
 					}
 					if notEnabled != "" {
-						fmt.Fprintln(os.Stderr, "rho:", notEnabled)
-						os.Exit(1)
+						if refusal == "" {
+							refusal = notEnabled
+						}
+						continue
 					}
 
-					// Found it! Load and run
-					mod, err := modcore.LoadInstalledModule(manifest.Module.Name)
+					// Found it! Load and run the version that answers to the
+					// command and is enabled, which is the one that was turned
+					// on rather than the one the scan reached first.
+					version := ""
+					if at := strings.LastIndex(e.Name(), "@"); at >= 0 {
+						version = e.Name()[at+1:]
+					}
+					mod, err := modcore.LoadInstalledModuleVersion(manifest.Module.Name, version)
 					if err != nil {
-						return false
+						mod, err = modcore.LoadInstalledModule(manifest.Module.Name)
+						if err != nil {
+							return false
+						}
 					}
 
 					entry := mod.Entry()
@@ -231,6 +253,11 @@ func runDynamicModule(cmd string, args []string) bool {
 				}
 			}
 		}
+	}
+
+	if refusal != "" {
+		fmt.Fprintln(os.Stderr, "rho:", refusal)
+		os.Exit(1)
 	}
 
 	// Fallback: try to load by module name (for backwards compatibility)

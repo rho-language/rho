@@ -1,0 +1,88 @@
+module docsite
+
+// The Rho documentation, served.
+//
+// Two halves. The documentation itself is built by the generator and served as
+// it was built, under /docs, so its pages, its menu and its links are the ones a
+// build produces. Around it this app adds the front matter a generated site does
+// not have: a landing page, the project's release notes, and a frame for the
+// pages that are its own.
+//
+// Every page is public: this is documentation, and a page meant to be read by
+// anyone that needed a credential would be a page that is not.
+
+include "docsite/storage.rho"
+
+import std.web.http
+import std.web.template
+import docsite.web
+
+route GET "/"               => home
+route GET "/docs"           => docs_index
+route GET "/docs/{path...}" => docs_page
+route GET "/releases"       => releases
+
+/* -------------------------------------------------------------------------- */
+/*  Handlers                                                                   */
+/* -------------------------------------------------------------------------- */
+
+// frame is the shared frame around a body of this app's own. The title, the
+// repository and the version are read here, because this is where the store's
+// externs are declared; the rendering module takes them as values.
+fn frame(req: Request, body: string) string {
+    return shell(req, body, site_title(), site_repository(), site_version())
+}
+
+// home is the index: what the site holds, where to start, and what changed
+// lately.
+fn home(req: Request) Response {
+    // The root route catches every path no other route matched, so `/` is not
+    // the only address that reaches this handler. Anything else is a page that
+    // does not exist, and is answered as one.
+    if request_path(req) != "/" {
+        return missing(req, "There is no page at that address.")
+    }
+    let notes: string = docs_releases(site_releases_path())
+    return html(status_ok(), frame(req, fill(template_get("index"),
+        vars("title", site_title()) +
+        vars("version", version_block(site_version())) +
+        vars("repo", repository_block(site_repository())) +
+        vars("cards", start_cards()) +
+        vars("releases", release_rows(notes, 4))
+    )))
+}
+
+// docs_index is the documentation's own index, at /docs without the trailing
+// slash — the one address that needs a base of its own, because the served
+// site's links are relative.
+fn docs_index(req: Request) Response {
+    let page: string = docs_root_page()
+    if page == "" {
+        return missing(req, "There is no page at that address.")
+    }
+    return Response{ status_ok(), page, "text/html; charset=utf-8" }
+}
+
+// docs_page serves one page of the built site, as it was built.
+fn docs_page(req: Request) Response {
+    let path: string = param(req, "path")
+    let page: string = docs_render(path)
+    if page == "" {
+        return missing(req, "There is no page at that address.")
+    }
+    return Response{ status_ok(), page, content_type_of(path) }
+}
+
+// releases lists the project's release notes in full.
+fn releases(req: Request) Response {
+    let notes: string = docs_releases(site_releases_path())
+    return html(status_ok(), frame(req, fill(template_get("releases"),
+        vars("count", int_to_str(line_count(notes))) +
+        vars("releases", release_rows(notes, 100))
+    )))
+}
+
+// missing renders a 404 page.
+fn missing(req: Request, message: string) Response {
+    return html(status_not_found(), frame(req, fill(template_get("notfound"), vars("message", message))))
+}

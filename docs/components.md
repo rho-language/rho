@@ -86,7 +86,7 @@ built and run like any other project.
 
 ## Adding one
 
-{ref}`handbook/modules` describes the three kinds of module and what a manifest
+{ref}`handbook/modules` describes components and plugins, and what a manifest
 declares for each. A component is a module with a `command`, a `main` that is a
 binary in its own root, and its own `go.mod`; a plugin is a module with an
 `extends` block naming the component it plugs into and the hooks it answers.
