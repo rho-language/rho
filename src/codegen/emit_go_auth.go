@@ -379,10 +379,57 @@ func auth_required() bool {
 }
 
 // auth_open_tokens reports whether the service will issue a token to a caller
-// that presents no credential. It is open by default so the first token can be
-// obtained, and can be closed once tokens are in place.
+// that presents no credential.
+//
+// Closed by default. Issuance being open is a decision a deployment makes for
+// itself — a laptop, a test — and never one it makes by accident: a registry
+// that mints a token for any name it is handed has no owners at all, whatever
+// its records say.
 func auth_open_tokens() bool {
-	return os.Getenv("RHO_REGISTRY_OPEN_TOKENS") != "0"
+	return os.Getenv("RHO_REGISTRY_OPEN_TOKENS") == "1"
+}
+
+// auth_bootstrap reports whether a request presents the administrator secret.
+//
+// With issuance closed, the way to the first token is the secret an operator
+// sets out of band, in the environment. Whoever holds it can mint a token for
+// any subject, which is what makes it the root credential: it is compared in
+// constant time, because it is one.
+func auth_bootstrap(header string) bool {
+	secret := strings.TrimSpace(os.Getenv("RHO_REGISTRY_BOOTSTRAP_SECRET"))
+	if secret == "" {
+		return false
+	}
+	presented := strings.TrimSpace(header)
+	if strings.HasPrefix(strings.ToLower(presented), "bearer ") {
+		presented = strings.TrimSpace(presented[len("bearer "):])
+	}
+	return hmac.Equal([]byte(presented), []byte(secret))
+}
+
+// auth_allowed reports whether a subject may be given a token of its own.
+//
+// An allowlist that is set is the set of users who may obtain one by asking. A
+// list that is not set is no self-service at all, so every token is minted by
+// the administrator and the set of users is whatever the administrator decided.
+func auth_allowed(user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return false
+	}
+	for _, entry := range strings.Split(os.Getenv("RHO_REGISTRY_ALLOWED_USERS"), ",") {
+		if strings.TrimSpace(entry) == user {
+			return true
+		}
+	}
+	return false
+}
+
+// auth_list_configured reports whether an allowlist was set at all, so a
+// deployment that mints every token itself is not also made to keep a list in
+// step with it.
+func auth_list_configured() bool {
+	return strings.TrimSpace(os.Getenv("RHO_REGISTRY_ALLOWED_USERS")) != ""
 }
 
 // authRequired is the Go spelling a Rho handler reaches.
@@ -390,6 +437,15 @@ func authRequired() bool { return auth_required() }
 
 // authOpenTokens is the Go spelling a Rho handler reaches.
 func authOpenTokens() bool { return auth_open_tokens() }
+
+// authBootstrap is the Go spelling a Rho handler reaches.
+func authBootstrap(header string) bool { return auth_bootstrap(header) }
+
+// authAllowed is the Go spelling a Rho handler reaches.
+func authAllowed(user string) bool { return auth_allowed(user) }
+
+// authListConfigured is the Go spelling a Rho handler reaches.
+func authListConfigured() bool { return auth_list_configured() }
 
 // authIssue is the Go spelling a Rho handler reaches.
 func authIssue(user, host string, days uint32, scopes string) string {

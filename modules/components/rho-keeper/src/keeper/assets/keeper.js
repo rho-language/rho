@@ -19,6 +19,25 @@
 const state = { data: null, filter: "", view: "overview" };
 let treeBuilt = false;
 
+/* The token, when the page was opened with one. A dashboard reached beyond
+ * loopback requires a token, and a page that cannot present it cannot read its
+ * own data. Every request carries it: the fetch and the stream both, because a
+ * page whose list works and whose stream does not is worse than one that fails
+ * the same way everywhere. */
+const KEEPER_TOKEN = new URLSearchParams(location.search).get("token") || "";
+function withToken(url) {
+  if (!KEEPER_TOKEN) return url;
+  return url + (url.indexOf("?") >= 0 ? "&" : "?") + "token=" + encodeURIComponent(KEEPER_TOKEN);
+}
+if (KEEPER_TOKEN) {
+  const realFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => realFetch(typeof input === "string" ? withToken(input) : input, init);
+  const RealEventSource = window.EventSource;
+  window.EventSource = function (url, config) {
+    return new RealEventSource(withToken(url), config);
+  };
+}
+
 const $ = (id) => document.getElementById(id);
 const el = (tag, className, text) => {
   const node = document.createElement(tag);

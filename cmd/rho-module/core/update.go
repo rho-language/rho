@@ -61,12 +61,18 @@ func UpdateDependencies(dir string) error {
 		return nil
 	}
 
-	// Step 5: Download updated modules
+	// Step 5: Download updated modules, recording each package's digest
+	hashes := LoadLockfileHashes(dir)
+	if hashes == nil {
+		hashes = map[string]string{}
+	}
 	for name, version := range updates {
 		spec := fmt.Sprintf("%s@%s", name, version)
-		if err := DownloadModule(spec); err != nil {
+		digest, err := DownloadModuleDigest(spec)
+		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", spec, err)
 		}
+		hashes[name] = digest
 	}
 
 	// Step 6: Install updated modules
@@ -75,7 +81,7 @@ func UpdateDependencies(dir string) error {
 	}
 
 	// Step 7: Write updated lockfile
-	if err := writeLockfile(dir, resolved); err != nil {
+	if err := writeLockfile(dir, resolved, hashes); err != nil {
 		return fmt.Errorf("cannot write rho.lock: %w", err)
 	}
 

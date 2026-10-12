@@ -124,6 +124,25 @@ func cutPrefix(text, prefix string) (string, bool) {
 	return text[len(prefix):], true
 }
 
+// registrySegment is one component of a registry URL — a module name, or a
+// version.
+//
+// A name that carries a slash, a query, a fragment or a traversal is not a
+// component, and pasting it into a URL asks the registry for something other
+// than the module that was named. Names and versions reach here from a manifest
+// this machine wrote and from an index it fetched, so neither is taken on trust.
+// What survives is escaped, so a character that means something in a URL cannot
+// mean it here.
+func registrySegment(value string) (string, error) {
+	if value == "" || value == "." || value == ".." {
+		return "", fmt.Errorf("invalid module name or version: %q", value)
+	}
+	if strings.ContainsAny(value, "/\\?#% \t\r\n") {
+		return "", fmt.Errorf("invalid module name or version: %q", value)
+	}
+	return url.PathEscape(value), nil
+}
+
 // UnpublishModule withdraws a published version from a remote registry.
 //
 // Only the identity that published the module may do this, and the registry
@@ -134,8 +153,16 @@ func UnpublishModule(client *Client, name, version string) error {
 	if client.BaseURL == "" {
 		return fmt.Errorf("remote registry not configured")
 	}
+	nameSegment, err := registrySegment(name)
+	if err != nil {
+		return err
+	}
+	versionSegment, err := registrySegment(version)
+	if err != nil {
+		return err
+	}
 	request, err := http.NewRequest("DELETE",
-		fmt.Sprintf("%s/modules/%s/%s", client.BaseURL, name, version), nil)
+		fmt.Sprintf("%s/modules/%s/%s", client.BaseURL, nameSegment, versionSegment), nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -239,7 +266,15 @@ func UploadModule(client *Client, name, version string, pkgData, sourceData []by
 		}
 	}
 	query.Set("version", version)
-	uploadURL := fmt.Sprintf("%s/modules/%s/%s/rho-pkg?%s", client.BaseURL, name, version, query.Encode())
+	nameSegment, err := registrySegment(name)
+	if err != nil {
+		return err
+	}
+	versionSegment, err := registrySegment(version)
+	if err != nil {
+		return err
+	}
+	uploadURL := fmt.Sprintf("%s/modules/%s/%s/rho-pkg?%s", client.BaseURL, nameSegment, versionSegment, query.Encode())
 
 	req, err := http.NewRequest("POST", uploadURL, bytes.NewReader(pkgData))
 	if err != nil {
@@ -291,8 +326,12 @@ func SetVisibility(client *Client, name, visibility string) error {
 	}
 	query := url.Values{}
 	query.Set("visibility", visibility)
+	nameSegment, err := registrySegment(name)
+	if err != nil {
+		return err
+	}
 	endpoint := fmt.Sprintf("%s/modules/%s/visibility?%s",
-		client.BaseURL, name, query.Encode())
+		client.BaseURL, nameSegment, query.Encode())
 
 	request, err := http.NewRequest("PUT", endpoint, nil)
 	if err != nil {
@@ -375,7 +414,15 @@ func DownloadModule(client *Client, name, version string) ([]byte, error) {
 		return nil, fmt.Errorf("remote registry not configured")
 	}
 
-	url := fmt.Sprintf("%s/modules/%s/%s/rho-pkg", client.BaseURL, name, version)
+	nameSegment, err := registrySegment(name)
+	if err != nil {
+		return nil, err
+	}
+	versionSegment, err := registrySegment(version)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/modules/%s/%s/rho-pkg", client.BaseURL, nameSegment, versionSegment)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -415,7 +462,7 @@ func SearchRemote(client *Client, query string) ([]ModuleInfo, error) {
 		return nil, fmt.Errorf("remote registry not configured")
 	}
 
-	url := fmt.Sprintf("%s/api/search?q=%s", client.BaseURL, query)
+	url := fmt.Sprintf("%s/api/search?q=%s", client.BaseURL, url.QueryEscape(query))
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -463,6 +510,19 @@ func FetchModule(name, version string) ([]byte, error) {
 	return DownloadModule(NewClient(cfg), name, version)
 }
 
+// RecordedSHA256 returns the digest the configured remote recorded for a
+// version, or "" when it records none.
+func RecordedSHA256(name, version string) (string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return "", err
+	}
+	if cfg.Remote.URL == "" {
+		return "", fmt.Errorf("remote registry not configured; set it with: rho config set remote.url <url>")
+	}
+	return ModuleSHA256(NewClient(cfg), name, version)
+}
+
 // AvailableVersions lists the published versions of a module, lowest first.
 // An empty result means the module is not on the remote, or the remote does
 // not publish a version list; callers treat that as "nothing to choose".
@@ -489,7 +549,11 @@ func ClientVersions(client *Client, name string) ([]string, error) {
 		return nil, fmt.Errorf("remote registry not configured")
 	}
 
-	url := fmt.Sprintf("%s/api/modules/%s", client.BaseURL, name)
+	nameSegment, err := registrySegment(name)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/api/modules/%s", client.BaseURL, nameSegment)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -538,4 +602,45 @@ func ResolveRemoteVersion(client *Client, name, version string) (string, error) 
 		return "", fmt.Errorf("the registry has no published version of %s", name)
 	}
 	return versions[len(versions)-1], nil
+}
+
+// ModuleSHA256 returns the digest the registry recorded for a version.
+//
+// It reads the same document the version list comes from, which carries each
+// version's digest. A registry that records none — one older than digests, or a
+// version published before they were kept — answers "", and the caller installs
+// unverified, exactly as it did before. An unreachable registry is an error
+// rather than an empty answer, because a caller that treated every failure as
+// "no digest" would have a way to have it skip the check.
+func ModuleSHA256(client *Client, name, version string) (string, error) {
+	if client.BaseURL == "" {
+		return "", fmt.Errorf("remote registry not configured")
+	}
+	nameSegment, err := registrySegment(name)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("%s/api/modules/%s", client.BaseURL, nameSegment)
+	request, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	if credential := client.credentialFor(); credential != "" {
+		request.Header.Set("Authorization", credential)
+	}
+	response, err := client.HTTP.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("the registry answered %d for %s", response.StatusCode, name)
+	}
+	var document struct {
+		SHA256 map[string]string `json:"sha256"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
+		return "", nil
+	}
+	return document.SHA256[version], nil
 }

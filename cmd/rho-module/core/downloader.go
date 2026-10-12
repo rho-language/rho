@@ -26,6 +26,8 @@ package core
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -42,29 +44,39 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func DownloadModule(spec string) error {
+	_, err := DownloadModuleDigest(spec)
+	return err
+}
+
+// DownloadModuleDigest downloads a module into the cache and returns the digest
+// its package hashed to, for a caller that records it in a lockfile. A module
+// already cached is not fetched again; its digest is read from what was
+// recorded beside it when it was.
+func DownloadModuleDigest(spec string) (string, error) {
 	name, version := parseSpec(spec)
 
 	// Step 1: Resolve version
 	resolved, err := resolveRemoteVersion(name, version)
 	if err != nil {
-		return fmt.Errorf("cannot resolve version: %w", err)
+		return "", fmt.Errorf("cannot resolve version: %w", err)
 	}
 
 	// Check if already in global cache
 	cachePath, err := paths.GetCachePath()
 	if err != nil {
-		return err
+		return "", err
 	}
 	cacheDir := filepath.Join(cachePath, fmt.Sprintf("%s@%s", name, resolved))
 	if _, err := os.Stat(cacheDir); err == nil {
-		// Already cached, skip download
-		return nil
+		// Already cached, skip download. The digest is read from the copy beside
+		// it, or is empty on a cache written before digests were kept.
+		return readCachedDigest(cacheDir), nil
 	}
 
-	// Step 2: Download archive
-	archive, err := downloadArchive(name, resolved)
+	// Step 2: Download archive, checked against the registry's digest
+	archive, digest, err := downloadArchive(name, resolved)
 	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
+		return "", fmt.Errorf("download failed: %w", err)
 	}
 	// A download that turns out not to be an archive is discarded here, while
 	// the file still exists. Caching first would move it away, leaving nothing
@@ -73,15 +85,15 @@ func DownloadModule(spec string) error {
 
 	// Step 3: Validate archive
 	if err := validateArchive(archive); err != nil {
-		return fmt.Errorf("invalid archive: %w", err)
+		return "", fmt.Errorf("invalid archive: %w", err)
 	}
 
 	// Step 4: Store in cache
-	if err := storeInCache(name, resolved, archive); err != nil {
-		return fmt.Errorf("cache error: %w", err)
+	if err := storeInCache(name, resolved, archive, digest); err != nil {
+		return "", fmt.Errorf("cache error: %w", err)
 	}
 
-	return nil
+	return digest, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -123,36 +135,54 @@ func resolveRemoteVersion(name, version string) (string, error) {
 /*  Download Archive                                                           */
 /* -------------------------------------------------------------------------- */
 
-func downloadArchive(name, version string) (string, error) {
+// downloadArchive fetches a module, checks it against the digest the registry
+// recorded, and returns the file it wrote and that digest.
+//
+// The check is here, before the package is cached, so a package that does not
+// agree with what was published never becomes the copy this machine installs
+// from. A registry that records no digest is not refused — it answers "", and
+// the package is taken as it was before digests were kept — but an unreachable
+// registry is an error, so a failure cannot be turned into a skipped check.
+func downloadArchive(name, version string) (string, string, error) {
 	// The archive is fetched through the configured remote, so the registry a
 	// user points at is the one that is used.
 	data, err := remote.FetchModule(name, version)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	recorded, err := remote.RecordedSHA256(name, version)
+	if err != nil {
+		return "", "", err
+	}
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	if recorded != "" && !strings.EqualFold(digest, recorded) {
+		return "", "", fmt.Errorf("%s@%s does not match the registry's checksum: got %s, want %s",
+			name, version, digest, recorded)
 	}
 
 	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("%s-%s.rho-module", name, version))
 	out, err := os.Create(tmp)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	if _, err := out.Write(data); err != nil {
 		_ = out.Close()
-		return "", err
+		return "", "", err
 	}
 	if err := out.Close(); err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return tmp, nil
+	return tmp, digest, nil
 }
 
 /* -------------------------------------------------------------------------- */
 /*  Store in Cache                                                             */
 /* -------------------------------------------------------------------------- */
 
-func storeInCache(name, version, archive string) error {
+func storeInCache(name, version, archive, digest string) error {
 	cachePath, err := paths.GetCachePath()
 	if err != nil {
 		return err
@@ -164,7 +194,26 @@ func storeInCache(name, version, archive string) error {
 	}
 
 	dst := filepath.Join(cacheDir, filepath.Base(archive))
-	return os.Rename(archive, dst)
+	if err := os.Rename(archive, dst); err != nil {
+		return err
+	}
+	// The digest is kept beside the package, so a cache hit can be written into
+	// a lockfile without fetching the module again.
+	if digest != "" {
+		if err := os.WriteFile(filepath.Join(cacheDir, "package.sha256"), []byte(digest+"\n"), 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readCachedDigest returns the digest recorded beside a cached module, or "".
+func readCachedDigest(cacheDir string) string {
+	data, err := os.ReadFile(filepath.Join(cacheDir, "package.sha256"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 /* -------------------------------------------------------------------------- */

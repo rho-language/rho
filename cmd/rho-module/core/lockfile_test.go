@@ -94,3 +94,31 @@ lock:
 		t.Fatalf("expected invalid semver error")
 	}
 }
+
+// A lock records the version and the digest of what that version was, and a
+// reader that reads the whole file as one section would take a digest for a
+// version.
+func TestLockfileRecordsHashes(t *testing.T) {
+	dir := t.TempDir()
+	deps := map[string]string{"math": "1.2.0", "io": "2.0.0"}
+	hashes := map[string]string{"math": "abc123", "io": ""}
+	if err := WriteLockfileWithHashes(dir, deps, hashes); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	read, err := LoadLockfile(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if read["math"] != "1.2.0" || read["io"] != "2.0.0" || len(read) != 2 {
+		t.Errorf("modules = %v", read)
+	}
+
+	digests := LoadLockfileHashes(dir)
+	if digests["math"] != "abc123" {
+		t.Errorf("math digest = %q, want abc123", digests["math"])
+	}
+	if _, ok := digests["io"]; ok {
+		t.Errorf("an empty digest should not be written: %v", digests)
+	}
+}

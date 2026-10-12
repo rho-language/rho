@@ -18,6 +18,8 @@ package rho
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -144,6 +146,9 @@ func startRegistryWithSettings(t *testing.T, token, settings string) *registrySe
 	cmd.Env = append(os.Environ(),
 		"RHO_HTTP_ADDR="+addr,
 		"RHO_REGISTRY_TOKEN="+token,
+		// Issuing is closed unless the caller is the administrator; the test
+		// holds the secret the way a deployment's operator does.
+		"RHO_REGISTRY_BOOTSTRAP_SECRET=test-bootstrap-secret",
 	)
 	if !strings.Contains(settings, "data_dir") {
 		// An environment variable outranks the setting, so it is only set
@@ -443,7 +448,7 @@ func TestRegistryRejectsPathTraversal(t *testing.T) {
 	binary := filepath.Join(server.dir, "registry-test")
 	cmd := exec.Command(binary)
 	cmd.Dir = server.dir
-	cmd.Env = append(os.Environ(), "RHO_HTTP_ADDR="+addr, "RHO_REGISTRY_DATA="+data)
+	cmd.Env = append(os.Environ(), "RHO_HTTP_ADDR="+addr, "RHO_REGISTRY_DATA="+data, "RHO_REGISTRY_BOOTSTRAP_SECRET=test-bootstrap-secret")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -586,8 +591,15 @@ func TestRegistryTokenLifetimeHonoursSettings(t *testing.T) {
 	server := startRegistryWithSettings(t, "", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\ntoken_days = 5\ntoken_max_days = 7\n")
 
 	asked := func(days string) int64 {
-		resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(
-			server.base+"/auth/token?user=x&host=y&days="+days, "application/octet-stream", nil)
+		// Issuing is closed unless the caller is the administrator, so the
+		// request carries the administrator secret.
+		request, err := http.NewRequest("POST",
+			server.base+"/auth/token?user=x&host=y&days="+days, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer test-bootstrap-secret")
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -654,7 +666,7 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = serverDir
-	cmd.Env = append(os.Environ(), "RHO_HTTP_ADDR="+addr, "RHO_REGISTRY_DATA="+data)
+	cmd.Env = append(os.Environ(), "RHO_HTTP_ADDR="+addr, "RHO_REGISTRY_DATA="+data, "RHO_REGISTRY_BOOTSTRAP_SECRET=test-bootstrap-secret")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -762,9 +774,16 @@ func (s *registryServer) mintToken(t *testing.T, user string) string {
 // should not have to build a registryServer just to be given a credential.
 func mintTokenAt(t *testing.T, base, user string) string {
 	t.Helper()
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(
-		base+"/auth/token?user="+user+"&host=test&days=1&scopes=pull%20push",
-		"application/octet-stream", nil)
+	// Issuing is closed unless the caller is the administrator, so the test
+	// presents the administrator secret the way a deployment's operator would.
+	t.Setenv("RHO_REGISTRY_BOOTSTRAP_SECRET", "test-bootstrap-secret")
+	request, err := http.NewRequest("POST",
+		base+"/auth/token?user="+user+"&host=test&days=1&scopes=pull%20push", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer test-bootstrap-secret")
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1021,4 +1040,52 @@ func compareGoReleases(left, right string) int {
 		}
 	}
 	return 0
+}
+
+// A write from another page is refused: the registry is reachable from a browser
+// a person is using, and a page that can post to it could otherwise publish, or
+// withdraw, on that person's behalf.
+func TestRegistryRefusesCrossSiteWrites(t *testing.T) {
+	server := startRegistry(t, "")
+	request, err := http.NewRequest("POST", server.base+"/modules/x/1.0.0/rho-pkg", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Origin", "http://evil.example")
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Errorf("a cross-site write should be refused, got %d", response.StatusCode)
+	}
+}
+
+// A published version carries the digest of the package it holds, and a client
+// reads it from the version list. It is the digest of the bytes that were
+// uploaded, so a package altered where it is stored no longer agrees with it.
+func TestRegistryRecordsThePackageDigest(t *testing.T) {
+	server := startRegistry(t, "")
+	payload := []byte{0x1f, 0x8b, 0x08, 0x00, 'd', 'i', 'g', 'e', 's', 't', 0x00}
+	status, body := server.publish(t, "digest", "1.0.0", payload)
+	if status != 201 {
+		t.Fatalf("publish: got %d %s", status, body)
+	}
+
+	status, body = server.request(t, "GET", "/api/modules/digest", nil, "")
+	if status != 200 {
+		t.Fatalf("versions: got %d %s", status, body)
+	}
+	var document struct {
+		SHA256 map[string]string `json:"sha256"`
+	}
+	if err := json.Unmarshal([]byte(body), &document); err != nil {
+		t.Fatalf("cannot read the version document: %s", body)
+	}
+	sum := sha256.Sum256(payload)
+	want := hex.EncodeToString(sum[:])
+	if document.SHA256["1.0.0"] != want {
+		t.Errorf("recorded digest = %q, want %q", document.SHA256["1.0.0"], want)
+	}
 }

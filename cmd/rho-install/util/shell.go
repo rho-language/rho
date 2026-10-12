@@ -103,6 +103,12 @@ func RCContains(rc string, line string) (bool, error) {
 
 // AppendToRC appends a line to the RC file.
 func AppendToRC(rc string, line string) error {
+	// One line, and nothing but one line. A value with a newline in it — a path
+	// that is not a path — would otherwise append the rest of itself as a
+	// command the shell runs the next time the user opens a terminal.
+	if strings.ContainsAny(line, "\r\n") {
+		return fmt.Errorf("refusing to append more than one line to the RC file")
+	}
 	f, err := os.OpenFile(rc, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("cannot open RC file for writing: %w", err)

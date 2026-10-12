@@ -21,10 +21,27 @@ import { findToolchain, workspaceRoot } from './toolchain';
 const defaultKeeper = 'http://127.0.0.1:8477';
 const wordPattern = /[A-Za-z_][A-Za-z0-9_]*/;
 
-/** keeperURL is where the dashboard is, configured or by its own default. */
-function keeperURL(): string {
+/**
+ * keeperURL is where the dashboard is, configured or by its own default, and
+ * only when it is an http(s) address.
+ *
+ * The setting is machine-scoped so a repository cannot set it, but a value that
+ * is not an http address is refused all the same: the address is fetched and
+ * opened in a browser, and a `file:` or `command:` URL is neither a keeper nor
+ * something to open.
+ */
+function keeperURL(): string | undefined {
     const configured = vscode.workspace.getConfiguration('rho').get<string>('keeper.url');
-    return configured && configured.trim() !== '' ? configured.trim() : defaultKeeper;
+    const candidate = configured && configured.trim() !== '' ? configured.trim() : defaultKeeper;
+    try {
+        const parsed = new URL(candidate);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return undefined;
+        }
+    } catch {
+        return undefined;
+    }
+    return candidate.replace(/\/+$/, '');
 }
 
 function delay(ms: number): Promise<void> {
@@ -70,6 +87,9 @@ function getJSON(url: string, timeoutMs = 2500): Promise<any | undefined> {
  */
 export async function ensureKeeper(): Promise<string | undefined> {
     const base = keeperURL();
+    if (!base) {
+        return undefined;
+    }
     if (await getJSON(base + '/api/v1/system')) {
         return base;
     }
@@ -123,7 +143,10 @@ export function registerSyntaxHelp(context: vscode.ExtensionContext): void {
             markdown.appendMarkdown(`**Rho: \`${help.keyword}\`** — _${help.title}_\n\n`);
             markdown.appendMarkdown(help.markdown);
             markdown.appendMarkdown(`\n\n[Open the full page](${base}/#/docs/${help.route})`);
-            markdown.isTrusted = true;
+            // A link a person can click, and no command: the content is the
+            // reference's, but a hover that could run a command is a hover a
+            // document could make run one, and the reference is a document.
+            markdown.isTrusted = { enabledCommands: [] };
             return new vscode.Hover(markdown, range);
         }
     });

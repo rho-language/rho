@@ -878,3 +878,73 @@ func TestHelpForAKeyword(t *testing.T) {
 		t.Errorf("an unknown word has no help")
 	}
 }
+
+// A request from another page is refused when it would change something, and
+// allowed when it would only read. The dashboard listens on loopback, which
+// keeps other machines out but not a browser, so the browser's own labels are
+// what the guard reads.
+func TestCrossSiteRequestsAreRefused(t *testing.T) {
+	handler := Handler(nil, false, nil, "")
+	cases := []struct {
+		name      string
+		method    string
+		target    string
+		origin    string
+		fetchSite string
+		want      int
+	}{
+		{"cross-site POST", "POST", "/api/v1/modules/none/enable", "http://evil.example", "", 403},
+		{"cross-site fetch POST", "POST", "/api/v1/init", "", "cross-site", 403},
+		{"cross-site confirmed install", "GET", "/api/v1/system/install/a/b?confirm=1", "http://evil.example", "", 403},
+		{"command-line POST is allowed", "POST", "/api/v1/modules/none/enable", "", "", 200},
+		{"cross-site read is allowed", "GET", "/api/v1/state", "http://evil.example", "", 200},
+	}
+	for _, tc := range cases {
+		request := httptest.NewRequest(tc.method, tc.target, nil)
+		if tc.origin != "" {
+			request.Header.Set("Origin", tc.origin)
+		}
+		if tc.fetchSite != "" {
+			request.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != tc.want {
+			t.Errorf("%s: got %d, want %d", tc.name, recorder.Code, tc.want)
+		}
+	}
+}
+
+// When a token is configured, a request that does not present it is refused, and
+// one that does — in the header or, for a page's EventSource, in the query — is
+// not.
+func TestTokenIsRequiredWhenSet(t *testing.T) {
+	t.Setenv("RHO_KEEPER_TOKEN", "s3cret")
+	handler := Handler(nil, false, nil, "")
+
+	status := func(request *http.Request) int {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+
+	if got := status(httptest.NewRequest("GET", "/api/v1/state", nil)); got != http.StatusUnauthorized {
+		t.Errorf("a request with no token should be refused, got %d", got)
+	}
+
+	withQuery := httptest.NewRequest("GET", "/api/v1/state?token=s3cret", nil)
+	if got := status(withQuery); got == http.StatusUnauthorized {
+		t.Errorf("the token in the query should be accepted")
+	}
+
+	withHeader := httptest.NewRequest("GET", "/api/v1/state", nil)
+	withHeader.Header.Set("Authorization", "Bearer s3cret")
+	if got := status(withHeader); got == http.StatusUnauthorized {
+		t.Errorf("the token in the header should be accepted")
+	}
+
+	wrong := httptest.NewRequest("GET", "/api/v1/state?token=wrong", nil)
+	if got := status(wrong); got != http.StatusUnauthorized {
+		t.Errorf("a wrong token should be refused, got %d", got)
+	}
+}

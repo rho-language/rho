@@ -27,11 +27,13 @@
 package keeper
 
 import (
+	"crypto/hmac"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -284,10 +286,17 @@ func Start(options Options) error {
 	if isLoopback(listener.Addr()) {
 		fmt.Fprintf(os.Stderr, "rho keeper: press ctrl-c to stop\n")
 	} else {
-		// The dashboard lists what a machine has and what it can install. Saying
-		// so out loud when it is reachable from elsewhere is the least that can
-		// be done about it.
-		fmt.Fprintf(os.Stderr, "rho keeper: this is reachable beyond this machine\n")
+		// The dashboard lists what a machine has and what it can install, and one
+		// reachable from elsewhere serves that to whatever can reach it. Refusing
+		// without a token is the difference between a decision and an accident.
+		if strings.TrimSpace(os.Getenv("RHO_KEEPER_TOKEN")) == "" {
+			listener.Close()
+			return fmt.Errorf(
+				"the dashboard is asked for %s, which is reachable beyond this machine; "+
+					"set RHO_KEEPER_TOKEN so only a caller holding it may read it, or listen on 127.0.0.1",
+				listener.Addr().String())
+		}
+		fmt.Fprintf(os.Stderr, "rho keeper: listening on %s, reachable beyond this machine; a token is required\n", listener.Addr().String())
 	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
@@ -541,10 +550,102 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
+	handler := http.Handler(mux)
 	if log {
-		return logRequests(mux)
+		handler = logRequests(mux)
 	}
-	return mux
+	return requireToken(sameSiteGuard(handler))
+}
+
+// requireToken refuses a request that does not present the configured token,
+// when one is configured.
+//
+// A dashboard on loopback is one a person's own machine can read, and that is
+// the whole of what defends it. One asked to listen beyond loopback is a list of
+// what the machine has and what it can install, served to whatever can reach it,
+// so it needs a credential — and RHO_KEEPER_TOKEN is it. The token is accepted
+// in the Authorization header, or as a `token` query parameter because a page's
+// EventSource cannot set a header.
+func requireToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(os.Getenv("RHO_KEEPER_TOKEN"))
+		if token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		presented := strings.TrimSpace(r.Header.Get("Authorization"))
+		if strings.HasPrefix(strings.ToLower(presented), "bearer ") {
+			presented = strings.TrimSpace(presented[len("bearer "):])
+		} else {
+			presented = strings.TrimSpace(r.URL.Query().Get("token"))
+		}
+		if !hmac.Equal([]byte(presented), []byte(token)) {
+			http.Error(w, "a token is required", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameSiteGuard refuses a request that would change something unless it came
+// from the dashboard itself.
+//
+// The dashboard listens on loopback, and that keeps other machines out but not a
+// browser: a page anywhere can post a form to, or load an image from,
+// http://127.0.0.1:8477 — the address being local is what makes it reachable
+// rather than what defends it. A browser labels such a request with `Origin` and
+// `Sec-Fetch-Site`, so a request that carries a label saying it came from
+// elsewhere, and that would change something, is refused. A command-line client
+// sends neither label and is allowed, because it is a person's own tool rather
+// than a page they happen to be reading.
+func sameSiteGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requestMutates(r) && !sameSite(r) {
+			http.Error(w, "this request did not come from the dashboard", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestMutates reports whether a request changes something. A GET that carries
+// `confirm` does: it is how an install is asked to run rather than to describe
+// what it would do, so it is a mutation however it is spelled.
+func requestMutates(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return r.URL.Query().Has("confirm")
+	default:
+		return true
+	}
+}
+
+// sameSite reports whether a request came from the dashboard rather than from
+// another page. A request that carries no label is not a browser's, and is one a
+// command-line client sent.
+func sameSite(r *http.Request) bool {
+	// `Sec-Fetch-Site` is the browser's own account of where the request began.
+	// `none` is a request a person typed or bookmarked; `same-origin` is the
+	// dashboard's own page.
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	// A sandboxed frame or a `data:` page sends the literal `null`, which is
+	// not the dashboard.
+	if origin == "null" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return parsed.Host == r.Host
 }
 
 // snapshot is the reading, with the time it was read.

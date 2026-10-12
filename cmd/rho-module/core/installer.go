@@ -50,12 +50,16 @@ func InstallDependencies(dir string) error {
 		return fmt.Errorf("dependency resolution failed: %w", err)
 	}
 
-	// Step 3: Download missing modules
+	// Step 3: Download missing modules, recording what each package hashed to
+	// so the lock names the bytes and not only the version.
+	hashes := map[string]string{}
 	for name, version := range resolved {
 		spec := fmt.Sprintf("%s@%s", name, version)
-		if err := DownloadModule(spec); err != nil {
+		digest, err := DownloadModuleDigest(spec)
+		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", spec, err)
 		}
+		hashes[name] = digest
 	}
 
 	// Step 4: Install into local cache
@@ -64,7 +68,7 @@ func InstallDependencies(dir string) error {
 	}
 
 	// Step 5: Generate lockfile
-	if err := writeLockfile(dir, resolved); err != nil {
+	if err := writeLockfile(dir, resolved, hashes); err != nil {
 		return fmt.Errorf("cannot write rho.lock: %w", err)
 	}
 
@@ -205,11 +209,6 @@ func copyDir(src, dst string) error {
 /*  Lockfile Writer                                                            */
 /* -------------------------------------------------------------------------- */
 
-func writeLockfile(dir string, deps map[string]string) error {
-	out := "lock:\n"
-	for name, version := range deps {
-		out += fmt.Sprintf("  %s: \"%s\"\n", name, version)
-	}
-
-	return os.WriteFile(filepath.Join(dir, "rho.lock"), []byte(out), 0644)
+func writeLockfile(dir string, deps map[string]string, hashes map[string]string) error {
+	return WriteLockfileWithHashes(dir, deps, hashes)
 }

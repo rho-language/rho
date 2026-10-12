@@ -25,9 +25,12 @@
 package core
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"rho/cmd/rho-module/remote"
 	pkgcore "rho/cmd/rho-pkg/core"
@@ -61,6 +64,25 @@ func InstallFromRemote(client *remote.Client, name, version string) (InstallResu
 	}
 	if len(archive) == 0 {
 		return result, fmt.Errorf("%s@%s is empty on the registry", name, version)
+	}
+
+	// What was downloaded is checked against the digest the registry recorded
+	// when it was published, before anything is written. The digest is the
+	// publisher's bytes, so a package altered where it is kept does not agree
+	// with it — which is the difference between installing a module and
+	// installing whatever is at that address. A registry that records no digest
+	// answers "", and the check is skipped, which is how it was before.
+	expected, err := remote.ModuleSHA256(client, name, version)
+	if err != nil {
+		return result, fmt.Errorf("cannot read the registry's checksum for %s@%s: %w", name, version, err)
+	}
+	if expected != "" {
+		sum := sha256.Sum256(archive)
+		if got := hex.EncodeToString(sum[:]); !strings.EqualFold(got, expected) {
+			return result, fmt.Errorf(
+				"%s@%s does not match the registry's checksum: got %s, want %s",
+				name, version, got, expected)
+		}
 	}
 
 	// The archive is read to find out what it is before anything is written: a
