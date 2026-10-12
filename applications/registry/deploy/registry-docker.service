@@ -15,7 +15,7 @@
 
 [Unit]
 Description=Rho module registry
-Documentation=https://github.com/rho-lang/rho
+Documentation=https://github.com/rho-language/rho
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service

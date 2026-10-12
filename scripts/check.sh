@@ -14,15 +14,15 @@
 # by this script or by the four commands it prints. It is the same procedure on a
 # machine that has never run it, which is what makes it usable on CI unchanged.
 #
-#   ./check.sh                     build and publish everything, install, test
-#   ./check.sh publish NAME...     build and publish only those, then stop
+#   ./scripts/check.sh                     build and publish everything, install, test
+#   ./scripts/check.sh publish NAME...     build and publish only those, then stop
 #
 # `publish` is for an image that needs a few components rather than all of them:
 # the registry service names six, and hand-writing their build-and-publish steps
 # in a Dockerfile is a list that stops agreeing with the tree.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
 BIN="${ROOT}/bin"

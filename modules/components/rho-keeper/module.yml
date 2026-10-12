@@ -9,7 +9,7 @@
 module:
   name: rho-keeper
   type: component
-  version: 0.1.2
+  version: 0.1.3
   author: Aurel Miron
   description: A local dashboard for the Rho installation and its registry, and what it fixes
   command: keeper

@@ -60,11 +60,19 @@ somewhere deeper with a message about a file.
 ## A remote registry
 
 A remote registry is a service: the `applications/registry` application in this
-tree is one. You point the CLI at it and log in:
+tree is one, and **Rho's official registry runs it at
+https://registry.rho-lang.org**. You point the CLI at it and log in:
 
 ```sh
-rho auth login https://registry.example.com
+rho config set remote.url https://registry.rho-lang.org
+rho auth login
 ```
+
+Reading a registry is public — `rho module search`, `install` and `download`
+need no credential. Publishing is not: `rho module publish` uploads to the
+configured remote and must present a token, which is what `rho auth login`
+obtains. A registry you run yourself is pointed at the same way, with its own
+URL.
 
 The credential is stored in `~/.rho/auth/`, and every operation that needs to
 know who you are presents it. That is what makes the owner of a module
@@ -197,9 +205,9 @@ rho install
 (cd modules/components/rho-fmt && go build -o rho-fmt ./src)
 rho module publish modules/components/rho-fmt
 
-# Point at a registry and log in, so publishes are attributed to you.
-rho config set remote.url https://registry.example.com
-rho auth login https://registry.example.com
+# Point at the official registry and log in, so publishes are attributed to you.
+rho config set remote.url https://registry.rho-lang.org
+rho auth login
 
 # Publish something. The manifest names the author; the token says who you are.
 rho module publish modules/components/rho-router

@@ -51,7 +51,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho     ./cmd/rho \
 # does not describe; one that could not render its declared statements would not
 # build at all.
 #
-# `check.sh publish` is the same build-and-publish a developer's machine and CI
+# `scripts/check.sh publish` is the same build-and-publish a developer's machine and CI
 # do, so the list here cannot drift from the tree the way a hand-written set of
 # build and publish commands would: the next component the service needs is
 # named here, and how each is built stays in one place.
@@ -60,7 +60,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho     ./cmd/rho \
 # which is what a copied tree is; the go.work file is what lets a component
 # resolve the toolchain it is built against from the tree rather than from a
 # network.
-RUN HOME=/home/rho ./check.sh publish \
+RUN HOME=/home/rho ./scripts/check.sh publish \
       rho-fmt rho-log rho-sql rho-sql-sqlite rho-router rho-openapi rho-doc rho-doc-api
 
 # The runtime tree: an installed toolchain plus the sources rho compiles at

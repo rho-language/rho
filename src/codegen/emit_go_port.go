@@ -168,6 +168,7 @@ type SQLField struct {
 // portGenerators are the built-in ports a descriptor may request.
 var portGenerators = map[string]portGenerator{
 	"docemit":     emitDocPort,
+	"docstore":    emitDocStorePort,
 	"fsstore":     emitFSStorePort,
 	"gateway":     emitGatewayPort,
 	"logemit":     emitLogPort,

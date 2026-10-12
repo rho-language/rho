@@ -37,18 +37,18 @@ jobs:
     # steps that came after could not rescue it: the tests had already run.
     #
     # The hand-written list of components to enable is gone for the same reason.
-    # `check.sh` publishes every module the tree carries at the version its own
+    # `scripts/check.sh` publishes every module the tree carries at the version its own
     # manifest declares, which is also what stops that list going stale — and what
     # lets a module added to the tree be tested without this file being edited.
     - name: Check
-      run: ./check.sh
+      run: ./scripts/check.sh
 
     # The CMake build on top: the Go toolchain through CMake, which is how the
     # project is packaged, and the CTest suite it registers.
     #
     # After the check rather than instead of it, because `configureAndBuild` runs
     # the Go toolchain to produce a project and that toolchain dispatches to the
-    # components `check.sh` has just installed.
+    # components `scripts/check.sh` has just installed.
     - name: Configure CMake
       run: cmake -S . -B build -DBUILD_TESTING=ON
 
