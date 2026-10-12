@@ -83,11 +83,20 @@ fn issue_token(req: Request) Response {
         days = default_token_days()
     }
 
-    // Issuing is open by default so the first token can be obtained at all;
-    // it can be closed once tokens are in place, and then a caller has to
-    // present the one it already holds.
-    if !auth_open_tokens() && !auth_is_authenticated(request_auth(req)) {
-        return error_json(status_unauthorized(), "token issuance is closed; present an existing token")
+    // Issuing a token decides who may publish, so it is closed unless one of a
+    // few things is true: the deployment opened it for itself, the caller holds
+    // the administrator secret, the caller is renewing a token for the subject
+    // it already is, or the subject is one the deployment allowlisted. A
+    // registry that mints a token for any name it is handed has no owners at
+    // all, however careful its records.
+    if !auth_open_tokens() {
+        let administrator: bool = auth_bootstrap(request_auth(req))
+        let renewing_own: bool = auth_is_authenticated(request_auth(req)) && auth_subject(request_auth(req)) == user
+        if !administrator && !renewing_own && !auth_allowed(user) {
+            warn("registry", "token refused for " + user + ", issuance is closed")
+            return error_json(status_unauthorized(),
+                "token issuance is closed; an administrator must mint one, or present the administrator secret")
+        }
     }
 
     return json(status_created(), auth_issue(user, host, days, scopes))

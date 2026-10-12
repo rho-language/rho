@@ -120,8 +120,13 @@ what each expects from the same service:
 | Path                          | What it returns                        |
 |-------------------------------|----------------------------------------|
 | `/api/search?q=`              | JSON array of module metadata          |
-| `/api/modules/{name}`         | JSON with the published version list   |
+| `/api/modules/{name}`         | JSON with the published version list, and each version's `sha256` |
 | `/modules/{name}/{v}/rho-pkg` | the uploaded package, verbatim        |
+
+The `sha256` is the digest of the package as it was uploaded, computed at
+publish and stored with the version. A client checks what it downloaded against
+it, so a package altered where it is kept no longer agrees with what the
+registry says it published.
 
 ## Configuration
 
@@ -138,7 +143,7 @@ the service runs with no settings file at all.
 | `site_url`        | `https://rho-lang.org`   | the footer link                            |
 | `token_days`      | `30`                      | how long an issued token lasts             |
 | `token_max_days`  | `90`                      | the ceiling, never exceeded               |
-| `open_tokens`     | `true`                    | whether a token can be issued without one  |
+| `open_tokens`     | `false`                   | whether a token can be issued without one  |
 | `max_upload_mb`   | `256`                     | the largest package accepted               |
 
 **Keep `data_dir` outside the application directory.** That is the point of it:
@@ -149,8 +154,30 @@ it. `/var/lib/rho-registry` is a good place on a server, and
 Reading is always public. `access = secured` turns on rho-auth for publishing
 only, so the index, search and downloads stay open.
 
+### Who may publish
+
+Issuing a token decides who may publish, so issuance is **closed by default**.
+A token is minted only when one of these is true:
+
+- the caller presents the **administrator secret**
+  (`RHO_REGISTRY_BOOTSTRAP_SECRET`), which mints a token for any subject — the
+  root credential, held out of band and compared in constant time;
+- the caller holds a valid token and is renewing it for the subject it already
+  is;
+- the subject is in the **allowlist** (`RHO_REGISTRY_ALLOWED_USERS`, a
+  comma-separated list of subjects), which lets those users obtain their own
+  token;
+- `open_tokens = true`, which a laptop or a test sets and a deployment does not.
+
+So an administrator mints the first token with the secret and either mints the
+rest or names the users in the allowlist. Publishing also checks the allowlist
+when one is set, so removing a user takes publishing away from a token they
+already hold. With no allowlist, the set of publishers is exactly the set the
+administrator minted tokens for.
+
 Environment overrides: `RHO_HTTP_ADDR` (default `:8080`), `RHO_REGISTRY_DATA`,
-`RHO_REGISTRY_CONFIG`.
+`RHO_REGISTRY_CONFIG`, `RHO_REGISTRY_BOOTSTRAP_SECRET`,
+`RHO_REGISTRY_ALLOWED_USERS`, `RHO_REGISTRY_OPEN_TOKENS`.
 
 ## Logging
 

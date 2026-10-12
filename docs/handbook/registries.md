@@ -219,3 +219,17 @@ rho module install      # resolve and install what module.yml declares
 rho module update       # move them to what a registry now offers
 rho module remove <name> # drop one from the project
 ```
+
+Each package is checked against the digest the registry recorded for the
+version, so a package altered where it is kept is refused rather than installed.
+The digest is written into the lock beside the version:
+
+```yaml
+lock:
+  math: "1.2.0"
+sha256:
+  math: "…"
+```
+
+The digest is what makes an install reproducible: the version says what to
+install, and the digest says which bytes that version was.

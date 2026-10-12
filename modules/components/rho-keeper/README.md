@@ -54,6 +54,17 @@ rho keeper -addr 127.0.0.1:9000
 ```
 
 It says so on standard error when it is reachable beyond the machine it is on.
+An address beyond loopback **requires a token**: `rho keeper` refuses to start
+without `RHO_KEEPER_TOKEN`, and then every request must present it — in the
+`Authorization` header, or as `?token=` for a page (a browser's `EventSource`
+cannot set a header). Open the page as
+`http://<address>/#/…?token=<token>`, or keep the address on loopback and need
+no token at all.
+
+A write from another page is refused whether or not a token is set: the
+browser's `Origin` and `Sec-Fetch-Site` labels are read, and a request that says
+it came from elsewhere, and that would change something, is answered `403`.
+Command-line callers send neither label and are unaffected.
 
 ## The commands
 

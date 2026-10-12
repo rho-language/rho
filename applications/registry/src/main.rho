@@ -72,6 +72,16 @@ fn publish_module(req: Request) Response {
         error("registry", "publish refused, the token names no subject")
         return error_json(status_internal(), "the token names no subject")
     }
+    // A token proves who is asking. Whether that identity may publish at all is
+    // the deployment's decision, and an allowlist is how it says so; a list
+    // that is not set means every identity the administrator minted a token for,
+    // since the administrator is who decided. The check is here as well as at
+    // issuance so that removing someone from the list takes publishing away
+    // from a token they already hold.
+    if auth_list_configured() && !auth_allowed(owner) {
+        warn("registry", "publish refused, " + owner + " is not allowed to publish")
+        return error_json(status_forbidden(), "that identity is not allowed to publish on this registry")
+    }
 
     let name: string = param(req, "name")
     let version: string = param(req, "version")
@@ -158,6 +168,9 @@ fn unpublish_module(req: Request) Response {
         return error_json(status_unauthorized(), "a token is required to unpublish")
     }
     let identity: string = auth_subject(request_auth(req))
+    if auth_list_configured() && !auth_allowed(identity) {
+        return error_json(status_forbidden(), "that identity is not allowed on this registry")
+    }
 
     let name: string = param(req, "name")
     let version: string = param(req, "version")
@@ -195,6 +208,9 @@ fn set_visibility(req: Request) Response {
         return error_json(status_unauthorized(), "a token is required to change visibility")
     }
     let identity: string = auth_subject(request_auth(req))
+    if auth_list_configured() && !auth_allowed(identity) {
+        return error_json(status_forbidden(), "that identity is not allowed on this registry")
+    }
 
     let name: string = param(req, "name")
     if !valid_name(name) {

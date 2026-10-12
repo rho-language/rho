@@ -26,9 +26,15 @@ site_url = https://rho-lang.org
 token_days = 30
 token_max_days = 90
 
-# Whether a token can be issued without already holding one. Leave this open so
-# the first token can be obtained, then set it to false once tokens are in place.
-open_tokens = true
+# Whether a token can be issued without already holding one. Closed, so the
+# set of people who may publish is the set an administrator decides.
+#
+# A deployment that opened this would mint a token for any name it was handed,
+# which is a registry with no owners at all. To obtain the first token, set
+# RHO_REGISTRY_BOOTSTRAP_SECRET in the environment and present it; to let a user
+# obtain their own, add them to RHO_REGISTRY_ALLOWED_USERS. Set this to true only
+# for a laptop or a test.
+open_tokens = false
 
 # The largest package accepted, in megabytes.
 max_upload_mb = 256
