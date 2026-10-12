@@ -69,6 +69,24 @@ cd modules/components/rho-doc && go build -o rho-doc ./src
 rho doc . -out build/docs
 ```
 
+## Releases
+
+Every module carries a `CHANGELOG.md` beside its `module.yml`, with a section per
+release. It is in the package, so it travels with the module, and the section for
+the version being published is read at publish time and recorded by the registry
+against that version:
+
+```markdown
+## [0.2.0] - 2026-02-01
+
+What changed, in the module's own words.
+```
+
+A module's description says what it is and does not change between releases; the
+release note is what tells two versions apart on a registry page. A version with
+no section yet is published without a note rather than refused. The section
+becomes valid JSON through `json_string`, never by pasting it into a document.
+
 ## Documentation
 
 Documentation is doc-as-code: Markdown sources with the MyST constructs, plus an

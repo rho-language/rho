@@ -131,6 +131,7 @@ package:
   include:
     - module.yml
     - README.md
+    - CHANGELOG.md
     - config
     - docs
     - src

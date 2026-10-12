@@ -1,0 +1,23 @@
+# The registry's test suites.
+#
+# The Rho unit tests cover the request validation and the response shapes. They
+# are declared here rather than discovered, because a discovered suite is
+# resolved to a file under `tests/` and this one cannot be built yet.
+#
+# It cannot be built because the descriptor generates go/go-server only: there is
+# no C target to build a Rho test on the default backend, and building one on the
+# `go` target fails in the generated SQL port, which names the result types of
+# the declared schema even when the program under test does not include the
+# generated db models. Both are gaps in the toolchain rather than in these tests.
+# Until they close, the request logic is covered by the Go integration tests
+# (go test ./src -run TestRegistry), which drive the generated service over HTTP.
+name: registry
+suites:
+  - name: tests/validate
+    kind: rho
+    tags: [rho]
+    status: skip
+    reason: >-
+      the registry declares no runnable Rho target, and the go target's generated
+      SQL port does not build for a program that omits the generated db models;
+      the Go integration tests cover the same logic.

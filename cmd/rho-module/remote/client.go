@@ -229,6 +229,11 @@ type ModuleInfo struct {
 	// Mine is set when the module was published by the caller, which is what
 	// makes an owner's own private modules findable.
 	Mine bool `json:"mine,omitempty"`
+	// Release is what this version changed, and Released when, as the module's
+	// own changelog wrote it. They are what tells two versions of one module
+	// apart, since the description is the same for both.
+	Release  string `json:"release,omitempty"`
+	Released string `json:"released,omitempty"`
 }
 
 // tokenReader is set by the CLI so this package can find an issued credential

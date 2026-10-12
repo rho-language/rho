@@ -203,6 +203,13 @@ var protocolFuncs = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// request_path returns the address a request was made to. A handler reached
+	// from a route that catches more than it names — a root route also answers
+	// every path nothing else matched — reads it to tell the two apart.
+	"request_path": {
+		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
 	// Authentication, supplied by a server target's generated auth.go.
 	"auth_bearer": {
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
@@ -296,6 +303,14 @@ var protocolFuncs = map[string]functionType{
 		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
 	},
 	"escape_html": {
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
+	// json_string renders a value as a JSON string literal, quotes and escapes
+	// included, so a value that contains a quote, a newline or a backslash
+	// cannot break the document it is written into. Free-form text — a release
+	// note, a description — only stays valid JSON through this.
+	"json_string": {
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},

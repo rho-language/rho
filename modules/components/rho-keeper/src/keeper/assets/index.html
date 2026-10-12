@@ -19,6 +19,7 @@
       <li><a href="#/overview" data-nav="overview"><span class="ico">◱</span>Overview</a></li>
       <li><a href="#/modules"   data-nav="modules"><span class="ico">▤</span>Modules<span class="count" id="nav-modules"></span></a></li>
       <li><a href="#/contracts" data-nav="contracts"><span class="ico">◈</span>Contracts &amp; plugins<span class="count" id="nav-contracts"></span></a></li>
+      <li><a href="#/registry"  data-nav="registry"><span class="ico">☁</span>Registry<span class="count" id="nav-registry"></span></a></li>
       <li><a href="#/docs"      data-nav="docs"><span class="ico">▦</span>Docs</a></li>
       <li><a href="#/cli"       data-nav="cli"><span class="ico">&gt;_</span>CLI</a></li>
       <li><a href="#/system"    data-nav="system"><span class="ico">⌘</span>System<span class="count" id="nav-system"></span></a></li>
@@ -97,6 +98,23 @@
             </table>
             <p class="empty" id="plugins-empty" hidden>No plugin is installed.</p>
           </div>
+        </div>
+      </section>
+
+      <!-- remote registry -->
+      <section class="view" data-view="registry" hidden>
+        <div class="block">
+          <div class="block-head">
+            <h2>Remote registry</h2>
+            <span class="hint" id="registry-url">Reading the registry&hellip;</span>
+          </div>
+          <table class="grid">
+            <thead>
+              <tr><th>Name</th><th>Kind</th><th>Version</th><th>What it is</th><th class="right">State</th></tr>
+            </thead>
+            <tbody id="registry"></tbody>
+          </table>
+          <p class="empty" id="registry-empty" hidden></p>
         </div>
       </section>
 

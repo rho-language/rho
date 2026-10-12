@@ -94,7 +94,12 @@ type settings struct {
 // contract a component declares is the contract the toolchain reads rather than a
 // second reading of it written next to it.
 func readSettings(override string) (settings, error) {
-	out := settings{logRequests: true, values: map[string]string{}}
+	// The default address is set before anything can fail, because a keeper that
+	// cannot read its own manifest must still listen where a person — and the
+	// editor that starts it — expects: loopback, on the port the manifest would
+	// have named. An empty address here would be "every interface, any port",
+	// which is the one answer a dashboard must never give.
+	out := settings{addr: defaultAddr, logRequests: true, values: map[string]string{}}
 
 	root := moduleRoot()
 	if root == "" {
@@ -413,6 +418,24 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 		act(w, r, Action{OK: false}, h, func(string) Action { return Disable(r.PathValue("name")) })
 	})
 
+	// Removing a copy from this machine. It is refused while the module is in
+	// use, so the page offers it only once the module is off, and the answer
+	// says what to do when it is not.
+	mux.HandleFunc("POST /api/v1/modules/{name}/uninstall", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Version string `json:"version"`
+		}
+		if err := decodeBody(w, r, &body); err != nil {
+			writeJSON(w, Action{Error: err.Error()})
+			return
+		}
+		action := Uninstall(r.PathValue("name"), body.Version)
+		if action.OK {
+			h.changed()
+		}
+		writeJSON(w, action)
+	})
+
 	// Starting a project: the same `rho init`, through the same function. What
 	// it writes is what the project's manifest declares, so a drivers
 	// repository produces a driver and the dashboard does not have to know that.
@@ -545,6 +568,34 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 	// open must not be able to start a download or reach for privileges, and a
 	// person clicking a button is what makes it run.
 	mux.HandleFunc("GET /api/v1/system/install/{module}/{dep}", handleInstall)
+
+	// The remote registry: what it offers, and which of it this machine does not
+	// hold. It is fetched rather than streamed, because it describes another
+	// machine and the stream describes this one — and it can change without this
+	// machine changing at all.
+	mux.HandleFunc("GET /api/v1/registry", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, ReadRegistry())
+	})
+
+	// Installing one of them, through the same `rho module install` the CLI runs.
+	// An action rather than a stream, because a module is a package over a
+	// network and not a privileged install: there is no password to wait for and
+	// no output a person needs to watch, only a command and whether it worked.
+	mux.HandleFunc("POST /api/v1/registry/install", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}
+		if err := decodeBody(w, r, &body); err != nil {
+			writeJSON(w, Action{Error: err.Error()})
+			return
+		}
+		action := InstallModule(body.Name, body.Version)
+		if action.OK {
+			h.changed()
+		}
+		writeJSON(w, action)
+	})
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})

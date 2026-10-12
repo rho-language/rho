@@ -220,6 +220,17 @@ func rateLimitAllow(client string) (bool, time.Duration) {
 	rateLimitLock.Lock()
 	defer rateLimitLock.Unlock()
 
+	// A map that only grows is a map a flood fills. The expired windows are
+	// dropped once the map is large enough to be worth walking, which bounds
+	// what a stream of distinct clients can cost the service.
+	if len(rateLimitCounters) > 4096 {
+		for key, counter := range rateLimitCounters {
+			if now.After(counter.expires) {
+				delete(rateLimitCounters, key)
+			}
+		}
+	}
+
 	counter, seen := rateLimitCounters[client]
 	if !seen || now.After(counter.expires) {
 		rateLimitCounters[client] = &rateLimitCounter{count: 1, expires: now.Add(rateLimitWindow)}
@@ -246,13 +257,22 @@ func %[4]s(next http.Handler) http.Handler {
 	})
 }
 
-// rateLimitClient names the caller the limit is counted against. The address
-// is the last resort, because a service behind a proxy sees the proxy's
-// address on every connection; a forwarded address says which client it was.
+// rateLimitClient names the caller the limit is counted against.
+//
+// Behind a proxy the connection address is the proxy's, so it is the last
+// resort; the proxy's own account of the client is used first. X-Real-IP is
+// preferred because a proxy sets it to the connection's address and overwrites
+// whatever the client sent. X-Forwarded-For is read at its *rightmost* entry,
+// which is the one the nearest proxy appended: a caller can put anything in the
+// left of that header, and counting by a value the caller chooses counts every
+// request as a new client.
 func rateLimitClient(r *http.Request) string {
+	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+		return real
+	}
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		if first, _, found := strings.Cut(forwarded, ","); found {
-			return strings.TrimSpace(first)
+		if index := strings.LastIndexByte(forwarded, ','); index >= 0 {
+			return strings.TrimSpace(forwarded[index+1:])
 		}
 		return strings.TrimSpace(forwarded)
 	}
@@ -356,7 +376,7 @@ func bearerToken(header, scheme string) string {
 	if header == "" {
 		return ""
 	}
-	value, found := strings.CutSpace(header)
+	value, _, found := strings.Cut(header, " ")
 	if !found || !strings.EqualFold(value, scheme) {
 		return ""
 	}

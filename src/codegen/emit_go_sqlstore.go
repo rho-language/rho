@@ -453,12 +453,12 @@ func registryPayload(db *sql.DB, name, version string) ([]byte, error) {
 	return payload, err
 }
 
-// registryMeta is the manifest as it was published.
+// registryMeta is the manifest as it was published, and when.
 func registryMeta(db *sql.DB, name, version string) (moduleMeta, bool) {
-	var encoded string
+	var encoded, publishedAt string
 	err := db.QueryRow(
-		§SELECT mv.meta FROM module_versions mv JOIN modules m ON m.id = mv.module_id
-		 WHERE m.name = ? AND mv.version = ?§, name, version).Scan(&encoded)
+		§SELECT mv.meta, mv.published_at FROM module_versions mv JOIN modules m ON m.id = mv.module_id
+		 WHERE m.name = ? AND mv.version = ?§, name, version).Scan(&encoded, &publishedAt)
 	if err != nil {
 		return moduleMeta{}, false
 	}
@@ -466,6 +466,9 @@ func registryMeta(db *sql.DB, name, version string) (moduleMeta, bool) {
 	if err := jsonenc.Unmarshal([]byte(encoded), &meta); err != nil {
 		return moduleMeta{}, false
 	}
+	// The time is a column rather than a field of the manifest, so it is put on
+	// the value here, where both the query and the reader are.
+	meta.PublishedAt = publishedAt
 	return meta, true
 }
 

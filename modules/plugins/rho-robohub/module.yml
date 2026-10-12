@@ -103,6 +103,7 @@ package:
   include:
     - module.yml
     - README.md
+    - CHANGELOG.md
     - src
   require:
     - module.yml

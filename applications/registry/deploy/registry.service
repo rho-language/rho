@@ -1,7 +1,22 @@
 # systemd unit for the Rho module registry.
 #
-# The service is a single static binary that only needs its data directory
-# writable, so the unit below locks everything else down.
+# The service is a single static binary, but at run time it shells out to
+# `rho doc` to document a module it receives, so the unit must also reach the
+# Rho toolchain and the components installed in its home. Everything else it
+# needs is a writable data directory, so the unit below locks the rest down.
+#
+# The service user's home holds the toolchain, and is deliberately under /opt
+# rather than /home: ProtectHome=yes hides /home, /root and /run/user, and the
+# toolchain has to stay reachable.
+#
+# The secrets and the deployment's choices go in /etc/rho/registry.env, which is
+# read below when present and must be mode 0600:
+#
+#   RHO_REGISTRY_BOOTSTRAP_SECRET=<long random string>   mint the first token
+#   RHO_REGISTRY_ALLOWED_USERS=alice,bob                 who may obtain one
+#   RHO_REGISTRY_OPEN_TOKENS=                            leave unset in production
+#
+# See docs/deployment.md.
 
 [Unit]
 Description=Rho module registry
@@ -11,10 +26,26 @@ After=network.target
 Type=simple
 User=rho
 Group=rho
+
+# The toolchain the service calls at run time, installed in the service user's
+# home (`rho install` puts it under $RHO_HOME, which defaults to $HOME/.rho).
+Environment=HOME=/opt/rho
+Environment=RHO_HOME=/opt/rho/.rho
+Environment=RHO_BIN=/opt/rho/.rho/bin/rho
+Environment=PATH=/opt/rho/.rho/bin:/usr/local/bin:/usr/bin:/bin
+
+# Loopback only: TLS and the public name are nginx's job. Publish the port only
+# when nothing is in front.
 Environment=RHO_HTTP_ADDR=127.0.0.1:8080
 Environment=RHO_REGISTRY_DATA=/var/lib/rho-registry
-# Put RHO_REGISTRY_TOKEN in /etc/rho/registry.env with 0600 permissions.
+# Settings file: access, title, registry_url, max_upload_mb and the rest.
+Environment=RHO_REGISTRY_CONFIG=/etc/rho/registry.conf
+# The database and the driver it is reached through. Both default to the data
+# directory and to sqlite, which is right for a single node.
+Environment=RHO_SQL_DATABASE=/var/lib/rho-registry/registry.db
+Environment=RHO_SQL_DRIVER=sqlite
 EnvironmentFile=-/etc/rho/registry.env
+
 ExecStart=/usr/local/bin/registry
 Restart=on-failure
 RestartSec=2
@@ -23,7 +54,9 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/rho-registry
+# The data directory is state; the tool home is written because the toolchain
+# keeps its cache under it. Nothing else is.
+ReadWritePaths=/var/lib/rho-registry /opt/rho/.rho
 
 [Install]
 WantedBy=multi-user.target

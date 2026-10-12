@@ -299,6 +299,17 @@ type moduleMeta struct {
 	Ownership  string ` + "`json:\"owner,omitempty\"`" + `
 	Visibility string ` + "`json:\"visibility,omitempty\"`" + `
 	Mine       bool   ` + "`json:\"mine,omitempty\"`" + `
+	// PublishedAt is when this version was published, read from the registry's
+	// own record rather than from the package: a package does not carry the time
+	// it was uploaded. It is shown on a version's page.
+	PublishedAt string ` + "`json:\"publishedAt,omitempty\"`" + `
+	// Release is what this version changed, and Released is when — both taken
+	// from the module's own changelog and sent with the publish. They are per
+	// version because a description says what a module is and does not change
+	// between releases, so without this two versions of one module read alike
+	// and a reader cannot tell which to take.
+	Release  string ` + "`json:\"release,omitempty\"`" + `
+	Released string ` + "`json:\"released,omitempty\"`" + `
 	// SHA256 is the package's digest, computed when it is published and stored
 	// with it. A client checks what it downloaded against this, so a package
 	// altered where it is kept is refused rather than installed.
@@ -469,7 +480,7 @@ var registrySettings = []struct {
 	description string
 }{
 	{"data_dir", "data", "where published modules are stored, outside the application"},
-	{"access", "public", "public, or secured to require a token for publishing"},
+	{"access", "public", "public, or secured to restrict publishing to the allowlist"},
 	{"title", "Rho module registry", "the name shown on the pages"},
 	{"site_url", "https://rho-lang.org", "where the footer links to"},
 	// The address this service is published under, which is what the pages of a
@@ -480,7 +491,7 @@ var registrySettings = []struct {
 	{"token_days", "30", "how long an issued token lasts"},
 	{"token_max_days", "90", "the longest a token may ever last"},
 	{"open_tokens", "false", "whether a token can be issued without holding one"},
-	{"max_upload_mb", "256", "the largest package accepted, in megabytes"},
+	{"max_upload_mb", "16", "the largest package accepted, in megabytes"},
 }
 
 // SettingDefaults lists the settings and their defaults, so a service can
@@ -493,15 +504,29 @@ func SettingDefaults() [][2]string {
 	return out
 }
 
-// AccessSecured reports whether publishing needs a credential. The default is
-// an open registry, which suits a trusted network; setting access = secured
-// turns rho-auth on for writes.
+// AccessSecured reports whether publishing is restricted to the allowlist.
+// Reading is public whatever this says.
 func AccessSecured() bool {
 	return strings.EqualFold(configGet("access", "public"), "secured")
 }
 
 // MaxUploadMB is the largest package accepted, in megabytes.
-func MaxUploadMB() uint32 { return configUint("max_upload_mb", 256) }
+func MaxUploadMB() uint32 { return configUint("max_upload_mb", maxUploadMBDefault) }
+
+// maxUploadMBDefault is the fallback for the setting, and matches the default
+// the settings table reports so the two agree.
+const maxUploadMBDefault = 16
+
+// The HTTP server reads a whole request body before a handler sees it, so its
+// ceiling must not be lower than the largest upload this service accepts, or a
+// package the registry would accept would be refused by the server before the
+// handler could agree to it. The setting is the one authority: the server's
+// override is derived from it here, unless the deployment set one itself.
+func init() {
+	if strings.TrimSpace(os.Getenv("RHO_HTTP_MAX_BODY")) == "" {
+		os.Setenv("RHO_HTTP_MAX_BODY", strconv.FormatUint(uint64(MaxUploadMB())<<20, 10))
+	}
+}
 
 // The settings accessors the generated aliases reach. Each one names a single
 // setting, so the defaults are stated in exactly one place.
@@ -1050,7 +1075,15 @@ func (s *fsStore) unpack(name, version string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	payload, err := os.ReadFile(filepath.Join(s.versionDir(name, version), "package.rho-pkg"))
+	// The package lives in the store, not beside a file: the version record and
+	// its payload are one commit in the database, so the bytes to unpack are read
+	// from there. Reading a path would find nothing, and the documentation pass
+	// would skip every module it was meant to document.
+	db, err := openRegistryDB()
+	if err != nil {
+		return "", err
+	}
+	payload, err := registryPayload(db, name, version)
 	if err != nil {
 		return "", err
 	}
@@ -1120,9 +1153,24 @@ func (s *fsStore) docPage(name, version, page string) ([]byte, error) {
 	if page == "" {
 		page = "index.html"
 	}
+	// The page is a path inside this version's documentation and nowhere else.
+	// The confinement is repeated here rather than left to the router, because a
+	// request can carry ".." in a form the router does not normalize: an encoded
+	// one. A percent-encoded "../" reaches a handler as "../", so a request for a
+	// page named that way would otherwise read a file the service was never
+	// meant to serve.
+	clean := filepath.Clean(filepath.FromSlash(page))
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("page %q is outside the documentation", page)
+	}
+	root := s.docsDir(name, version)
+	out := filepath.Join(root, clean)
+	if out != root && !strings.HasPrefix(out, root+string(filepath.Separator)) {
+		return nil, fmt.Errorf("page %q is outside the documentation", page)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return os.ReadFile(filepath.Join(s.docsDir(name, version), filepath.FromSlash(page)))
+	return os.ReadFile(out)
 }
 
 // hasDocs reports whether a version has documentation, which is what a page
@@ -1405,8 +1453,34 @@ func storeLatest(name string) string {
 	return versions[0]
 }
 
+// storeRelease is the full release note for one version, or "" when the module
+// or the version is not here, or it was published before notes were kept.
+//
+// A listing flattens a note onto one line, which is right for a row and wrong
+// for a page about the release: this returns it as the module wrote it, newlines
+// and all, so a version's page shows what changed rather than a sentence with
+// the line breaks taken out.
+func storeRelease(name, version string) string {
+	db, err := openRegistryDB()
+	if err != nil {
+		return ""
+	}
+	meta, ok := registryMeta(db, name, version)
+	if !ok {
+		return ""
+	}
+	return meta.Release
+}
+
 
 // detailLine renders one module version for a Rho handler to read.
+//
+// The fields are positional, so a reader indexes them: name, version, type,
+// description, main, command, publisher, published-at, released, release. New
+// fields go at the end, because a handler that reads an index must not have
+// another field put before the one it reads. The release note is flattened to
+// one line here, because a listing line cannot hold a newline; a page that wants
+// the note in full reads it with store_release.
 func detailLine(meta moduleMeta) string {
 	fields := []string{
 		meta.Name,
@@ -1415,6 +1489,10 @@ func detailLine(meta moduleMeta) string {
 		meta.Description,
 		meta.Main,
 		meta.Command,
+		meta.Ownership,
+		meta.PublishedAt,
+		meta.Released,
+		meta.Release,
 	}
 	// A field must not break the line format, so tabs and newlines are dropped.
 	for i, field := range fields {

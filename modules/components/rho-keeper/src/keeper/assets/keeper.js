@@ -62,6 +62,7 @@ const TITLES = {
   overview: "Overview",
   modules: "Modules",
   contracts: "Contracts & plugins",
+  registry: "Remote registry",
   docs: "Docs",
   cli: "CLI",
   system: "System",
@@ -111,6 +112,7 @@ function route() {
   show(section || "overview", name);
   if (section === "module" && name) openModule(name);
   if (section === "docs" && name) loadDoc(name);
+  if (section === "registry") loadRegistry();
 }
 
 window.addEventListener("hashchange", route);
@@ -144,6 +146,7 @@ function render() {
   renderModules(s.modules);
   renderContracts(s.contracts);
   renderPlugins(s.modules);
+  renderRegistry(s.modules);
   renderErrors(s.errors);
 }
 
@@ -315,6 +318,134 @@ function renderErrors(errors) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  The remote registry                                                         */
+/* -------------------------------------------------------------------------- */
+
+// The registry is fetched, not streamed: it describes another machine, and the
+// stream describes this one. What is held here — the installed flags, and the
+// count of what is not — is worked out from the streamed state instead, so a
+// module installed in a terminal appears as installed here without a request,
+// and the two can never disagree about what this machine has.
+let registryData = null;
+
+async function loadRegistry() {
+  try {
+    registryData = await (await fetch("/api/v1/registry")).json();
+  } catch (err) {
+    registryData = { configured: true, url: "", modules: [], error: String(err) };
+  }
+  renderRegistry(state.data ? state.data.state.modules : []);
+}
+
+function renderRegistry(installed) {
+  const nav = $("nav-registry");
+  if (!registryData) {
+    nav.textContent = "";
+    return;
+  }
+  const registry = registryData;
+
+  if (!registry.configured) {
+    $("registry-url").textContent = "No remote registry is configured.";
+    $("registry").innerHTML = "";
+    showRegistryEmpty("Set one with: rho config set remote.url <url>");
+    nav.textContent = "";
+    return;
+  }
+
+  $("registry-url").textContent = registry.url + (registry.error ? " — " + registry.error : "");
+
+  // What is held here, by name. The registry's own answer about whether a module
+  // is installed is only true when it was asked, and this page is left open
+  // across installs, so the local state is what decides.
+  const local = new Map((installed || []).map((m) => [m.name, m]));
+  const modules = registry.modules || [];
+  $("registry").innerHTML = modules.map((m) => registryRow(m, local.get(m.name))).join("");
+
+  const available = modules.filter((m) => !local.get(m.name)).length;
+  nav.textContent = available ? String(available) : "";
+  if (modules.length === 0) {
+    showRegistryEmpty(registry.error ? registry.error : "The registry returned nothing.");
+  } else {
+    $("registry-empty").hidden = true;
+  }
+}
+
+function showRegistryEmpty(text) {
+  const empty = $("registry-empty");
+  empty.hidden = false;
+  empty.textContent = text;
+}
+
+function registryRow(m, local) {
+  const held = local
+    ? (local.installedVersions && local.installedVersions.length ? local.installedVersions : [local.version])
+    : [];
+  const hasThis = held.includes(m.version);
+
+  // What the row offers is about this machine's copy, whose version may differ
+  // from the newest the registry holds: a module that is here can be turned off
+  // or removed, and one that is not (or is older) can be installed.
+  let state;
+  if (local && hasThis) {
+    state = local.enabled
+      ? '<span class="pill ok">in use</span> ' +
+        `<button class="act" data-disable-module="${esc(local.name)}">Turn off</button>`
+      : '<span class="pill ok">installed</span> ' +
+        `<button class="act danger" data-uninstall="${esc(local.name)}|${esc(local.version)}">Uninstall</button>`;
+  } else {
+    state =
+      (held.length ? '<span class="hint">holds ' + esc(held.join(", ")) + "</span> " : "") +
+      `<button class="act" data-install-module="${esc(m.name)}|${esc(m.version)}">` +
+      "Install</button>" +
+      `<code class="pick" title="The command this runs">rho module install ${esc(m.name)}@${esc(
+        m.version
+      )}</code>`;
+  }
+
+  const by = m.author
+    ? '<span class="sub2">by ' +
+      esc(m.author) +
+      (m.owner && m.owner !== m.author ? " · published by " + esc(m.owner) : "") +
+      "</span>"
+    : "";
+
+  return `<tr>
+    <td class="name">${esc(m.name)}</td>
+    <td class="kind">${esc(m.type)}</td>
+    <td class="version">${esc(m.version)}</td>
+    <td class="about">${m.description ? esc(m.description) : '<span class="none">no description</span>'}${by}</td>
+    <td class="right">${state}</td>
+  </tr>`;
+}
+
+async function installFromRegistry(name, version) {
+  $("last-panel").hidden = false;
+  $("last-command").textContent = "rho module install " + name + "@" + version;
+  $("last-outcome").textContent = "installing…";
+  $("last-outcome").className = "";
+
+  let action;
+  try {
+    const response = await fetch("/api/v1/registry/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, version: version }),
+    });
+    action = await response.json();
+  } catch (err) {
+    action = { ok: false, command: "rho module install " + name + "@" + version, error: String(err) };
+  }
+
+  $("last-command").textContent = action.command || "";
+  $("last-outcome").textContent = action.ok ? action.message : action.error || action.message;
+  $("last-outcome").className = action.ok ? "" : "bad";
+  // Asked again rather than assumed: an install that left nothing behind is a
+  // thing this page has to be able to see, and the remote may have moved on.
+  if (action.ok) loadRegistry();
+}
+
+/* -------------------------------------------------------------------------- */
 /*  The stream                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -396,9 +527,78 @@ async function openModule(name) {
 
   $("detail-actions").innerHTML = `
     ${toggle(detail)}
+    ${
+      detail.enabled
+        ? ""
+        : `<button class="act danger" data-uninstall="${esc(detail.name)}|${esc(
+            detail.version
+          )}">Uninstall</button>`
+    }
     ${detail.hasDocs ? '<a class="docbtn" href="#/module-docs/' + encodeURIComponent(detail.name) + '">read its documentation</a>' : ""}`;
 
   renderSettings(detail);
+}
+
+// uninstallModule removes this machine's copy of a module version.
+//
+// The server refuses to remove one that is in use, so the button is only offered
+// for a module that is off; the answer says so if it is not.
+async function uninstallModule(name, version) {
+  $("last-panel").hidden = false;
+  $("last-command").textContent = "rho module uninstall " + name + "@" + version;
+  $("last-outcome").textContent = "uninstalling…";
+  $("last-outcome").className = "";
+
+  let action;
+  try {
+    const response = await fetch("/api/v1/modules/" + encodeURIComponent(name) + "/uninstall", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version: version }),
+    });
+    action = await response.json();
+  } catch (err) {
+    action = { ok: false, command: "rho module uninstall " + name + "@" + version, error: String(err) };
+  }
+
+  $("last-command").textContent = action.command || "";
+  $("last-outcome").textContent = action.ok ? action.message : action.error || action.message;
+  $("last-outcome").className = action.ok ? "" : "bad";
+  // Re-read what changed: the modules table on a detail page, the registry list
+  // otherwise. The stream carries the new state either way; these say so at once.
+  if (action.ok) {
+    loadRegistry();
+    if ((location.hash || "").startsWith("#/module/")) openModule(name);
+  }
+}
+
+// disableModule turns a module off so it can then be removed.
+//
+// It is the first half of uninstalling, and it is a button of its own because
+// removing something that is in use is refused: a run resolves to that version,
+// and the page has to let a person step off it before it will take the copy away.
+async function disableModule(name) {
+  $("last-panel").hidden = false;
+  $("last-command").textContent = "rho module disable " + name;
+  $("last-outcome").textContent = "turning off…";
+  $("last-outcome").className = "";
+
+  let action;
+  try {
+    const response = await fetch("/api/v1/modules/" + encodeURIComponent(name) + "/disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    action = await response.json();
+  } catch (err) {
+    action = { ok: false, command: "rho module disable " + name, error: String(err) };
+  }
+
+  $("last-command").textContent = action.command || "";
+  $("last-outcome").textContent = action.ok ? action.message : action.error || action.message;
+  $("last-outcome").className = action.ok ? "" : "bad";
+  if (action.ok) loadRegistry();
 }
 
 // renderSettings is the form for what a module says it can be configured with.
@@ -982,6 +1182,23 @@ document.addEventListener("click", (event) => {
     act(button);
     return;
   }
+  const install = event.target.closest("[data-install-module]");
+  if (install) {
+    const [name, version] = install.dataset.installModule.split("|");
+    installFromRegistry(name, version);
+    return;
+  }
+  const uninstall = event.target.closest("[data-uninstall]");
+  if (uninstall) {
+    const [name, version] = uninstall.dataset.uninstall.split("|");
+    uninstallModule(name, version);
+    return;
+  }
+  const disable = event.target.closest("[data-disable-module]");
+  if (disable) {
+    disableModule(disable.dataset.disableModule);
+    return;
+  }
   const save = event.target.closest("button[data-set]");
   if (save) {
     setSetting(save);
@@ -1004,4 +1221,5 @@ route();
 loadSystem();
 loadDoctor();
 loadCommands();
+loadRegistry();
 connect();

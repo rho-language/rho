@@ -531,6 +531,8 @@ button.act {
 }
 button.act:hover { border-color: var(--accent); color: var(--accent); }
 button.act:active { transform: translateY(1px); }
+button.act.danger { color: var(--stop); }
+button.act.danger:hover { border-color: var(--stop); color: var(--stop); }
 
 /* The console, which is a terminal because it shows a terminal's output: fixed
    width, lines that do not wrap, and scrolling rather than growing. */

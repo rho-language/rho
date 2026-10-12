@@ -122,7 +122,10 @@ func TestARunFallsBackToTheRhoTestFilesItFinds(t *testing.T) {
 	if report.Err != nil {
 		t.Fatalf("expected a run, got %v", report.Err)
 	}
-	if len(report.Suites) != 1 || report.Suites[0].Name != "math" {
+	// The suite keeps the file's path under the project, because that is the name
+	// the resolver joins to the root to find the file: a test at
+	// `tests/math_test.rho` is the suite `tests/math`.
+	if len(report.Suites) != 1 || report.Suites[0].Name != "tests/math" {
 		t.Fatalf("expected the file's suite, got %+v", report.Suites)
 	}
 }

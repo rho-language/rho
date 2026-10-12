@@ -77,6 +77,7 @@ var goServerImports = []importSpec{
 	{Path: `"net/url"`},
 	{Path: `"os"`},
 	{Path: `"os/signal"`},
+	{Path: `"strconv"`},
 	{Path: `"strings"`},
 	{Path: `"syscall"`},
 	{Path: `"time"`},
@@ -357,7 +358,11 @@ func newRequest(r *http.Request) *Request {
 	}
 	body, err := readAll(r)
 	if err != nil {
+		// A body that could not be read is not a body: a truncated upload must
+		// not be handled as if it were whole, so the handler is handed nothing
+		// and refuses it.
 		log.Printf("read body: %v", err)
+		body = ""
 	}
 	return &Request{
 		Method: r.Method,
@@ -387,12 +392,34 @@ func readAll(r *http.Request) (string, error) {
 		return "", nil
 	}
 	defer r.Body.Close()
-	const maxBody = 256 << 20
-	buf, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	// MaxBytesReader, not LimitReader: a body over the limit is an error rather
+	// than a body silently cut short, and a truncated upload must not be handled
+	// as if it were whole.
+	r.Body = http.MaxBytesReader(nil, r.Body, httpMaxBody())
+	buf, err := io.ReadAll(r.Body)
 	if err != nil {
 		return "", err
 	}
 	return string(buf), nil
+}
+
+// httpMaxBody is the largest request body read into memory.
+//
+// It is a setting rather than a constant, because a service that accepts uploads
+// and one that accepts a small document want different answers, and it is
+// bounded by default because the service that forgot to set it is the one a
+// large body would otherwise exhaust. The registry sets it to its upload limit.
+func httpMaxBody() int64 {
+	const fallback = 16 << 20
+	value := strings.TrimSpace(os.Getenv("RHO_HTTP_MAX_BODY"))
+	if value == "" {
+		return fallback
+	}
+	bytes, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || bytes <= 0 {
+		return fallback
+	}
+	return bytes
 }
 
 // param returns a path wildcard captured by the router, or "" when absent.
@@ -408,6 +435,22 @@ func requestBody(req Request) string {
 // request_auth returns the raw Authorization header.
 func requestAuth(req Request) string {
 	return req.Auth
+}
+
+// request_path returns the address the request was made to.
+func requestPath(req Request) string {
+	return req.Path
+}
+
+// json_string renders a string as a JSON string literal, quotes and escapes
+// included, so a value that contains a quote or a newline cannot break the
+// document it is written into.
+func jsonString(value string) string {
+	encoded, err := jsonenc.Marshal(value)
+	if err != nil {
+		return "\"\""
+	}
+	return string(encoded)
 }
 
 // request_query_param returns one value from the raw query string.
@@ -450,7 +493,11 @@ func newRequest(r *http.Request) *Request {
 	}
 	body, err := readAll(r)
 	if err != nil {
+		// A body that could not be read is not a body: a truncated upload must
+		// not be handled as if it were whole, so the handler is handed nothing
+		// and refuses it.
 		log.Printf("read body: %v", err)
+		body = ""
 	}
 	head := make(map[string]string, len(r.Header))
 	for name, values := range r.Header {
@@ -477,12 +524,34 @@ func readAll(r *http.Request) (string, error) {
 		return "", nil
 	}
 	defer r.Body.Close()
-	const maxBody = 256 << 20
-	buf, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	// MaxBytesReader, not LimitReader: a body over the limit is an error rather
+	// than a body silently cut short, and a truncated upload must not be handled
+	// as if it were whole.
+	r.Body = http.MaxBytesReader(nil, r.Body, httpMaxBody())
+	buf, err := io.ReadAll(r.Body)
 	if err != nil {
 		return "", err
 	}
 	return string(buf), nil
+}
+
+// httpMaxBody is the largest request body read into memory.
+//
+// It is a setting rather than a constant, because a service that accepts uploads
+// and one that accepts a small document want different answers, and it is
+// bounded by default because the service that forgot to set it is the one a
+// large body would otherwise exhaust. The registry sets it to its upload limit.
+func httpMaxBody() int64 {
+	const fallback = 16 << 20
+	value := strings.TrimSpace(os.Getenv("RHO_HTTP_MAX_BODY"))
+	if value == "" {
+		return fallback
+	}
+	bytes, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || bytes <= 0 {
+		return fallback
+	}
+	return bytes
 }
 
 // param returns a path wildcard captured by the router, or "" when absent.
@@ -498,6 +567,22 @@ func requestBody(req Request) string {
 // request_auth returns the raw Authorization header.
 func requestAuth(req Request) string {
 	return req.Auth
+}
+
+// request_path returns the address the request was made to.
+func requestPath(req Request) string {
+	return req.Path
+}
+
+// json_string renders a string as a JSON string literal, quotes and escapes
+// included, so a value that contains a quote or a newline cannot break the
+// document it is written into.
+func jsonString(value string) string {
+	encoded, err := jsonenc.Marshal(value)
+	if err != nil {
+		return "\"\""
+	}
+	return string(encoded)
 }
 
 // request_query_param returns one value from the raw query string.
@@ -709,6 +794,13 @@ func goRouteHandlers(m ir.ModuleIR) string {
 			}
 		}
 		fmt.Fprintf(&b, "func %s(w http.ResponseWriter, r *http.Request) {\n", name)
+		// A declared body larger than the ceiling is refused before it is read,
+		// so an oversized upload is answered as what it is rather than reaching a
+		// handler as an empty body. A body with no declared length still meets
+		// the ceiling in readAll, which is the bound that cannot be lied about.
+		b.WriteString("\tif r.ContentLength > httpMaxBody() {\n")
+		b.WriteString("\t\thttp.Error(w, \"request body too large\", http.StatusRequestEntityTooLarge)\n")
+		b.WriteString("\t\treturn\n\t}\n")
 		fmt.Fprintf(&b, "\t%s(*newRequest(r)).write(w)\n}\n\n", goFuncName(handler))
 	}
 	return b.String()

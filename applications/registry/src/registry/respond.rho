@@ -29,11 +29,23 @@ fn published_json(name: string, version: string) Response {
 // separate because a module may be written by one person and published by
 // another, and a registry that confused the two would let anyone who wrote a
 // name into a file claim a module.
-fn meta_json(name: string, version: string, kind: string, description: string, main: string, command: string, author: string, maintainer: string, owner: string, visibility: string) string {
-    return "{\"name\":\"" + name + "\",\"version\":\"" + version +
-        "\",\"type\":\"" + kind + "\",\"description\":\"" + description +
-        "\",\"main\":\"" + main + "\",\"command\":\"" + command +
-        "\",\"author\":\"" + author + "\",\"maintainer\":\"" + maintainer +
-        "\",\"owner\":\"" + owner + "\",\"visibility\":\"" + visibility +
-        "\",\"features\":[],\"deps\":{}}"
+//
+// Release and Released are what this version changed and when, taken from the
+// module's own changelog. They are per version rather than per module, because
+// the description says what a module is and does not change between releases,
+// while the release note says what is different about this one — which is the
+// only thing that tells two versions apart in a list.
+//
+// Every value goes through json_string rather than into the document raw: a
+// description or a release note can contain a quote, a newline or a backslash,
+// and a document built by pasting one in is a document that stops parsing the
+// first time somebody writes an apostrophe the wrong way.
+fn meta_json(name: string, version: string, kind: string, description: string, main: string, command: string, author: string, maintainer: string, owner: string, visibility: string, release: string, released: string) string {
+    return "{\"name\":" + json_string(name) + ",\"version\":" + json_string(version) +
+        ",\"type\":" + json_string(kind) + ",\"description\":" + json_string(description) +
+        ",\"main\":" + json_string(main) + ",\"command\":" + json_string(command) +
+        ",\"author\":" + json_string(author) + ",\"maintainer\":" + json_string(maintainer) +
+        ",\"owner\":" + json_string(owner) + ",\"visibility\":" + json_string(visibility) +
+        ",\"release\":" + json_string(release) + ",\"released\":" + json_string(released) +
+        ",\"features\":[],\"deps\":{}}"
 }

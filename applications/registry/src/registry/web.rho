@@ -29,6 +29,14 @@ route GET "/modules/{name}/{version}" => version_page
 
 // index_page lists the published modules, each with its newest version.
 fn index_page(req: Request) Response {
+    // The router's root route catches every path no other route matched, so `/`
+    // is not the only address that reaches this handler. Anything else is a page
+    // that does not exist, and answering it with the index would tell a reader —
+    // and a crawler — that a wrong address is a right one. It is answered as a
+    // 404 instead.
+    if request_path(req) != "/" {
+        return missing(req, "There is no page at that address.")
+    }
     let query: string = request_query_param(req, "q")
     // The listing is what the caller may see, so a private module is absent for
     // anybody but its owner. The pages and the API therefore agree about what
@@ -95,8 +103,29 @@ fn version_page(req: Request) Response {
         vars("description", fallback(field_of(found, 3), "No description.")) +
         vars("main", field_of(found, 4)) +
         vars("command", field_of(found, 5)) +
+        vars("publisher", field_of(found, 6)) +
+        vars("published", field_of(found, 7)) +
+        vars("release", release_section(field_of(found, 8), store_release(name, version))) +
         vars("doc", doc_link(field_of(found, 0), version)))
     ))
+}
+
+// release_section is what a version's page says about the release: when it was
+// cut, and what changed. It is empty when the module recorded nothing, so a
+// version published before notes were kept shows no heading promising one.
+//
+// The note is escaped rather than trusted: it is text a publisher wrote, and a
+// page that pasted it in raw would run whatever was written in it. It keeps its
+// line breaks inside a <pre>.
+fn release_section(released: string, note: string) string {
+    if note == "" {
+        return ""
+    }
+    let when: string = ""
+    if released != "" {
+        when = "<p class=\"when\">Released " + escape_html(released) + "</p>"
+    }
+    return "<h3>Release</h3>" + when + "<pre class=\"release\">" + escape_html(note) + "</pre>"
 }
 
 // missing renders a 404 page.
@@ -155,6 +184,8 @@ fn module_rows(listing: string) string {
             vars("name", field_of(line, 0)) +
             vars("version", field_of(line, 1)) +
             vars("description", field_of(line, 3)) +
+            vars("released", field_of(line, 8)) +
+            vars("release", field_of(line, 9)) +
             vars("doc", doc_badge(field_of(line, 0), field_of(line, 1)))
         )
         count = count + 1
@@ -181,6 +212,8 @@ fn version_rows(listing: string, when_empty: string) string {
             vars("name", field_of(line, 0)) +
             vars("version", field_of(line, 1)) +
             vars("description", field_of(line, 3)) +
+            vars("released", field_of(line, 8)) +
+            vars("release", field_of(line, 9)) +
             vars("doc", doc_badge(field_of(line, 0), field_of(line, 1)))
         )
         count = count + 1

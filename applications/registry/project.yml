@@ -56,8 +56,8 @@ targets:
     # the address a caller gets one from is the one thing no source records.
     api:
       security: bearer
-      security_description: "A publish token in the Authorization header, obtained from POST /auth/token."
-      public_paths: "/, /search, /healthz"
+      security_description: "A token in the Authorization header, obtained from POST /auth/token. Publishing always needs one; reading is public."
+      public_paths: "/, /healthz"
     # Supplies the store_put/store_get/store_has/store_search externs the
     # handlers declare, the documentation generator the pages come from, and the
     # service's own API description.
