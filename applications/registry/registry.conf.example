@@ -13,13 +13,21 @@
 # container uses.
 data_dir = data
 
-# public  - anyone may publish, suited to a trusted network
-# secured - publishing needs a token, reads stay public
+# public  - any identity with a token may publish; reading is open
+# secured - only identities named in RHO_REGISTRY_ALLOWED_USERS may publish
+#
+# Reading is public either way: the index, search, a version list, a module's
+# documentation and its download need no credential.
 access = public
 
 # Shown on the pages.
 title = Rho module registry
 site_url = https://rho-lang.org
+
+# The address this service is published under. Generated documentation links
+# back here, so a reader who follows a module's docs can return. Set it to the
+# public URL when the service is behind a proxy or a name.
+registry_url = /
 
 # How long an issued token lasts, and the ceiling a caller may ask for.
 # token_days is clamped to token_max_days, and never exceeds 90 days.
@@ -36,5 +44,7 @@ token_max_days = 90
 # for a laptop or a test.
 open_tokens = false
 
-# The largest package accepted, in megabytes.
-max_upload_mb = 256
+# The largest package accepted, in megabytes. The HTTP server's body ceiling is
+# derived from this, so raising it is enough; a reverse proxy in front must allow
+# at least as large a body (nginx: client_max_body_size).
+max_upload_mb = 16

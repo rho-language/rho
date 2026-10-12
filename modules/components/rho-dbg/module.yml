@@ -225,6 +225,7 @@ package:
   include:
     - module.yml
     - README.md
+    - CHANGELOG.md
     # The settings a person can change. They travel with the module so that a
     # rho-dbg installed from a registry is configured by the same file as one run
     # from a checkout, rather than by whatever the installation happened to have.

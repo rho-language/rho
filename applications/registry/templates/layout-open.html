@@ -74,6 +74,18 @@
         opacity: 0.8;
       }
       .desc { opacity: 0.7; font-size: 0.9em; }
+      /* The release statement for a version, so two versions of one module —
+         which share a description — can be told apart in a listing. */
+      .when { opacity: 0.6; font-size: 0.8em; }
+      .note { opacity: 0.75; font-size: 0.88em; font-style: italic; }
+      .release {
+        white-space: pre-wrap;
+        margin: 0.3rem 0 1rem;
+        padding: 0.6rem 0.8rem;
+        border: 1px solid #8883;
+        border-radius: 0.4rem;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
       /* The documentation marker. It has its own colour rather than the
          version badge's, so a listing reads at a glance: a grey badge is a
          version and a teal one is documentation. */

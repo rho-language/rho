@@ -1,0 +1,54 @@
+# systemd unit for the Rho module registry, run as a container.
+#
+# This is the variant to use when the image is deployed rather than built on the
+# host: systemd pulls the image, starts the container in the foreground, and
+# restarts it. The container is not given a Docker restart policy, because
+# systemd is the thing that restarts it — two supervisors fighting over one
+# container is a container that is up when the unit says it is not.
+#
+# Set the image once, here. Everything else the service reads comes from
+# /etc/rho/registry.conf and /etc/rho/registry.env (see docs/deployment.md).
+#
+#   sudo install -m 0644 deploy/registry-docker.service /etc/systemd/system/registry-docker.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now registry-docker
+
+[Unit]
+Description=Rho module registry
+Documentation=https://github.com/rho-lang/rho
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+
+# The image to run. Replace with the published image and tag.
+Environment=IMAGE=<dockerhub-user>/rho-registry:latest
+
+# Use the cached image when the pull fails, so a host without network at boot
+# still starts the registry it already has.
+ExecStartPre=-/usr/bin/docker pull ${IMAGE}
+# Clear a container left behind by an unclean stop before starting a new one.
+ExecStartPre=-/usr/bin/docker rm -f registry
+
+# Foreground, so systemd tracks the container's lifetime. --rm removes it when
+# it stops. The port is loopback only: nginx is what faces the network.
+ExecStart=/usr/bin/docker run --rm --name registry \
+    --env-file /etc/rho/registry.env \
+    -e RHO_REGISTRY_CONFIG=/etc/rho/registry.conf \
+    -e RHO_REGISTRY_URL=https://registry.example.com \
+    -v /etc/rho/registry.conf:/etc/rho/registry.conf:ro \
+    -v rho-registry-data:/app/applications/registry/data \
+    -p 127.0.0.1:8080:8080 \
+    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
+    ${IMAGE}
+
+Restart=on-failure
+RestartSec=5
+# The first start regenerates and compiles the project inside the container.
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -104,7 +104,7 @@ func PublishModule(dir string) error {
 	}
 
 	// Step 6: Upload to remote registry (both binary pkg and source archive)
-	if err := uploadModule(meta, pkgPath, sourceArchive); err != nil {
+	if err := uploadModule(meta, dir, pkgPath, sourceArchive); err != nil {
 		return err
 	}
 
@@ -214,7 +214,7 @@ func moduleVisibility(meta ModuleInfo) string {
 /*  Upload Module                                                              */
 /* -------------------------------------------------------------------------- */
 
-func uploadModule(meta ModuleInfo, pkgPath, sourceArchive string) error {
+func uploadModule(meta ModuleInfo, dir, pkgPath, sourceArchive string) error {
 	// Load remote config
 	cfg, err := remote.LoadConfig()
 	if err != nil {
@@ -253,6 +253,14 @@ func uploadModule(meta ModuleInfo, pkgPath, sourceArchive string) error {
 			"author":      meta.Module.Author,
 			"maintainer":  meta.Module.Maintainer,
 			"visibility":  moduleVisibility(meta),
+		}
+		// The release note travels with the release rather than living only in
+		// the module's folder: the registry a reader browses shows it against
+		// the version, so two versions of one module can be told apart by what
+		// changed rather than by their identical descriptions.
+		if note, date, found := ReleaseFor(ReadChangelog(dir), meta.Module.Version); found {
+			manifest["release"] = note
+			manifest["released"] = date
 		}
 		if err := remote.UploadModule(client, meta.Module.Name, meta.Module.Version, pkgData, sourceData, manifest); err != nil {
 			return err

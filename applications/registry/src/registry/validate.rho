@@ -70,12 +70,14 @@ fn is_alpha(byte: u8) bool {
     return (byte >= 97 && byte <= 122) || (byte >= 65 && byte <= 90)
 }
 
-// Whether reading a public module requires a credential.
+// Whether publishing is restricted to an allowlist.
 //
-// It governs reading only. Publishing always needs a credential, because a
-// registry that records who owns a module cannot accept a publish it cannot
-// attribute: an unowned module is one nobody can add a version to or withdraw,
-// which is a module that is stuck the moment it is published.
+// `access = secured` governs publishing only. Reading — the index, search, a
+// version list, a module's documentation and its download — is public whatever
+// this says. Publishing always needs a credential, because a registry that
+// records who owns a module cannot accept a publish it cannot attribute: an
+// unowned module is one nobody can add a version to or withdraw, which is a
+// module that is stuck the moment it is published.
 fn is_secured() bool {
     return registry_access() == "secured"
 }

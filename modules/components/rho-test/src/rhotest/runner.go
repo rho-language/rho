@@ -232,8 +232,20 @@ func loadManifestFor(options Options) (Manifest, error) {
 		return Manifest{}, err
 	}
 	declared := []Declared{}
+	absRoot, rootErr := filepath.Abs(options.Root)
 	for _, path := range paths {
-		name := strings.TrimSuffix(filepath.Base(path), "_test.rho")
+		// The suite keeps the file's path relative to the project, not just its
+		// base name, because the runner resolves a declared Rho suite to the file
+		// it names: a test under `tests/` is `tests/math`, and dropping the
+		// directory would look for it beside the manifest and report it missing.
+		// The discovery walks the path as given, which may be relative while the
+		// root is absolute, so both are resolved before one is taken from the other.
+		name := strings.TrimSuffix(filepath.Base(path), TestFileSuffix)
+		if absPath, absErr := filepath.Abs(path); rootErr == nil && absErr == nil {
+			if rel, relErr := filepath.Rel(absRoot, absPath); relErr == nil && !strings.HasPrefix(rel, "..") {
+				name = strings.TrimSuffix(filepath.ToSlash(rel), TestFileSuffix)
+			}
+		}
 		declared = append(declared, Declared{Name: name, Kind: KindRho, Tags: []string{KindRho}})
 	}
 	return Manifest{Name: filepath.Base(options.Root), Declared: declared}, nil

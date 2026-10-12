@@ -9,10 +9,15 @@ service. It speaks the three endpoints the Rho module client already uses, so
 | Method | Path                                | Purpose                     |
 |--------|-------------------------------------|-----------------------------|
 | GET    | `/healthz`                          | Liveness probe              |
+| POST   | `/auth/token`                       | Mint a token (issuance policy applies) |
 | POST   | `/modules/{name}/{version}/rho-pkg` | Publish a module package    |
 | GET    | `/modules/{name}/{version}/rho-pkg` | Download a module package   |
+| DELETE | `/modules/{name}/{version}`         | Withdraw a version (owner)  |
+| PUT    | `/modules/{name}/visibility`        | Set public/private (owner)  |
+| GET    | `/modules/{name}/{version}/docs/{path...}` | A version's documentation |
 | GET    | `/search?q=<query>`                 | Search published modules    |
 | GET    | `/modules/{name}`                   | List a module's versions    |
+| GET    | `/openapi.json`                     | This service's API description |
 
 ## Layout
 
@@ -24,7 +29,10 @@ applications/registry/
 │   ├── main.rho                   routes and handlers
 │   └── registry/
 │       ├── storage.rho            the storage port, as extern declarations
-│       ├── validate.rho           request validation and auth
+│       ├── validate.rho           request validation and settings
+│       ├── auth.rho               token issuance, reading policy
+│       ├── web.rho                the HTML pages
+│       ├── docs.rho               documentation pages for a version
 │       └── respond.rho            response and JSON shapes
 └── tests/
     └── validate_test.rho          Rho tests
@@ -40,13 +48,15 @@ shipping host code. Nothing outside `src/` and `tests/` is hand-written Go.
 Two layers, because Rho tests can only reach what a plain program can:
 
 **Rho tests** cover the logic a command line build can run: version
-validation, bearer-token parsing, and the response shapes. They run on the
-`go` target, which the descriptor defines for exactly this purpose.
+validation, bearer-token parsing, and the response shapes. They live in
+`tests/validate_test.rho`. They are declared in `tests/tests.yml` as skipped:
+the descriptor generates `go`/`go-server` only, and the `go` target's generated
+SQL port does not build for a program that omits the generated db models, so
+there is no target to build them on yet. The Go integration tests cover the same
+logic meanwhile.
 
 ```sh
-rho test applications/registry go
-# or, from inside the project:
-cd applications/registry && rho test go
+rho test applications/registry --target go
 ```
 
 **Integration tests** cover what only the generated service has: the storage
@@ -102,17 +112,39 @@ cd build/generated/go-server && go build -o ../../registry .
 
 ## Pages
 
-All public, no credential needed:
+Public: the landing page, search, a version list, a module's documentation and
+its download need no credential, whatever `access` says:
 
 | Path                          | What it shows                                        |
 |-------------------------------|------------------------------------------------------|
 | `/`                           | every module, with its newest version badged         |
 | `/search?q=`                  | matching modules, one row per version                |
-| `/modules/{name}`             | one module's versions, newest first                  |
-| `/modules/{name}/{version}`   | that version's public metadata and its download path |
+| `/modules/{name}`             | one module's versions, newest first, each with its release statement |
+| `/modules/{name}/{version}`   | that version's metadata — publisher, publish time, release note — and its download path |
 
 Every page carries a footer with the registry version from its manifest, the
 year, and a link to rho-lang.org.
+
+### Release history
+
+A module's description says what it is and does not change between releases, so
+two versions of one module would read alike. The other half is a `CHANGELOG.md`
+beside the module's manifest: a section per release, in the module's own words.
+`rho module publish` reads the section for the version being published and sends
+it with the package, so the registry records it against that version without
+unpacking anything:
+
+```markdown
+## [0.1.1] - 2026-10-12
+
+Added a remote registry section.
+```
+
+A version's page shows the statement, and a version list shows it beside each
+version, so 0.1.0 and 0.1.1 are told apart by what changed rather than by two
+identical descriptions. The note is plain text a publisher wrote, so it is
+escaped before it is shown and never trusted as markup. A version published
+before a module kept a changelog simply has no note.
 
 The machine surface is kept apart under `/api`, so a client and a person get
 what each expects from the same service:
@@ -138,21 +170,26 @@ the service runs with no settings file at all.
 | Setting           | Default                   | Purpose                                    |
 |-------------------|---------------------------|--------------------------------------------|
 | `data_dir`        | `data`                    | where modules are stored                   |
-| `access`          | `public`                  | `public`, or `secured` to require a token to publish |
+| `access`          | `public`                  | `public`, or `secured` to restrict publishing to the allowlist |
 | `title`           | `Rho module registry`    | the name on the pages                      |
 | `site_url`        | `https://rho-lang.org`   | the footer link                            |
+| `registry_url`    | `/`                       | the address this service is published under; set it behind a proxy |
 | `token_days`      | `30`                      | how long an issued token lasts             |
 | `token_max_days`  | `90`                      | the ceiling, never exceeded               |
 | `open_tokens`     | `false`                   | whether a token can be issued without one  |
-| `max_upload_mb`   | `256`                     | the largest package accepted               |
+| `max_upload_mb`   | `16`                      | the largest package accepted; the HTTP body ceiling follows it |
 
 **Keep `data_dir` outside the application directory.** That is the point of it:
 installing a new build over the old one cannot take the published modules with
 it. `/var/lib/rho-registry` is a good place on a server, and
 `RHO_REGISTRY_DATA` overrides the setting, which is what a container uses.
 
-Reading is always public. `access = secured` turns on rho-auth for publishing
-only, so the index, search and downloads stay open.
+Reading is always public: the index, search, a version list, a download and a
+module's documentation need no credential. Publishing always needs a token,
+because the registry records who owns a module from the token and an unowned
+module is one nobody can add to or withdraw; `access = secured` additionally
+requires the publisher to be named in `RHO_REGISTRY_ALLOWED_USERS`, so a
+deployment decides who may publish rather than every holder of a token.
 
 ### Who may publish
 
@@ -240,30 +277,39 @@ escape the data directory.
 rho run applications/registry
 ```
 
-In another shell:
+In another shell (a publish always needs a token; see *With authentication*):
 
 ```sh
 printf 'package' > /tmp/m.rho-pkg
-curl -X POST --data-binary @/tmp/m.rho-pkg \
-     http://localhost:8080/modules/math/0.1.0/rho-pkg
 
 curl 'http://localhost:8080/search?q=math'
 curl -o /tmp/out.rho-pkg http://localhost:8080/modules/math/0.1.0/rho-pkg
 ```
 
-With authentication:
+With authentication, set the administrator secret and mint a publish token, then
+present it. Publishing always needs a token, even on a public registry:
 
 ```sh
-RHO_REGISTRY_TOKEN=secret rho run applications/registry
-curl -X POST -H 'Authorization: Bearer secret' --data-binary @/tmp/m.rho-pkg \
-     http://localhost:8080/modules/math/0.1.0/rho-pkg
+RHO_REGISTRY_BOOTSTRAP_SECRET=secret rho run applications/registry
+
+TOKEN=$(curl -s -H 'Authorization: Bearer secret' \
+  'http://localhost:8080/auth/token?user=miraur&host=localhost&days=1&scopes=push' \
+  | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+curl -X POST -H "Authorization: Bearer $TOKEN" --data-binary @/tmp/m.rho-pkg \
+     "http://localhost:8080/modules/math/0.1.0/rho-pkg?author=miraur"
 ```
+
+With `access = secured` in the settings file, the same token is required to
+publish, and the publisher must also be named in `RHO_REGISTRY_ALLOWED_USERS`.
+Reads stay public.
 
 ## Pointing the Rho client at it
 
 ```sh
-rho config set remote.url      http://localhost:8080
-rho config set remote.token    secret
+rho config set remote.url   http://localhost:8080
+# The value is a token minted from POST /auth/token, not the administrator
+# secret; see *With authentication*.
+rho config set remote.token "$TOKEN"
 rho module search math
 ```
 
