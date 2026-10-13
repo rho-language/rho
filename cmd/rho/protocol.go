@@ -55,28 +55,18 @@ func protocolGenerate(args []string) int {
 		return 1
 	}
 
-	// Every file is read into one schema. A schema may be split across files —
-	// messages in one, rpcs in another — and the wire does not care which file a
-	// declaration was written in.
+	// Every file is read into one schema, and every schema it includes with it:
+	// a schema may be split across files — the shared identity in one, a level's
+	// messages in another — and the wire does not care which file a declaration
+	// was written in. A name declared in two of them is one declaration.
 	merged := &protocol.Schema{}
 	for _, file := range files {
-		data, readErr := os.ReadFile(file)
-		if readErr != nil {
-			fmt.Fprintln(os.Stderr, "protocol generate:", readErr)
-			return 1
-		}
-		schema, parseErr := protocol.Parse(string(data))
+		schema, parseErr := protocol.LoadFile(file)
 		if parseErr != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", file, parseErr)
+			fmt.Fprintln(os.Stderr, "protocol generate:", parseErr)
 			return 1
 		}
-		if merged.Namespace == "" {
-			merged.Namespace = schema.Namespace
-			merged.Version = schema.Version
-		}
-		merged.Enums = append(merged.Enums, schema.Enums...)
-		merged.Messages = append(merged.Messages, schema.Messages...)
-		merged.Rpcs = append(merged.Rpcs, schema.Rpcs...)
+		protocol.Merge(merged, schema)
 	}
 
 	outDir := *out
