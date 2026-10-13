@@ -112,12 +112,14 @@ type Override struct {
 }
 
 // Validate reports whether a preset says enough to build against.
+//
+// It may name no dependencies. A preset fetches the vendor repositories a board
+// needs, and a **hosted** target needs none: the machine already has its
+// compiler and its libraries, so there is nothing to vendor. A preset that does
+// fetch something says so, and each dependency is checked.
 func (p Preset) Validate() error {
 	if p.Name == "" {
 		return fmt.Errorf("a preset names nothing")
-	}
-	if len(p.Dependencies) == 0 {
-		return fmt.Errorf("preset %q lists no dependencies, so there is nothing to build against", p.Name)
 	}
 	for _, dep := range p.Dependencies {
 		if err := dep.Validate(); err != nil {

@@ -11,6 +11,8 @@ package protocol
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -29,6 +31,10 @@ type Schema struct {
 	Enums    []ast.EnumDecl
 	Messages []ast.MessageDecl
 	Rpcs     []ast.RpcDecl
+	// Includes are the schemas this one includes, relative to it. A schema that
+	// shares its identity with another writes it once and includes it, so the
+	// identity is one declaration rather than two kept in step.
+	Includes []string
 }
 
 // Parse reads a schema from source.
@@ -49,6 +55,9 @@ func Parse(source string) (*Schema, error) {
 // one for the types and none for the wire.
 func FromModule(mod *ast.Module) *Schema {
 	schema := &Schema{Namespace: mod.Namespace}
+	for _, inc := range mod.Includes {
+		schema.Includes = append(schema.Includes, inc.Path)
+	}
 	for _, decl := range mod.Decls {
 		switch d := decl.(type) {
 		case ast.EnumDecl:
@@ -61,6 +70,107 @@ func FromModule(mod *ast.Module) *Schema {
 	}
 	schema.Version = namespaceVersion(schema.Namespace)
 	return schema
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Includes                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// LoadFile reads a schema and every schema it includes, and merges them into
+// one, so a caller generates from a root and gets the whole wire.
+//
+// An include is a path relative to the file that wrote it. A schema included by
+// two others is merged once — the names are deduplicated first-wins — so a
+// diamond is not a conflict; a schema that includes itself, directly or through
+// another, is a cycle and is reported rather than followed until the stack ends.
+func LoadFile(path string) (*Schema, error) {
+	return loadSchema(path, map[string]bool{})
+}
+
+func loadSchema(path string, visiting map[string]bool) (*Schema, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if visiting[absolute] {
+		return nil, fmt.Errorf("%s: include cycle", path)
+	}
+	visiting[absolute] = true
+	defer delete(visiting, absolute)
+
+	data, err := os.ReadFile(absolute)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := Parse(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	merged := &Schema{}
+	// The including file's own declarations are merged first, so a name it
+	// declares wins over one it includes: the nearer definition is the one a
+	// reader of this file means.
+	Merge(merged, parsed)
+	for _, include := range parsed.Includes {
+		child, childErr := loadSchema(filepath.Join(filepath.Dir(absolute), filepath.FromSlash(include)), visiting)
+		if childErr != nil {
+			return nil, childErr
+		}
+		Merge(merged, child)
+	}
+	return merged, nil
+}
+
+// Merge adds a schema's declarations to another's, dropping a name already
+// present. Namespace is taken from the first schema that has one.
+func Merge(into, add *Schema) {
+	if into.Namespace == "" {
+		into.Namespace = add.Namespace
+		into.Version = add.Version
+	}
+	for _, e := range add.Enums {
+		if !hasEnum(into, e.Name) {
+			into.Enums = append(into.Enums, e)
+		}
+	}
+	for _, m := range add.Messages {
+		if !hasMessage(into, m.Name) {
+			into.Messages = append(into.Messages, m)
+		}
+	}
+	for _, r := range add.Rpcs {
+		if !hasRpc(into, r.Name) {
+			into.Rpcs = append(into.Rpcs, r)
+		}
+	}
+}
+
+func hasEnum(schema *Schema, name string) bool {
+	for _, e := range schema.Enums {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMessage(schema *Schema, name string) bool {
+	for _, m := range schema.Messages {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRpc(schema *Schema, name string) bool {
+	for _, r := range schema.Rpcs {
+		if r.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // namespaceVersion reads the number out of a namespace's last component, so
@@ -83,11 +193,50 @@ func namespaceVersion(namespace string) int {
 
 // AllMessages is every message the wire carries: the ones the schema declared,
 // and the request and response of each rpc, named after it.
+//
+// They are ordered so that a message comes after every message it contains. A
+// language whose types must be defined before they are used — C, and Rho's
+// structs — cannot lay out a struct that holds one not yet defined, and a schema
+// author writing the identity after a message that carries it is writing the
+// obvious thing, not a mistake to be reported.
 func (s *Schema) AllMessages() []ast.MessageDecl {
 	out := append([]ast.MessageDecl{}, s.Messages...)
 	for _, r := range s.Rpcs {
 		out = append(out, ast.MessageDecl{Name: r.Name + "Request", Fields: r.Request})
 		out = append(out, ast.MessageDecl{Name: r.Name + "Response", Fields: r.Response})
+	}
+	return orderByDependency(out)
+}
+
+// orderByDependency is a stable topological sort of the messages: each is
+// emitted after the messages its fields are, and messages that do not depend on
+// one another keep the order they were declared in.
+func orderByDependency(messages []ast.MessageDecl) []ast.MessageDecl {
+	byName := map[string]ast.MessageDecl{}
+	for _, message := range messages {
+		byName[message.Name] = message
+	}
+	// 0 is unvisited, 1 is being visited — a cycle, which the layout reports
+	// rather than this — and 2 is emitted.
+	state := map[string]int{}
+	out := make([]ast.MessageDecl, 0, len(messages))
+	var visit func(name string)
+	visit = func(name string) {
+		if state[name] != 0 {
+			return
+		}
+		state[name] = 1
+		message := byName[name]
+		for _, field := range message.Fields {
+			if _, isMessage := byName[field.TypeExpr.Name]; isMessage {
+				visit(field.TypeExpr.Name)
+			}
+		}
+		state[name] = 2
+		out = append(out, message)
+	}
+	for _, message := range messages {
+		visit(message.Name)
 	}
 	return out
 }
