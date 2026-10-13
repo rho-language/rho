@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -123,6 +125,34 @@ func TestEmitCBus(t *testing.T) {
 	}
 }
 
+// Both generated C headers are wrapped so a C++ translation unit links against
+// the C that frames the bytes: without the guard every symbol would be
+// name-mangled, and a C++ program could not call the codec its C neighbour uses.
+func TestEmitCGuardsCxx(t *testing.T) {
+	schema, err := Parse(sample)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	protocolHeader, _ := schema.EmitC()
+	busHeader, _ := schema.EmitCBus()
+
+	for name, header := range map[string]string{
+		"protocol.h":     protocolHeader,
+		"protocol_bus.h": busHeader,
+	} {
+		for _, want := range []string{"#ifdef __cplusplus", "extern \"C\" {", "}\n#endif"} {
+			if !strings.Contains(header, want) {
+				t.Errorf("%s is missing %q", name, want)
+			}
+		}
+		open := strings.Index(header, "extern \"C\" {")
+		closing := strings.Index(header, "}\n#endif")
+		if open < 0 || closing < 0 || closing < open {
+			t.Errorf("%s: the extern \"C\" guard does not open before it closes", name)
+		}
+	}
+}
+
 func TestEmitGo(t *testing.T) {
 	schema, err := Parse(sample)
 	if err != nil {
@@ -186,5 +216,153 @@ func TestEmitRhoWritesTransportAndVersion(t *testing.T) {
 	// then failed to parse rather than failing here.
 	if strings.Contains(out, "%!") {
 		t.Errorf("generated Rho carries an unresolved format verb")
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Ordering                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// A message that contains another is emitted after it. C and Rho structs need a
+// type defined before it is used, and a schema may write the identity after the
+// message that carries it — the merge of a shared identity does exactly that.
+func TestAllMessagesOrdersDependencies(t *testing.T) {
+	source := "module x\nnamespace x.v1\n\n" +
+		"message Telemetry {\n    device: DeviceId\n}\n\n" +
+		"message DeviceId {\n    area_id: u16\n    node_id: u16\n}\n"
+	schema, err := Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	position := map[string]int{}
+	for i, m := range schema.AllMessages() {
+		position[m.Name] = i
+	}
+	if position["DeviceId"] > position["Telemetry"] {
+		t.Fatalf("DeviceId must be emitted before Telemetry, got %v", position)
+	}
+}
+
+// Messages that do not depend on one another keep the order they were written
+// in, so an unrelated change does not churn the generated files.
+func TestAllMessagesKeepsIndependentOrder(t *testing.T) {
+	source := "module x\nnamespace x.v1\n\n" +
+		"message Alpha {\n    a: u16\n}\n\n" +
+		"message Beta {\n    b: u16\n}\n"
+	schema, err := Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordered := schema.AllMessages()
+	if len(ordered) != 2 || ordered[0].Name != "Alpha" || ordered[1].Name != "Beta" {
+		t.Fatalf("independent messages were reordered: %v", ordered)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Includes                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// writeSchema writes one schema file, making its directory.
+func writeSchema(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func messageNames(schema *Schema) []string {
+	names := []string{}
+	for _, m := range schema.Messages {
+		names = append(names, m.Name)
+	}
+	return names
+}
+
+// An include is merged into the schema that names it, so a caller generates from
+// a root and gets the whole wire.
+func TestLoadFileFollowsIncludes(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, "common.rho", "module common\nnamespace robohub.v1\n\nmessage DeviceId {\n    area_id: u16\n    node_id: u16\n}\n")
+	root := writeSchema(t, dir, "link.rho", "module link\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage Hello {\n    device: DeviceId\n}\n")
+
+	schema, err := LoadFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasMessage(schema, "DeviceId") || !hasMessage(schema, "Hello") {
+		t.Fatalf("expected both declarations, got %v", messageNames(schema))
+	}
+	if schema.Namespace != "robohub.v1" {
+		t.Errorf("namespace = %q, want robohub.v1", schema.Namespace)
+	}
+}
+
+// A schema included by two others is one declaration, not two: a diamond is not
+// a conflict.
+func TestLoadFileDedupesADiamond(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, "common.rho", "module common\nnamespace robohub.v1\n\nmessage DeviceId {\n    area_id: u16\n    node_id: u16\n}\n")
+	writeSchema(t, dir, "a.rho", "module a\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage A {\n    device: DeviceId\n}\n")
+	writeSchema(t, dir, "b.rho", "module b\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage B {\n    device: DeviceId\n}\n")
+	root := writeSchema(t, dir, "root.rho", "module root\nnamespace robohub.v1\n\ninclude \"a.rho\"\ninclude \"b.rho\"\n")
+
+	schema, err := LoadFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, m := range schema.Messages {
+		if m.Name == "DeviceId" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("DeviceId appears %d times, want 1: %v", count, messageNames(schema))
+	}
+}
+
+// The nearer definition is the one a reader of the file means, so a declaration
+// in the including file wins over one it includes.
+func TestLoadFileKeepsTheIncludingDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, "common.rho", "module common\nnamespace robohub.v1\n\nmessage Shared {\n    a: u16\n}\n")
+	root := writeSchema(t, dir, "root.rho", "module root\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage Shared {\n    a: u16\n    b: u16\n}\n")
+
+	schema, err := LoadFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range schema.Messages {
+		if m.Name == "Shared" {
+			if len(m.Fields) != 2 {
+				t.Fatalf("expected the including declaration (2 fields), got %d", len(m.Fields))
+			}
+			return
+		}
+	}
+	t.Fatal("Shared is missing")
+}
+
+// A schema that includes itself, directly or through another, is reported rather
+// than followed until the stack ends.
+func TestLoadFileRejectsACycle(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, "a.rho", "module a\nnamespace robohub.v1\n\ninclude \"b.rho\"\n")
+	writeSchema(t, dir, "b.rho", "module b\nnamespace robohub.v1\n\ninclude \"a.rho\"\n")
+	if _, err := LoadFile(filepath.Join(dir, "a.rho")); err == nil {
+		t.Fatal("expected a cycle to be reported")
+	}
+}
+
+// An include that is not there is a schema that cannot be read, and says which.
+func TestLoadFileReportsAMissingInclude(t *testing.T) {
+	dir := t.TempDir()
+	root := writeSchema(t, dir, "root.rho", "module root\nnamespace robohub.v1\n\ninclude \"nope.rho\"\n")
+	if _, err := LoadFile(root); err == nil {
+		t.Fatal("expected a missing include to be reported")
 	}
 }

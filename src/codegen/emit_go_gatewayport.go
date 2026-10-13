@@ -138,6 +138,187 @@ func gatewayConfig() {
 	}
 }
 
+// gatewayMode is the deployment's operating mode: node, edge, relay or master.
+//
+// The default is master, because a gateway with nothing said about it terminates
+// the tree rather than being a relay with no parent — a default that reads as an
+// answer rather than a half-configured one.
+func gatewayMode() string {
+	if value := strings.TrimSpace(os.Getenv("GATEWAY_MODE")); value != "" {
+		return value
+	}
+	return "master"
+}
+
+// gatewayArea is the area this gateway speaks for. Devices under it are numbered
+// in this area, and it is what a parent uses to route a command back down.
+func gatewayArea() uint32 {
+	if value := strings.TrimSpace(os.Getenv("GATEWAY_AREA")); value != "" {
+		if parsed, err := strconv.ParseUint(value, 10, 32); err == nil {
+			return uint32(parsed)
+		}
+	}
+	return 1
+}
+
+// gatewayUplinkPort is the port an uplink listens on: where a relay or an edge
+// dials in. Zero means no uplink, which is what a gateway that is only a leaf
+// node — or one with nothing above it — has.
+func gatewayUplinkPort() uint32 {
+	if value := strings.TrimSpace(os.Getenv("UPLINK_PORT")); value != "" {
+		if parsed, err := strconv.ParseUint(value, 10, 32); err == nil {
+			return uint32(parsed)
+		}
+	}
+	return 0
+}
+
+// The uplink listener and the frames it has heard.
+//
+// A relay dials in and pushes COBS frames — the same framing a serial link
+// carries, so the Rho side decodes them with the codec it already has. The
+// goroutine reads and splits them; the Rho side drains the queue when it runs,
+// which is how a request-driven service receives something it did not ask for.
+var (
+	gatewayUplinkOnce     sync.Once
+	gatewayUplinkListener net.Listener
+	gatewayUplinkMu       sync.Mutex
+	gatewayUplinkQueue    []gatewayUplinkFrame
+	// The connections a child is bound to, by the child's gateway id, so a
+	// command addressed to a device can be sent down the link its area came from.
+	gatewayUplinkConns    = map[uint32]net.Conn{}
+	gatewayUplinkByID     = map[uint32]net.Conn{}
+	gatewayUplinkNextID   uint32
+	gatewayUplinkLastConn uint32
+)
+
+// gatewayUplinkFrame is one frame and the connection it arrived on, so a reply
+// can go back the way the question came.
+type gatewayUplinkFrame struct {
+	connection uint32
+	data       string
+}
+
+// gateway_uplink_start listens on a TCP port for gateways that dial in. Frames
+// that arrive are queued; the Rho side drains them with gateway_uplink_next.
+func gatewayUplinkStart(port uint32) bool {
+	if port == 0 {
+		return false
+	}
+	gatewayUplinkOnce.Do(func() {
+		address := ":" + strconv.FormatUint(uint64(port), 10)
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gateway: uplink listen %s: %v\n", address, err)
+			return
+		}
+		gatewayUplinkListener = listener
+		go gatewayUplinkAccept()
+	})
+	return gatewayUplinkListener != nil
+}
+
+func gatewayUplinkAccept() {
+	for {
+		connection, err := gatewayUplinkListener.Accept()
+		if err != nil {
+			return
+		}
+		gatewayUplinkMu.Lock()
+		gatewayUplinkNextID++
+		id := gatewayUplinkNextID
+		gatewayUplinkByID[id] = connection
+		gatewayUplinkMu.Unlock()
+		go gatewayUplinkRead(connection, id)
+	}
+}
+
+// gatewayUplinkRead reads one connection and queues the frames it completes. A
+// frame is COBS bytes closed with a zero, exactly as on a serial link.
+func gatewayUplinkRead(connection net.Conn, id uint32) {
+	defer func() {
+		gatewayUplinkMu.Lock()
+		delete(gatewayUplinkByID, id)
+		gatewayUplinkMu.Unlock()
+		connection.Close()
+	}()
+	pending := make([]byte, 0, 1024)
+	chunk := make([]byte, 512)
+	for {
+		count, err := connection.Read(chunk)
+		if count > 0 {
+			pending = append(pending, chunk[:count]...)
+			for {
+				at := bytes.IndexByte(pending, 0)
+				if at < 0 {
+					break
+				}
+				frame := string(pending[:at])
+				pending = pending[at+1:]
+				if len(frame) > 0 {
+					gatewayUplinkMu.Lock()
+					gatewayUplinkQueue = append(gatewayUplinkQueue, gatewayUplinkFrame{connection: id, data: frame})
+					gatewayUplinkMu.Unlock()
+				}
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// gateway_uplink_next returns the next frame an uplink sent, or "" when there is
+// none. The Rho side calls it until it is empty, so a burst is drained in order.
+func gatewayUplinkNext() string {
+	gatewayUplinkMu.Lock()
+	defer gatewayUplinkMu.Unlock()
+	if len(gatewayUplinkQueue) == 0 {
+		return ""
+	}
+	frame := gatewayUplinkQueue[0]
+	gatewayUplinkQueue = gatewayUplinkQueue[1:]
+	gatewayUplinkLastConn = frame.connection
+	return frame.data
+}
+
+// gateway_uplink_connection is the connection the frame gateway_uplink_next just
+// returned arrived on, so the Rho side can bind a child to it when it announces
+// itself, or answer the same link.
+func gatewayUplinkConnection() uint32 {
+	gatewayUplinkMu.Lock()
+	defer gatewayUplinkMu.Unlock()
+	return gatewayUplinkLastConn
+}
+
+// gateway_uplink_bind remembers that a child's gateway id is served by one
+// connection, so a command for that child's area is sent down it.
+func gatewayUplinkBind(childArea uint32, childLink uint32, connection uint32) {
+	gatewayUplinkMu.Lock()
+	defer gatewayUplinkMu.Unlock()
+	gatewayUplinkConns[childKey(childArea, childLink)] = gatewayUplinkByID[connection]
+}
+
+// gateway_uplink_send writes one COBS frame to the connection a child is bound
+// to, and reports whether there was one. A child that has not announced itself
+// has no link to send down.
+func gatewayUplinkSend(childArea uint32, childLink uint32, frame string) bool {
+	gatewayUplinkMu.Lock()
+	connection := gatewayUplinkConns[childKey(childArea, childLink)]
+	gatewayUplinkMu.Unlock()
+	if connection == nil {
+		return false
+	}
+	_, err := connection.Write(append([]byte(frame), 0))
+	return err == nil
+}
+
+// childKey packs a child's gateway id the way the Rho side does, so both name a
+// child the same.
+func childKey(area uint32, link uint32) uint32 {
+	return (area << 16) | (link & 0xFFFF)
+}
+
 // gatewayOpenSerial opens SERIAL_PORT at SERIAL_BAUD, once.
 func gatewayOpenSerial() bool {
 	gatewaySerialOnce.Do(func() {

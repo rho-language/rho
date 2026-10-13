@@ -1,7 +1,7 @@
 module:
   name: rho-cimport
   type: component
-  version: 0.1.0
+  version: 0.1.1
   author: Aurel Miron
   description: Generates a Rho foreign interface from C headers, and the C that Rho cannot express
   command: cimport

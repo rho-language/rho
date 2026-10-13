@@ -216,9 +216,15 @@ func TestAMissingPresetSaysWhatWasLookedFor(t *testing.T) {
 
 // A preset with no dependencies is a build with nothing to build against, and
 // saying so is better than fetching nothing and reporting a missing header.
-func TestAPresetWithNoDependenciesIsRefused(t *testing.T) {
-	if err := (Preset{Name: "empty"}).Validate(); err == nil {
-		t.Errorf("a preset with no dependencies was accepted")
+// A preset with no dependencies is a hosted target: the machine already has the
+// compiler and the libraries, so there is no vendor repository to fetch. A
+// nameless preset is still refused.
+func TestAPresetWithNoDependenciesIsAHostedTarget(t *testing.T) {
+	if err := (Preset{Name: "native"}).Validate(); err != nil {
+		t.Errorf("a hosted preset was refused: %v", err)
+	}
+	if err := (Preset{}).Validate(); err == nil {
+		t.Errorf("a nameless preset was accepted")
 	}
 }
 

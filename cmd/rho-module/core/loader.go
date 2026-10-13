@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 
 	"rho/internal/paths"
+	"rho/src/deps"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -42,21 +43,26 @@ type Module struct {
 /*  Load Installed Module                                                      */
 /* -------------------------------------------------------------------------- */
 
+// LoadInstalledModule loads the module a toolchain means when it names one:
+// the enabled version if one is enabled, and the newest otherwise.
+//
+// Several versions can be installed at once and only one of them runs, so
+// loading "the module by name" as whichever directory a scan reached first is
+// loading a version nobody chose — an old one, kept beside the new one for a
+// reason. A caller that knows which version it means uses
+// LoadInstalledModuleVersion instead.
 func LoadInstalledModule(name string) (*Module, error) {
-	// Scan ~/.rho/modules/installed/ to find the module
 	modulesDir, err := paths.GetModulesInstalledPath()
 	if err != nil {
 		return nil, err
 	}
 
+	candidates := []*Module{}
+	kinds := []string{}
 	for _, moduleType := range []string{"component", "plugin"} {
 		typeDir := filepath.Join(modulesDir, moduleType)
-		if _, err := os.Stat(typeDir); err != nil {
-			continue
-		}
-
-		entries, err := os.ReadDir(typeDir)
-		if err != nil {
+		entries, readErr := os.ReadDir(typeDir)
+		if readErr != nil {
 			continue
 		}
 
@@ -64,31 +70,50 @@ func LoadInstalledModule(name string) (*Module, error) {
 			if !e.IsDir() {
 				continue
 			}
-
 			// Check if directory name matches name@version pattern
 			if len(e.Name()) > len(name) && e.Name()[:len(name)] == name && e.Name()[len(name)] == '@' {
 				modulePath := filepath.Join(typeDir, e.Name())
-				manifestPath := filepath.Join(modulePath, "module.yml")
-
-				manifest, err := LoadModuleYAML(manifestPath)
-				if err != nil {
+				manifest, manifestErr := LoadModuleYAML(filepath.Join(modulePath, "module.yml"))
+				if manifestErr != nil || manifest.Module.Name != name {
 					continue
 				}
-
-				if manifest.Module.Name == name {
-					return &Module{
-						Name:     name,
-						Version:  manifest.Module.Version,
-						RootPath: modulePath,
-						Manifest: manifest,
-					}, nil
-				}
+				candidates = append(candidates, &Module{
+					Name:     name,
+					Version:  manifest.Module.Version,
+					RootPath: modulePath,
+					Manifest: manifest,
+				})
+				kinds = append(kinds, moduleType)
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("module not installed: %s", name)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("module not installed: %s", name)
+	}
+
+	// The enabled version is the one a run resolves to, so it is the one the
+	// toolchain means when it names the module.
+	if state, stateErr := deps.LoadEnabled(); stateErr == nil && state != nil {
+		for i, candidate := range candidates {
+			if state.IsEnabled(kinds[i], name, candidate.Version) {
+				return candidate, nil
+			}
+		}
+	}
+
+	// Nothing enabled: the newest, which is the one enabling would turn on.
+	newest := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if compareVersions(candidate.Version, newest.Version) > 0 {
+			newest = candidate
+		}
+	}
+	return newest, nil
 }
+
+// compareVersions orders two version strings; it lives with the registry that
+// already needs it, so a name has one meaning wherever it is compared.
 
 // LoadInstalledModuleVersion loads one installed version of a module.
 //
