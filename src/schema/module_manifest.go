@@ -302,6 +302,21 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// The functions a driver presents, one per driver interface the
+				// interfaces module declares. A part that measures one thing
+				// lists it; a mixed part — a BMP180 is a thermometer, a
+				// barometer and an altimeter — lists each, so a search for any
+				// one of them finds it. It is a top-level declaration because it
+				// is what the module is, not a fact about how it is built, and
+				// it is the map a driver index is read from.
+				Name:     "functions",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindString,
+				},
+			},
+			{
 				// The docs section is doc-as-code: the module names the sources
 				// its documentation is written in, and where the pages belong in
 				// a site. The generator is the rho-doc component, so a module
