@@ -53,6 +53,64 @@ regions as facts rather than as somewhere a program is laid out. A board whose
 platform links with its own script names it in `linker_script` instead.
 :::
 
+### The `linker` block
+
+The `linker` block says how a program's memory is laid out, and it is the block
+a part uses to say that the toolchain already knows:
+
+| Field | What it means |
+|-------|---------------|
+| `script` | A `.ld` of the spec's own, absolute or beside the spec that named it |
+| `toolchain_script` | The toolchain brings its own, and none is written |
+| `stack_bytes`, `heap_bytes` | How much stack and heap the program gets |
+| `entry` | The symbol the program starts at |
+| `regions`, `sections`, `symbols` | Further places a program may be put, and what the script defines |
+
+`toolchain_script` is for the toolchains that know their part: `avr-gcc` knows
+where an AVR's vector table belongs and how its runtime expects to be reached,
+and a script written here is that knowledge repeated less well. The memory map
+is still declared — what a program is told about the part it runs on does not
+depend on who writes the script.
+
+```json
+{
+  "kind": "mcu",
+  "name": "atmega328p",
+  "memory": { "flash": { "origin": "0x0", "length": "0x8000" } },
+  "linker": { "toolchain_script": true }
+}
+```
+
+A board that says nothing about its linker inherits its part's, so that where a
+program's memory is laid out stays the part's fact.
+
+## The flash command
+
+A board says how it is written to, and that is a command:
+
+```json
+"flash": {
+  "tool": "avrdude",
+  "command": "avrdude -P {env:AVRDUDE_PORT:-/dev/ttyUSB0} -U flash:w:{binary}"
+}
+```
+
+`{binary}` is where the file that was just built goes, and a command that never
+says so has it appended.
+
+A command may read the environment: `{env:NAME}` is the value of `NAME`, and
+`{env:NAME:-default}` is that value or the default when it is not set. That is how
+a spec says something the machine decides — which serial line the board is on,
+which probe it is behind — without the spec being wrong on every machine but the
+one it was written on. A reference with no default and no value is an error
+rather than a hole.
+
+It is a substitution and not a shell: there is no pipeline, no glob and no
+command substitution, so a spec that could name one is still a spec that cannot
+run whatever a machine could be talked into. The reference is spelled
+`{env:…}` rather than `${…}` because the command travels into a CMake file, and
+CMake reads `${…}` as its own.
+
 ## The pin map
 
 A board says what each pin is for, and which interface it is on:

@@ -13,6 +13,8 @@ How the Rho toolchain is put together, and how a project uses it.
 - {ref}`handbook/registries` — the local and remote registries, and who may
   change what is in each.
 - {ref}`handbook/ports` — how a project asks for what only a host can do.
+- {ref}`handbook/platforms` — what a platform is: the target spec, the console
+  and the stop a program on a part is given, and the library it links.
 - {ref}`handbook/generating` — starting a project: a Rho application, or one a
   module knows how to generate.
 - {ref}`handbook/networking` — the network contract, and how each platform

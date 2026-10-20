@@ -873,3 +873,125 @@ func TestASpecMarshalsItsDeployBlock(t *testing.T) {
 		}
 	}
 }
+
+// A board whose chip resolves to a chip that stands on its own is a board that
+// stands on its own. The chip's preset names a build preset rather than a
+// spec, and that is not a fault: the chain ended where it should.
+func TestABoardWhoseChipStandsOnItsOwnIsNotReported(t *testing.T) {
+	library := libraryOf(t, map[string]string{
+		"arch.json": archSpec,
+		"chip.json": `{
+		  "kind": "mcu", "name": "chip", "arch": "arm-cortex-m", "preset": "family",
+		  "toolchain": {"compiler": "avr-gcc"},
+		  "memory": {
+		    "flash": {"origin": "0x0", "length": "0x8000"},
+		    "ram": {"origin": "0x800100", "length": "0x800"}
+		  }
+		}`,
+		"board.json": `{"kind": "board", "name": "board", "mcu": "chip"}`,
+	})
+	_, diagnostics := library.Resolve("board")
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected a clean resolution, got %+v", diagnostics)
+	}
+}
+
+// A board says nothing about its linker, and inherits its part's: where a
+// program's memory is laid out is the part's fact.
+func TestABoardInheritsItsChipsLinker(t *testing.T) {
+	library := libraryOf(t, map[string]string{
+		"chip.json": `{
+		  "kind": "mcu", "name": "chip", "arch": "arm-cortex-m",
+		  "toolchain": {"compiler": "avr-gcc"},
+		  "linker": {"toolchain_script": true},
+		  "memory": {
+		    "flash": {"origin": "0x0", "length": "0x8000"},
+		    "ram": {"origin": "0x800100", "length": "0x800"}
+		  }
+		}`,
+		"board.json": `{"kind": "board", "name": "board", "mcu": "chip"}`,
+	})
+	spec, diagnostics := library.Resolve("board")
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected a clean resolution, got %+v", diagnostics)
+	}
+	if !spec.Linker.ToolchainScript {
+		t.Errorf("expected the chip's linker block, got %+v", spec.Linker)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The flash command                                                         */
+/* -------------------------------------------------------------------------- */
+
+// A command may read the environment: the serial line a board is on is a fact
+// about the machine, and a spec that hard-codes it is a spec that is wrong on
+// every machine but the one it was written on.
+func TestAFlashCommandReadsTheEnvironment(t *testing.T) {
+	t.Setenv("RHO_TEST_PORT", "/dev/ttyUSB1")
+
+	flash := Flash{Tool: "avrdude", Command: "avrdude -P {env:RHO_TEST_PORT} -U flash:w:{binary}"}
+	program, arguments, err := flash.Invocation("/tmp/app.elf")
+	if err != nil {
+		t.Fatalf("expected the command to be rendered, got %v", err)
+	}
+	if program != "avrdude" {
+		t.Errorf("expected avrdude, got %q", program)
+	}
+	if len(arguments) != 4 || arguments[1] != "/dev/ttyUSB1" {
+		t.Errorf("expected the port from the environment, got %v", arguments)
+	}
+}
+
+// A reference with a default is the value when there is one and the default
+// when there is not, which is how a spec says "this machine's choice, and this
+// one if it says nothing".
+func TestAFlashCommandFallsBackToItsDefault(t *testing.T) {
+	os.Unsetenv("RHO_TEST_PORT")
+
+	flash := Flash{Tool: "avrdude", Command: "avrdude -P {env:RHO_TEST_PORT:-/dev/ttyUSB0} -U flash:w:{binary}"}
+	_, arguments, err := flash.Invocation("/tmp/app.elf")
+	if err != nil {
+		t.Fatalf("expected the command to be rendered, got %v", err)
+	}
+	if len(arguments) != 4 || arguments[1] != "/dev/ttyUSB0" {
+		t.Errorf("expected the default, got %v", arguments)
+	}
+}
+
+// A reference with no default and no value is a hole in a command that would
+// flash nothing. Saying so is better than doing it.
+func TestAMissingEnvironmentIsReported(t *testing.T) {
+	os.Unsetenv("RHO_TEST_PORT")
+
+	flash := Flash{Tool: "avrdude", Command: "avrdude -P {env:RHO_TEST_PORT} -U flash:w:{binary}"}
+	_, _, err := flash.Invocation("/tmp/app.elf")
+	if err == nil {
+		t.Fatal("expected the missing variable to be reported")
+	}
+	if !strings.Contains(err.Error(), "RHO_TEST_PORT") {
+		t.Errorf("expected the variable to be named, got %q", err)
+	}
+}
+
+// The binary still goes where the command says it goes, and a command that
+// never says so still has it appended.
+func TestTheBinaryIsStillTheBinary(t *testing.T) {
+	flash := Flash{Tool: "avrdude", Command: "avrdude -U flash:w:{binary}"}
+	_, arguments, err := flash.Invocation("/tmp/app.elf")
+	if err != nil {
+		t.Fatalf("expected the command to be rendered, got %v", err)
+	}
+	if len(arguments) != 2 || arguments[1] != "flash:w:/tmp/app.elf" {
+		t.Errorf("expected the binary where the command said, got %v", arguments)
+	}
+
+	plain := Flash{Tool: "avrdude", Command: "avrdude -U flash:w"}
+	_, arguments, err = plain.Invocation("/tmp/app.elf")
+	if err != nil {
+		t.Fatalf("expected the command to be rendered, got %v", err)
+	}
+	if len(arguments) != 3 || arguments[2] != "/tmp/app.elf" {
+		t.Errorf("expected the binary appended, got %v", arguments)
+	}
+}

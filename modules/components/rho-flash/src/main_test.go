@@ -17,6 +17,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -180,5 +181,60 @@ func TestInvocationForArduinoFlasherCli(t *testing.T) {
 func TestNoFlashBlockIsRefused(t *testing.T) {
 	if _, _, err := (Flash{}).invocation("app.bin"); err == nil {
 		t.Fatal("expected a target with no flash command to be refused")
+	}
+}
+
+// A command may read the environment: which serial line the board is on is a
+// fact about the machine, and a spec that hard-codes it is a spec that is
+// wrong on every machine but the one it was written on.
+func TestInvocationReadsTheEnvironment(t *testing.T) {
+	t.Setenv("RHO_TEST_PORT", "/dev/ttyUSB1")
+
+	flash := Flash{Command: `avrdude -P {env:RHO_TEST_PORT} -U flash:w:{binary}`}
+
+	program, args, err := flash.invocation("build/firmware.elf")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	if program != "avrdude" {
+		t.Errorf("expected avrdude, got %q", program)
+	}
+	want := []string{"-P", "/dev/ttyUSB1", "-U", "flash:w:build/firmware.elf"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("expected\n  %q\ngot\n  %q", want, args)
+	}
+}
+
+// A reference with a default is the value when there is one and the default
+// when there is not, which is how a spec says "this machine's choice, and this
+// one if it says nothing".
+func TestInvocationFallsBackToTheDefault(t *testing.T) {
+	t.Setenv("RHO_TEST_PORT", "")
+
+	flash := Flash{Command: `avrdude -P {env:RHO_TEST_PORT:-/dev/ttyUSB0} -U flash:w:{binary}`}
+
+	_, args, err := flash.invocation("build/firmware.elf")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	want := []string{"-P", "/dev/ttyUSB0", "-U", "flash:w:build/firmware.elf"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("expected\n  %q\ngot\n  %q", want, args)
+	}
+}
+
+// A reference with no default and no value is a hole in a command that would
+// flash nothing. Saying so is better than doing it.
+func TestInvocationReportsAMissingEnvironment(t *testing.T) {
+	t.Setenv("RHO_TEST_PORT", "")
+
+	flash := Flash{Command: `avrdude -P {env:RHO_TEST_PORT} -U flash:w:{binary}`}
+
+	_, _, err := flash.invocation("build/firmware.elf")
+	if err == nil {
+		t.Fatal("expected the missing variable to be reported")
+	}
+	if !strings.Contains(err.Error(), "RHO_TEST_PORT") {
+		t.Errorf("expected the variable to be named, got %q", err)
 	}
 }

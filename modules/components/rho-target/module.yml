@@ -1,7 +1,7 @@
 module:
   name: rho-target
   type: component
-  version: 0.1.0
+  version: 0.1.7
   author: Aurel Miron
   description: Board and architecture specifications, and the CMake that builds for them
   command: target

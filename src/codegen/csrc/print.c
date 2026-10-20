@@ -33,7 +33,14 @@ int rho_write(int fd, const char* data, uint32_t len) __attribute__((weak));
  * providing only one of them does, and why the platform's own console implements
  * both.
  */
-#if defined(__arm__) || defined(__thumb__) || defined(__riscv)
+#if defined(RHO_PROGRAM_WRITE)
+/* The platform owns the output. A target whose console is its own — a UART, a
+ * USB device, a display — says which function writes to it, and the runtime calls
+ * that. Deciding by architecture instead is what makes a firmware on a part this
+ * runtime has never heard of link and print nothing. */
+extern int RHO_PROGRAM_WRITE(int fd, const char* data, int len);
+#define RHO_DEFAULT_WRITE(fd, data, len) RHO_PROGRAM_WRITE((fd), (data), (len))
+#elif defined(__arm__) || defined(__thumb__) || defined(__riscv)
 extern int _write(int fd, const char* data, int len);
 /* _write has no warn_unused_result on bare-metal targets. */
 #define RHO_DEFAULT_WRITE(fd, data, len) _write((fd), (data), (len))

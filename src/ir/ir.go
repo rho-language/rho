@@ -17,6 +17,8 @@
 
 package ir
 
+import "strings"
+
 /* -------------------------------------------------------------------------- */
 /*  Basic Types                                                               */
 /* -------------------------------------------------------------------------- */
@@ -70,6 +72,45 @@ type Type struct {
 	Name     string // for structs or user-defined types
 	Args     []Type
 	ArrayLen int
+}
+
+// SameType reports whether two types are the same one.
+//
+// A pointer is spelled two ways: `Ptr[X]` in a source, and the mangled
+// `Ptr_X` a foreign declaration carries. They are one type reached two ways,
+// and a program that names both has one type rather than two — a generic
+// applied to a pointer written in a source and the same generic applied to the
+// mangled name a foreign declaration carries is one specialisation, and a
+// backend that emitted a definition for each would be emitting the same
+// definition twice.
+func SameType(a, b Type) bool {
+	if a.Kind == TypePtr {
+		return SameType(Type{Kind: TypeStruct, Name: mangledPointerName(a)}, b)
+	}
+	if b.Kind == TypePtr {
+		return SameType(a, Type{Kind: TypeStruct, Name: mangledPointerName(b)})
+	}
+	if a.Kind != b.Kind || a.Name != b.Name || a.ArrayLen != b.ArrayLen {
+		return false
+	}
+	if len(a.Args) != len(b.Args) {
+		return false
+	}
+	for index := range a.Args {
+		if !SameType(a.Args[index], b.Args[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// mangledPointerName is the mangled name of a pointer type: `Ptr[X]` is `Ptr_X`.
+func mangledPointerName(t Type) string {
+	name := t.Name
+	if strings.HasPrefix(name, "Ptr[") && strings.HasSuffix(name, "]") && len(name) > len("Ptr[]") {
+		return "Ptr_" + name[len("Ptr["):len(name)-1]
+	}
+	return name
 }
 
 /* -------------------------------------------------------------------------- */

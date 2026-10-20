@@ -898,10 +898,60 @@ func (tc *TypeChecker) monomorphicStructsInOrder() []ir.StructIR {
 	}
 	sortStrings(keys)
 	out := make([]ir.StructIR, 0, len(keys))
+	// Two applications of the same generic can mangle to the same name, and
+	// they are the same type: `Option[Ptr[Thing]]` written in a source and
+	// the mangled `Option_Ptr_Thing` a foreign declaration carries are one
+	// type reached two ways, and they are seeded as two instantiations
+	// because their arguments are spelled differently. A backend emits one
+	// definition per name, so the second would be a second definition of the
+	// first, and the C one is rejected as a duplicate.
+	//
+	// Only the same type is collapsed, though. Two *different* types that mangle
+	// to one name are a collision, and dropping one of them would leave a
+	// program that compiles and means something other than it says. Those are
+	// both kept, and the backend's own duplicate check reports them — which is
+	// the answer they deserve, rather than a silent one.
+	emitted := map[string]ir.StructIR{}
 	for _, key := range keys {
-		out = append(out, tc.monomorphicStructs[key])
+		structure := tc.monomorphicStructs[key]
+		previous, seen := emitted[structure.Name]
+		if seen && sameStruct(previous, structure) {
+			continue
+		}
+		emitted[structure.Name] = structure
+		out = append(out, structure)
 	}
 	return out
+}
+
+// sameStruct reports whether two structures are the same one.
+//
+// The name is not compared: it is the same by the caller's own account, and
+// what is compared is what the type *is* — its fields, their names, their
+// types and their widths.
+func sameStruct(a, b ir.StructIR) bool {
+	if a.CName != b.CName || len(a.Fields) != len(b.Fields) {
+		return false
+	}
+	for index := range a.Fields {
+		if !sameField(a.Fields[index], b.Fields[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameField reports whether two fields are the same one.
+//
+// A field's type is compared by what it is rather than by comparing the
+// structs that hold it: a type carries its arguments, and those are a slice.
+// The comparison is the IR's own, so that a pointer written in a source and
+// the mangled name of the same pointer are one type — which is what they are.
+func sameField(a, b ir.FieldIR) bool {
+	if a.Name != b.Name || a.BitWidth != b.BitWidth || a.Unit != b.Unit || a.Shift != b.Shift {
+		return false
+	}
+	return ir.SameType(a.Type, b.Type)
 }
 
 func (tc *TypeChecker) monomorphicFuncsInOrder() []ir.FuncIR {
