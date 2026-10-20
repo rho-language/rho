@@ -703,3 +703,87 @@ config:
 		t.Fatal("expected values that are not a map to be rejected")
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: A board                                                            */
+/* -------------------------------------------------------------------------- */
+
+// A board says what it is and what it brings out: the part, the driver that
+// speaks for it, the functions it presents, and the pinout — the connector
+// positions and the pins behind them.
+func TestValidateModuleManifestValidBoard(t *testing.T) {
+	src := `module:
+  name: ky-009-rgb-led-module
+  type: driver-board
+  version: 0.1.0
+  description: >
+    A KY-009 RGB LED board.
+board:
+  designation: KY_009_RGB_LED_MODULE
+  device: ky-009-rgb-led
+  category: output
+  driver: robohub-driver-rgb-pwm
+  mcu: RGB
+  family: RGB
+  core: RGB
+  functions:
+    - color
+  connectors:
+    - name: VCC
+      signal: power
+      position: 1
+    - name: GND
+      signal: ground
+      position: 2
+  pins:
+    red:
+      gpio: 21
+      signal: pwm
+    green:
+      gpio: 23
+      signal: pwm
+    blue:
+      gpio: 24
+      signal: pwm
+  peripherals:
+    - name: pwm0
+      instance: pwm0
+      channel: 0
+      gpio: 21
+  programmer:
+    tool: usb
+  flash:
+    tool: picotool
+    command: "elf2uf2 {binary}"
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ValidateModuleManifest(data, "driver-board")
+	if result.HasErrors() {
+		t.Fatalf("expected a board to validate, got: %s", result.String())
+	}
+}
+
+// A connector without a name says nothing about which position it is, and a
+// board that cannot say that is not a board anybody can wire.
+func TestValidateModuleManifestBoardConnectorNeedsAName(t *testing.T) {
+	src := `module:
+  name: broken-board
+  type: driver-board
+  version: 0.1.0
+  description: A board with a nameless connector.
+board:
+  connectors:
+    - signal: power
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ValidateModuleManifest(data, "driver-board")
+	if !result.HasErrors() {
+		t.Fatal("expected a connector without a name to be reported")
+	}
+}

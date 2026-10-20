@@ -708,6 +708,93 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// What a board *is*, when this module is one.
+				//
+				// A board is two things that are easy to confuse: the piece of
+				// hardware, and the part of the tree that knows how to reach it.
+				// This block says which hardware it is — the part, the family, the
+				// pins it brings out, the connector on it — and which driver
+				// speaks for it, so a program that fits the board says which
+				// device it now has.
+				//
+				// The pinout is here because a board's pins are the board's facts:
+				// which connector position carries which signal, and which
+				// interface a part hangs off. They are what a person wiring the
+				// board needs, and they are what an editor's pin view is drawn
+				// from.
+				Name:     "board",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					// The board's designation, as the manufacturer writes it.
+					{Name: "designation", Required: false, Kind: KindString},
+					// The part the board carries.
+					{Name: "mcu", Required: false, Kind: KindString},
+					// The family of parts the board belongs to.
+					{Name: "family", Required: false, Kind: KindString},
+					// The processor core the part has.
+					{Name: "core", Required: false, Kind: KindString},
+					// The build preset and the target the board is built for.
+					{Name: "preset", Required: false, Kind: KindString},
+					{Name: "target", Required: false, Kind: KindString},
+					// What kind of board it is: an eval module, a platform, a
+					// transceiver carrier. The category is what a tree is indexed
+					// by.
+					{Name: "category", Required: false, Kind: KindString},
+					// The driver that speaks for the board's part.
+					{Name: "driver", Required: false, Kind: KindString},
+					// The driver interfaces the board's part presents, so the board
+					// is found by what it does and not only by its name.
+					{Name: "functions", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindString,
+					}},
+					// What the board has: memory, storage, and the machine it runs
+					// on.
+					{Name: "resources", Required: false, Kind: KindMap},
+					{Name: "host", Required: false, Kind: KindMap},
+					// A second part on the same board, with a life of its own —
+					// a companion MCU beside a Linux one.
+					{Name: "companion_mcu", Required: false, Kind: KindMap},
+					// The connector on the board: what each position carries.
+					{Name: "connectors", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "name", Required: true, Kind: KindString},
+							// What the position carries: a power, a ground, a
+							// signal, a bus line.
+							{Name: "signal", Required: false, Kind: KindString},
+							// The position itself, counted from one end.
+							{Name: "position", Required: false, Kind: KindString},
+						},
+					}},
+					// The pinout: a name for each pin, and what it is.
+					{Name: "pins", Required: false, Kind: KindMap},
+					// The interfaces the board brings out.
+					{Name: "peripherals", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+						Kind: KindMap,
+						Fields: []FieldSchema{
+							{Name: "name", Required: true, Kind: KindString},
+							{Name: "instance", Required: false, Kind: KindString},
+							{Name: "type", Required: false, Kind: KindString},
+							{Name: "channel", Required: false, Kind: KindString},
+							{Name: "gpio", Required: false, Kind: KindString},
+							{Name: "tx", Required: false, Kind: KindString},
+							{Name: "rx", Required: false, Kind: KindString},
+							{Name: "sck", Required: false, Kind: KindString},
+							{Name: "sda", Required: false, Kind: KindString},
+							{Name: "scl", Required: false, Kind: KindString},
+							{Name: "csn", Required: false, Kind: KindString},
+							{Name: "dq", Required: false, Kind: KindString},
+						},
+					}},
+					// How the board is reached by a programmer, and how a program
+					// is written to it or carried to it.
+					{Name: "programmer", Required: false, Kind: KindMap},
+					{Name: "flash", Required: false, Kind: KindMap},
+					{Name: "deploy", Required: false, Kind: KindMap},
+				},
+			},
+			{
 				// Where a platform keeps the declarations of the hardware it supports.
 				//
 				// Declared rather than found. A directory called `targets` beside a
