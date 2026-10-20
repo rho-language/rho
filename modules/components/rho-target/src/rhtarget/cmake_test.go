@@ -188,3 +188,86 @@ func TestFilesAreWrittenWhereTheProjectExpectsThem(t *testing.T) {
 		}
 	}
 }
+
+// A board that ships its own linker script names it beside its own spec, and the
+// path is resolved there: a project is somewhere else entirely, and the script
+// is the board's rather than the project's.
+func TestATargetsOwnScriptIsResolvedBesideItsSpec(t *testing.T) {
+	spec := testSpec()
+	spec.Source = "/home/board/boards/uno-r3/target.json"
+	spec.Linker.Script = "linker.ld"
+
+	content := TargetCMake(spec, "cmake/linker.ld")
+	if !strings.Contains(content, "/home/board/boards/uno-r3/linker.ld") {
+		t.Errorf("expected the script resolved beside the spec, got:\n%s", content)
+	}
+	if strings.Contains(content, "${CMAKE_CURRENT_SOURCE_DIR}/linker.ld") {
+		t.Errorf("expected the script not resolved against the project, got:\n%s", content)
+	}
+}
+
+// A script named by an absolute path is taken as written, so that a platform can
+// ship one script and every project that uses it points at the same file.
+func TestAnAbsoluteScriptIsTakenAsWritten(t *testing.T) {
+	spec := testSpec()
+	spec.Source = "/home/board/boards/uno-r3/target.json"
+	spec.Linker.Script = "/opt/robohub/avr/linker.ld"
+
+	content := TargetCMake(spec, "cmake/linker.ld")
+	if !strings.Contains(content, "/opt/robohub/avr/linker.ld") {
+		t.Errorf("expected the script as written, got:\n%s", content)
+	}
+}
+
+// A part whose toolchain brings its own script gets the toolchain's, and no
+// script is written: the toolchain knows where the part's vectors go, and a
+// script written here is that knowledge repeated less well.
+func TestAPartWithItsOwnScriptGetsNoGeneratedOne(t *testing.T) {
+	spec := testSpec()
+	spec.Linker.ToolchainScript = true
+	spec.Memory = Memory{
+		Flash: Region{Origin: "0x0", Length: "0x8000"},
+		RAM:   Region{Origin: "0x800100", Length: "0x800"},
+	}
+
+	for _, file := range Files(spec, "cmake") {
+		if strings.HasSuffix(file.Path, "linker.ld") {
+			t.Fatalf("expected no generated script, got %+v", file.Path)
+		}
+	}
+	content := TargetCMake(spec, "cmake/linker.ld")
+	if strings.Contains(content, "RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}") {
+		t.Errorf("expected no script named, got:\n%s", content)
+	}
+	if !strings.Contains(content, "if(DEFINED RHO_LINKER_SCRIPT)") {
+		t.Errorf("expected the script to stay optional, got:\n%s", content)
+	}
+}
+
+// A command that reads the environment is read the same way in a build and in
+// a flash: the reference is resolved from the environment CMake was started in,
+// and the value it falls back to is what the command is run with when the
+// environment says nothing.
+func TestAFlashCommandReadsTheEnvironmentInTheGeneratedCMake(t *testing.T) {
+	spec := testSpec()
+	spec.Flash = Flash{Tool: "avrdude", Command: "avrdude -P {env:AVRDUDE_PORT:-/dev/ttyUSB0} -U flash:w:{binary}"}
+
+	content := TargetCMake(spec, "cmake/linker.ld")
+	if !strings.Contains(content, "if(DEFINED ENV{AVRDUDE_PORT})") {
+		t.Errorf("expected the environment to be read, got:\\n%s", content)
+	}
+	if !strings.Contains(content, `set(RHO_ENV_AVRDUDE_PORT "$ENV{AVRDUDE_PORT}")`) {
+		t.Errorf("expected the value from the environment, got:\\n%s", content)
+	}
+	if !strings.Contains(content, `set(RHO_ENV_AVRDUDE_PORT "/dev/ttyUSB0")`) {
+		t.Errorf("expected the default beside it, got:\\n%s", content)
+	}
+	if !strings.Contains(content, "-P ${RHO_ENV_AVRDUDE_PORT}") {
+		t.Errorf("expected the command to name the variable, got:\\n%s", content)
+	}
+	// The reference is not passed to the tool as the spelling: a tool that was
+	// handed `{env:…}` would be handed a device that does not exist.
+	if strings.Contains(content, "{env:AVRDUDE_PORT") {
+		t.Errorf("expected the reference to be resolved, got:\\n%s", content)
+	}
+}

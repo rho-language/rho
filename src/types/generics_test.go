@@ -394,3 +394,76 @@ func structNames(module ir.ModuleIR) map[string]bool {
 	}
 	return names
 }
+
+// Two applications of the same generic can mangle to the same name, and they
+// are the same type: `Option[Ptr[Thing]]` written in a source and the mangled
+// `Option_Ptr_Thing` a foreign declaration carries are one type reached two
+// ways, seeded as two instantiations because their arguments are spelled
+// differently. A backend emits one definition per name, so the second would be
+// a second definition of the first — and the C one rejects that as a
+// duplicate.
+func TestMonomorphiseEmitsOnePerName(t *testing.T) {
+	out := compileGeneric(t, `module app
+
+struct Thing {
+    value: u32
+}
+
+struct Option[T] {
+    is_some: bool
+    value: T
+}
+
+extern fn get_thing(name: Ptr[u8]) Option[Ptr[Thing]]
+
+fn use() void {
+    let a: Option[Ptr[Thing]] = Option[Ptr[Thing]]{ false, 0 }
+    print("done");
+}
+`)
+	count := 0
+	for _, structure := range out.Structs {
+		if structure.Name == "Option_Ptr_Thing" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one Option_Ptr_Thing, got %d: %v", count, structNames(out))
+	}
+}
+
+// Two *different* types that mangle to the same name are a collision, and both
+// are kept: dropping one of them would leave a program that compiles and means
+// something other than it says. The backend's own duplicate check is what
+// reports them.
+func TestTwoTypesWithOneNameAreBothKept(t *testing.T) {
+	out := compileGeneric(t, `module app
+
+struct Thing {
+    value: u32
+}
+
+struct Option[T] {
+    is_some: bool
+    value: T
+}
+
+struct Option_Ptr_Thing {
+    other: u32
+}
+
+fn use() void {
+    let a: Option[Ptr[Thing]] = Option[Ptr[Thing]]{ false, 0 }
+    print("done");
+}
+`)
+	count := 0
+	for _, structure := range out.Structs {
+		if structure.Name == "Option_Ptr_Thing" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected both types with the name to be kept, got %d: %v", count, structNames(out))
+	}
+}

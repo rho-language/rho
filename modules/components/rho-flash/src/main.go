@@ -73,6 +73,20 @@ func (f Flash) declared() bool {
 // The command is split rather than handed to a shell, because it came out of a
 // spec that a platform ships: a spec that could name a pipeline would be a spec
 // that could run whatever a machine could be talked into.
+//
+// A command may read the environment: `{env:NAME}` is the value of `NAME`, and
+// `{env:NAME:-default}` is that value or the default when it is not set. That is
+// how a spec says something the machine decides — which serial line the board
+// is on, which probe it is behind — without the spec being wrong on every
+// machine but the one it was written on.
+//
+// It is a substitution and not a shell: there is no pipeline, no glob and no
+// command substitution, so a spec that could name one is still a spec that
+// cannot run whatever a machine could be talked into.
+//
+// The reference is spelled `{env:…}` rather than `${…}` because the command
+// travels into a CMake file, and CMake reads `${…}` as its own: a reference
+// written that way is a configure error rather than a placeholder.
 func (f Flash) invocation(binary string) (string, []string, error) {
 	argv := []string{}
 	switch {
@@ -90,11 +104,14 @@ func (f Flash) invocation(binary string) (string, []string, error) {
 	out := make([]string, 0, len(argv)+len(f.PostArgs)+1)
 	named := false
 	for _, arg := range argv {
+		expanded, err := expandPlaceholders(arg, binary)
+		if err != nil {
+			return "", nil, err
+		}
 		if strings.Contains(arg, "{binary}") {
-			arg = strings.ReplaceAll(arg, "{binary}", binary)
 			named = true
 		}
-		out = append(out, arg)
+		out = append(out, expanded)
 	}
 	// A command that never says where the file goes would leave the tool to its
 	// default, which on some tools is the last build in a directory rather than
@@ -109,6 +126,82 @@ func (f Flash) invocation(binary string) (string, []string, error) {
 		out = append(out, arg)
 	}
 	return out[0], out[1:], nil
+}
+
+// expandPlaceholders replaces the placeholders in one argument of a flash
+// command: what the environment says, and where the binary goes.
+//
+// One pass over the text, so that a value that comes out of the environment is
+// not read again for placeholders of its own.
+func expandPlaceholders(text, binary string) (string, error) {
+	if !strings.Contains(text, "{binary}") && !strings.Contains(text, envPrefix) {
+		return text, nil
+	}
+	out := &strings.Builder{}
+	rest := text
+	for {
+		binaryAt := strings.Index(rest, "{binary}")
+		envAt := strings.Index(rest, envPrefix)
+		if envAt < 0 && binaryAt < 0 {
+			out.WriteString(rest)
+			break
+		}
+		// Whichever comes first.
+		if envAt >= 0 && (binaryAt < 0 || envAt < binaryAt) {
+			out.WriteString(rest[:envAt])
+			closing := strings.Index(rest[envAt:], "}")
+			if closing < 0 {
+				return "", fmt.Errorf("the flash command has an environment reference with no closing brace: %q", text)
+			}
+			value, err := environmentValue(rest[envAt+len(envPrefix) : envAt+closing])
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(value)
+			rest = rest[envAt+closing+1:]
+			continue
+		}
+		out.WriteString(rest[:binaryAt])
+		out.WriteString(binary)
+		rest = rest[binaryAt+len("{binary}"):]
+	}
+	return out.String(), nil
+}
+
+// envPrefix is how a flash command names an environment variable: `{env:NAME}`.
+//
+// It is not `${NAME}` because the command travels into a CMake file, and CMake
+// reads `${…}` as its own — a reference written that way is a configure error
+// rather than a placeholder.
+const envPrefix = "{env:"
+
+// environmentValue is the value of an environment reference: `NAME` or
+// `NAME:-default`.
+//
+// A reference with no default and no value is an error rather than an empty
+// string: a flash command with a hole in it is a command that would flash
+// nothing, and saying so is better than doing it.
+func environmentValue(reference string) (string, error) {
+	name := reference
+	fallback := ""
+	hasDefault := false
+	if separator := strings.Index(reference, ":-"); separator >= 0 {
+		name = reference[:separator]
+		fallback = reference[separator+2:]
+		hasDefault = true
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("the flash command has an environment reference with no name: %q", reference)
+	}
+	value, found := os.LookupEnv(name)
+	if found && value != "" {
+		return value, nil
+	}
+	if hasDefault {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("the flash command needs %s, and it is not set", name)
 }
 
 // splitCommand splits a command into arguments, honouring quotes so a path with

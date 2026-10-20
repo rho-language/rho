@@ -53,7 +53,7 @@ func Files(spec Spec, directory string) []File {
 		{Path: prefix + "toolchain.cmake", Content: ToolchainCMake(spec)},
 		{Path: prefix + "target.cmake", Content: TargetCMake(spec, prefix+"linker.ld")},
 	}
-	if spec.LinkerScript == "" && len(spec.LinkRegions()) > 0 {
+	if spec.LinkerScript == "" && !spec.Linker.ToolchainScript && len(spec.LinkRegions()) > 0 {
 		files = append(files, File{Path: prefix + "linker.ld", Content: LinkerScript(spec)})
 	}
 	// What the platform says about the program, carried into the generated
@@ -219,16 +219,25 @@ func TargetCMake(spec Spec, linkerScript string) string {
 	// changes numbers in it; and a `.ld` of one's own, for the layouts that cannot
 	// be reached by changing numbers at all.
 	switch {
+	case spec.Linker.ToolchainScript:
+		// The toolchain brings its own script, and the one written here is
+		// left out: a part whose runtime the toolchain knows about is better
+		// served by the toolchain's own hand than by a script that guesses
+		// where the vectors go.
+		fmt.Fprintf(&b, "# The linker script is the toolchain's own, and none is written here.\n")
 	case spec.LinkerScript != "":
 		fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", spec.LinkerScript)
 	case spec.Linker.Script != "":
 		// A path outside the project is taken as written, so that a platform can
 		// ship one script and every project that uses it points at the same file.
-		if filepath.IsAbs(spec.Linker.Script) {
-			fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT %s)\n", spec.Linker.Script)
-		} else {
-			fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", spec.Linker.Script)
+		script := spec.Linker.Script
+		if !filepath.IsAbs(script) {
+			// A script named beside the spec that named it is resolved there: a
+			// project is somewhere else entirely, and the script is not the
+			// project's — it is the board's, and it is beside the board.
+			script = filepath.Join(filepath.Dir(spec.Source), script)
 		}
+		fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT %s)\n", script)
 	case len(spec.LinkRegions()) > 0:
 		fmt.Fprintf(&b, "set(RHO_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/%s)\n", linkerScript)
 	}
@@ -266,16 +275,36 @@ func TargetCMake(spec Spec, linkerScript string) string {
 	if spec.Flash.Tool != "" {
 		b.WriteString("# How a built program reaches the board. The binary is named as {binary}.\n")
 		fmt.Fprintf(&b, "set(RHO_FLASH_TOOL %s)\n", spec.Flash.Tool)
-		fmt.Fprintf(&b, "set(RHO_FLASH_COMMAND %s)\n", cmakeQuote(spec.Flash.Command))
+		command, environment := cmakeEnvironment(spec.Flash.Command)
+		for _, line := range environment {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+		// The binary is the program's own file, and it is named by a generator
+		// expression because the program does not exist yet when this file is
+		// read: the expression is resolved when the build is generated, which is
+		// after the program has been declared.
+		//
+		// A command that never says where the file goes has it appended, for the
+		// same reason the command line does: a tool with a default would
+		// otherwise write whatever that default is.
+		program := "$<TARGET_FILE:${RHO_PROGRAM}>"
+		if strings.Contains(command, "{binary}") {
+			command = strings.ReplaceAll(command, "{binary}", program)
+		} else {
+			command = command + " " + program
+		}
+		fmt.Fprintf(&b, "set(RHO_FLASH_COMMAND %s)\n", cmakeQuote(command))
 		if spec.Flash.Offset != "" {
 			fmt.Fprintf(&b, "set(RHO_FLASH_OFFSET %s)\n", spec.Flash.Offset)
 		}
-		// A framework may define `flash` itself — ESP-IDF does, because it
-		// knows which images it built and where they go — and two targets of
-		// one name is a configure error. The one that already knows wins.
-		b.WriteString("if(NOT TARGET flash)\n")
+		// The command is split into arguments, because a tool given the whole
+		// command as one argument is a tool given a name it cannot parse.
+		b.WriteString("separate_arguments(RHO_FLASH_ARGS UNIX_COMMAND \"${RHO_FLASH_COMMAND}\")\n")
+		b.WriteString("if(DEFINED RHO_PROGRAM AND NOT TARGET flash)\n")
 		b.WriteString("  add_custom_target(flash\n")
-		b.WriteString("    COMMAND ${RHO_FLASH_TOOL} ${RHO_FLASH_COMMAND}\n")
+		b.WriteString("    COMMAND ${RHO_FLASH_TOOL} ${RHO_FLASH_ARGS}\n")
+		b.WriteString("    DEPENDS ${RHO_PROGRAM}\n")
 		b.WriteString("    COMMENT \"Writing the program to the board\"\n")
 		b.WriteString("    VERBATIM\n")
 		b.WriteString("  )\n")
@@ -285,6 +314,73 @@ func TargetCMake(spec Spec, linkerScript string) string {
 }
 
 /* -------------------------------------------------------------------------- */
+// cmakeEnvironment rewrites a command's environment references into the
+// variables the generated file defines for them, and returns the definitions.
+//
+// A command that reads the environment is read the same way in a build and in
+// a flash: the reference is resolved here, from the environment CMake was
+// started in, and what it resolves to is what the command is run with. CMake
+// has its own syntax for this — `$ENV{NAME}` — and a reference written in the
+// toolchain's own spelling would be passed to the tool as the spelling.
+//
+// A reference with a default falls back to it when the environment says
+// nothing, which is what makes a spec say "this machine's choice, and this
+// one if it says nothing".
+func cmakeEnvironment(command string) (string, []string) {
+	if !strings.Contains(command, envPrefix) {
+		return command, nil
+	}
+	seen := map[string]bool{}
+	definitions := []string{}
+	rewritten := command
+	for {
+		at := strings.Index(rewritten, envPrefix)
+		if at < 0 {
+			break
+		}
+		closing := strings.Index(rewritten[at:], "}")
+		if closing < 0 {
+			break
+		}
+		reference := rewritten[at+len(envPrefix) : at+closing]
+		name := reference
+		fallback := ""
+		hasDefault := false
+		if separator := strings.Index(reference, ":-"); separator >= 0 {
+			name = reference[:separator]
+			fallback = reference[separator+2:]
+			hasDefault = true
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			break
+		}
+		variable := "RHO_ENV_" + cmakeMapName(name)
+		if !seen[variable] {
+			seen[variable] = true
+			definitions = append(definitions, cmakeEnvironmentVariable(variable, name, fallback, hasDefault))
+		}
+		rewritten = rewritten[:at] + "${" + variable + "}" + rewritten[at+closing+1:]
+	}
+	return rewritten, definitions
+}
+
+// cmakeEnvironmentVariable is the definition of one environment value, and the
+// default it falls back to when the environment says nothing.
+func cmakeEnvironmentVariable(variable, name, fallback string, hasDefault bool) string {
+	out := &strings.Builder{}
+	fmt.Fprintf(out, "if(DEFINED ENV{%s})\n", name)
+	fmt.Fprintf(out, "  set(%s \"$ENV{%s}\")\n", variable, name)
+	out.WriteString("else()\n")
+	if hasDefault {
+		fmt.Fprintf(out, "  set(%s %s)\n", variable, cmakeQuote(fallback))
+	} else {
+		fmt.Fprintf(out, "  set(%s \"\")\n", variable)
+	}
+	out.WriteString("endif()")
+	return out.String()
+}
+
 // cmakeMapName is the file a link writes its map to, named after the target.
 //
 // Named after the target rather than after the program because the program's

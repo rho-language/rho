@@ -97,3 +97,26 @@ func firstLines(out string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// A pointer to a pointer is a pointer to the pointer: the C type of
+// `Ptr_Ptr_Thing` is `Thing**`, and a name that stopped at one star would be a
+// declaration of a different type than the program means.
+func TestAMangledPointerToAPointerKeepsBothStars(t *testing.T) {
+	cases := map[string]string{
+		"Ptr_Thing":     "Thing*",
+		"Ptr_u8":        "uint8_t*",
+		"Thing_Ptr":     "Thing*",
+		"Ptr_Ptr_Thing": "Thing**",
+		"Ptr_Ptr_u8":    "uint8_t**",
+	}
+	for name, want := range cases {
+		got, ok := mangledPointerCType(name)
+		if !ok {
+			t.Errorf("expected %q to be a pointer", name)
+			continue
+		}
+		if got != want {
+			t.Errorf("expected %q to be %q, got %q", name, want, got)
+		}
+	}
+}

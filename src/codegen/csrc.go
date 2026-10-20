@@ -61,7 +61,6 @@ var yamlSource string
 //go:embed csrc/bits.c
 var bitsSource string
 
-
 // RuntimeFragment is one piece of the runtime, and the symbols that pull it in.
 //
 // `provides` is what a program has to name for this fragment to be worth
@@ -93,6 +92,13 @@ type RuntimeFragment struct {
 	// C: the const-ness and the pointer depth are part of the declaration, and a
 	// generator that guessed them would produce a program that compiles with a
 	// warning and misbehaves.
+	//
+	// None of them is `static`. The fragment is emitted into the runtime's own
+	// translation unit and the call to it is emitted into the program's, so a
+	// `static` prototype in the program declares a symbol that unit does not
+	// define: the call is compiled as an internal one and the link fails on a
+	// name that was declared right there. A fragment whose symbols only the
+	// runtime calls is not declared here at all.
 	Decls []string
 }
 
@@ -123,7 +129,7 @@ var runtimeFragments = []RuntimeFragment{
 		Source:   panicSource,
 		Provides: []string{"panicf"},
 		Needs:    []string{"rho_print"},
-		Decls:    []string{"static void panicf(const char* msg);"},
+		Decls:    []string{"void panicf(const char* msg);"},
 	},
 	{
 		Name:   "strings",
@@ -165,14 +171,14 @@ var runtimeFragments = []RuntimeFragment{
 		Name:     "env",
 		Source:   envSource,
 		Provides: []string{"rho_env_or"},
-		Decls:    []string{"static const char* rho_env_or(const char* name, const char* fallback);"},
+		Decls:    []string{"const char* rho_env_or(const char* name, const char* fallback);"},
 	},
 	{
 		Name:     "yaml",
 		Source:   yamlSource,
 		Provides: []string{"rho_yaml_load"},
 		Needs:    []string{"rho_strlen"},
-		Decls:    []string{"static char* rho_yaml_load(const char* path);"},
+		Decls:    []string{"char* rho_yaml_load(const char* path);"},
 	},
 }
 

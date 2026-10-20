@@ -23,7 +23,7 @@
 module:
   name: rho-flash
   type: component
-  version: 0.1.0
+  version: 0.1.3
   author: Aurel Miron
   description: Puts a built binary on a board, using the command its target spec declares
   command: flash

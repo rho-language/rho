@@ -579,6 +579,15 @@ func cTypeFor(t ir.Type) string {
 		return "const char*" + suffix
 	case ir.TypeStruct:
 		if t.Name != "" {
+			// A mangled pointer name is a pointer, not a structure. `Ptr_X` and
+			// `X_Ptr` are the same pointer written two ways — one is what a
+			// source writes and the other is what a foreign declaration
+			// carries — and the C a declaration has to be given is `X*`. Spelling
+			// it as a structure names a type no backend emitted, and the
+			// declaration that uses it does not compile.
+			if pointer, ok := mangledPointerCType(t.Name); ok {
+				return pointer + suffix
+			}
 			return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(t.Name) + suffix
 		}
 		return "struct /* anonymous */"

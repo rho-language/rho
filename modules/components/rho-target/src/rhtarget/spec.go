@@ -217,6 +217,21 @@ type Linker struct {
 	// what it would have been generated with, and merging the two would produce a
 	// script that is neither.
 	Script string `json:"script,omitempty"`
+	// ToolchainScript says the toolchain brings its own linker script for this
+	// part, and none is generated.
+	//
+	// A cross toolchain for a part whose programs are written by a vendor's own
+	// tools has no script of its own: where the vectors go and how the startup
+	// code is reached are the part's facts, and a generated script guesses them.
+	// A toolchain that does bring one is better served by it than by a guess —
+	// avr-gcc knows where an AVR's vector table belongs and how its runtime
+	// expects to be reached, and a script written here is that knowledge
+	// repeated less well.
+	//
+	// The memory map is still the part's own and is still declared: what a
+	// program is told about the part it runs on does not depend on who writes
+	// the script.
+	ToolchainScript bool `json:"toolchain_script,omitempty"`
 	// StackBytes is how much stack the program gets. Zero means "as it would
 	// otherwise have been" — which, for a Rho program, is the bound the compiler
 	// computed from the call graph rather than a number somebody guessed.
@@ -249,6 +264,17 @@ type Linker struct {
 	// getter is not, and one number for both is the same guess wearing a
 	// declaration's clothes.
 	ForeignFrames map[string]uint64 `json:"foreign_frames,omitempty"`
+}
+
+// isEmpty reports whether a linker block says anything at all.
+//
+// Written out rather than compared, because the block holds maps and a struct
+// holding maps is not comparable — and because what counts as "said something"
+// is a list, not an accident of the layout.
+func (l Linker) isEmpty() bool {
+	return l.Script == "" && !l.ToolchainScript && l.StackBytes == 0 && l.HeapBytes == 0 &&
+		l.Entry == "" && len(l.Regions) == 0 && len(l.Sections) == 0 &&
+		len(l.Symbols) == 0 && len(l.ForeignFrames) == 0
 }
 
 // LinkerSection is one section placed in one region.
@@ -368,6 +394,20 @@ func (f Flash) Declared() bool {
 // the file goes, and a command that never says so has it appended — otherwise a
 // tool with a default would flash whatever that default is rather than the file
 // that was just built.
+//
+// A command may also read the environment: `{env:NAME}` is the value of `NAME`,
+// and `{env:NAME:-default}` is that value or the default when it is not set.
+// That is how a spec says something the machine decides — which serial line the
+// board is on, which probe it is behind — without the spec being wrong on every
+// machine but the one it was written on.
+//
+// It is a substitution and not a shell: there is no pipeline, no glob and no
+// command substitution, so a spec that could name one is still a spec that
+// cannot run whatever a machine could be talked into.
+//
+// The reference is spelled `{env:…}` rather than `${…}` because the command
+// travels into a CMake file, and CMake reads `${…}` as its own: a reference
+// written that way is a configure error rather than a placeholder.
 func (f Flash) Invocation(binary string) (string, []string, error) {
 	argv := []string{}
 	switch {
@@ -385,11 +425,14 @@ func (f Flash) Invocation(binary string) (string, []string, error) {
 	out := make([]string, 0, len(argv)+len(f.PostArgs)+1)
 	named := false
 	for _, arg := range argv {
-		if strings.Contains(arg, "{binary}") {
-			arg = strings.ReplaceAll(arg, "{binary}", binary)
-			named = true
+		expanded, err := expandPlaceholders(arg, binary)
+		if err != nil {
+			return "", nil, err
 		}
-		out = append(out, arg)
+		if expanded != arg {
+			named = named || strings.Contains(arg, "{binary}")
+		}
+		out = append(out, expanded)
 	}
 	if !named {
 		out = append(out, binary)
@@ -401,6 +444,82 @@ func (f Flash) Invocation(binary string) (string, []string, error) {
 		out = append(out, arg)
 	}
 	return out[0], out[1:], nil
+}
+
+// expandPlaceholders replaces the placeholders in one argument of a flash
+// command: where the binary goes, and what the environment says.
+//
+// One pass over the text, so that a value that comes out of the environment is
+// not read again for placeholders of its own.
+func expandPlaceholders(text, binary string) (string, error) {
+	if !strings.Contains(text, "{binary}") && !strings.Contains(text, envPrefix) {
+		return text, nil
+	}
+	out := &strings.Builder{}
+	rest := text
+	for {
+		binaryAt := strings.Index(rest, "{binary}")
+		envAt := strings.Index(rest, envPrefix)
+		if envAt < 0 && binaryAt < 0 {
+			out.WriteString(rest)
+			break
+		}
+		// Whichever comes first.
+		if envAt >= 0 && (binaryAt < 0 || envAt < binaryAt) {
+			out.WriteString(rest[:envAt])
+			closing := strings.Index(rest[envAt:], "}")
+			if closing < 0 {
+				return "", fmt.Errorf("the flash command has an environment reference with no closing brace: %q", text)
+			}
+			value, err := environmentValue(rest[envAt+len(envPrefix) : envAt+closing])
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(value)
+			rest = rest[envAt+closing+1:]
+			continue
+		}
+		out.WriteString(rest[:binaryAt])
+		out.WriteString(binary)
+		rest = rest[binaryAt+len("{binary}"):]
+	}
+	return out.String(), nil
+}
+
+// envPrefix is how a flash command names an environment variable: `{env:NAME}`.
+//
+// It is not `${NAME}` because the command travels into a CMake file, and CMake
+// reads `${…}` as its own — a reference written that way is a configure error
+// rather than a placeholder.
+const envPrefix = "{env:"
+
+// environmentValue is the value of an environment reference: `NAME` or
+// `NAME:-default`.
+//
+// A reference with no default and no value is an error rather than an empty
+// string: a flash command with a hole in it is a command that would flash
+// nothing, and saying so is better than doing it.
+func environmentValue(reference string) (string, error) {
+	name := reference
+	fallback := ""
+	hasDefault := false
+	if separator := strings.Index(reference, ":-"); separator >= 0 {
+		name = reference[:separator]
+		fallback = reference[separator+2:]
+		hasDefault = true
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("the flash command has an environment reference with no name: %q", reference)
+	}
+	value, found := os.LookupEnv(name)
+	if found && value != "" {
+		return value, nil
+	}
+	if hasDefault {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("the flash command needs %s, and it is not set", name)
 }
 
 // SplitCommand splits a command into arguments, honouring quotes so that a path
@@ -936,10 +1055,14 @@ func (l *Library) Resolve(name string) (Spec, []Diagnostic) {
 	// The chain named something that no spec declares — almost always a part, since
 	// no spec is named after one: a board is `nucleo-h753zi` and carries an
 	// `STM32H753ZI`, which is the chip rather than another spec. That is not a
-	// problem for a board, which carries its own memory map and flash command; it is
-	// a problem for a spec that cannot stand on its own, and the diagnostic says
+	// problem for a board, which carries its own memory map and flash command; it
+	// is a problem for a spec that cannot stand on its own, and the diagnostic says
 	// which one rather than naming the part again.
-	if unresolved != "" && !specIsSelfContained(chain[0]) {
+	//
+	// What is asked is of the spec the chain *ended* on rather than the one it
+	// started from: a board whose chip resolves to a chip that stands on its own
+	// is a board that stands on its own, and says so by its chip.
+	if unresolved != "" && !specIsSelfContained(chain[len(chain)-1]) {
 		diagnostics = append(diagnostics, Diagnostic{
 			Path:    chain[0].Source,
 			Message: fmt.Sprintf("%q is for %q, which no spec declares, and it does not carry a toolchain and memory map of its own to stand without one", chain[0].Name, unresolved),
@@ -1248,6 +1371,12 @@ func merge(parent, child Spec) Spec {
 	child.Flags = append(append([]string{}, parent.Flags...), child.Flags...)
 	if child.Flash.Tool == "" {
 		child.Flash = parent.Flash
+	}
+	// A board that says nothing about its linker inherits its part's: where a
+	// program's memory is laid out is the part's fact, and a board carries a
+	// part rather than a layout of its own.
+	if child.Linker.isEmpty() {
+		child.Linker = parent.Linker
 	}
 	// Debug is folded whole rather than field by field, like Flash: a board that
 	// names a probe server has named a debugger that matches it, and a child's

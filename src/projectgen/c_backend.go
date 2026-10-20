@@ -410,6 +410,13 @@ func emitCMakeLists(ctx Context) string {
 	b.WriteString("endif()\n")
 
 	fmt.Fprintf(&b, "project(%s C)\n\n", name)
+	// The program's own name, said before the target file is read: a target
+	// that knows how the board is reached needs to know what it is flashing,
+	// and the target file is read before the program is declared.
+	b.WriteString("# The program this project builds, named for the target that says how the board\n")
+	b.WriteString("# is reached. It is said here, before the target file is read, because that file\n")
+	b.WriteString("# flashes it.\n")
+	b.WriteString("set(RHO_PROGRAM " + name + ")\n\n")
 	b.WriteString("if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/target.cmake)\n")
 	b.WriteString("  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/target.cmake)\n")
 	b.WriteString("endif()\n\n")

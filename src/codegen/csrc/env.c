@@ -7,7 +7,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-static const char* rho_env_or(const char* name, const char* fallback)
+const char* rho_env_or(const char* name, const char* fallback)
 {
     const char* value = name != NULL ? getenv(name) : NULL;
     return value != NULL ? value : fallback;

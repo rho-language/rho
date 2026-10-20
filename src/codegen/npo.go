@@ -96,3 +96,43 @@ func cPrimitive(name string) (string, bool) {
 	}
 	return "", false
 }
+
+// mangledPointerElement returns the element of a mangled pointer name, or "" when
+// the name is not one.
+//
+// A pointer is mangled two ways: `Ptr[X]` becomes `Ptr_X`, and the optional
+// pointer's payload keeps the suffix as `X_Ptr`. Both spell one pointer, and
+// both are read off the name rather than re-derived, for the same reason the
+// option's is.
+func mangledPointerElement(name string) (string, bool) {
+	if strings.HasPrefix(name, "Ptr_") && len(name) > len("Ptr_") {
+		return name[len("Ptr_"):], true
+	}
+	if strings.HasSuffix(name, "_Ptr") && len(name) > len("_Ptr") {
+		return strings.TrimSuffix(name, "_Ptr"), true
+	}
+	return "", false
+}
+
+// mangledPointerCType returns the C type a mangled pointer name is, and whether
+// the name was one at all.
+//
+// The element is asked for its own spelling, because a mangled name is a Rho
+// name: `u8` is not what C calls it.
+//
+// A pointer to a pointer is a pointer to the pointer, so the element is asked
+// the same question: `Ptr_Ptr_Thing` is `Thing**`, and a name that stopped at
+// one star would be a declaration of a different type than the program means.
+func mangledPointerCType(name string) (string, bool) {
+	element, ok := mangledPointerElement(name)
+	if !ok {
+		return "", false
+	}
+	if inner, ok := mangledPointerCType(element); ok {
+		return inner + "*", true
+	}
+	if c, ok := cPrimitive(element); ok {
+		return c + "*", true
+	}
+	return element + "*", true
+}

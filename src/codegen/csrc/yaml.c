@@ -9,7 +9,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-static char* rho_yaml_load(const char* path)
+char* rho_yaml_load(const char* path)
 {
     FILE* f = fopen(path, "r");
     char line[4096];
