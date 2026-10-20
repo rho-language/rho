@@ -1,0 +1,55 @@
+#
+# rho-deploy — put a built program on a host, and start it.
+#
+# A board is flashed; a host is deployed to. What a host needs to be reached is
+# not a property of this program — a login, a directory and a start command
+# differ between two boards — so the platform says: a target spec carries a
+# `deploy` block naming the host, the login, the path and how to copy, and this
+# program reads it through rho-target and does it. A `docker` block in the same
+# place deploys a container image instead of a file.
+#
+# The command is `deploy`: `rho deploy -target uno-q -run build/gateway`.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: rho-deploy
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Puts a built program on a host, using the target spec's deploy block
+  command: deploy
+
+main: rho-deploy
+
+features:
+  - deploy
+  - ssh
+  - rsync
+  - scp
+  - docker
+  - host
+  - board
+
+docs:
+  title: Deploying to a host
+  section: components
+  order: "56"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - CHANGELOG.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src

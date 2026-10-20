@@ -18,6 +18,7 @@
 package rhtarget
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -793,5 +794,82 @@ func TestABoardThatOnlyNamesItsRegisterMapIsStillDeclared(t *testing.T) {
 	// still derived from the command that flashes it.
 	if !spec.Debug.Watcher() {
 		t.Error("expected the probe to be derived for a board that declares only its register map")
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Deploying                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// A host target — a board whose program is copied to a machine rather than
+// written by a probe — carries a deploy block beside any flash block it has. It
+// is how a target says where it is reached and how, and the tool that deploys
+// reads it rather than guessing a host or a path.
+const hostSpec = `{
+  "kind": "board", "name": "uno-q",
+  "deploy": {
+    "method": "rsync", "host": "uno-q.local", "port": 22, "user": "arduino",
+    "path": "/home/arduino/apps", "run": "./{artifact}",
+    "docker": {"file": "Dockerfile", "image": "robohub-gateway", "tag": "v1",
+               "run": ["--net", "host"]}
+  },
+  "flash": {"tool": "arduino-flasher-cli", "command": "arduino-flasher-cli write -f {binary}"}
+}`
+
+func TestADeployBlockIsReadAndKept(t *testing.T) {
+	library := libraryOf(t, map[string]string{"uno-q.json": hostSpec})
+	if len(library.Diagnostics) != 0 {
+		t.Fatalf("expected a clean read, got %+v", library.Diagnostics)
+	}
+	spec, found := library.Get("uno-q")
+	if !found {
+		t.Fatal("expected the host spec by name")
+	}
+	if !spec.Deploy.declared() {
+		t.Fatal("expected the deploy block to be declared")
+	}
+	if spec.Deploy.Method != "rsync" || spec.Deploy.Host != "uno-q.local" ||
+		spec.Deploy.User != "arduino" || spec.Deploy.Port != 22 ||
+		spec.Deploy.Path != "/home/arduino/apps" || spec.Deploy.Run != "./{artifact}" {
+		t.Fatalf("the deploy block was not read: %+v", spec.Deploy)
+	}
+	if spec.Deploy.Docker == nil {
+		t.Fatal("expected the docker block")
+	}
+	if spec.Deploy.Docker.Image != "robohub-gateway" || spec.Deploy.Docker.Tag != "v1" ||
+		spec.Deploy.Docker.File != "Dockerfile" || len(spec.Deploy.Docker.Run) != 2 {
+		t.Fatalf("the docker block was not read: %+v", spec.Deploy.Docker)
+	}
+	// A target that is flashed also keeps its flash block; the two are not
+	// alternatives and a board with both says so.
+	if spec.Flash.Tool != "arduino-flasher-cli" {
+		t.Fatalf("the flash block was lost: %+v", spec.Flash)
+	}
+}
+
+func TestATargetWithNoDeployBlockDeclaresNone(t *testing.T) {
+	var empty Spec
+	if empty.Deploy.declared() {
+		t.Fatal("an unspecified deploy block should not be declared")
+	}
+}
+
+// A spec that is shown as JSON carries its deploy block, so the tool that
+// deploys reads the board's own words for where it is reached rather than a
+// second opinion compiled into it.
+func TestASpecMarshalsItsDeployBlock(t *testing.T) {
+	library := libraryOf(t, map[string]string{"uno-q.json": hostSpec})
+	spec, found := library.Get("uno-q")
+	if !found {
+		t.Fatal("expected the host spec")
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{`"deploy"`, `"uno-q.local"`, `"robohub-gateway"`, `"docker"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("the marshalled spec is missing %s:\n%s", want, data)
+		}
 	}
 }

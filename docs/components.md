@@ -25,6 +25,7 @@ index is a map rather than a second copy.
 | Module | Command | What it does |
 |---|---|---|
 | {ref}`rho-flash <rho-flash/index>` | `rho flash` | Puts a built binary on a board |
+| {ref}`rho-deploy <rho-deploy/index>` | `rho deploy` | Puts a built program on a host, and starts it |
 | {ref}`rho-dbg <rho-dbg/index>` | `rho dbg` | A debug adapter: DAP on one side, GDB on the other, a probe in between |
 | {ref}`rho-monitor <rho-monitor/index>` | `rho monitor` | A target's console over UART, RTT or an ITM trace, alongside a debug session |
 | {ref}`rho-test <rho-test/index>` | `rho test` | Discovers and runs a project's tests |
