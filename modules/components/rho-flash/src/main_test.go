@@ -155,3 +155,30 @@ func TestInvocationDoesNotInterpretShellSyntax(t *testing.T) {
 		t.Errorf("expected the trailing words passed through as arguments, got %q", args)
 	}
 }
+
+// A board whose flasher takes the image as a plain argument — Arduino's
+// arduino-flasher-cli does — renders the same way: the program, its options,
+// and the binary where the command put it.
+func TestInvocationForArduinoFlasherCli(t *testing.T) {
+	flash := Flash{Command: `arduino-flasher-cli upload --board uno-q {binary}`}
+
+	program, args, err := flash.invocation("build/firmware.hex")
+	if err != nil {
+		t.Fatalf("invocation: %v", err)
+	}
+	if program != "arduino-flasher-cli" {
+		t.Errorf("expected arduino-flasher-cli, got %q", program)
+	}
+	want := []string{"upload", "--board", "uno-q", "build/firmware.hex"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("expected\n  %q\ngot\n  %q", want, args)
+	}
+}
+
+// A target that says nothing about reaching a board cannot be flashed, and
+// saying so is better than running a tool with no target.
+func TestNoFlashBlockIsRefused(t *testing.T) {
+	if _, _, err := (Flash{}).invocation("app.bin"); err == nil {
+		t.Fatal("expected a target with no flash command to be refused")
+	}
+}

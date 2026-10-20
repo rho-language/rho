@@ -42,7 +42,7 @@ by hand.
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-lint`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
+- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-deploy`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-lint`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
 - `src/ide/` - What an editor reads, rendered from what a project declares (`rho ide`)
 - `src/sysdep/` - What a module needs from the machine: `system_deps`, versions, the fetched-toolchain layout
 - `src/privilege/` - Saying something when a run has more authority than it needs
@@ -178,6 +178,22 @@ rho target generate . --target pico      # write cmake/ into the project
 The generated project includes `cmake/toolchain.cmake` before `project()` and
 `cmake/target.cmake` after it, when they are there. A project that targets the
 host has neither and builds as it did.
+
+## Deploying and flashing
+
+A board is flashed; a host is deployed to. A target spec says which of the two
+applies to it, and the two components read the block for the half they are:
+
+```sh
+rho flash  -target pico   build/app.elf     # the spec's `flash` block, via rho-flash
+rho deploy -target uno-q -run build/gateway # the spec's `deploy` block, via rho-deploy
+```
+
+A `flash` block names the tool and the command that writes a binary to a part; a
+`deploy` block names the host, login, path and how a program is copied (rsync or
+scp) and started, with a `docker` block deploying a container image instead. A
+board may carry both — the Arduino UNO Q's Linux side is deployed to and its
+MCU is flashed — and `rho deploy -n` prints the steps and runs nothing.
 
 ## System dependencies
 

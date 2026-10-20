@@ -130,6 +130,10 @@ type Spec struct {
 	Peripherals map[string]Peripheral `json:"peripherals,omitempty"`
 	// Flash is how a built program is written to the board.
 	Flash Flash `json:"flash,omitempty"`
+	// Deploy is how a built program reaches a target that runs an operating
+	// system rather than being written by a probe: the machine to copy it to and
+	// how. A board that is flashed declares none; a Linux target declares this.
+	Deploy Deploy `json:"deploy,omitempty"`
 	// Debug is how a program's execution is inspected on this target.
 	Debug Debug `json:"debug,omitempty"`
 	// Program is a CMake fragment to place beside the generated build and
@@ -1380,4 +1384,53 @@ func (s Spec) Pin(role string) (Pin, bool) {
 // parent: how to compile it, and where it lives in memory.
 func specIsSelfContained(spec Spec) bool {
 	return spec.Toolchain.Compiler != "" && spec.Memory.RAM.Origin != "" && spec.Memory.Flash.Origin != ""
+}
+
+// Deploy is how a built program reaches a target that runs an operating system,
+// as opposed to one that is written to a part by a probe.
+//
+// A board is flashed; a host is deployed to. The difference is real enough to be
+// a different block: there is no probe and no address, there is a machine, a
+// login, a directory, and often a way to start what was copied. A target may
+// carry a board's flash block, a host's deploy block, or both — the UNO Q is one
+// board whose Linux side is deployed to and whose MCU is flashed — and a tool
+// picks the one it is for.
+type Deploy struct {
+	// Method is how the artefact is copied: rsync or scp. Empty means rsync.
+	Method string `json:"method,omitempty"`
+	// Host is the machine to copy to. Empty means the target is the local
+	// machine — a toolchain that runs on the board deploys to itself.
+	Host string `json:"host,omitempty"`
+	// Port is the SSH port. Zero means 22.
+	Port int `json:"port,omitempty"`
+	// User is the login name on the target. Empty leaves it to the tool.
+	User string `json:"user,omitempty"`
+	// Path is the directory on the target the artefact lands in.
+	Path string `json:"path,omitempty"`
+	// Run is the command that starts the program after it is copied, with
+	// {artifact} naming what was copied. Empty copies without starting.
+	Run string `json:"run,omitempty"`
+	// Docker, when set, deploys the program as a container image rather than a
+	// plain file: the image is built here, carried to the target and run there.
+	Docker *DeployDocker `json:"docker,omitempty"`
+	// Comment says what has to be true for deployment to work.
+	Comment string `json:"comment,omitempty"`
+}
+
+// DeployDocker describes deploying a program as a container image.
+type DeployDocker struct {
+	// File is the Dockerfile, relative to the project. Empty means "Dockerfile".
+	File string `json:"file,omitempty"`
+	// Image is the image name the project is built as.
+	Image string `json:"image,omitempty"`
+	// Tag is the image tag. Empty means "latest".
+	Tag string `json:"tag,omitempty"`
+	// Run is the arguments a container is started with — ports, mounts, the
+	// network — with {image} naming the built image.
+	Run []string `json:"run,omitempty"`
+}
+
+// declared reports whether the target says anything about deploying.
+func (d Deploy) declared() bool {
+	return strings.TrimSpace(d.Host) != "" || strings.TrimSpace(d.Path) != "" || d.Docker != nil
 }
