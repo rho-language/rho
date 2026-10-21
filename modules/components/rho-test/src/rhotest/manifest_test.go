@@ -303,3 +303,49 @@ func TestAnAxisValueMayContainSlashes(t *testing.T) {
 		t.Errorf("expected an axis the cell was not expanded for to be empty, got %q", got)
 	}
 }
+
+// A manifest may include another, which is how a project keeps its tests in
+// folders — the unit tests in one, the smoke tests in another — and says so in
+// one place. The suites of the included manifest are the project's suites: they
+// run in the project's own root, not in the folder they were written in.
+func TestAManifestMayIncludeAnother(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tests", "unit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tests", "smoke"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "unit", "tests.yml"), []byte(
+		"name: unit\nsuites:\n  - name: the unit tests\n    kind: command\n    command: [\"/bin/true\"]\n    tags: [unit]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "smoke", "tests.yml"), []byte(
+		"name: smoke\nsuites:\n  - name: the smoke tests\n    kind: build\n    tags: [smoke]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "tests.yml"), []byte(
+		"name: p\ninclude:\n  - unit/tests.yml\n  - smoke/tests.yml\nsuites: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := LoadProjectManifest(root)
+	if err != nil {
+		t.Fatalf("expected the manifest to load, got %v", err)
+	}
+	if len(manifest.Declared) != 2 {
+		t.Fatalf("expected the two included suites, got %+v", manifest.Declared)
+	}
+	if manifest.Declared[0].Name != "the unit tests" || manifest.Declared[1].Name != "the smoke tests" {
+		t.Errorf("expected the included suites in order, got %+v", manifest.Declared)
+	}
+	// The suites belong to the project, so a path in one of them is the
+	// project's path rather than the folder's.
+	built, err := BuiltinResolvers()[2].Resolve(manifest.Declared[1], root)
+	if err != nil {
+		t.Fatalf("expected the included suite to resolve, got %v", err)
+	}
+	if built.Root != root {
+		t.Errorf("expected the included suite to run in the project, got %q", built.Root)
+	}
+}

@@ -51,3 +51,39 @@ the target file can say how the board is reached in terms of the program it
 builds: the `flash` target a build carries now names the file it wrote, and
 splits the command into arguments rather than handing the tool the whole
 command as one name it cannot parse.
+
+## [0.1.2] - 2026-10-21
+
+A loop can `continue`: the statement that leaves the innermost loop and goes
+on with the next thing the loop has to do, which is what a guard inside a loop
+body has always meant. A `continue` outside a loop is refused, as a `break`
+outside a loop is.
+
+The step of a `for` loop now comes before the body rather than after it, and it
+is a real assignment rather than a piece of text. Two things follow. A `continue`
+in a `for` no longer skips the step, so a loop whose body continues is a loop
+that ends. And a `for` loop advances at all: the step was written in a form the
+backends did not read, so the index never moved and the loop repeated its first
+element for ever.
+
+The native YAML reads more of a document: `yaml.value` takes a dotted path, so
+`board.connectors` is the connectors of the board; `yaml.kind` says what a
+value is — a list, a map, a string — because a program that reads a document
+needs to know what it read; and `yaml.keys` says what a document holds.
+
+A program can read a file and write one — `rho_read_text` and
+`rho_write_text` — and the arguments of a program it runs are split on
+whitespace honouring quotes, so a name with a space in it is one argument and
+not two.
+
+The C runtime answers the same as the Go one, which it did not. Its YAML
+walked a document by its top-level keys and nothing else; it now walks a dotted
+path the way the Go runtime does, and says what a value is and what a document
+holds. A program's configuration is read the same on either backend too: the
+name under the `user:` section, which the Go runtime was reading from the top
+level instead.
+
+The C runtime can run a program as well. The program is run directly rather
+than through a shell, and what it said is written where the caller asked for
+it, so a program that orchestrates other programs means the same thing on
+either backend.

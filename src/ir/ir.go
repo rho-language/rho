@@ -216,6 +216,7 @@ const (
 	OpIf
 	OpWhile
 	OpBreak
+	OpContinue
 )
 
 // Instr represents a single IR instruction.

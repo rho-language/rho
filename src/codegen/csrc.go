@@ -58,6 +58,19 @@ var envSource string
 //go:embed csrc/yaml.c
 var yamlSource string
 
+// The file reader and writer, separate from the strings because it is the only
+// part of the runtime that touches a file, and a program that never does should
+// not carry it.
+//
+//go:embed csrc/file.c
+var fileSource string
+
+// The program runner, separate from the file reader because it is the only
+// part of the runtime that runs another program.
+//
+//go:embed csrc/exec.c
+var execSource string
+
 //go:embed csrc/bits.c
 var bitsSource string
 
@@ -174,11 +187,45 @@ var runtimeFragments = []RuntimeFragment{
 		Decls:    []string{"const char* rho_env_or(const char* name, const char* fallback);"},
 	},
 	{
-		Name:     "yaml",
-		Source:   yamlSource,
-		Provides: []string{"rho_yaml_load"},
-		Needs:    []string{"rho_strlen"},
-		Decls:    []string{"char* rho_yaml_load(const char* path);"},
+		Name:   "exec",
+		Source: execSource,
+		Provides: []string{
+			"rho_exec",
+		},
+		Needs: []string{"rho_strlen"},
+		Decls: []string{
+			"unsigned int rho_exec(const char* program, const char* arguments, const char* output_path);",
+		},
+	},
+	{
+		Name:   "file",
+		Source: fileSource,
+		Provides: []string{
+			"rho_read_text",
+			"rho_write_text",
+		},
+		Needs: []string{"rho_strlen"},
+		Decls: []string{
+			"char* rho_read_text(const char* path);",
+			"int rho_write_text(const char* path, const char* text);",
+		},
+	},
+	{
+		Name:   "yaml",
+		Source: yamlSource,
+		Provides: []string{
+			"rho_yaml_load",
+			"rho_yaml_value",
+			"rho_yaml_kind",
+			"rho_yaml_keys",
+		},
+		Needs: []string{"rho_strlen"},
+		Decls: []string{
+			"char* rho_yaml_load(const char* path);",
+			"char* rho_yaml_value(const char* path, const char* key);",
+			"char* rho_yaml_kind(const char* path, const char* key);",
+			"char* rho_yaml_keys(const char* path, const char* key);",
+		},
 	},
 }
 

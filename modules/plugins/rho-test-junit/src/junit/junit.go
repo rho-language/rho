@@ -78,9 +78,19 @@ type Result struct {
 		File string `json:"file"`
 		Line int    `json:"line"`
 	} `json:"case"`
-	Passed bool   `json:"passed"`
+	// Status is what the run concluded: `pass`, `fail` or `skip`.
+	//
+	// The status rather than a verdict of its own, because the run is what
+	// concluded: a report that decided for itself what passed would be a
+	// second opinion on the run, and a run that passed would be reported as
+	// failed by a report that never read it.
+	Status string `json:"status"`
+	Reason string `json:"reason"`
 	Output string `json:"output"`
 }
+
+// Passed reports whether the case passed.
+func (r Result) Passed() bool { return r.Status == "pass" }
 
 // Response is what this plugin answers with: the report it wrote, and a note
 // saying where it was written.
@@ -148,6 +158,7 @@ type suite struct {
 	Tests    int        `xml:"tests,attr"`
 	Failures int        `xml:"failures,attr"`
 	Errors   int        `xml:"errors,attr"`
+	Skipped  int        `xml:"skipped,attr"`
 	Time     string     `xml:"time,attr"`
 	Package  string     `xml:"package,attr,omitempty"`
 	Cases    []testcase `xml:"testcase"`
@@ -160,6 +171,11 @@ type testcase struct {
 	Class   string   `xml:"classname,attr"`
 	Time    string   `xml:"time,attr"`
 	Failure *failure `xml:"failure,omitempty"`
+	Skipped *skipped `xml:"skipped,omitempty"`
+}
+
+type skipped struct {
+	Message string `xml:"message,attr,omitempty"`
 }
 
 // failure is what a case carries when it did not pass.
@@ -198,7 +214,10 @@ func Document(root, target string, results []Result) string {
 			Class: relative(root, name),
 			Time:  "0",
 		}
-		if !result.Passed {
+		if result.Status == "skip" {
+			found.Skipped++
+			entry.Skipped = &skipped{Message: result.Reason}
+		} else if !result.Passed() {
 			found.Failures++
 			entry.Failure = &failure{
 				Message: "test failed",

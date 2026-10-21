@@ -453,6 +453,9 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 	case ir.OpBreak:
 		fmt.Fprintf(b, "%sbreak\n", pad)
 
+	case ir.OpContinue:
+		fmt.Fprintf(b, "%scontinue\n", pad)
+
 	case ir.OpCall:
 		if len(instr.Args) > 0 {
 			args := make([]string, 0, len(instr.Args)-1)
@@ -548,7 +551,7 @@ func hasTerminatingReturn(body []ir.Instr) bool {
 		switch body[i].Op {
 		case ir.OpReturn:
 			return true
-		case ir.OpBreak, ir.OpNop:
+		case ir.OpBreak, ir.OpContinue, ir.OpNop:
 			continue
 		default:
 			return false
@@ -686,10 +689,340 @@ func EmitGoRuntime(implementation string) string {
 	imports = addGoImport(imports, "fmt")
 
 	needed := []struct {
-		call    string
+		call string
+		// needs are the helpers this one is written in terms of. A helper that
+		// names another is emitted with it, and the set is closed over that:
+		// a program that calls one of them gets the ones under it as well.
+		needs   []string
 		define  string
 		imports []string
 	}{
+		{
+			// The text of a file.
+			//
+			// A registry or a manifest is read as text and understood by the
+			// program that reads it, and a program that writes one has to be
+			// able to say whether it did: a file that was not written is a
+			// registry that was not changed.
+			call: "rhoReadText(",
+			define: "func rhoReadText(path string) string {\n" +
+				"\tdata, err := os.ReadFile(path)\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn \"\"\n" +
+				"\t}\n" +
+				"\treturn string(data)\n" +
+				"}\n",
+		},
+		{
+			call: "rhoWriteText(",
+			define: "func rhoWriteText(path string, text string) bool {\n" +
+				"\treturn os.WriteFile(path, []byte(text), 0644) == nil\n" +
+				"}\n",
+		},
+		{
+			// One value out of a YAML file, named by its path.
+			//
+			// The path is dotted: `board.connectors` is the connectors of the
+			// board, and `module.version` is the version of the module. A
+			// program that reads a document asks for the thing it wants by the
+			// name of the thing, rather than by the name of a reader it carries.
+			call:  "rhoYamlValue(",
+			needs: []string{"rhoYamlLookup("},
+			define: "func rhoYamlValue(path string, key string) string {\n" +
+				"\tvalue, _ := rhoYamlLookup(path, key)\n" +
+				"\treturn value\n" +
+				"}\n",
+		},
+		{
+			// What a value is: `string`, `number`, `boolean`, `list`, `map`, or
+			// `missing`.
+			//
+			// A program that reads a document needs to know what it read: a
+			// manifest that says a list where it should say a map is a manifest
+			// the reader cannot use, and a reader that cannot say what it read
+			// cannot report that.
+			call:  "rhoYamlKind(",
+			needs: []string{"rhoYamlLookup("},
+			define: "func rhoYamlKind(path string, key string) string {\n" +
+				"\t_, kind := rhoYamlLookup(path, key)\n" +
+				"\treturn kind\n" +
+				"}\n",
+		},
+		{
+			// The keys under a key, one per line.
+			//
+			// A program that reads a document needs to know what is in it: a
+			// registry is read by asking for each of the things it holds, and a
+			// program that cannot ask what is there cannot read what is.
+			call:  "rhoYamlKeys(",
+			needs: []string{"rhoYamlLookup("},
+			define: "func rhoYamlKeys(path string, key string) string {\n" +
+				"\tdata, err := os.ReadFile(path)\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn \"\"\n" +
+				"\t}\n" +
+				"\tlines := strings.Split(string(data), \"\\n\")\n" +
+				"\tindent := -1\n" +
+				"\tindex := 0\n" +
+				"\tfor _, part := range strings.Split(key, \".\") {\n" +
+				"\t\tfound := false\n" +
+				"\t\tfor index < len(lines) {\n" +
+				"\t\t\traw := lines[index]\n" +
+				"\t\t\ttrimmed := strings.TrimLeft(raw, \" \")\n" +
+				"\t\t\tcurrent := len(raw) - len(trimmed)\n" +
+				"\t\t\tif trimmed == \"\" || strings.HasPrefix(trimmed, \"#\") {\n" +
+				"\t\t\t\tindex++\n" +
+				"\t\t\t\tcontinue\n" +
+				"\t\t\t}\n" +
+				"\t\t\tif indent >= 0 && current <= indent {\n" +
+				"\t\t\t\treturn \"\"\n" +
+				"\t\t\t}\n" +
+				"\t\t\tif strings.HasPrefix(trimmed, \"- \") {\n" +
+				"\t\t\t\tindex++\n" +
+				"\t\t\t\tcontinue\n" +
+				"\t\t\t}\n" +
+				"\t\t\tif !strings.HasPrefix(trimmed, part+\":\") {\n" +
+				"\t\t\t\tindex++\n" +
+				"\t\t\t\tcontinue\n" +
+				"\t\t\t}\n" +
+				"\t\t\tindex++\n" +
+				"\t\t\tindent = current\n" +
+				"\t\t\tfound = true\n" +
+				"\t\t\tbreak\n" +
+				"\t\t}\n" +
+				"\t\tif !found {\n" +
+				"\t\t\treturn \"\"\n" +
+				"\t\t}\n" +
+				"\t}\n" +
+				"\tnames := []string{}\n" +
+				"\tchild := -1\n" +
+				"\tfor index < len(lines) {\n" +
+				"\t\traw := lines[index]\n" +
+				"\t\ttrimmed := strings.TrimLeft(raw, \" \")\n" +
+				"\t\tcurrent := len(raw) - len(trimmed)\n" +
+				"\t\tif trimmed == \"\" || strings.HasPrefix(trimmed, \"#\") {\n" +
+				"\t\t\tindex++\n" +
+				"\t\t\tcontinue\n" +
+				"\t\t}\n" +
+				"\t\tif current <= indent {\n" +
+				"\t\t\tbreak\n" +
+				"\t\t}\n" +
+				"\t\tif child < 0 {\n" +
+				"\t\t\tchild = current\n" +
+				"\t\t}\n" +
+				"\t\tif current == child && !strings.HasPrefix(trimmed, \"- \") {\n" +
+				"\t\t\tname := trimmed\n" +
+				"\t\t\tif colon := strings.Index(name, \":\"); colon >= 0 {\n" +
+				"\t\t\t\tname = name[:colon]\n" +
+				"\t\t\t}\n" +
+				"\t\t\tif name != \"\" {\n" +
+				"\t\t\t\tnames = append(names, strings.TrimSpace(name))\n" +
+				"\t\t\t}\n" +
+				"\t\t}\n" +
+				"\t\tindex++\n" +
+				"\t}\n" +
+				"\treturn strings.Join(names, \"\\n\")\n" +
+				"}\n",
+		},
+		{
+			// The lookup the two share: a dotted path into a YAML document, and
+			// the value and the kind found there.
+			//
+			// The document is walked by its indentation, which is what a YAML
+			// mapping is: a key, and the block below it that belongs to it. A
+			// path that leaves the block it is in is a path that names nothing,
+			// which is what `missing` says.
+			call:  "rhoYamlLookup(",
+			needs: []string{"rhoYamlKindOf("},
+			define: "func rhoYamlLookup(path string, key string) (string, string) {\n" +
+				"\tdata, err := os.ReadFile(path)\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn \"\", \"missing\"\n" +
+				"\t}\n" +
+				"\tlines := strings.Split(string(data), \"\\n\")\n" +
+				"\tparts := strings.Split(key, \".\")\n" +
+				"\tvalue := \"\"\n" +
+				"\tkind := \"missing\"\n" +
+				"\tindent := -1\n" +
+				"\tindex := 0\n" +
+				"\tfor _, part := range parts {\n" +
+				"\t\tfound := false\n" +
+				"\t\tfor index < len(lines) {\n" +
+				"\t\t\traw := lines[index]\n" +
+				"\t\t\ttrimmed := strings.TrimLeft(raw, \" \")\n" +
+				"\t\t\tcurrent := len(raw) - len(trimmed)\n" +
+				"\t\t\tif trimmed == \"\" || strings.HasPrefix(trimmed, \"#\") {\n" +
+				"\t\t\t\tindex++\n" +
+				"\t\t\t\tcontinue\n" +
+				"\t\t\t}\n" +
+				"\t\t\tif indent >= 0 && current <= indent {\n" +
+				"\t\t\t\treturn \"\", \"missing\"\n" +
+				"\t\t\t}\n" +
+				"\t\t\tif strings.HasPrefix(trimmed, \"- \") {\n" +
+				"\t\t\t\tindex++\n" +
+				"\t\t\t\tcontinue\n" +
+				"\t\t\t}\n" +
+				"\t\t\tif !strings.HasPrefix(trimmed, part+\":\") {\n" +
+				"\t\t\t\tindex++\n" +
+				"\t\t\t\tcontinue\n" +
+				"\t\t\t}\n" +
+				"\t\t\tvalue = strings.TrimSpace(strings.TrimPrefix(trimmed, part+\":\"))\n" +
+				"\t\t\tvalue = strings.Trim(value, \"\\\"\")\n" +
+				"\t\t\tindex++\n" +
+				"\t\t\tkind = rhoYamlKindOf(value, lines, index, current)\n" +
+				"\t\t\tindent = current\n" +
+				"\t\t\tfound = true\n" +
+				"\t\t\tbreak\n" +
+				"\t\t}\n" +
+				"\t\tif !found {\n" +
+				"\t\t\treturn \"\", \"missing\"\n" +
+				"\t\t}\n" +
+				"\t}\n" +
+				"\treturn value, kind\n" +
+				"}\n",
+			imports: []string{"strconv"},
+		},
+		{
+			// What a value is, from the line it is on and the block below it.
+			//
+			// A value on its own line is a scalar, and which scalar it is is
+			// said by what it looks like. A value that is a block is a list when
+			// the block's first item is a dash, and a map when it is a key.
+			call: "rhoYamlKindOf(",
+			define: "func rhoYamlKindOf(value string, lines []string, index int, indent int) string {\n" +
+				"\tif value != \"\" {\n" +
+				"\t\tif _, err := strconv.Atoi(value); err == nil {\n" +
+				"\t\t\treturn \"number\"\n" +
+				"\t\t}\n" +
+				"\t\tif value == \"true\" || value == \"false\" {\n" +
+				"\t\t\treturn \"boolean\"\n" +
+				"\t\t}\n" +
+				"\t\tif strings.HasPrefix(value, \"[\") {\n" +
+				"\t\t\treturn \"list\"\n" +
+				"\t\t}\n" +
+				"\t\tif strings.HasPrefix(value, \"{\") {\n" +
+				"\t\t\treturn \"map\"\n" +
+				"\t\t}\n" +
+				"\t\treturn \"string\"\n" +
+				"\t}\n" +
+				"\tfor index < len(lines) {\n" +
+				"\t\traw := lines[index]\n" +
+				"\t\ttrimmed := strings.TrimLeft(raw, \" \")\n" +
+				"\t\tcurrent := len(raw) - len(trimmed)\n" +
+				"\t\tif trimmed == \"\" || strings.HasPrefix(trimmed, \"#\") {\n" +
+				"\t\t\tindex++\n" +
+				"\t\t\tcontinue\n" +
+				"\t\t}\n" +
+				"\t\tif current <= indent {\n" +
+				"\t\t\tbreak\n" +
+				"\t\t}\n" +
+				"\t\tif strings.HasPrefix(trimmed, \"- \") || trimmed == \"-\" {\n" +
+				"\t\t\treturn \"list\"\n" +
+				"\t\t}\n" +
+				"\t\treturn \"map\"\n" +
+				"\t}\n" +
+				"\treturn \"missing\"\n" +
+				"}\n",
+		},
+		{
+			// One command-line argument, by its position. The arguments as one
+			// string are what a program is given; a program with a command in
+			// them needs to pick the command out of it.
+			call: "rhoArg(",
+			define: "func rhoArg(index int32) string {\n" +
+				"\tif index < 0 || int(index) >= len(os.Args)-1 {\n" +
+				"\t\treturn \"\"\n" +
+				"\t}\n" +
+				"\treturn os.Args[index+1]\n" +
+				"}\n",
+		},
+		{
+			// Whether a path is there. A program that walks a tree asks about
+			// every path it meets, and a program that cannot ask is a program
+			// that has to guess.
+			call: "rhoPathExists(",
+			define: "func rhoPathExists(path string) bool {\n" +
+				"\t_, err := os.Stat(path)\n" +
+				"\treturn err == nil\n" +
+				"}\n",
+		},
+		{
+			// The names in a directory, one per line. A program that walks a tree
+			// needs to know what is in it, and a list is what a directory is.
+			call: "rhoListDir(",
+			define: "func rhoListDir(path string) string {\n" +
+				"\tentries, err := os.ReadDir(path)\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn \"\"\n" +
+				"\t}\n" +
+				"\tnames := make([]string, 0, len(entries))\n" +
+				"\tfor _, entry := range entries {\n" +
+				"\t\tnames = append(names, entry.Name())\n" +
+				"\t}\n" +
+				"\treturn strings.Join(names, \"\\n\")\n" +
+				"}\n",
+		},
+		{
+			// Running a program. A tool that orchestrates other tools has to run
+			// them, and a program that cannot is a program that can only describe.
+			//
+			// The output goes to a file rather than back to the caller, because
+			// what a program prints is not a string a caller can be trusted to
+			// have room for, and a file is what a reader can read in pieces.
+			call: "rhoSplitArgs(",
+			define: "func rhoSplitArgs(arguments string) []string {\n" +
+				"\targs := []string{}\n" +
+				"\tcurrent := strings.Builder{}\n" +
+				"\tquoted := false\n" +
+				"\tfor _, character := range arguments {\n" +
+				"\t\tswitch {\n" +
+				"\t\tcase character == 34:\n" +
+				"\t\t\tquoted = !quoted\n" +
+				"\t\tcase character == ' ' && !quoted:\n" +
+				"\t\t\tif current.Len() > 0 {\n" +
+				"\t\t\t\targs = append(args, current.String())\n" +
+				"\t\t\t\tcurrent.Reset()\n" +
+				"\t\t\t}\n" +
+				"\t\tdefault:\n" +
+				"\t\t\tcurrent.WriteRune(character)\n" +
+				"\t\t}\n" +
+				"\t}\n" +
+				"\tif current.Len() > 0 {\n" +
+				"\t\targs = append(args, current.String())\n" +
+				"\t}\n" +
+				"\treturn args\n" +
+				"}\n",
+		},
+		{
+			// Running a program.
+			//
+			// The arguments are split on whitespace and honouring quotes, so
+			// that a name with a space in it is one argument and not two.
+			call:  "rhoExec(",
+			needs: []string{"rhoSplitArgs("},
+			define: "func rhoExec(program string, arguments string, outputPath string) uint32 {\n" +
+				"\t// The report is written where it was asked for, and the place it\n" +
+				"\t// was asked for is made first: a run that cannot write its own\n" +
+				"\t// report is a run whose findings nobody can read.\n" +
+				"\t_ = os.MkdirAll(filepath.Dir(outputPath), 0755)\n" +
+				"\tcommand := exec.Command(program, rhoSplitArgs(arguments)...)\n" +
+				"\toutput, err := command.CombinedOutput()\n" +
+				"\tif err != nil {\n" +
+				"\t\t// The output a program wrote before it failed is still its\n" +
+				"\t\t// output, and a reader needs it to say why it failed.\n" +
+				"\t\t_ = os.WriteFile(outputPath, output, 0644)\n" +
+				"\t\tif exit, ok := err.(*exec.ExitError); ok {\n" +
+				"\t\t\treturn uint32(exit.ExitCode())\n" +
+				"\t\t}\n" +
+				"\t\t// The program could not be run at all, which is not an exit\n" +
+				"\t\t// status: it is the one answer that is not a status.\n" +
+				"\t\treturn 255\n" +
+				"\t}\n" +
+				"\t_ = os.WriteFile(outputPath, output, 0644)\n" +
+				"\treturn 0\n" +
+				"}\n",
+			imports: []string{"os/exec", "path/filepath"},
+		},
 		{
 			call:   "rhoStrEq(",
 			define: "func rhoStrEq(a, b string) bool {\n\treturn a == b\n}\n",
@@ -728,23 +1061,50 @@ func EmitGoRuntime(implementation string) string {
 			imports: []string{"strconv"},
 		},
 		{
-			call: "rhoYamlLoad(",
+			// The name of a program's configuration: the one under the `user:`
+			// section, which is where a configuration keeps it.
+			//
+			// It is read through the same walk as everything else, so that a
+			// program which asks for `user.name` and a program which loads a
+			// configuration are asking the same question — on either backend.
+			call:  "rhoYamlLoad(",
+			needs: []string{"rhoYamlLookup("},
 			define: "func rhoYamlLoad(path string) string {\n" +
-				"\tdata, err := os.ReadFile(path)\n" +
-				"\tif err != nil {\n\t\treturn \"unknown\"\n\t}\n" +
-				"\tfor _, line := range strings.Split(string(data), \"\\n\") {\n" +
-				"\t\ttrimmed := strings.TrimSpace(line)\n" +
-				"\t\tif strings.HasPrefix(trimmed, \"name:\") {\n" +
-				"\t\t\treturn strings.TrimSpace(strings.TrimPrefix(trimmed, \"name:\"))\n" +
-				"\t\t}\n" +
+				"\tvalue, kind := rhoYamlLookup(path, \"user.name\")\n" +
+				"\tif kind == \"missing\" {\n" +
+				"\t\treturn \"unknown\"\n" +
 				"\t}\n" +
-				"\treturn \"unknown\"\n}\n",
-			imports: []string{"strings"},
+				"\treturn value\n" +
+				"}\n",
 		},
 	}
 
+	// A helper is emitted when the program names it, and when it is written in
+	// terms of one that is: the set is closed over that, so a helper that needs
+	// another brings it with it.
+	wanted := map[string]bool{}
 	for _, helper := range needed {
-		if !strings.Contains(implementation, helper.call) {
+		if strings.Contains(implementation, helper.call) {
+			wanted[helper.call] = true
+		}
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, helper := range needed {
+			if !wanted[helper.call] {
+				continue
+			}
+			for _, need := range helper.needs {
+				if !wanted[need] {
+					wanted[need] = true
+					changed = true
+				}
+			}
+		}
+	}
+	for _, helper := range needed {
+		if !wanted[helper.call] {
 			continue
 		}
 		body.WriteString(helper.define)

@@ -153,12 +153,12 @@ func LoadManifest(path string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, fmt.Errorf("%s: %w", path, err)
 	}
-	manifest, err := parseManifest(document, ProjectRoot(path))
+	parsed, err := parseManifest(document, ProjectRoot(path), path)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("%s: %w", path, err)
 	}
-	manifest.Source = path
-	return manifest, nil
+	parsed.Source = path
+	return parsed, nil
 }
 
 // LoadProjectManifest finds and reads a project's suite manifest, from its root.
@@ -170,18 +170,68 @@ func LoadProjectManifest(root string) (Manifest, error) {
 	return LoadManifest(path)
 }
 
-func parseManifest(document yaml.Value, root string) (Manifest, error) {
+// manifestIncludes are the manifests a manifest includes, in the order it
+// names them.
+func manifestIncludes(document yaml.Value) []string {
+	included := []string{}
+	value, ok := document.Map["include"]
+	if !ok {
+		return included
+	}
+	switch value.Kind {
+	case yaml.KindString:
+		if value.Str != "" {
+			included = append(included, value.Str)
+		}
+	case yaml.KindList:
+		for _, entry := range value.List {
+			if entry.Kind == yaml.KindString && entry.Str != "" {
+				included = append(included, entry.Str)
+			}
+		}
+	}
+	return included
+}
+
+func parseManifest(document yaml.Value, root string, source string) (Manifest, error) {
 	manifest := Manifest{}
 	if document.Kind != yaml.KindMap {
 		return manifest, fmt.Errorf("a suite manifest is a mapping")
 	}
 	manifest.Name = document.Map["name"].Str
 
+	// A manifest may include another, which is how a project keeps its tests
+	// in folders — the unit tests in one, the smoke tests in another — and says
+	// so in one place. The included manifests are read first, so a suite the
+	// including manifest declares itself comes after the ones it includes.
+	//
+	// An included manifest is read in the including manifest's own root, not in
+	// the root of the project: a suite's paths are the project's paths, and a
+	// test that meant a different directory in a different place would be a
+	// test whose paths mean two things.
+	manifest.Source = source
+	for _, included := range manifestIncludes(document) {
+		path := included
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(filepath.Dir(manifest.Source), path)
+		}
+		inner, err := LoadManifest(path)
+		if err != nil {
+			return manifest, fmt.Errorf("include %s: %w", included, err)
+		}
+		for _, suite := range inner.Declared {
+			manifest.Declared = append(manifest.Declared, suite)
+		}
+	}
+
 	suites, ok := document.Map["suites"]
 	if !ok || suites.Kind != yaml.KindList {
-		return manifest, fmt.Errorf("a suite manifest declares a `suites` list")
+		if len(manifest.Declared) == 0 {
+			return manifest, fmt.Errorf("a suite manifest declares a `suites` list")
+		}
+		return manifest, nil
 	}
-	if len(suites.List) == 0 {
+	if len(suites.List) == 0 && len(manifest.Declared) == 0 {
 		return manifest, fmt.Errorf("a suite manifest declares no suites")
 	}
 	seen := map[string]bool{}
@@ -237,6 +287,13 @@ func parseSuite(entry yaml.Value, root string) (Declared, error) {
 	// before it could be written. Saying so here rather than failing is what
 	// lets a project record the hardware test it has not written yet — and what
 	// keeps that suite from being reported as a pass.
+	// A suite that is not enabled is not run. It is not a failure: it is
+	// there, and the reason it is not run is that somebody said so.
+	if enabled, ok := entry.Map["enabled"]; ok {
+		if enabled.Str == "false" {
+			suite.Skip = "disabled"
+		}
+	}
 	if status, ok := entry.Map["status"]; ok {
 		if status.Str == string(StatusSkip) {
 			suite.Skip = planned(entry.Map["reason"].Str, suite.Name, suite.Kind)

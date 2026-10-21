@@ -48,11 +48,11 @@ type Case struct {
 	// Name is what the run reports. A framework's own name is kept rather than
 	// rewritten, because the name a framework prints is what a person's muscle
 	// memory and their CI filter are written against.
-	Name string
+	Name string `json:"name"`
 	// File is the source the case came from, when it came from one.
-	File string
+	File string `json:"file"`
 	// Line is where in that file, when the file is a source a reader can open.
-	Line int
+	Line int `json:"line"`
 }
 
 // Describe is a human-readable location for the case, for a report line.
@@ -253,15 +253,15 @@ type Result struct {
 	// Suite is the suite the case belongs to, which is the name the manifest gave
 	// it rather than a pointer into a structure that no longer exists by the time
 	// a plugin reads this.
-	Suite string
-	Case  Case
+	Suite string `json:"suite"`
+	Case  Case   `json:"case"`
 	// Status is what the run concluded.
-	Status Status
+	Status Status `json:"status"`
 	// Output is what the case printed, kept for a report that shows a failure's
 	// output under it.
-	Output string
+	Output string `json:"output"`
 	// Reason is why a case was skipped.
-	Reason string
+	Reason string `json:"reason"`
 }
 
 // Passed reports whether the result counts as a pass.
