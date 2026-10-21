@@ -215,7 +215,13 @@ func rhoTestAction(path string) func(Suite) (string, bool, error) {
 		defer os.Remove(cFile)
 		defer os.Remove(binary)
 
-		build := exec.Command(rhoBinary(), "build", "-target", DefaultTarget, "-o", cFile, stripped)
+		// The C backend, and no target: the runner wants the C the backend
+		// generates, because it compiles it itself and runs what it compiled.
+		//
+		// The name the runner used to pass was not a target a spec declares — a
+		// project that declares a Go target and no C one had no such target, and
+		// the build was asked for a board that does not exist.
+		build := exec.Command(rhoBinary(), "build", "-o", cFile, stripped)
 		if out, err := build.CombinedOutput(); err != nil {
 			return string(out), false, fmt.Errorf("rho build: %w: %s", err, strings.TrimSpace(string(out)))
 		}

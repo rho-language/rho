@@ -1,7 +1,7 @@
 module:
   name: rho-test
   type: component
-  version: 0.1.0
+  version: 0.1.5
   author: Aurel Miron
   description: Test runner
   command: test

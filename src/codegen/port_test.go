@@ -174,3 +174,61 @@ func TestStorePortRefusesAPackageEntryThatLeavesTheDirectory(t *testing.T) {
 		t.Error("expected the containment check to be present")
 	}
 }
+
+// The runtime's YAML support: a program that reads a document asks for what it
+// wants by the name of the thing, and the runtime answers with the value and
+// with what the value is.
+//
+// The helpers are emitted only when a program names them, and a helper written
+// in terms of another comes with it: a program that asks for a value needs the
+// lookup under it, whether or not it ever says the lookup's name.
+func TestTheYamlHelpersAreEmittedWithWhatTheyNeed(t *testing.T) {
+	program := `package main
+
+func AppMain() {
+	fmt.Print((rhoYamlValue("a.yml", "board.connectors")))
+}
+`
+	runtime := EmitGoRuntime(program)
+	for _, wanted := range []string{"func rhoYamlValue(", "func rhoYamlLookup(", "func rhoYamlKindOf("} {
+		if !strings.Contains(runtime, wanted) {
+			t.Errorf("expected %s in the runtime", wanted)
+		}
+	}
+	// The kind is a separate question, and a program that asks only the value
+	// does not carry it.
+	if strings.Contains(runtime, "func rhoYamlKind(") {
+		t.Errorf("expected the kind not to be carried by a program that does not ask for it")
+	}
+
+	// A program that asks for the kind gets the lookup under it too.
+	program = `package main
+
+func AppMain() {
+	fmt.Print((rhoYamlKind("a.yml", "board.connectors")))
+}
+`
+	runtime = EmitGoRuntime(program)
+	for _, wanted := range []string{"func rhoYamlKind(", "func rhoYamlLookup(", "func rhoYamlKindOf("} {
+		if !strings.Contains(runtime, wanted) {
+			t.Errorf("expected %s in the runtime", wanted)
+		}
+	}
+}
+
+// The keys of a document, so that a program can read what is in it: a registry
+// is read by asking for each of the things it holds.
+func TestTheYamlKeysHelperIsEmittedWithWhatItNeeds(t *testing.T) {
+	program := `package main
+
+func AppMain() {
+	fmt.Print((rhoYamlKeys("a.yml", "unit")))
+}
+`
+	runtime := EmitGoRuntime(program)
+	for _, wanted := range []string{"func rhoYamlKeys(", "func rhoYamlLookup("} {
+		if !strings.Contains(runtime, wanted) {
+			t.Errorf("expected %s in the runtime", wanted)
+		}
+	}
+}

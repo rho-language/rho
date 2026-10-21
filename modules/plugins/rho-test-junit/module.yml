@@ -1,7 +1,7 @@
 module:
   name: rho-test-junit
   type: plugin
-  version: 0.1.0
+  version: 0.1.2
   author: Aurel Miron
   description: Writes a JUnit report for a test run, which is what a CI system reads
 

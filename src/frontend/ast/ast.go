@@ -422,6 +422,20 @@ func (BreakStmt) stmtNode() {}
 
 func (n BreakStmt) Position() Position { return n.Pos }
 
+// ContinueStmt leaves the innermost loop and goes on with the next thing it
+// has to do.
+//
+// A loop that skips what it has already done is ordinary to write and
+// impossible without it: a guard inside the body says what to skip, and the
+// rest of the body is the rest.
+type ContinueStmt struct {
+	Node
+}
+
+func (ContinueStmt) stmtNode() {}
+
+func (n ContinueStmt) Position() Position { return n.Pos }
+
 // ForStmt iterates an array, binding each element to Name. `reverse` walks it
 // from the end, and `step` visits every Nth element.
 type ForStmt struct {

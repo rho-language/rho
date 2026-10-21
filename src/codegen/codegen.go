@@ -495,6 +495,9 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 	case ir.OpBreak:
 		cg.b.EmitLine("break;")
 
+	case ir.OpContinue:
+		cg.b.EmitLine("continue;")
+
 	case ir.OpCall:
 		line := ""
 		if instr.Dest != "" {

@@ -65,3 +65,10 @@ output/
 # Its per-module equivalents are tracked, so this is the one of the three that is
 # only a cache.
 go.work.sum
+
+# The C a compiler test generates, when a test is interrupted before it is
+# removed. It is not source, and a stray one in a Go package is a package that
+# does not build.
+src/*.c
+src/*_test.c
+src/*_bin

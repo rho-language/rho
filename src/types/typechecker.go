@@ -640,7 +640,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		return left, nil
 	case ast.MemberExpr:
-		if object, ok := value.Object.(ast.IdentifierExpr); ok && ((object.Name == "yaml" && value.Name == "load") || (object.Name == "string" && value.Name == "from_i32")) {
+		if object, ok := value.Object.(ast.IdentifierExpr); ok && ((object.Name == "yaml" && (value.Name == "load" || value.Name == "value" || value.Name == "kind" || value.Name == "keys")) || (object.Name == "string" && value.Name == "from_i32")) {
 			return ir.Type{Kind: ir.TypeStruct, Name: "function"}, nil
 		}
 		object, err := tc.exprType(value.Object, scope)
@@ -799,9 +799,21 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				}
 			}
 		} else if member, ok := value.Callee.(ast.MemberExpr); ok && isBuiltinMemberCall(member) {
-			if member.Name == "load" {
+			switch {
+			case member.Name == "load":
 				signature = functionType{params: []ir.Type{{Kind: ir.TypeString, Name: "string"}}, result: ir.Type{Kind: ir.TypeString, Name: "string"}}
-			} else {
+			case member.Name == "value", member.Name == "kind", member.Name == "keys":
+				// A value out of a file, named by its key: the YAML a program
+				// reads is asked for by the name of the thing it wants, rather
+				// than by a reader the program carries.
+				signature = functionType{
+					params: []ir.Type{
+						{Kind: ir.TypeString, Name: "string"},
+						{Kind: ir.TypeString, Name: "string"},
+					},
+					result: ir.Type{Kind: ir.TypeString, Name: "string"},
+				}
+			default:
 				signature = functionType{params: []ir.Type{{Kind: ir.TypeI32, Name: "i32"}}, result: ir.Type{Kind: ir.TypeString, Name: "string"}}
 			}
 		} else {
@@ -1174,7 +1186,7 @@ func isExternalBuiltin(name string) bool {
 }
 func isBuiltinMemberCall(member ast.MemberExpr) bool {
 	object, ok := member.Object.(ast.IdentifierExpr)
-	return ok && ((object.Name == "yaml" && member.Name == "load") || (object.Name == "string" && member.Name == "from_i32"))
+	return ok && ((object.Name == "yaml" && (member.Name == "load" || member.Name == "value" || member.Name == "kind" || member.Name == "keys")) || (object.Name == "string" && member.Name == "from_i32"))
 }
 
 func numeric(value ir.Type) bool {
@@ -1706,6 +1718,8 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		return tc.lowerMatch(stmt, scope)
 	case ast.BreakStmt:
 		return []ir.Instr{{Op: ir.OpBreak}}
+	case ast.ContinueStmt:
+		return []ir.Instr{{Op: ir.OpContinue}}
 	default:
 		return nil
 	}
@@ -1739,21 +1753,29 @@ func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir
 	length := "(int64_t)(" + tc.lengthExpr(collectionName, collectionType) + ")"
 	start := "0"
 	condition := "(" + indexName + " < " + length + ")"
-	increment := indexName + " = " + indexName + " + 1"
+	// The step, as an expression over the index. It is an assignment and not a
+	// piece of text, because a backend reads an assignment as a destination and
+	// an expression — and a piece of text is neither, so a backend that does
+	// not know it drops it and the loop never moves.
+	step := indexName + " + 1"
 	if stmt.Step != nil {
-		step := tc.lowerExpr(stmt.Step, scope)
-		increment = indexName + " = " + indexName + " + " + step
+		step = indexName + " + " + tc.lowerExpr(stmt.Step, scope)
 	}
 	if stmt.Reverse {
 		start = "(" + length + " - 1)"
 		condition = "(" + indexName + " >= 0)"
 		if stmt.Step != nil {
-			increment = indexName + " = " + indexName + " - " + tc.lowerExpr(stmt.Step, scope)
+			step = indexName + " - " + tc.lowerExpr(stmt.Step, scope)
 		} else {
-			increment = indexName + " = " + indexName + " - 1"
+			step = indexName + " - 1"
 		}
 	}
 
+	// The element is bound to a name of its own before the step moves the index,
+	// so that the body reads the element the index names and not the one after
+	// it. The step comes first because a `continue` skips what is after it, and
+	// a step that came after the body would be skipped with it.
+	elementName := "rho_for_elem_" + suffix
 	bodyScope := cloneScope(scope)
 	bodyScope[stmt.Name] = element
 	// The loop variable stands for the element, so a body that reads it reads
@@ -1764,14 +1786,27 @@ func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir
 		tc.lowerAliases = map[string]string{}
 	}
 	previous, shadowed := tc.lowerAliases[stmt.Name]
-	tc.lowerAliases[stmt.Name] = collectionName + "[" + indexName + "]"
+	tc.lowerAliases[stmt.Name] = elementName
 	body := tc.lowerStatements(stmt.Body, bodyScope)
 	if shadowed {
 		tc.lowerAliases[stmt.Name] = previous
 	} else {
 		delete(tc.lowerAliases, stmt.Name)
 	}
-	body = append(body, ir.Instr{Op: ir.OpAssign, Dest: increment})
+	// The step comes before the body, not after it.
+	//
+	// A `continue` leaves the loop and goes on with the next thing the loop has
+	// to do, and what that skips is what comes after it. A step that came after
+	// the body would be skipped with it, and a loop whose step is skipped never
+	// ends: the same element, for ever.
+	//
+	// The element is bound before the step for the same reason: the body reads
+	// the element, and the element is the one the index names before it moves.
+	body = append([]ir.Instr{
+		{Op: ir.OpLet, Dest: elementName, Type: tc.cTypeFor(element), TypeName: typeName(element),
+			Args: []string{collectionName + "[" + indexName + "]"}},
+		{Op: ir.OpAssign, Dest: indexName, Args: []string{step}},
+	}, body...)
 
 	out = append(out,
 		ir.Instr{Op: ir.OpLet, Dest: indexName, Type: "int64_t", TypeName: "i64", Args: []string{start}},
@@ -1976,6 +2011,15 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		object, isIdentifier := expr.Object.(ast.IdentifierExpr)
 		if isIdentifier && object.Name == "yaml" && expr.Name == "load" {
 			return "rho_yaml_load"
+		}
+		if isIdentifier && object.Name == "yaml" && expr.Name == "value" {
+			return "rho_yaml_value"
+		}
+		if isIdentifier && object.Name == "yaml" && expr.Name == "kind" {
+			return "rho_yaml_kind"
+		}
+		if isIdentifier && object.Name == "yaml" && expr.Name == "keys" {
+			return "rho_yaml_keys"
 		}
 		if isIdentifier && object.Name == "string" && expr.Name == "from_i32" {
 			return "rho_string_from_i32"
@@ -2947,6 +2991,10 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 			return false, fmt.Errorf("break outside loop")
 		}
 		statementTerminates = true
+	case ast.ContinueStmt:
+		if !inLoop {
+			return false, fmt.Errorf("continue outside loop")
+		}
 	default:
 		return false, fmt.Errorf("unsupported statement %T", statement)
 	}

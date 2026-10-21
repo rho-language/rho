@@ -30,7 +30,7 @@ func request(results []Result) []byte {
 	body.Payload.Target = "go"
 	body.Payload.Results = results
 	for _, result := range results {
-		if result.Passed {
+		if result.Passed() {
 			body.Payload.Passed++
 		}
 	}
@@ -43,7 +43,13 @@ func request(results []Result) []byte {
 }
 
 func result(name, file string, line int, passed bool, output string) Result {
-	out := Result{Passed: passed, Output: output}
+	// The run's own verdict, which is what a report reads: a report that
+	// decided for itself what passed would be a second opinion on the run.
+	status := "fail"
+	if passed {
+		status = "pass"
+	}
+	out := Result{Status: status, Output: output}
 	out.Case.Name = name
 	out.Case.File = file
 	out.Case.Line = line

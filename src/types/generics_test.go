@@ -17,10 +17,9 @@
 package types
 
 import (
+	"rho/src/ir"
 	"strings"
 	"testing"
-
-	"rho/src/ir"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -466,4 +465,151 @@ fn use() void {
 	if count != 2 {
 		t.Fatalf("expected both types with the name to be kept, got %d: %v", count, structNames(out))
 	}
+}
+
+// The YAML a program reads is asked for by the name of the thing it wants:
+// `yaml.value(path, key)` is a call in the language, not a reader the program
+// carries.
+func TestTheYamlValueBuiltinIsACallInTheLanguage(t *testing.T) {
+	out := compileGeneric(t, `module app
+
+fn read(path: string, key: string) string {
+    return yaml.value(path, key)
+}
+
+fn main() void {
+    print(read("a.yml", "name"));
+}
+`)
+	found := false
+	for _, function := range out.Funcs {
+		if function.Name != "read" {
+			continue
+		}
+		for _, instruction := range function.Body {
+			for _, argument := range instruction.Args {
+				if strings.Contains(argument, "rho_yaml_value") {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a call to rho_yaml_value, got %+v", out.Funcs)
+	}
+}
+
+// What a value in a document is, asked for the same way the value is: the
+// kind is part of what a program reads, because a manifest that says a list
+// where it should say a map is a manifest the reader cannot use.
+func TestTheYamlKindBuiltinIsACallInTheLanguage(t *testing.T) {
+	out := compileGeneric(t, `module app
+
+fn read(path: string, key: string) string {
+    return yaml.kind(path, key)
+}
+
+fn main() void {
+    print(read("a.yml", "board.connectors"));
+}
+`)
+	found := false
+	for _, function := range out.Funcs {
+		if function.Name != "read" {
+			continue
+		}
+		for _, instruction := range function.Body {
+			for _, argument := range instruction.Args {
+				if strings.Contains(argument, "rho_yaml_kind") {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a call to rho_yaml_kind, got %+v", out.Funcs)
+	}
+}
+
+// The keys of a document: a program that reads a registry needs to know what is
+// in it before it can read what is there.
+func TestTheYamlKeysBuiltinIsACallInTheLanguage(t *testing.T) {
+	out := compileGeneric(t, `module app
+
+fn read(path: string, key: string) string {
+    return yaml.keys(path, key)
+}
+
+fn main() void {
+    print(read("registry.yml", "unit"));
+}
+`)
+	found := false
+	for _, function := range out.Funcs {
+		if function.Name != "read" {
+			continue
+		}
+		for _, instruction := range function.Body {
+			for _, argument := range instruction.Args {
+				if strings.Contains(argument, "rho_yaml_keys") {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a call to rho_yaml_keys, got %+v", out.Funcs)
+	}
+}
+
+// A loop that skips what it has already done is ordinary to write: a guard
+// inside the body says what to skip, and the rest of the body is the rest.
+//
+// The statement is a statement of the language, not a pattern a program spells
+// out with a flag: the loop's own counter is the thing that says where it is,
+// and a program that has to carry the flag itself carries it wrongly.
+func TestContinueLeavesTheLoopAndGoesOn(t *testing.T) {
+	out := compileGeneric(t, `module app
+
+fn count(n: u32) u32 {
+    var total: u32 = 0
+    var i: u32 = 0
+    while i < n {
+        i = i + 1
+        if i % 2 == 0 {
+            continue
+        }
+        total = total + i
+    }
+    return total
+}
+
+fn main() void {
+    print(int_to_str(count(10)));
+}
+`)
+	found := false
+	for _, function := range out.Funcs {
+		if instructionsHold(function.Body, ir.OpContinue) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a continue in the loop, got %+v", out.Funcs)
+	}
+}
+
+// instructionsHold reports whether an operation is anywhere in a body, in the
+// branches as well as in the body itself: a continue is usually inside a
+// guard, and a guard is a branch.
+func instructionsHold(body []ir.Instr, op ir.OpCode) bool {
+	for _, instruction := range body {
+		if instruction.Op == op {
+			return true
+		}
+		if instructionsHold(instruction.Then, op) || instructionsHold(instruction.Else, op) {
+			return true
+		}
+	}
+	return false
 }

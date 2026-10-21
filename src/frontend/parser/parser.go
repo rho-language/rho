@@ -848,6 +848,10 @@ func (p *Parser) parseStmt() ast.Stmt {
 		p.readToken()
 		p.consumeSemi()
 		stmt = ast.BreakStmt{}
+	case lexer.TokenContinue:
+		p.readToken()
+		p.consumeSemi()
+		stmt = ast.ContinueStmt{}
 	default:
 		left := p.parseExpr(0)
 		if p.current.Kind == lexer.TokenAssign {
@@ -895,6 +899,9 @@ func (p *Parser) place(stmt *ast.Stmt, at ast.Position) {
 		n.Pos = at
 		*stmt = n
 	case ast.BreakStmt:
+		n.Pos = at
+		*stmt = n
+	case ast.ContinueStmt:
 		n.Pos = at
 		*stmt = n
 	case ast.AssignStmt:

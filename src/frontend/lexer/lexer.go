@@ -66,6 +66,7 @@ const (
 	TokenWhile
 	TokenElse
 	TokenBreak
+	TokenContinue
 	TokenTrue
 	TokenFalse
 	TokenType
@@ -674,6 +675,8 @@ func lookupKeyword(ident string) Kind {
 		return TokenElse
 	case "break":
 		return TokenBreak
+	case "continue":
+		return TokenContinue
 	case "true":
 		return TokenTrue
 	case "false":
