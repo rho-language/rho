@@ -18,7 +18,7 @@
 # Deliberately the same entry point as the workflow: both run ./scripts/check.sh. There is
 # one definition of what a check does, and this is a second way of running it
 # rather than a second thing to keep in step.
-FROM golang:1.23-bookworm
+FROM golang:1.26.10-bookworm
 
 # git, because a component is published from its manifest and some of them are
 # fetched from a repository; cmake and a C compiler, because the core tests build

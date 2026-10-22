@@ -145,6 +145,8 @@ system_deps:
       # between two runs — and it comes away with the directory it was put in.
       fetch:
         url: https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
+        # As Arm publishes it, in the `.sha256asc` file beside the archive.
+        sha256: 62a63b981fe391a9cbad7ef51b17e49aeaa3e7b0d029b36ca1e9c3b2a9b78823
         archive: tar.xz
         dir: arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi
         binary: bin/arm-none-eabi-gdb

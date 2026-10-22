@@ -858,7 +858,17 @@ func ModuleSchema() Schema {
 							// toolchain in the user's own directory belongs to that user,
 							// does not change when the machine's package manager does, and
 							// comes away with the directory it was put in.
-							{Name: "fetch", Required: false, Kind: KindMap},
+							//
+							// `sha256` is the digest the vendor publishes for the archive,
+							// and the program that fetches refuses a recipe without one.
+							{Name: "fetch", Required: false, Kind: KindMap, Fields: []FieldSchema{
+								{Name: "url", Required: true, Kind: KindString},
+								{Name: "sha256", Required: false, Kind: KindString},
+								{Name: "archive", Required: false, Kind: KindString},
+								{Name: "dir", Required: false, Kind: KindString},
+								{Name: "binary", Required: false, Kind: KindString},
+								{Name: "version", Required: false, Kind: KindString},
+							}},
 						},
 					}},
 					{Name: "env_vars", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{

@@ -901,6 +901,10 @@ func TestCrossSiteRequestsAreRefused(t *testing.T) {
 	}
 	for _, tc := range cases {
 		request := httptest.NewRequest(tc.method, tc.target, nil)
+		// Addressed the way a real client addresses the dashboard. The default Host
+		// of a test request is example.com, which is a name the dashboard is not
+		// reachable by and is refused before these checks are reached.
+		request.Host = "127.0.0.1:8477"
 		if tc.origin != "" {
 			request.Header.Set("Origin", tc.origin)
 		}
@@ -923,6 +927,9 @@ func TestTokenIsRequiredWhenSet(t *testing.T) {
 	handler := Handler(nil, false, nil, "")
 
 	status := func(request *http.Request) int {
+		// A loopback Host, as a real client sends: the Host check comes before the
+		// token and would otherwise answer these first.
+		request.Host = "127.0.0.1:8477"
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		return recorder.Code

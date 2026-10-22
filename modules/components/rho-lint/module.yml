@@ -205,10 +205,14 @@ system_deps:
         would have failed; it is the strongest analyzer a machine is likely to
         have and the one most Rho projects should run
       required: false
+      # The 22.04 build: LLVM 17.0.6 published no 18.04 one, so the URL this used to
+      # name answered 404 and the fetch could never have worked. The digest is of
+      # the file that URL serves, and the fetch is refused if it ever stops being.
       fetch:
-        url: https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-18.04.tar.xz
+        url: https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+        sha256: 884ee67d647d77e58740c1e645649e29ae9e8a6fe87c1376be0f3a30f3cc9ab3
         archive: tar.xz
-        dir: clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-18.04
+        dir: clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04
         binary: bin/clang-tidy
         version: "17.0.6"
       install:
@@ -229,12 +233,11 @@ system_deps:
         finds the things a front end cannot see — the dead branch, the resource
         that is released on one path and not the other
       required: false
-      fetch:
-        url: https://github.com/danmar/cppcheck/archive/refs/tags/2.10.1.tar.gz
-        archive: tar.gz
-        dir: cppcheck-2.10.1
-        binary: cppcheck
-        version: "2.10.1"
+      # No `fetch` block. It used to name the project's source tarball, which holds
+      # no `cppcheck` binary — only the sources to build one — so a fetch of it could
+      # never have produced a program, and a digest would only have vouched for a
+      # recipe that cannot work. cppcheck publishes no prebuilt Linux archive; a
+      # package manager is how it is installed.
       install:
         brew: cppcheck
         apt: cppcheck

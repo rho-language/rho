@@ -1,6 +1,8 @@
 module github.com/rho/rho-log
 
-go 1.23
+go 1.26.10
+
+toolchain go1.26.10
 
 // The record format is defined once, in the formatter component, so a device
 // writing to a serial console and a server writing to stdout cannot drift

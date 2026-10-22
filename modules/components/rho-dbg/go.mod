@@ -1,6 +1,8 @@
 module github.com/rho/rho-dbg
 
-go 1.23
+go 1.26.10
+
+toolchain go1.26.10
 
 require (
 	github.com/rho/rho-log v0.0.0

@@ -61,10 +61,11 @@ that says so:
 
 - **No hidden allocation.** There is no heap and no garbage collector. A value
   lives where it is bound, and a pointer is a pointer.
-- **No globals.** State belongs to a value, which is what makes a function
-  testable without a fixture.
+- **No mutable global state to speak of.** Top-level bindings exist, but state
+  belongs to a value, which is what makes a function testable without a fixture.
 - **No closure, and no higher-order function.**
-- **No file I/O, time or network** unless a port supplies it.
+- **No time or network** unless a port supplies it, and file I/O only as
+  `rho_read_text` and `rho_write_text`.
 
 ## Where things live
 

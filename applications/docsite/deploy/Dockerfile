@@ -6,7 +6,7 @@
 # build. What it serves comes from the repository's own docs/ tree and
 # CHANGELOG.md, copied in below.
 
-FROM golang:1.23-bookworm
+FROM golang:1.26.10-bookworm
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc ca-certificates \

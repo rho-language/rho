@@ -25,8 +25,8 @@ one:
 
 - **No hidden allocation.** There is no heap and no garbage collector. A value
   lives where it is bound, and a pointer is a pointer.
-- **No globals.** State belongs to a value, which is what makes a function
-  testable without a fixture.
+- **No mutable global state to speak of.** Top-level bindings exist, but state
+  belongs to a value, which is what makes a function testable without a fixture.
 - **The host is declared, not assumed.** A program that needs storage, logging
   or documentation declares `extern fn` and asks for a port.
 
@@ -49,8 +49,12 @@ Stated plainly, because a reference that implies otherwise is worse than none:
 
 - No heap allocation, and no `new`. A slice is a view over memory someone else
   owns.
-- No globals, so a value is passed or reached through a struct field.
-- No file I/O, no time, no network, unless a port supplies it.
+- No mutable global state to speak of: a module may declare a `const`, `let` or
+  `var` at the top level, but state belongs to a value that is passed or reached
+  through a struct field.
+- No time and no network, unless a port supplies it. File I/O is `rho_read_text`
+  and `rho_write_text`, which read and write a whole text file; anything beyond
+  that is a port.
 - No closures, and no higher-order functions.
 - No statement-level reflection.
 

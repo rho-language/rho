@@ -43,6 +43,21 @@ jobs:
     - name: Check
       run: ./scripts/check.sh
 
+    # The race detector over the packages that download, unpack and serve. They
+    # are the ones with goroutines and with untrusted input, and a race there is a
+    # security bug as often as a correctness one. After the check, for the same
+    # reason the CMake build is: it needs the components the check installed.
+    - name: Race detector
+      run: go test -race -count=1 ./cmd/... ./src/plugins/... ./src/privilege/...
+
+    # Known vulnerabilities in what the toolchain is built from. Failing here is
+    # the point: a dependency with a published advisory is a decision to make, not
+    # a thing to find out about from somebody else.
+    - name: Vulnerability scan
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+
     # The CMake build on top: the Go toolchain through CMake, which is how the
     # project is packaged, and the CTest suite it registers.
     #

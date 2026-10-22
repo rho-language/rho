@@ -605,7 +605,11 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 	if log {
 		handler = logRequests(mux)
 	}
-	return requireToken(sameSiteGuard(handler))
+	// Outermost is the Host check, then the token, then the same-site check: a
+	// request addressed to a name the dashboard is not reachable by is refused
+	// before anything else has looked at it, which is what stops a page on another
+	// domain from reaching loopback through DNS rebinding.
+	return hostGuard(addr, requireToken(sameSiteGuard(handler)))
 }
 
 // requireToken refuses a request that does not present the configured token,

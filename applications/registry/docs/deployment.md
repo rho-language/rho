@@ -35,7 +35,7 @@ On Ubuntu 22.04 or 24.04:
 ```sh
 sudo apt-get update
 sudo apt-get install -y git ca-certificates build-essential nginx
-# Go 1.23, which is what the modules declare
+# Go 1.26.10, which is what the modules declare
 sudo snap install go --classic      # or install the tarball from go.dev/dl
 ```
 

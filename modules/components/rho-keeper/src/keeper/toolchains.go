@@ -59,6 +59,15 @@ const (
 	fetchLimit   = 2 << 30
 )
 
+// What an archive may expand to. A toolchain is a few hundred megabytes unpacked,
+// so these leave room for one and not for a bomb. Variables rather than constants
+// only so a test can lower them instead of writing gigabytes to show they hold.
+var (
+	unpackLimit     int64 = 8 << 30
+	unpackFileLimit int64 = 2 << 30
+	unpackEntries         = 200000
+)
+
 // FetchedDir is where one version of one program is kept.
 func FetchedDir(name string, version string) string {
 	return sysdep.FetchedDir(ToolchainRoot(), name, version)
@@ -97,6 +106,12 @@ func Fetch(dep sysdep.ExecutableDep, onProgress func(string)) (string, error) {
 	if path, found := FetchedBinary(dep, versionFor(dep)); found {
 		return path, nil
 	}
+	// Before anything is created or downloaded: a recipe with nothing to check the
+	// download against is refused here, so the person is told what to fix without
+	// first waiting for an archive that would then be thrown away.
+	if err := requireDigest(dep.Name, dep.Fetch.SHA256); err != nil {
+		return "", err
+	}
 
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return "", fmt.Errorf("make %s: %w", directory, err)
@@ -107,6 +122,17 @@ func Fetch(dep sysdep.ExecutableDep, onProgress func(string)) (string, error) {
 	}
 	if err := download(dep.Fetch.URL, archive); err != nil {
 		os.Remove(archive)
+		return "", err
+	}
+	// Checked before it is unpacked, and the directory it was fetched into is
+	// removed with it: a file that is not the vendor's must not be left looking
+	// like the start of an installation.
+	if onProgress != nil {
+		onProgress("checking " + dep.Name + " against its sha256")
+	}
+	if err := checkDigest(dep.Name, archive, dep.Fetch.SHA256); err != nil {
+		os.Remove(archive)
+		os.RemoveAll(directory)
 		return "", err
 	}
 
@@ -402,7 +428,12 @@ func unpackTar(archive string, into string, compressed bool) error {
 		reader = gzipped
 	}
 
-	entries := tar.NewReader(reader)
+	// Bounded on what comes out of the decompressor, not on what went in: the
+	// digest says this is the vendor's archive, but a vendor's archive that is a
+	// decompression bomb is still one, and a limit costs nothing.
+	entries := tar.NewReader(io.LimitReader(reader, unpackLimit))
+	var count int
+	var total int64
 	for {
 		header, err := entries.Next()
 		if err == io.EOF {
@@ -411,9 +442,17 @@ func unpackTar(archive string, into string, compressed bool) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", filepath.Base(archive), err)
 		}
+		count++
+		if count > unpackEntries {
+			return fmt.Errorf("%s has more than %d entries", filepath.Base(archive), unpackEntries)
+		}
 		target, ok := safePath(into, header.Name)
 		if !ok {
-			continue
+			// Refused, not skipped: an entry that climbs out of the destination is
+			// the archive saying something about itself, and carrying on with the
+			// rest of it would be unpacking an archive that is not what it claims.
+			return fmt.Errorf("%s contains a path that leaves where it is unpacked: %s",
+				filepath.Base(archive), header.Name)
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -421,6 +460,10 @@ func unpackTar(archive string, into string, compressed bool) error {
 				return err
 			}
 		case tar.TypeReg:
+			if header.Size > unpackFileLimit {
+				return fmt.Errorf("%s in %s is %d bytes, more than the %d a file may be",
+					header.Name, filepath.Base(archive), header.Size, int64(unpackFileLimit))
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
@@ -428,11 +471,20 @@ func unpackTar(archive string, into string, compressed bool) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, entries); err != nil {
-				out.Close()
+			written, err := io.Copy(out, io.LimitReader(entries, unpackFileLimit+1))
+			out.Close()
+			if err != nil {
 				return err
 			}
-			out.Close()
+			total += written
+			if written > unpackFileLimit || total > unpackLimit {
+				return fmt.Errorf("%s expands to more than this will unpack", filepath.Base(archive))
+			}
+		default:
+			// A link is how a later entry is made to write somewhere the path check
+			// never looked. Vendors do ship them — gdb's `bin` has a few — so they
+			// are not an error, but they are not created, and a toolchain that
+			// needs one says so when it is run and not by writing outside its tree.
 		}
 	}
 }
@@ -443,16 +495,31 @@ func unpackZip(archive string, into string) error {
 		return fmt.Errorf("%s is not a zip archive: %w", filepath.Base(archive), err)
 	}
 	defer reader.Close()
+	if len(reader.File) > unpackEntries {
+		return fmt.Errorf("%s has more than %d entries", filepath.Base(archive), unpackEntries)
+	}
+	var total int64
 	for _, entry := range reader.File {
 		target, ok := safePath(into, entry.Name)
 		if !ok {
-			continue
+			return fmt.Errorf("%s contains a path that leaves where it is unpacked: %s",
+				filepath.Base(archive), entry.Name)
 		}
 		if entry.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 			continue
+		}
+		// A symbolic link is stored as a file whose content is its target. Writing
+		// it as a regular file would be harmless; creating it as a link is not, so
+		// it is not created, and is not an error for the same reason as in a tar.
+		if entry.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if entry.UncompressedSize64 > uint64(unpackFileLimit) {
+			return fmt.Errorf("%s in %s is more than the %d bytes a file may be",
+				entry.Name, filepath.Base(archive), unpackFileLimit)
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
@@ -461,16 +528,22 @@ func unpackZip(archive string, into string) error {
 		if err != nil {
 			return err
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, entry.Mode()|0o600)
+		// The mode's permission bits only, so a setuid bit in an archive is not one
+		// on disk.
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, entry.Mode().Perm()|0o600)
 		if err != nil {
 			source.Close()
 			return err
 		}
-		_, copyErr := io.Copy(out, source)
+		written, copyErr := io.Copy(out, io.LimitReader(source, unpackFileLimit+1))
 		source.Close()
 		out.Close()
 		if copyErr != nil {
 			return copyErr
+		}
+		total += written
+		if written > unpackFileLimit || total > unpackLimit {
+			return fmt.Errorf("%s expands to more than this will unpack", filepath.Base(archive))
 		}
 	}
 	return nil
