@@ -679,6 +679,9 @@ func EmitGoRuntime(implementation string) string {
 	body.WriteString("func rhoEnvOr(name, fallback string) string {\n")
 	body.WriteString("\tif value, ok := os.LookupEnv(name); ok {\n\t\treturn value\n\t}\n")
 	body.WriteString("\treturn fallback\n}\n\n")
+	body.WriteString("// rhoGetenv returns an environment variable, or \"\" when it is not set.\n")
+	body.WriteString("func rhoGetenv(name string) string {\n")
+	body.WriteString("\treturn os.Getenv(name)\n}\n\n")
 	imports = addGoImport(imports, "strconv")
 	imports = addGoImport(imports, "strings")
 
@@ -727,6 +730,17 @@ func EmitGoRuntime(implementation string) string {
 			call: "rhoWriteText(",
 			define: "func rhoWriteText(path string, text string) bool {\n" +
 				"\treturn os.WriteFile(path, []byte(text), 0644) == nil\n" +
+				"}\n",
+		},
+		{
+			// The value of an environment variable, or "" when it is not set.
+			//
+			// A program that runs on a machine needs to read what the machine
+			// says about where things are, and an environment variable is how
+			// a machine says that.
+			call: "rhoGetenv(",
+			define: "func rhoGetenv(name string) string {\n" +
+				"\treturn os.Getenv(name)\n" +
 				"}\n",
 		},
 		{

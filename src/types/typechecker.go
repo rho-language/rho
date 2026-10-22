@@ -1164,6 +1164,7 @@ var intrinsicLowering = map[string]string{
 	"auth_subject":    "auth_subject",
 	"str_from_byte":   "rho_str_from_byte",
 	"env_or":          "rho_env_or",
+	"getenv":          "rho_getenv",
 }
 
 // isExternalBuiltinNames are the intrinsics a module may call without
@@ -2574,6 +2575,10 @@ func init() {
 		params: twoStrings,
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	}
+	intrinsicSignatures["getenv"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
 	// len returns the length of a slice or string. Its argument is typed as
 	// invalid, which assignable treats as compatible with anything, so one
 	// signature covers strings, dynamic arrays and fixed-size arrays alike.
@@ -2603,7 +2608,7 @@ func init() {
 		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
 		"f32_to_bits", "f32_from_bits", "f64_to_bits", "f64_from_bits",
-		"template_get", "template_has", "template_fill", "env_or",
+		"template_get", "template_has", "template_fill", "env_or", "getenv",
 		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",
 		"auth_required", "auth_open_tokens", "auth_bootstrap", "auth_allowed", "auth_list_configured",
 		"auth_issue", "int_from_str", "emit",

@@ -273,6 +273,7 @@ func TestEmitGoRuntimeAlwaysCarriesIntrinsics(t *testing.T) {
 		"func rhoIntFromStr(",
 		"func rhoStrFromByte(",
 		"func rhoEnvOr(",
+		"func rhoGetenv(",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected the intrinsic %s to always be present", want)

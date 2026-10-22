@@ -233,3 +233,18 @@ func AppMain() {
 		}
 	}
 }
+
+// The environment is readable: a program that runs on a machine needs to read
+// what the machine says about where things are.
+func TestTheEnvironmentIsReadable(t *testing.T) {
+	program := `package main
+
+func AppMain() {
+	fmt.Print((rhoGetenv("RHO_TEST_VALUE")))
+}
+`
+	runtime := EmitGoRuntime(program)
+	if !strings.Contains(runtime, "func rhoGetenv(") {
+		t.Errorf("expected rhoGetenv in the runtime")
+	}
+}

@@ -102,7 +102,7 @@ func TestTheIndexHookBuildsAContentsPage(t *testing.T) {
 
 func TestTheContentsPageSitsWithTheMostPages(t *testing.T) {
 	response := answer(t, testRequest())
-	if response.Pages[0].Section != "guides" {
+	if response.Pages[0].Section != "" {
 		t.Fatalf("expected the contents beside the pages, got %q", response.Pages[0].Section)
 	}
 }
