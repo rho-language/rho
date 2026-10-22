@@ -43,13 +43,14 @@ func TestParseSpecWithoutVersion(t *testing.T) {
 }
 
 func TestParseSpecMultipleAt(t *testing.T) {
-	// Split splits on ALL @ characters, so only first part is name
+	// Only the first @ separates the name from the version, so what follows it is
+	// kept. Dropping the tail turned `unpublish math@1.2.0@x` into an unpublish of
+	// 1.2.0, which is not what was typed.
 	name, version := parseSpec("math@1.2.0@extra")
 	if name != "math" {
 		t.Fatalf("expected name 'math', got '%s'", name)
 	}
-	// strings.Split returns all parts, so version will be just "1.2.0"
-	if version != "1.2.0" {
-		t.Fatalf("expected version '1.2.0', got '%s'", version)
+	if version != "1.2.0@extra" {
+		t.Fatalf("expected version '1.2.0@extra', got '%s'", version)
 	}
 }

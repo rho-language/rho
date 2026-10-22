@@ -23,10 +23,14 @@ import (
 
 // parseSpec parses a module spec in the format name[@version]
 // Returns (name, version). If version is not provided, returns empty string.
+//
+// Only the first `@` separates them. It used to keep the first two of every part
+// split on `@`, so `math@1.2.0@extra` became `math@1.2.0` — and for `unpublish` and
+// `uninstall` that is an action on a version that was not the one typed. The version
+// is now everything after the first `@`, which no registry will have.
 func parseSpec(spec string) (string, string) {
-	if strings.Contains(spec, "@") {
-		parts := strings.Split(spec, "@")
-		return parts[0], parts[1]
+	if name, version, found := strings.Cut(spec, "@"); found {
+		return name, version
 	}
 	return spec, ""
 }

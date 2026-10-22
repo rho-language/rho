@@ -19,7 +19,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 )
@@ -28,6 +27,14 @@ import (
 /*  Public API                                                                 */
 /* -------------------------------------------------------------------------- */
 
+// UnpackArchive extracts a package on disk into a destination directory.
+//
+// It reads the file and hands the stream to the same extraction a package from a
+// registry goes through. This function used to have its own loop, with a bare
+// join of the destination and the entry name — which is how an entry named
+// `../../x` wrote outside the destination, from `rho pkg unpack` and from every
+// `rho module publish` that installed what it had just packed. One extraction, one
+// set of rules: confinement, only files and directories, and the size bounds.
 func UnpackArchive(src, dest string) error {
 	f, err := os.Open(src)
 	if err != nil {
@@ -41,58 +48,17 @@ func UnpackArchive(src, dest string) error {
 	}
 	defer gz.Close()
 
-	tr := tar.NewReader(gz)
-
-	var binaryName string
-
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("tar error: %w", err)
-		}
-
-		outPath := filepath.Join(dest, hdr.Name)
-
-		if hdr.FileInfo().IsDir() {
-			if err := os.MkdirAll(outPath, 0755); err != nil {
-				return fmt.Errorf("mkdir error: %w", err)
-			}
-			continue
-		}
-
-		// Ensure directory exists
-		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
-			return fmt.Errorf("mkdir error: %w", err)
-		}
-
-		// Write file
-		outFile, err := os.Create(outPath)
-		if err != nil {
-			return fmt.Errorf("create error: %w", err)
-		}
-
-		if _, err := io.Copy(outFile, tr); err != nil {
-			outFile.Close()
-			return fmt.Errorf("copy error: %w", err)
-		}
-
-		outFile.Close()
-
-		// Track binary name from module.yml
-		if hdr.Name == "module.yml" {
-			// We'll read it after extraction to find the binary name
-		}
+	if err := extract(tar.NewReader(expanded(gz)), dest); err != nil {
+		return err
 	}
 
-	// Read module.yml to find binary name and make it executable
+	// Read module.yml to find the binary name and make it executable, for a package
+	// that was packed before the mode travelled with the file.
 	modPath := filepath.Join(dest, "module.yml")
 	if _, err := os.Stat(modPath); err == nil {
 		manifest, err := LoadModuleYAML(modPath)
 		if err == nil && manifest.Main != "" {
-			binaryName = filepath.Base(manifest.Main)
+			binaryName := filepath.Base(manifest.Main)
 			binaryPath := filepath.Join(dest, binaryName)
 			if _, err := os.Stat(binaryPath); err == nil {
 				// Make binary executable

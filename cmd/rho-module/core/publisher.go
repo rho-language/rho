@@ -262,6 +262,19 @@ func uploadModule(meta ModuleInfo, dir, pkgPath, sourceArchive string) error {
 			manifest["release"] = note
 			manifest["released"] = date
 		}
+		// A publisher who holds a signing key signs the package's digest, so a
+		// client that has pinned the key can tell this package from one a registry
+		// substituted. One who does not publishes unsigned, as before — and is told,
+		// because an unsigned release is a release nobody can attribute.
+		if key, found, keyErr := LoadSigningKey(); keyErr != nil {
+			return fmt.Errorf("cannot read the signing key: %w", keyErr)
+		} else if found {
+			signature := SignPackage(key, meta.Module.Name, meta.Module.Version, digestOf(pkgData))
+			manifest["signer"] = signature.Signer
+			manifest["signature"] = signature.Signature
+		} else {
+			fmt.Fprintln(os.Stderr, "note: publishing unsigned; create a key with 'rho module keygen' so installers can pin you")
+		}
 		if err := remote.UploadModule(client, meta.Module.Name, meta.Module.Version, pkgData, sourceData, manifest); err != nil {
 			return err
 		}

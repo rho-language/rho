@@ -449,9 +449,15 @@ func DownloadModule(client *Client, name, version string) ([]byte, error) {
 		return nil, fmt.Errorf("download failed: %d %s", resp.StatusCode, string(body))
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// One byte over the bound, so that exceeding it is told apart from a package
+	// that is exactly that large. A registry that streams for ever costs this
+	// much memory and no more.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxPackageBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(data)) > MaxPackageBytes {
+		return nil, fmt.Errorf("%s@%s is larger than the %d bytes a package may be", name, version, MaxPackageBytes)
 	}
 
 	return data, nil
@@ -618,34 +624,119 @@ func ResolveRemoteVersion(client *Client, name, version string) (string, error) 
 // rather than an empty answer, because a caller that treated every failure as
 // "no digest" would have a way to have it skip the check.
 func ModuleSHA256(client *Client, name, version string) (string, error) {
+	record, err := ModuleRecord(client, name, version)
+	if err != nil {
+		return "", err
+	}
+	return record.SHA256, nil
+}
+
+// VersionRecord is what a registry recorded about one version: the digest of the
+// package and the publisher's signature over it, either of which may be absent.
+type VersionRecord struct {
+	// SHA256 is the digest, lower-case hex, or "" when none was recorded.
+	SHA256 string
+	// Signer and Signature are the publisher's, hex, or "" for an unsigned package.
+	Signer    string
+	Signature string
+}
+
+// ModuleRecord reads the registry's record of one version.
+//
+// One document carries the digest and the signature, so they are read together and
+// cannot disagree about which version they describe.
+func ModuleRecord(client *Client, name, version string) (VersionRecord, error) {
+	var record VersionRecord
 	if client.BaseURL == "" {
-		return "", fmt.Errorf("remote registry not configured")
+		return record, fmt.Errorf("remote registry not configured")
 	}
 	nameSegment, err := registrySegment(name)
 	if err != nil {
-		return "", err
+		return record, err
 	}
 	url := fmt.Sprintf("%s/api/modules/%s", client.BaseURL, nameSegment)
 	request, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return "", err
+		return record, err
 	}
 	if credential := client.credentialFor(); credential != "" {
 		request.Header.Set("Authorization", credential)
 	}
 	response, err := client.HTTP.Do(request)
 	if err != nil {
-		return "", err
+		return record, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("the registry answered %d for %s", response.StatusCode, name)
+		return record, fmt.Errorf("the registry answered %d for %s", response.StatusCode, name)
 	}
 	var document struct {
-		SHA256 map[string]string `json:"sha256"`
+		SHA256     map[string]string            `json:"sha256"`
+		Signatures map[string]map[string]string `json:"signatures"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
-		return "", nil
+	// A document that cannot be read is an error and not "no digest": answering ""
+	// here was a way for a registry to turn a check into a skipped check just by
+	// sending something that was not JSON.
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxIndexBytes)).Decode(&document); err != nil {
+		return record, fmt.Errorf("cannot read the registry's checksums for %s: %w", name, err)
 	}
-	return document.SHA256[version], nil
+	recorded := strings.TrimSpace(document.SHA256[version])
+	if recorded != "" && !validDigest(recorded) {
+		return record, fmt.Errorf("the registry's checksum for %s@%s is not a SHA-256 digest: %q", name, version, recorded)
+	}
+	record.SHA256 = strings.ToLower(recorded)
+	if signature, found := document.Signatures[version]; found {
+		record.Signer = strings.TrimSpace(signature["signer"])
+		record.Signature = strings.TrimSpace(signature["signature"])
+	}
+	return record, nil
+}
+
+// RecordedVersion is the registry's record of a version, from the configured remote.
+func RecordedVersion(name, version string) (VersionRecord, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return VersionRecord{}, err
+	}
+	if cfg.Remote.URL == "" {
+		return VersionRecord{}, fmt.Errorf("remote registry not configured; set it with: rho config set remote.url <url>")
+	}
+	return ModuleRecord(NewClient(cfg), name, version)
+}
+
+// maxIndexBytes bounds a registry's answer about one module. It is a list of
+// versions and their digests, which is kilobytes; anything much larger is not one.
+const maxIndexBytes = 8 << 20
+
+// MaxPackageBytes is the most a package is read from the network: the compressed
+// form, which is what arrives. What it expands to is bounded where it is unpacked.
+const MaxPackageBytes int64 = 512 << 20
+
+// validDigest reports whether a string is a hex SHA-256: sixty-four hex digits.
+func validDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		switch {
+		case character >= '0' && character <= '9':
+		case character >= 'a' && character <= 'f':
+		case character >= 'A' && character <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// AllowUnverified reports whether this machine has said to install a package the
+// registry recorded no checksum for.
+//
+// A checksum the registry recorded is what an install is compared against, and a
+// package with none is a package that cannot be compared against anything. That is
+// refused unless a person says otherwise, in the environment — which is how
+// RHO_ALLOW_INSECURE_REGISTRY is said too, so there is one kind of switch for the
+// two ways of trusting a registry less.
+func AllowUnverified() bool {
+	return os.Getenv("RHO_ALLOW_UNVERIFIED_PACKAGES") == "1"
 }

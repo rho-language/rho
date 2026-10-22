@@ -62,6 +62,10 @@ func Main(args []string) int {
 		err = visibilityCommand(args[1:])
 	case "mine":
 		err = Mine(args[1:])
+	case "keygen":
+		err = Keygen(args[1:])
+	case "trust":
+		err = Trust(args[1:])
 	case "download":
 		err = Download(args[1:])
 	case "install":
@@ -123,6 +127,8 @@ In the remote registry:
   visibility <name> [public|private]
                              show or change whether anybody may install it
   mine [query]               the modules you published, and their state
+  keygen                     make the key you sign what you publish with
+  trust <name|*> <key>       pin the key a module must be signed by when installed
 
 A project's own dependencies:
   install [dir]              resolve and install a project's dependencies
@@ -137,14 +143,14 @@ About a module on disk:
   download <name>[@version]  fetch a package into the cache without installing
 
 Commands: init, validate, info, build, publish, unpublish, install, uninstall,
-          activate, deactivate, visibility, mine, download, remove, update,
-          search, list`
+          activate, deactivate, visibility, mine, keygen, trust, download,
+          remove, update, search, list`
 }
 
 // Commands is the one-line list the usage ends with, for a message that has to
 // be short.
 func Commands() string {
 	return "Commands: init, validate, info, build, publish, unpublish, install, " +
-		"uninstall, activate, deactivate, visibility, mine, download, remove, " +
-		"update, search, list"
+		"uninstall, activate, deactivate, visibility, mine, keygen, trust, download, " +
+		"remove, update, search, list"
 }

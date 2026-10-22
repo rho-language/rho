@@ -315,7 +315,15 @@ type moduleMeta struct {
 	// with it. A client checks what it downloaded against this, so a package
 	// altered where it is kept is refused rather than installed.
 	SHA256   string            ` + "`json:\"sha256,omitempty\"`" + `
-	Features []string          ` + "`json:\"features\"`" + `
+	// Signer and Signature are the publisher's own signature over the package's
+	// digest, sent with the publish and stored as received. The registry does not
+	// vouch for them and does not need to: a client checks the signature against
+	// a key it has pinned, which is the whole point of the publisher holding a
+	// key the registry never sees. A registry that altered them would only make
+	// them stop verifying.
+	Signer    string            ` + "`json:\"signer,omitempty\"`" + `
+	Signature string            ` + "`json:\"signature,omitempty\"`" + `
+	Features  []string          ` + "`json:\"features\"`" + `
 	Deps     map[string]string ` + "`json:\"deps\"`" + `
 }
 
@@ -1372,15 +1380,26 @@ func storeVersions(name string) string {
 		versions = []string{}
 	}
 	hashes := map[string]string{}
+	signatures := map[string]map[string]string{}
 	for _, version := range versions {
-		if meta, ok := s.meta(name, version); ok && meta.SHA256 != "" {
+		meta, ok := s.meta(name, version)
+		if !ok {
+			continue
+		}
+		if meta.SHA256 != "" {
 			hashes[version] = meta.SHA256
+		}
+		// The publisher's signature is served beside the digest it is over, so a
+		// client reads both from one document and checks one against the other.
+		if meta.Signature != "" && meta.Signer != "" {
+			signatures[version] = map[string]string{"signer": meta.Signer, "signature": meta.Signature}
 		}
 	}
 	encoded, err := jsonenc.Marshal(map[string]any{
-		"name":     name,
-		"versions": versions,
-		"sha256":   hashes,
+		"name":       name,
+		"versions":   versions,
+		"sha256":     hashes,
+		"signatures": signatures,
 	})
 	if err != nil {
 		return fmt.Sprintf("{\"name\":%q,\"versions\":[]}", name)
