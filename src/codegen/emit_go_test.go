@@ -337,7 +337,7 @@ func TestEmitGoRuntimeKeepsOnlyReferencedHelpers(t *testing.T) {
 
 func TestEmitGoMod(t *testing.T) {
 	m := greetIR()
-	if got := EmitGoMod(m); !strings.Contains(got, "module greet") || !strings.Contains(got, "go 1.22") {
+	if got := EmitGoMod(m); !strings.Contains(got, "module greet") || !strings.Contains(got, "go "+GoModuleVersion) {
 		t.Errorf("unexpected go.mod:\n%s", got)
 	}
 }
@@ -381,6 +381,32 @@ func TestEmitGoServer(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected server.go to contain %q\n%s", want, out)
+		}
+	}
+}
+
+// A generated service closes every way a client can hold a connection open for
+// ever: a slow body, a response nobody reads, an idle keep-alive, an oversized
+// header. A header timeout alone closed only the first of them.
+func TestGeneratedServerBoundsEveryPhaseOfARequest(t *testing.T) {
+	// Both listeners: the backend's own matcher, and the one a named router
+	// assembles. The registry is the second, and the first test of this was only
+	// the first.
+	for label, config := range map[string]ServerConfig{
+		"plain":  {},
+		"routed": {Router: DefaultRouter},
+	} {
+		out := EmitGoServer(greetIR(), config)
+		for _, want := range []string{
+			"ReadHeaderTimeout:",
+			"ReadTimeout:",
+			"WriteTimeout:",
+			"IdleTimeout:",
+			"MaxHeaderBytes:",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s server has no %s\n%s", label, want, out)
+			}
 		}
 	}
 }

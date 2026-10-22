@@ -146,6 +146,13 @@ type FetchRecipe struct {
 	// toolchain is not the distribution's build of it and the distribution's number
 	// says nothing about what was downloaded.
 	Version string `yaml:"version" json:"version,omitempty"`
+	// SHA256 is the digest of the archive, as the vendor publishes it: sixty-four
+	// hex digits. It is what makes the download the vendor's file rather than
+	// whatever answered at the URL — a mirror that was compromised, a redirect, a
+	// proxy that rewrote the body. A recipe without one is refused by the program
+	// that fetches, because a program fetched from the internet and run is the
+	// worst thing here to take on trust.
+	SHA256 string `yaml:"sha256" json:"sha256,omitempty"`
 }
 
 // EnvVarDep is one environment variable.

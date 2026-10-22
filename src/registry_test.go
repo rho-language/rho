@@ -31,6 +31,7 @@ import (
 	"strings"
 	"testing"
 
+	"rho/src/codegen"
 	"rho/src/deps"
 	"time"
 )
@@ -104,8 +105,9 @@ func startRegistryWithSettings(t *testing.T, token, settings string) *registrySe
 	t.Helper()
 	// The registry routes through the standard library's ServeMux, which
 	// carries the method-and-wildcard patterns its routes are declared with
-	// from Go 1.22.
-	goToolchainAtLeast(t, "1.22")
+	// from Go 1.22 — and the generated service it is built from declares the
+	// Go this toolchain generates for.
+	goToolchainAtLeast(t, codegen.GoModuleVersion)
 
 	root := "../applications/registry"
 	entry := filepath.Join(root, "src", "main.rho")
@@ -628,8 +630,9 @@ func TestRegistryTokenLifetimeHonoursSettings(t *testing.T) {
 
 func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	// The registry routes through the standard library's ServeMux, which needs
-	// Go 1.22 for the patterns its routes are declared with.
-	goToolchainAtLeast(t, "1.22")
+	// Go 1.22 for the patterns its routes are declared with, and the generated
+	// service declares the Go this toolchain generates for.
+	goToolchainAtLeast(t, codegen.GoModuleVersion)
 	root := "../applications/registry"
 	if _, err := os.Stat(filepath.Join(root, "src", "main.rho")); err != nil {
 		t.Skip("registry sources are not present")
@@ -1016,11 +1019,11 @@ func TestRegistryFooterOnTheEmptyPage(t *testing.T) {
 // goToolchainAtLeast reports whether the go on PATH is new enough for a
 // generated project to build.
 //
-// A project that routes through the standard library's ServeMux needs Go 1.22,
-// which is where that mux learned the method-and-wildcard patterns a Rho route
-// is declared with. Saying so is better than letting a build fail on a symbol
-// the toolchain has never heard of, which reads as a fault in the generator
-// rather than as a toolchain that is behind the project.
+// A generated project declares the Go it is for in its own go.mod, and the
+// toolchain that generated it is the one that knows. Saying so is better than
+// letting a build fail on a symbol the toolchain has never heard of, which
+// reads as a fault in the generator rather than as a toolchain that is behind
+// the project.
 func goToolchainAtLeast(t *testing.T, want string) {
 	t.Helper()
 	out, err := exec.Command("go", "version").Output()

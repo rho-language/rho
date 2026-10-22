@@ -1,6 +1,8 @@
 module github.com/rho/rho-flash
 
-go 1.23
+go 1.26.10
+
+toolchain go1.26.10
 
 // The flasher reads what rho-target resolved and runs the command that resolved
 // to. It asks the toolchain for that answer by invoking it rather than importing

@@ -7,16 +7,18 @@ once and putting the result somewhere the shell will find it.
 
 | | Why | Needed for |
 |---|---|---|
-| **Go 1.18 or newer** | Rho compiles to Go, and the toolchain is written in it | everything |
+| **Go 1.26.10 or newer** | Rho compiles to Go, and the toolchain is written in it | everything |
 | The repository | `rho install` builds what is checked out | installing |
 | `git` | cloning a dependency that declares a `git:` source | only those dependencies |
 | `gcc` | building a `c` target, and running `rho test` | C projects |
 
-Go 1.22 is what the tree's own `go.mod` asks for and what CI builds with, but
-the compiler builds and runs on 1.18. The one thing that needs 1.22 is a
-generated project that routes through the standard library's `http.ServeMux`, which
-gained method-and-wildcard patterns in that release — so a project that
-declares `router: serveMux` needs 1.22, and one that does not does not.
+Go 1.26.10 is what the tree's own `go.mod` asks for and what CI builds with. A
+`go.mod` names a minimum, so an older toolchain refuses the tree rather than
+building it against something it was not written for; the `toolchain` line in
+the same file names the release the tree is built and tested with, and a `go`
+older than that downloads it rather than failing.
+
+A generated project carries its own `go.mod`, and it asks for the same release.
 
 `rho install` reports what is missing rather than failing on it later. A
 missing `go` is an error at the step that needs it; a missing `gcc` or `git` is
@@ -72,7 +74,7 @@ rho module publish <dir>    # make a component reachable, and install it here
 the shortest description of what one takes:
 
 ```dockerfile
-FROM golang:1.22-bookworm
+FROM golang:1.26.10-bookworm
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc ca-certificates \
  && rm -rf /var/lib/apt/lists/*

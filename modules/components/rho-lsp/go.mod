@@ -1,6 +1,8 @@
 module github.com/rho/rho-lsp
 
-go 1.23
+go 1.26.10
+
+toolchain go1.26.10
 
 // The language server reads and type-checks Rho sources, so it depends on the
 // compiler rather than being part of it. The require says so, and the workspace

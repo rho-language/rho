@@ -139,6 +139,9 @@ func parseFetch(node yaml.Value) (*FetchRecipe, bool) {
 		Dir:     text(node.Map["dir"]),
 		Binary:  text(node.Map["binary"]),
 		Version: text(node.Map["version"]),
+		// Lower-cased so the comparison with a computed digest is not a question
+		// of which case a vendor's page happened to print.
+		SHA256: strings.ToLower(text(node.Map["sha256"])),
 	}
 	if recipe.URL == "" {
 		return nil, false

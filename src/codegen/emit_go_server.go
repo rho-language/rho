@@ -252,7 +252,7 @@ func goServerLifecycle(cfg ServerConfig) string {
 		b.WriteString("\tserver := &http.Server{\n")
 		b.WriteString("\t\tAddr:              addr,\n")
 		b.WriteString("\t\tHandler:           withLogging(withSameSite(handler)),\n")
-		b.WriteString("\t\tReadHeaderTimeout: 10 * time.Second,\n")
+		b.WriteString(goServerLimits())
 		b.WriteString("\t}\n\n")
 	} else {
 		b.WriteString("\trouter := &router{}\n")
@@ -262,11 +262,32 @@ func goServerLifecycle(cfg ServerConfig) string {
 		b.WriteString("\tserver := &http.Server{\n")
 		b.WriteString("\t\tAddr:              addr,\n")
 		b.WriteString("\t\tHandler:           withLogging(withSameSite(mux)),\n")
-		b.WriteString("\t\tReadHeaderTimeout: 10 * time.Second,\n")
+		b.WriteString(goServerLimits())
 		b.WriteString("\t}\n\n")
 	}
 	b.WriteString(goServerShutdown())
 	return b.String()
+}
+
+// goServerLimits renders the server's time and size bounds.
+//
+// A server with only a header timeout can still be held open for ever by a client
+// that sends the headers promptly and then the body a byte a minute, or that
+// finishes a request and sits on the connection. Each of these closes one of
+// those: the whole request has to arrive, the response has to be written, and an
+// idle connection is let go. The body is already capped by MaxBytesReader, and the
+// largest accepted is 16 MB by default, so a minute to read it is generous for a
+// real client and a wall for a slow one.
+//
+// No handler in a generated service streams, which is what makes a write timeout
+// safe; one that did would be a handler written by hand around the generated
+// server, and would set its own deadline.
+func goServerLimits() string {
+	return "\t\tReadHeaderTimeout: 10 * time.Second,\n" +
+		"\t\tReadTimeout:       60 * time.Second,\n" +
+		"\t\tWriteTimeout:      60 * time.Second,\n" +
+		"\t\tIdleTimeout:       120 * time.Second,\n" +
+		"\t\tMaxHeaderBytes:    1 << 16,\n"
 }
 
 // goServerShutdown renders the part that stops the service the same way in both
@@ -835,7 +856,7 @@ func EmitGoModWithRequirements(m ir.ModuleIR, modulePath string, requires []stri
 		path = goModulePath(m.Name)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "module %s\n\ngo 1.22\n", path)
+	fmt.Fprintf(&b, "module %s\n\ngo %s\n", path, GoModuleVersion)
 	if len(requires) == 0 {
 		return b.String()
 	}

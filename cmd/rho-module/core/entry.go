@@ -6,7 +6,7 @@
 //
 // Responsibilities:
 //   - resolve main file path
-//   - execute module via rho-runner
+//   - execute the module's binary, when main names one
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -71,11 +71,12 @@ func (e *ModuleEntry) Run(args []string, stdin *os.File, stdout *os.File) error 
 		return cmd.Run()
 	}
 
-	// Otherwise, run via rho-runner (for .rho source files)
-	cmd := exec.Command("rho-runner", append([]string{mainFile}, args...)...)
-	cmd.Stdin = stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
+	// Anything else is a source file, and there is nothing to run it with. This
+	// used to hand it to a `rho-runner` command that this repository has never
+	// built — every call ended in "executable file not found", which read as a
+	// problem with the machine rather than a statement that the feature does not
+	// exist. A Rho program is compiled (`rho build`, `rho run`), and a module
+	// that is run as a command is a component with a binary.
+	return fmt.Errorf("%s is a source file, not a program: build it with `rho build`, "+
+		"or declare a binary as the module's main", e.Module.Manifest.Main)
 }

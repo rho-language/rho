@@ -72,6 +72,30 @@ func parsed(t *testing.T) *SystemDeps {
 	return deps
 }
 
+// The digest a recipe declares is read, and lower-cased: a vendor's page may print
+// it either way, and the comparison with a computed one is not a question of case.
+func TestARecipesDigestIsReadAndLowerCased(t *testing.T) {
+	document, err := yaml.Load(`
+system_deps:
+  executables:
+    - name: thing
+      fetch:
+        url: https://example.com/thing.tar.gz
+        sha256: "ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := Parse(yaml.Value{Kind: yaml.KindMap, Map: document.Map})
+	if deps == nil || len(deps.Executables) != 1 || deps.Executables[0].Fetch == nil {
+		t.Fatal("the recipe was not read")
+	}
+	want := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	if got := deps.Executables[0].Fetch.SHA256; got != want {
+		t.Errorf("the digest was read as %q, want %q", got, want)
+	}
+}
+
 func TestAModulesRequirementsAreRead(t *testing.T) {
 	deps := parsed(t)
 	if len(deps.Executables) != 2 {

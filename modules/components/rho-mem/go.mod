@@ -1,6 +1,8 @@
 module github.com/rho/rho-mem
 
-go 1.23
+go 1.26.10
+
+toolchain go1.26.10
 
 // The component reads what a linker wrote: a `.map` file and the ELF beside it.
 // Both are formats rather than libraries, so it depends on nothing from this

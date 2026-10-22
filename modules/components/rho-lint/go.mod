@@ -1,6 +1,8 @@
 module github.com/rho/rho-lint
 
-go 1.23
+go 1.26.10
+
+toolchain go1.26.10
 
 // A lint run logs through the shared logger, so an analyzer's finding is
 // identifiable in a log that several components write to. Which checkout that is,

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"rho/src/codegen"
 	"rho/src/ir"
 )
 
@@ -365,7 +366,7 @@ func TestEmitGoProjectCLIRole(t *testing.T) {
 	if !strings.Contains(artifacts.Entrypoint, "func main()") {
 		t.Error("Go entrypoint should define main")
 	}
-	if !strings.Contains(artifacts.Build, "go 1.22") {
+	if !strings.Contains(artifacts.Build, "go "+codegen.GoModuleVersion) {
 		t.Error("go.mod should declare a Go version")
 	}
 	if !strings.Contains(artifacts.Build, "module demo") {
