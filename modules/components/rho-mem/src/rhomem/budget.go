@@ -234,7 +234,7 @@ func growthAgainst(analysis *Analysis, baseline *Baseline, enforce Enforcement) 
 		}
 		if enforce.FailOnGrowthDeclared {
 			growth.Limit = enforce.FailOnGrowthBytes
-			growth.OverLimit = delta > int64(enforce.FailOnGrowthBytes)
+			growth.OverLimit = delta > 0 && uint64(delta) > enforce.FailOnGrowthBytes
 		}
 		out = append(out, growth)
 	}

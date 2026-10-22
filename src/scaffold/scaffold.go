@@ -23,6 +23,7 @@
 package scaffold
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -221,6 +222,21 @@ type Request struct {
 	Targets  []string
 }
 
+func validateInitDir(dir string) (string, error) {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return "", fmt.Errorf("a directory to create the project in is required")
+	}
+	if strings.Contains(trimmed, "..") {
+		return "", fmt.Errorf("invalid directory path")
+	}
+	cleaned := filepath.Clean(trimmed)
+	if !filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("directory path must be absolute")
+	}
+	return cleaned, nil
+}
+
 // Init writes what the project offers: a generator's outputs when the project
 // declares `generate:`, and a Rho application otherwise. It is the whole
 // decision, so `rho init` and the keeper write the same thing from the same
@@ -229,6 +245,10 @@ func Init(req Request) ([]Result, string, error) {
 	project := req.Project
 	if strings.TrimSpace(project) == "" {
 		project = "."
+	}
+	project = filepath.Clean(project)
+	if filepath.IsAbs(project) || project == ".." || strings.HasPrefix(project, ".."+string(filepath.Separator)) {
+		return nil, "", errors.New("project path must be a relative path within the workspace")
 	}
 	if strings.TrimSpace(req.Dir) == "" {
 		return nil, "", fmt.Errorf("a directory to create the project in is required")

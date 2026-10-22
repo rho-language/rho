@@ -183,7 +183,7 @@ type Comparison struct {
 // OverBudget is whether a measurement broke a limit the project declared.
 func OverBudget(result Result, budgets Budgets) []string {
 	failures := []string{}
-	if budgets.MaxStackBytes > 0 && result.StackBytes > int64(budgets.MaxStackBytes) {
+	if budgets.MaxStackBytes > 0 && result.StackBytes > 0 && uint64(result.StackBytes) > budgets.MaxStackBytes {
 		failures = append(failures, fmt.Sprintf("%s used %d B of stack, over the %d B budget",
 			result.Benchmark.Name, result.StackBytes, budgets.MaxStackBytes))
 	}

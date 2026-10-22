@@ -180,7 +180,7 @@ func (r Register) SizeBits() int {
 	if lowered := strings.ToLower(text); strings.HasPrefix(lowered, "0x") {
 		text, base = lowered[2:], 16
 	}
-	parsed, err := strconv.ParseInt(text, base, 64)
+	parsed, err := strconv.ParseInt(text, base, strconv.IntSize)
 	if err != nil || parsed <= 0 {
 		return 32
 	}
