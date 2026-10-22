@@ -179,17 +179,9 @@ func contents(request Site) Page {
 // sectionOf is the section the contents page is listed under: the section most
 // pages belong to, so it sits next to them.
 func sectionOf(request Site) string {
-	counts := map[string]int{}
-	for _, page := range request.Pages {
-		counts[page.Section]++
-	}
-	best, bestCount := "", 0
-	for name, count := range counts {
-		if count > bestCount {
-			best, bestCount = name, count
-		}
-	}
-	return best
+	// The contents page sits at the top of the menu, not under any section,
+	// so a reader can reach it from anywhere in the tree.
+	return ""
 }
 
 // Notice is the banner a generated page carries, so a reader can tell what was

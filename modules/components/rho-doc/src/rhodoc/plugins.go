@@ -112,9 +112,10 @@ func (site *Site) run(hook string, payload any) PluginResult {
 			href = page.Target + ".html"
 		}
 		section := page.Section
-		if section == "" {
-			section = DefaultExtensionSection
-		}
+		// A page with no section sits at the top of the menu, ahead of every
+		// section, so a reader can reach it from anywhere in the tree.
+		// (No override: an empty section is a deliberate placement, not a
+		// missing one.)
 		result.Pages = append(result.Pages, &SitePage{
 			Target:  page.Target,
 			Title:   page.Title,

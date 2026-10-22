@@ -124,7 +124,28 @@ func (site *Site) renderHeader(root string) string {
 func (site *Site) renderSidebar(current *SitePage, root string) string {
 	var b strings.Builder
 	b.WriteString("<nav class=\"sidebar\" id=\"menu\" aria-label=\"Documentation pages\">\n")
+	// Pages without a section — the table of contents — sit at the top of
+	// the menu, ahead of every section, so a reader can reach them from
+	// anywhere in the tree.
 	for _, group := range site.Sections {
+		if group.Name != "" {
+			continue
+		}
+		for _, page := range group.Pages {
+			class := "nav-link"
+			if current != nil && page.Target == current.Target {
+				class += " current"
+			}
+			b.WriteString("<div class=\"nav-group\">\n")
+			b.WriteString("<h2 class=\"nav-title\"><a class=\"nav-section\" href=\"" + root + html.EscapeString(page.Href) + "\">" +
+				html.EscapeString(page.Title) + "</a></h2>\n")
+			b.WriteString("</div>\n")
+		}
+	}
+	for _, group := range site.Sections {
+		if group.Name == "" {
+			continue
+		}
 		label := humanise(group.Name)
 		b.WriteString("<div class=\"nav-group\">\n")
 		// The section the page belongs to is the one opened; with no page — the
@@ -837,11 +858,11 @@ const SearchScript = `// Search over the index the documentation build wrote.
       panel.innerHTML = "";
       var hits = search(term);
       if (!hits.length) {
-        panel.innerHTML = "<p class=\\"empty\\">No page mentions that.</p>";
+        panel.innerHTML = "<p class=\"empty\">No page mentions that.</p>";
       }
       hits.forEach(function (page) {
         var link = document.createElement("a");
-        link.href = page.href;
+        link.href = "/" + page.href;
         link.appendChild(document.createTextNode(page.title));
         var where = document.createElement("span");
         where.className = "result-section";
