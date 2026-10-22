@@ -613,10 +613,22 @@ func safePath(into string, name string) (string, bool) {
 	}
 	cleaned := filepath.Clean(filepath.Join(into, normalized))
 	root := filepath.Clean(into)
-	if cleaned != root && !strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
 		return "", false
 	}
-	return cleaned, true
+	absCleaned, err := filepath.Abs(cleaned)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(absRoot, absCleaned)
+	if err != nil {
+		return "", false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return absCleaned, true
 }
 
 func copyExecutable(from string, into string) error {
