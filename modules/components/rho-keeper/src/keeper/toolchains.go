@@ -599,10 +599,19 @@ func min(a, b int) int {
 // at all. A path that leaves the destination — by `..` or by being absolute — is not
 // one, and an archive that contains one is saying something about its own.
 func safePath(into string, name string) (string, bool) {
-	if strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if normalized == "" || strings.ContainsRune(normalized, '\x00') {
 		return "", false
 	}
-	cleaned := filepath.Clean(filepath.Join(into, name))
+	if strings.HasPrefix(normalized, "/") || path.IsAbs(normalized) || filepath.IsAbs(normalized) || filepath.VolumeName(normalized) != "" {
+		return "", false
+	}
+	for _, part := range strings.Split(normalized, "/") {
+		if part == ".." {
+			return "", false
+		}
+	}
+	cleaned := filepath.Clean(filepath.Join(into, normalized))
 	root := filepath.Clean(into)
 	if cleaned != root && !strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
 		return "", false

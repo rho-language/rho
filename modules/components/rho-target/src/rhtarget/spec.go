@@ -30,6 +30,7 @@ package rhtarget
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -1253,7 +1254,11 @@ func isProbeServer(tool string) bool {
 // before a target one, which is what nearly every invocation writes and what the
 // target configuration refers to.
 func configArguments(config []string) []string {
-	out := make([]string, 0, len(config)*2)
+	capacity := 0
+	if len(config) <= math.MaxInt/2 {
+		capacity = len(config) * 2
+	}
+	out := make([]string, 0, capacity)
 	for _, file := range config {
 		out = append(out, "-f", file)
 	}

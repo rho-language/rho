@@ -46,6 +46,21 @@ import (
 	"rho/src/yaml"
 )
 
+func validateInitDir(dir string) error {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return fmt.Errorf("a directory to create the project in is required")
+	}
+	if filepath.IsAbs(trimmed) {
+		return fmt.Errorf("invalid directory: absolute paths are not allowed")
+	}
+	cleaned := filepath.Clean(trimmed)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("invalid directory: parent directory traversal is not allowed")
+	}
+	return nil
+}
+
 // defaultAddr is the address the dashboard listens on when its manifest and its
 // settings file say nothing.
 //
@@ -450,6 +465,10 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 			Set         map[string]string `json:"set"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, Action{Error: err.Error()})
+			return
+		}
+		if err := validateInitDir(body.Dir); err != nil {
 			writeJSON(w, Action{Error: err.Error()})
 			return
 		}
