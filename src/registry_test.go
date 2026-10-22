@@ -1126,6 +1126,52 @@ func TestRegistryRecordsThePackageDigest(t *testing.T) {
 	}
 }
 
+// A publisher's signature travels with the publish and comes back beside the
+// digest it is over, so a client can check one against the other. The registry
+// stores it as sent and does not judge it.
+func TestRegistryServesThePublishersSignature(t *testing.T) {
+	server := startRegistry(t, "")
+	payload := []byte{0x1f, 0x8b, 0x08, 0x00, 's', 'i', 'g', 0x00}
+
+	fields := url.Values{}
+	fields.Set("version", "1.0.0")
+	fields.Set("type", "module")
+	fields.Set("main", "src/main.rho")
+	fields.Set("author", "Aurel Miron")
+	fields.Set("signer", strings.Repeat("ab", 32))
+	fields.Set("signature", strings.Repeat("cd", 64))
+	status, body := server.request(t, "POST", "/modules/signed/1.0.0/rho-pkg?"+fields.Encode(), payload, server.credential)
+	if status != 201 {
+		t.Fatalf("publish: got %d %s", status, body)
+	}
+	// An unsigned module alongside it must not gain one.
+	if status, body = server.publish(t, "unsigned", "1.0.0", payload); status != 201 {
+		t.Fatalf("publish unsigned: got %d %s", status, body)
+	}
+
+	read := func(name string) map[string]map[string]string {
+		status, body := server.request(t, "GET", "/api/modules/"+name, nil, "")
+		if status != 200 {
+			t.Fatalf("versions of %s: got %d %s", name, status, body)
+		}
+		var document struct {
+			Signatures map[string]map[string]string `json:"signatures"`
+		}
+		if err := json.Unmarshal([]byte(body), &document); err != nil {
+			t.Fatalf("cannot read the version document: %s", body)
+		}
+		return document.Signatures
+	}
+
+	got := read("signed")["1.0.0"]
+	if got["signer"] != strings.Repeat("ab", 32) || got["signature"] != strings.Repeat("cd", 64) {
+		t.Errorf("the signature came back as %v", got)
+	}
+	if _, found := read("unsigned")["1.0.0"]; found {
+		t.Error("an unsigned module was served with a signature")
+	}
+}
+
 // A page path that tries to leave the documentation is refused. The router
 // normalizes a literal "../" but not a percent-encoded one, so a request can
 // arrive with ".." in the page name — and the store, not the router, is what

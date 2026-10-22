@@ -84,7 +84,9 @@ test fn published_json_names_the_version() void {
 test fn publish_metadata_is_complete() void {
     let meta: string = meta_json("rho-lsp", "0.1.0", "rho", "Language server",
         "src/main.rho", "lsp", "Aurel Miron", "Aurel Miron", "miraur", "public",
-        "Fixed a crash on hover.", "2026-10-12")
+        "Fixed a crash on hover.", "2026-10-12", "ab12", "cd34")
+    assert_eq(json_string_field(meta, "signer"), "ab12")
+    assert_eq(json_string_field(meta, "signature"), "cd34")
     assert_eq(json_string_field(meta, "name"), "rho-lsp")
     assert_eq(json_string_field(meta, "version"), "0.1.0")
     assert_eq(json_string_field(meta, "type"), "rho")

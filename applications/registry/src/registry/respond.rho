@@ -40,12 +40,18 @@ fn published_json(name: string, version: string) Response {
 // description or a release note can contain a quote, a newline or a backslash,
 // and a document built by pasting one in is a document that stops parsing the
 // first time somebody writes an apostrophe the wrong way.
-fn meta_json(name: string, version: string, kind: string, description: string, main: string, command: string, author: string, maintainer: string, owner: string, visibility: string, release: string, released: string) string {
+//
+// Signer and signature are the publisher's own signature over the package's digest,
+// stored as sent. The registry does not check them: a client does, against a key it
+// has pinned, which is what makes a signature mean something the registry cannot
+// forge. They are empty for a publisher who does not sign.
+fn meta_json(name: string, version: string, kind: string, description: string, main: string, command: string, author: string, maintainer: string, owner: string, visibility: string, release: string, released: string, signer: string, signature: string) string {
     return "{\"name\":" + json_string(name) + ",\"version\":" + json_string(version) +
         ",\"type\":" + json_string(kind) + ",\"description\":" + json_string(description) +
         ",\"main\":" + json_string(main) + ",\"command\":" + json_string(command) +
         ",\"author\":" + json_string(author) + ",\"maintainer\":" + json_string(maintainer) +
         ",\"owner\":" + json_string(owner) + ",\"visibility\":" + json_string(visibility) +
         ",\"release\":" + json_string(release) + ",\"released\":" + json_string(released) +
+        ",\"signer\":" + json_string(signer) + ",\"signature\":" + json_string(signature) +
         ",\"features\":[],\"deps\":{}}"
 }

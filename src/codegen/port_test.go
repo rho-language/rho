@@ -43,6 +43,7 @@ func TestDocstorePortSuppliesTheStore(t *testing.T) {
 	for _, want := range []string{
 		"func docsList(dir string) string",
 		"func docsRender(path string) string",
+		"func docsRenderSource(path string) string",
 		"func docsRootPage() string",
 		"func docsReleases(path string) string",
 		"func siteTitle() string",

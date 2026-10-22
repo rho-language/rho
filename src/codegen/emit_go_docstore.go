@@ -260,6 +260,33 @@ func docsEnsure() (string, bool) {
 	return docsSite, docsBuilt
 }
 
+// docsRenderSource renders a documentation source file to the body of a page.
+//
+// A service that has its own frame around the documentation it serves — its own
+// navigation, its own styling — asks for the content and not the page, because a
+// page carries the chrome of the site that built it. The source is given to the
+// generator on standard input, which is where it reads it from.
+//
+// The path is the path of the source, as the caller knows it — a path in the
+// tree the service reads its documentation from.
+func docsRenderSource(path string) string {
+	binary := docstoreBinary()
+	if binary == "" {
+		return ""
+	}
+	source, err := os.ReadFile(filepath.FromSlash(path))
+	if err != nil {
+		return ""
+	}
+	command := exec.Command(binary, "doc", "--fragment", "render", path)
+	command.Stdin = strings.NewReader(string(source))
+	out, err := command.Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 // docsRender returns the built page for a request path, or "" when there is
 // none. The path comes from a URL, so it is confined to the built site: a path
 // that climbs out of it names a file the service was never asked to serve.

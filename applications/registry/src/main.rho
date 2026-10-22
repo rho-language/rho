@@ -131,7 +131,9 @@ fn publish_module(req: Request) Response {
         author, request_query_param(req, "maintainer"),
         owner, visibility,
         request_query_param(req, "release"),
-        request_query_param(req, "released")
+        request_query_param(req, "released"),
+        request_query_param(req, "signer"),
+        request_query_param(req, "signature")
     )
     if store_put(name, version, owner, payload, meta) != 0 {
         // The store refuses a module that is held by another identity, and a
