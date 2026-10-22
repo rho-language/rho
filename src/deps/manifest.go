@@ -567,16 +567,39 @@ func (m *Manifest) BuildDirectory() string {
 	return m.BuildDir
 }
 
+func sanitizeProjectRoot(projectRoot string) (string, bool) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		return "", false
+	}
+	clean := filepath.Clean(root)
+	// Reject paths that climb out of the starting point. An absolute path is
+	// fine — it names a directory, which is what a caller is expected to
+	// pass — but a path that contains `..` is trying to reach somewhere it
+	// was not given.
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		if part == ".." {
+			return "", false
+		}
+	}
+	return clean, true
+}
+
 func ManifestPath(projectRoot string) string {
-	path := filepath.Join(projectRoot, "module.yml")
+	root, ok := sanitizeProjectRoot(projectRoot)
+	if !ok {
+		return filepath.Join(".", "rho.mod")
+	}
+	path := filepath.Join(root, "module.yml")
 	if _, err := os.Stat(path); err == nil {
 		return path
 	}
-	return filepath.Join(projectRoot, "rho.mod")
+	return filepath.Join(root, "rho.mod")
 }
 
 // LoadManifest loads a rho.mod manifest file.
 func LoadManifest(path string) (*Manifest, error) {
+	path = filepath.Clean(path)
 	if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
 		path = filepath.Join(path, "module.yml")
 	} else if filepath.Base(path) == "rho.mod" {

@@ -422,7 +422,7 @@ func (r Result) Int(name string) (int, bool) {
 	}
 	// MI renders an integer as a string, and a hexadecimal one with a 0x in it.
 	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "-0x") {
-		parsed, err := strconv.ParseInt(strings.TrimPrefix(strings.TrimPrefix(value, "-"), "0x"), 16, 64)
+		parsed, err := strconv.ParseInt(strings.TrimPrefix(strings.TrimPrefix(value, "-"), "0x"), 16, strconv.IntSize)
 		if err != nil {
 			return 0, false
 		}
