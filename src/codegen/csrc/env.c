@@ -1,3 +1,4 @@
+#include <stdlib.h>
 /*
  * env.c — the environment intrinsic.
  *
@@ -11,4 +12,17 @@ const char* rho_env_or(const char* name, const char* fallback)
 {
     const char* value = name != NULL ? getenv(name) : NULL;
     return value != NULL ? value : fallback;
+}
+
+
+/* rho_getenv reads the value of an environment variable, or "" when it is not
+ * set. The same answer the Go runtime gives, so a program means the same thing
+ * on either backend. */
+char* rho_getenv(const char* name)
+{
+    const char* value = getenv(name);
+    if (value == NULL) {
+        return strdup("");
+    }
+    return strdup(value);
 }

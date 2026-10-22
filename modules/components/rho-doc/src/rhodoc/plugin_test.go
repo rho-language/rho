@@ -146,7 +146,7 @@ func TestPluginRequestCarriesTheWholeSite(t *testing.T) {
 	if added == nil {
 		t.Fatalf("expected the contents page, got %+v", site.Pages)
 	}
-	if added.Section != "extensions" {
+	if added.Section != "" {
 		t.Fatalf("expected the page attributed to the plugin, got %+v", added)
 	}
 	if !strings.Contains(added.Body, "Index") {

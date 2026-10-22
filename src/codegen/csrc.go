@@ -183,8 +183,8 @@ var runtimeFragments = []RuntimeFragment{
 	{
 		Name:     "env",
 		Source:   envSource,
-		Provides: []string{"rho_env_or"},
-		Decls:    []string{"const char* rho_env_or(const char* name, const char* fallback);"},
+		Provides: []string{"rho_env_or", "rho_getenv"},
+		Decls:    []string{"const char* rho_env_or(const char* name, const char* fallback);", "char* rho_getenv(const char* name);"},
 	},
 	{
 		Name:   "exec",

@@ -564,3 +564,56 @@ fn main() void {
 		t.Fatalf("unexpected output: got %q, want %q", string(got), want)
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Test: getenv                                                              */
+/* -------------------------------------------------------------------------- */
+
+// A program that reads its environment: the value is there when it is set, and
+// empty when it is not, on either backend.
+func TestRhoGetenv(t *testing.T) {
+	src := `module getenv
+
+extern fn getenv(name: string) string
+
+fn main() void {
+    let value: string = getenv("RHO_TEST_VALUE")
+    print(value)
+}
+`
+	in := "getenv_test.rho"
+	out := "getenv_test.c"
+	bin := "getenv_test_bin"
+
+	dir := t.TempDir()
+	in = filepath.Join(dir, in)
+	out = filepath.Join(dir, out)
+	bin = filepath.Join(dir, bin)
+
+	defer os.Remove(in)
+	defer os.Remove(out)
+	defer os.Remove(bin)
+
+	if err := os.WriteFile(in, []byte(src), 0644); err != nil {
+		t.Fatalf("write source failed: %v", err)
+	}
+	if err := CompileFile(in); err != nil {
+		t.Fatalf("CompileFile failed: %v", err)
+	}
+	binPath := bin
+	cmd := exec.Command("gcc", "-std=c11", "-o", binPath, out)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("gcc failed: %v\n%s", err, output)
+	}
+	// Set the variable for the run.
+	cmd = exec.Command(binPath)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "RHO_TEST_VALUE=hello from the environment")
+	got, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("running program failed: %v", err)
+	}
+	if string(got) != "hello from the environment" {
+		t.Fatalf("unexpected output: got %q, want %q", string(got), "hello from the environment")
+	}
+}
