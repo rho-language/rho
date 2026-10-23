@@ -590,11 +590,14 @@ func renderTree(templateRoot, destDir string, values map[string]string) ([]strin
 func substitute(text string, values map[string]string) string {
 	for key, value := range values {
 		// Keep substitutions safe when placeholders are used in output paths:
-		// normalize to a single path component and drop traversal markers.
+		// force values to a single path component in an OS-agnostic way.
 		safe := strings.TrimSpace(value)
 		safe = strings.ReplaceAll(safe, "\\", "/")
-		safe = strings.ReplaceAll(safe, "..", "")
-		safe = filepath.Base(safe)
+		parts := strings.Split(safe, "/")
+		safe = parts[len(parts)-1]
+		if safe == "." || safe == ".." {
+			safe = ""
+		}
 		for _, spelling := range []string{"{{" + key + "}}", "{{ " + key + " }}"} {
 			text = strings.ReplaceAll(text, spelling, safe)
 		}
