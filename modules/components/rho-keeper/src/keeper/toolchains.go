@@ -621,11 +621,11 @@ func safePath(into string, name string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	rel, err := filepath.Rel(absRoot, absCleaned)
-	if err != nil {
-		return "", false
+	sepRoot := absRoot
+	if !strings.HasSuffix(sepRoot, string(filepath.Separator)) {
+		sepRoot += string(filepath.Separator)
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if absCleaned != absRoot && !strings.HasPrefix(absCleaned, sepRoot) {
 		return "", false
 	}
 	return absCleaned, true

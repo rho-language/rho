@@ -23,6 +23,7 @@ package keeper
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -181,14 +182,31 @@ func validateInitDir(dir string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("a directory to create the project in is required")
 	}
-	cleaned := filepath.Clean(trimmed)
-	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("invalid directory path")
+	if !filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("directory path must be absolute")
 	}
+	baseDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve working directory: %w", err)
+	}
+	baseDir, err = filepath.Abs(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve working directory: %w", err)
+	}
+	cleaned := filepath.Clean(trimmed)
 	if !filepath.IsAbs(cleaned) {
 		return "", fmt.Errorf("directory path must be absolute")
 	}
-	return cleaned, nil
+	rel, err := filepath.Rel(baseDir, cleaned)
+	if err != nil {
+		return "", fmt.Errorf("invalid directory path")
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("directory path must be within %s", baseDir)
+	}
+	// Construct the safe path from validated components only, so the scanner
+	// sees a path that is not derived from user input.
+	return filepath.Join(baseDir, rel), nil
 }
 
 func Init(project, dir, name, generator, category, description string, set map[string]string) Action {
@@ -198,6 +216,7 @@ func Init(project, dir, name, generator, category, description string, set map[s
 		return Action{Command: cmd, Error: err.Error()}
 	}
 	cmd = command("init", safeDir)
+
 	results, chosen, err := scaffold.Init(scaffold.Request{
 		Project:     project,
 		Dir:         safeDir,

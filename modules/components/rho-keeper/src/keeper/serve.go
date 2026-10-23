@@ -453,8 +453,10 @@ func Handler(now func() time.Time, log bool, h *hub, addrOf string) http.Handler
 			writeJSON(w, Action{Error: err.Error()})
 			return
 		}
-		if _, err := validateInitDir(body.Dir); err != nil {
-			writeJSON(w, Action{Error: err.Error()})
+		// Validate the directory before passing it to Init.
+		cleaned := filepath.Clean(body.Dir)
+		if !filepath.IsAbs(cleaned) {
+			writeJSON(w, Action{Error: "directory path must be absolute"})
 			return
 		}
 		writeJSON(w, Init(body.Project, body.Dir, body.Name, body.Generator, body.Category, body.Description, body.Set))
