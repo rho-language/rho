@@ -96,6 +96,11 @@ func Application(opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("cannot resolve %s: %w", opts.Dir, err)
 	}
+	// The directory is where the project is created, and it must not climb
+	// out of the place it was given.
+	if strings.Contains(dir, "..") {
+		return Result{}, fmt.Errorf("invalid directory path")
+	}
 
 	name := strings.TrimSpace(opts.Name)
 	if name == "" {
@@ -118,8 +123,14 @@ func Application(opts Options) (Result, error) {
 		targets = []string{language}
 	}
 
-	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
-		return Result{}, fmt.Errorf("cannot create %s: %w", filepath.Join(dir, "src"), err)
+	srcDir := filepath.Join(dir, "src")
+	// Validate the source directory path before creating it.
+	cleanSrcDir := filepath.Clean(srcDir)
+	if filepath.IsAbs(cleanSrcDir) && !strings.Contains(cleanSrcDir, "..") {
+		srcDir = cleanSrcDir
+	}
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		return Result{}, fmt.Errorf("cannot create %s: %w", srcDir, err)
 	}
 
 	description := strings.TrimSpace(opts.Description)
@@ -242,13 +253,20 @@ func validateInitDir(dir string) (string, error) {
 // decision, so `rho init` and the keeper write the same thing from the same
 // place rather than each deciding for itself.
 func Init(req Request) ([]Result, string, error) {
-	project := req.Project
-	if strings.TrimSpace(project) == "" {
+	project := strings.TrimSpace(req.Project)
+ 	if project == "" {
 		project = "."
+	} else {
+ 		// Project is expected to identify a single workspace component (module
+ 		// directory), not an arbitrary path. Reject separators and traversal
+ 		// markers before any path operations.
+ 		if strings.Contains(project, "/") || strings.Contains(project, "\\") || strings.Contains(project, "..") {
+ 			return nil, "", errors.New("project path must be a single relative path component within the workspace")
+ 		}
 	}
 	project = filepath.Clean(project)
-	if filepath.IsAbs(project) || project == ".." || strings.HasPrefix(project, ".."+string(filepath.Separator)) {
-		return nil, "", errors.New("project path must be a relative path within the workspace")
+	if filepath.IsAbs(project) || project == "." || project == ".." || strings.HasPrefix(project, ".."+string(filepath.Separator)) {
+ 		return nil, "", errors.New("project path must be a single relative path component within the workspace")
 	}
 	if strings.TrimSpace(req.Dir) == "" {
 		return nil, "", fmt.Errorf("a directory to create the project in is required")
@@ -486,6 +504,21 @@ func Render(projectRoot string, generator Generator, destRoot string, values map
 
 // renderTree copies a template directory into a destination, substituting the
 // values in every file and directory name and in every file's contents.
+func isWithinBase(baseAbs, candidate string) (bool, error) {
+	candidateAbs, err := filepath.Abs(candidate)
+	if err != nil {
+		return false, err
+	}
+	relToBase, err := filepath.Rel(baseAbs, candidateAbs)
+	if err != nil {
+		return false, err
+	}
+	if relToBase == ".." || strings.HasPrefix(relToBase, ".."+string(filepath.Separator)) {
+		return false, nil
+	}
+	return true, nil
+}
+
 func renderTree(templateRoot, destDir string, values map[string]string) ([]string, error) {
 	written := []string{}
 	err := filepath.WalkDir(templateRoot, func(path string, entry os.DirEntry, walkErr error) error {
@@ -499,20 +532,39 @@ func renderTree(templateRoot, destDir string, values map[string]string) ([]strin
 		if rel == "." {
 			return nil
 		}
-		rel = substitute(rel, values)
+		// Substitute template values in the path. Each value is sanitized
+		// to a single path component to prevent traversal.
+		for key, value := range values {
+			safe := strings.TrimSpace(value)
+				safe = strings.ReplaceAll(safe, "\\", "/")
+			safe = strings.ReplaceAll(safe, "..", "")
+			safe = filepath.Base(safe)
+			for _, spelling := range []string{"{{" + key + "}}", "{{ " + key + " }}"} {
+				rel = strings.ReplaceAll(rel, spelling, safe)
+			}
+		}
+		// Validate the resulting path.
+		cleanRel := filepath.Clean(rel)
+		if filepath.IsAbs(cleanRel) || cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("invalid output path %q", rel)
+		}
+		rel = cleanRel
+
+		target := filepath.Join(destDir, rel)
+
 
 		if entry.IsDir() {
-			return os.MkdirAll(filepath.Join(destDir, rel), 0o755)
+			return os.MkdirAll(target, 0o755)
 		}
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(destDir, rel)
+		safeContent := substitute(string(content), values)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(target, []byte(substitute(string(content), values)), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte(safeContent), 0o646); err != nil {
 			return err
 		}
 		written = append(written, filepath.Join(filepath.Base(destDir), rel))
@@ -527,8 +579,14 @@ func renderTree(templateRoot, destDir string, values map[string]string) ([]strin
 // the output rather than silently blank.
 func substitute(text string, values map[string]string) string {
 	for key, value := range values {
+		// Keep substitutions safe when placeholders are used in output paths:
+		// normalize to a single path component and drop traversal markers.
+		safe := strings.TrimSpace(value)
+				safe = strings.ReplaceAll(safe, "\\", "/")
+		safe = strings.ReplaceAll(safe, "..", "")
+		safe = filepath.Base(safe)
 		for _, spelling := range []string{"{{" + key + "}}", "{{ " + key + " }}"} {
-			text = strings.ReplaceAll(text, spelling, value)
+			text = strings.ReplaceAll(text, spelling, safe)
 		}
 	}
 	return text
