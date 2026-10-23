@@ -474,6 +474,22 @@ func Render(projectRoot string, generator Generator, destRoot string, values map
 	if err != nil {
 		return nil, fmt.Errorf("cannot resolve %s: %w", destRoot, err)
 	}
+	projectRootAbs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve project root %s: %w", projectRoot, err)
+	}
+	workspaceRoot, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve working directory: %w", err)
+	}
+	workspaceRoot, err = filepath.Abs(workspaceRoot)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve working directory: %w", err)
+	}
+	projectRel, err := filepath.Rel(workspaceRoot, projectRootAbs)
+	if err != nil || projectRel == ".." || strings.HasPrefix(projectRel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("project path must be within %s", workspaceRoot)
+	}
 
 	filled := map[string]string{}
 	for key, value := range values {
@@ -488,7 +504,7 @@ func Render(projectRoot string, generator Generator, destRoot string, values map
 	results := make([]Result, 0, len(generator.Outputs))
 	for _, output := range generator.Outputs {
 		dir := filepath.Join(root, filepath.FromSlash(substitute(output.Path, filled)))
-		templateRoot := filepath.Join(projectRoot, output.Template)
+		templateRoot := filepath.Join(projectRootAbs, output.Template)
 		if info, err := os.Stat(templateRoot); err != nil || !info.IsDir() {
 			return nil, fmt.Errorf("generator %q: template %s is not a directory", generator.Name, output.Template)
 		}
