@@ -531,6 +531,64 @@ docs:
 	}
 }
 
+func TestValidateModuleManifestApplicationSection(t *testing.T) {
+	src := `module:
+  name: mesh
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+application:
+  kind: keeper-hosted
+  title: RoboHub Mesh
+  route: /mesh
+  port: "8478"
+  command: mesh
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := ValidateModuleManifest(data, "rho"); errs.HasErrors() {
+		t.Fatalf("expected the application section to validate, got %v", errs.ErrorString())
+	}
+}
+
+func TestValidateModuleManifestRejectsUnknownApplicationKind(t *testing.T) {
+	src := `module:
+  name: docs
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+application:
+  kind: static-site
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "rho").HasErrors() {
+		t.Fatal("expected an unknown application kind to be rejected")
+	}
+}
+
+func TestValidateModuleManifestApplicationSectionNeedsAKind(t *testing.T) {
+	src := `module:
+  name: mesh
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+application:
+  title: RoboHub Mesh
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "rho").HasErrors() {
+		t.Fatal("expected an application section without a kind to be rejected")
+	}
+}
+
 func TestValidateModuleManifestRejectsDocsSourcesThatAreNotAList(t *testing.T) {
 	src := `module:
   name: registry
@@ -785,5 +843,58 @@ board:
 	result := ValidateModuleManifest(data, "driver-board")
 	if !result.HasErrors() {
 		t.Fatal("expected a connector without a name to be reported")
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Tests: Deployment Capabilities                                             */
+/* -------------------------------------------------------------------------- */
+
+// A board says what it can be in a deployment, and a driver says what it is.
+// The planner reads these, so the schema has to accept them and still hold
+// the flags to true or false.
+func TestModuleManifestAcceptsDeploymentCapabilities(t *testing.T) {
+	src := `module:
+  name: pico2w
+  type: platform-board
+  version: 0.1.0
+board:
+  designation: PICO_2W
+  summary: A Pico 2W with WiFi and a 1-Wire bus.
+capabilities:
+  gateway: true
+  relay: true
+  node: true
+  host: false
+  wireless: true
+  ethernet: false
+  buses: "uart i2c spi onewire"
+  deploy: "flash"
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ValidateModuleManifest(data, "c")
+	if result.HasErrors() {
+		t.Fatalf("expected capabilities and board.summary to validate, got: %s", result.String())
+	}
+}
+
+func TestModuleManifestRejectsNonBooleanCapability(t *testing.T) {
+	src := `module:
+  name: pico2w
+  type: platform-board
+  version: 0.1.0
+capabilities:
+  gateway: "yes"
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ValidateModuleManifest(data, "c")
+	if !result.HasErrors() {
+		t.Fatal("expected a capability that is not true or false to be refused")
 	}
 }

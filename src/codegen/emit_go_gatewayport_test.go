@@ -43,6 +43,7 @@ func TestGatewayPortSuppliesTheGateway(t *testing.T) {
 		"func gatewayUdpStart() bool",
 		"func gatewayUdpSend(text string) bool",
 		"func gatewayNowMs() uint32",
+		"func gatewayWallTimeMs() string",
 		"func gatewayF32Str(value float32) string",
 		"func gatewayNodeSeen(id uint32)",
 		"func gatewayNodeCount() uint32",

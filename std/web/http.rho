@@ -63,3 +63,15 @@ fn status_internal() u32 {
 fn html(status: u32, body: string) Response {
     return Response{ status, body, "text/html; charset=utf-8" }
 }
+
+// sse_file streams a file as Server-Sent Events. Each line becomes one event;
+// a line beginning with __DONE__: closes the stream with a `done` event whose
+// data is the exit status. The interval is how long the server waits before
+// looking for more when the file has no new line.
+//
+// It is how a long step reports progress: the action writes its output to a
+// file, and the page listens to the same file instead of waiting for the whole
+// request to finish.
+extern fn sse_file(path: string, interval_ms: u32) Response
+
+

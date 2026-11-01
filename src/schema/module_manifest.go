@@ -317,6 +317,92 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// How a deployment reaches the thing this module is. A driver
+				// names the example a node is built from and the Kconfig that
+				// example needs; a board names the method used to reach it and
+				// the architecture a gateway is built for. The keeper reads
+				// these at runtime, which is what lets a board or driver be
+				// added to the tree without rebuilding the keeper.
+				Name:     "deployment",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "example", Required: false, Kind: KindString},
+					{Name: "boards", Required: false, Kind: KindString},
+					{Name: "binary", Required: false, Kind: KindString},
+					{Name: "kconfig", Required: false, Kind: KindString},
+					{Name: "method", Required: false, Kind: KindString},
+					{Name: "arch", Required: false, Kind: KindString},
+					{Name: "apps_dir", Required: false, Kind: KindString},
+					{Name: "user", Required: false, Kind: KindString},
+					{Name: "path", Required: false, Kind: KindString},
+				},
+			},
+			{
+				// What a module can be in a deployment. A board says which
+				// roles it can take — gateway, relay, node — and what it has to
+				// do them with; a driver says it is a sensor, the bus it sits
+				// on, and what it measures. A deployment planner reads these
+				// instead of carrying a list of boards, so a board added to the
+				// tree is offered as soon as its manifest says it can do the job.
+				Name:     "capabilities",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "gateway", Required: false, Kind: KindBool},
+					{Name: "relay", Required: false, Kind: KindBool},
+					{Name: "node", Required: false, Kind: KindBool},
+					{Name: "edge", Required: false, Kind: KindBool},
+					{Name: "host", Required: false, Kind: KindBool},
+					{Name: "wireless", Required: false, Kind: KindBool},
+					{Name: "ethernet", Required: false, Kind: KindBool},
+					{Name: "sensor", Required: false, Kind: KindBool},
+					{Name: "buses", Required: false, Kind: KindString},
+					{Name: "transports", Required: false, Kind: KindString},
+					{Name: "links", Required: false, Kind: KindString},
+					{Name: "deploy", Required: false, Kind: KindString},
+					{Name: "measures", Required: false, Kind: KindString},
+					{Name: "summary", Required: false, Kind: KindString},
+				},
+			},
+			{
+				// What a module is when it is a web application rather than a
+				// library or a tool. The keeper reads this block to list the
+				// applications on the machine and to launch them, so the block
+				// says what the keeper cannot guess: whether the application
+				// is the keeper itself, where it listens, and the route it
+				// answers on.
+				//
+				// A module without the block is not an application the keeper
+				// offers — a documentation site or a component has a command
+				// and no listener of its own — which is how the two kinds of
+				// module stay apart without either naming the other.
+				Name:     "application",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					// keeper is the dashboard a person is looking at; it is
+					// listed so the page has a complete picture but it cannot
+					// be started, stopped or removed from itself.
+					// keeper-hosted is an application the keeper runs on its
+					// own port, standalone or from the keeper's registry.
+					{Name: "kind", Required: true, Kind: KindString,
+						AllowedValues: []string{"keeper", "keeper-hosted"}},
+					{Name: "title", Required: false, Kind: KindString},
+					{Name: "description", Required: false, Kind: KindString},
+					// route is the path the application answers on, with its
+					// leading slash. The page uses it for the launch link.
+					{Name: "route", Required: false, Kind: KindString},
+					// port is the listener the application opens; kept as text
+					// so a manifest is not a number type and the keeper can put
+					// it into an address without a conversion.
+					{Name: "port", Required: false, Kind: KindString},
+					// command is the binary the build writes into build/, which
+					// is what the keeper starts and stops.
+					{Name: "command", Required: false, Kind: KindString},
+				},
+			},
+			{
 				// The docs section is doc-as-code: the module names the sources
 				// its documentation is written in, and where the pages belong in
 				// a site. The generator is the rho-doc component, so a module

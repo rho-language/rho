@@ -310,6 +310,83 @@ build:
     - go-server
 ```
 
+## Capabilities and deployment
+
+Beyond identity and dependencies, a module can describe how a deployment uses
+it. The fields are optional and a module that only builds need not carry them.
+
+A board says what roles it can take and what it has:
+
+```yaml
+capabilities:
+  gateway: true
+  relay: true
+  node: true
+  edge: true
+  host: false
+  wireless: true
+  ethernet: false
+  links: "uart console usb wifi socket"
+  buses: "uart i2c spi onewire gpio"
+  deploy: "flash"
+```
+
+`links` is the transports a deployment may put on that board; `buses` is what
+the board's HAL carries. A host board is one that can run the gateway process.
+
+A driver says what it is and what a deployment builds from it:
+
+```yaml
+capabilities:
+  sensor: true
+  buses: "onewire"
+  measures: "temperature"
+
+deployment:
+  boards: "pico2w"
+  example: "examples/temperature/ds18b20/c/telemetry"
+  binary: "build/output/telemetry.elf"
+  kconfig: "CONFIG_RH_HAL_ONEWIRE=y ..."
+```
+
+A board's `deployment` block says how a gateway is reached:
+
+```yaml
+deployment:
+  method: "adb"          # adb, ssh, flash or process
+  arch: "arm64"
+  kconfig: "CONFIG_RH_BOARD_ARDUINO_UNO_Q=y"
+  apps_dir: "/home/arduino/apps"
+  user: "arduino"
+  path: "/home/arduino/apps"
+```
+
+Both blocks are validated by the module schema. A deployment planner reads them
+at runtime; nothing in the planner needs to know the board or driver by name.
+
+## The `application` block
+
+A module that is a web application rather than a library or a tool says so,
+because an application has a listener the registry that runs it has to know
+about:
+
+```yaml
+application:
+  kind: keeper-hosted
+  title: RoboHub Mesh
+  description: Plans and runs RoboHub gateway deployments.
+  route: /mesh
+  port: "8478"
+  command: mesh
+```
+
+`kind: keeper` is the dashboard itself; `kind: keeper-hosted` is an application
+it can start and stop on its own port. A module without the block is not an
+application — a documentation site or a component is built and run, but has no
+listener of its own. The block is optional and is validated by the module
+schema, so a consumer can list the applications on a machine without knowing
+any of them by name.
+
 ## The `package` block
 
 A module may say what a published package carries, so a consumer receives the
