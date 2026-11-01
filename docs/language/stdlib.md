@@ -86,6 +86,12 @@ producing a program that cannot open a file.
 on. Both are for the Go server target rather than for firmware: a board has no
 HTTP server, and a library that assumed one would not build for one.
 
+`web.http.sse_file(path, interval_ms)` is a response that follows a file as
+Server-Sent Events. Each line becomes one `data:` event. A line beginning
+`__DONE__:<status>` closes the response with `done`, and the stream keeps
+following a file that is still being written. It is how a long action reports
+progress: the action writes a file and the page listens to the same file.
+
 ## assert
 
 `assert` is what a test says with. It is a module rather than a keyword so that a

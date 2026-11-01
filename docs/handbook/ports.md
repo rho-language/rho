@@ -43,7 +43,7 @@ to see what it does.
 | `fsstore` | A module store on the filesystem: put, get, search, list | the registry |
 | `logemit` | Writing a log record, with the formatter's own shape | any project that logs |
 | `docemit` | The documentation generator, as a page or a site | a project that serves documentation |
-| `gateway` | A serial link, UDP delivery, a monotonic clock, shared state and tx-id correlation | an edge gateway that reads a node and streams what it reads |
+| `gateway` | A serial link, UDP delivery, a monotonic clock and a wall clock, shared state and tx-id correlation | an edge gateway that reads a node and streams what it reads |
 
 ## A worked example
 
@@ -125,3 +125,9 @@ The state `background()` writes and a handler reads is what the `gateway` port
 is for: a value a program cannot declare as a global is one the host holds, and
 the port's mutex is what makes it safe to share. The frame grammar itself stays
 in Rho — the port supplies the link, not the protocol.
+
+`gateway_now_ms` is a monotonic duration since the gateway started; it is not a
+calendar. `gateway_wall_time_ms` is the host's Unix time, which is what a
+service records beside a node's own uptime timestamp. A generated service's
+streaming responses are not bounded by the server's read or write deadline, so a
+file-following event stream stays open for the action it reports.

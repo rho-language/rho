@@ -70,7 +70,9 @@ func EmitGoServerEntrypoint(m ir.ModuleIR) string {
 // kept only when the file refers to it, so a project that routes through a port
 // is not handed an import the compiler refuses.
 var goServerImports = []importSpec{
+	{Path: `"bufio"`},
 	{Path: `"context"`},
+	{Path: `"fmt"`},
 	{Path: `"io"`},
 	{Path: `"log"`},
 	{Path: `"net/http"`},
@@ -284,8 +286,17 @@ func goServerLifecycle(cfg ServerConfig) string {
 // server, and would set its own deadline.
 func goServerLimits() string {
 	return "\t\tReadHeaderTimeout: 10 * time.Second,\n" +
-		"\t\tReadTimeout:       60 * time.Second,\n" +
-		"\t\tWriteTimeout:      60 * time.Second,\n" +
+		// A streaming response stays open for as long as the action it reports,
+		// and a flash can take minutes. The header timeout still bounds a
+		// request that never finishes its headers, so an unfinished request
+		// cannot hold a connection forever before a handler is reached.
+		"\t\tReadTimeout:       0,\n" +
+		// A build, a flash or a deploy can legitimately take minutes, and the
+		// handler answers when the work is done. A write deadline would cut the
+		// response off before the action it asked for had finished. Long work
+		// that streams does so over its own event stream, whose writes are also
+		// bound by this deadline, so it must be absent rather than short.
+		"\t\tWriteTimeout:      0,\n" +
 		"\t\tIdleTimeout:       120 * time.Second,\n" +
 		"\t\tMaxHeaderBytes:    1 << 16,\n"
 }
@@ -361,10 +372,123 @@ func goResponseType() string {
 	b.WriteString("func (resp Response) write(w http.ResponseWriter) {\n")
 	b.WriteString("\tcontentType := resp.contentType\n")
 	b.WriteString("\tif contentType == \"\" {\n\t\tcontentType = \"text/plain; charset=utf-8\"\n\t}\n")
+	b.WriteString("\tif contentType == \"text/event-stream\" {\n")
+	b.WriteString("\t\twriteEventStream(w, resp.Body)\n")
+	b.WriteString("\t\treturn\n")
+	b.WriteString("\t}\n")
 	b.WriteString("\tw.Header().Set(\"Content-Type\", contentType)\n")
 	b.WriteString("\tw.WriteHeader(int(resp.Status))\n")
 	b.WriteString("\t_, _ = w.Write([]byte(resp.Body))\n}\n\n")
+	b.WriteString(goSSEHelpers())
 	return b.String()
+}
+
+// goSSEHelpers returns the response helpers for a Server-Sent Events stream.
+//
+// The response carries the file in its body rather than in a field of its own:
+// a Response is a value the standard library builds with a positional literal,
+// and a stream is not a second kind of value a page returns. The separator is a
+// non-printing byte, so a path that contains spaces survives, and the interval
+// follows it.
+func goSSEHelpers() string {
+	return `// sseSeparator separates the streamed path from its polling interval.
+const sseSeparator = "\x1f"
+
+// sse_file returns a response that follows a file as Server-Sent Events.
+func sseFile(path string, intervalMs uint32) Response {
+	return Response{
+		Status:      200,
+		Body:        path + sseSeparator + strconv.FormatUint(uint64(intervalMs), 10),
+		contentType: "text/event-stream",
+	}
+}
+
+// writeEventStream follows the file named by a stream response and writes each
+// line as one event. A line beginning with __DONE__: ends the stream, because
+// the action that wrote it has returned. The file may not exist yet when the
+// page connects: the request that starts the action and the event stream are
+// two requests, and either can arrive first.
+func writeEventStream(w http.ResponseWriter, token string) {
+	path := token
+	interval := 250 * time.Millisecond
+	if at := strings.LastIndex(token, sseSeparator); at >= 0 {
+		path = token[:at]
+		if value, err := strconv.Atoi(token[at+1:]); err == nil && value > 0 {
+			interval = time.Duration(value) * time.Millisecond
+		}
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming is not supported by this connection", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	started := time.Now()
+	var file *os.File
+	for {
+		opened, err := os.Open(path)
+		if err == nil {
+			file = opened
+			break
+		}
+		if time.Since(started) > time.Minute {
+			fmt.Fprint(w, "event: error\ndata: the progress file did not appear\n\n")
+			flusher.Flush()
+			return
+		}
+		select {
+		case <-time.After(interval):
+		}
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	var offset int64
+	heartbeat := time.Now()
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			offset += int64(len(line))
+			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(trimmed, "__DONE__:") {
+				fmt.Fprintf(w, "event: done\ndata: %s\n\n", strings.TrimPrefix(trimmed, "__DONE__:"))
+				flusher.Flush()
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", trimmed)
+			flusher.Flush()
+			heartbeat = time.Now()
+		}
+		if err == io.EOF {
+			// A new action truncates the file. The reader is then past its
+			// end, which looks like an empty file; start again from the top.
+			if info, statErr := file.Stat(); statErr == nil && info.Size() < offset {
+				_, _ = file.Seek(0, io.SeekStart)
+				reader.Reset(file)
+				offset = 0
+			}
+			if time.Since(heartbeat) > 15*time.Second {
+				fmt.Fprint(w, ": keepalive\n\n")
+				flusher.Flush()
+				heartbeat = time.Now()
+			}
+			time.Sleep(interval)
+			continue
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+`
 }
 
 // goRequestHelpers returns the helpers used to decode an incoming request.

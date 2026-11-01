@@ -733,17 +733,6 @@ func EmitGoRuntime(implementation string) string {
 				"}\n",
 		},
 		{
-			// The value of an environment variable, or "" when it is not set.
-			//
-			// A program that runs on a machine needs to read what the machine
-			// says about where things are, and an environment variable is how
-			// a machine says that.
-			call: "rhoGetenv(",
-			define: "func rhoGetenv(name string) string {\n" +
-				"\treturn os.Getenv(name)\n" +
-				"}\n",
-		},
-		{
 			// One value out of a YAML file, named by its path.
 			//
 			// The path is dotted: `board.connectors` is the connectors of the

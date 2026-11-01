@@ -483,6 +483,11 @@ func gatewayUdpSend(text string) bool {
 // gatewayNowMs is milliseconds since the gateway started.
 func gatewayNowMs() uint32 { return uint32(time.Since(gatewayStart).Milliseconds()) }
 
+// gatewayWallTimeMs is the host's wall clock in Unix milliseconds. A node's
+// own timestamp is its uptime, so a reader needs this separate value to put a
+// reading on a calendar.
+func gatewayWallTimeMs() string { return strconv.FormatInt(time.Now().UnixMilli(), 10) }
+
 // gatewayF32Str renders a float with the two decimals a telemetry frame carries.
 func gatewayF32Str(value float32) string {
 	return strconv.FormatFloat(float64(value), 'f', 2, 32)

@@ -336,6 +336,16 @@ func TestEmitGoRuntimeKeepsOnlyReferencedHelpers(t *testing.T) {
 	}
 }
 
+// One helper, one definition. The environment helper used to be emitted by the
+// always-present set and again by the referenced-helper set, which a program
+// that called getenv saw as a redeclaration in its generated runtime.
+func TestEmitGoRuntimeEmitsGetenvOnce(t *testing.T) {
+	out := EmitGoRuntime(`func x() { _ = rhoGetenv("X") }`)
+	if got := strings.Count(out, "func rhoGetenv"); got != 1 {
+		t.Fatalf("expected one rhoGetenv definition, got %d\n%s", got, out)
+	}
+}
+
 func TestEmitGoMod(t *testing.T) {
 	m := greetIR()
 	if got := EmitGoMod(m); !strings.Contains(got, "module greet") || !strings.Contains(got, "go "+GoModuleVersion) {
@@ -408,6 +418,40 @@ func TestGeneratedServerBoundsEveryPhaseOfARequest(t *testing.T) {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s server has no %s\n%s", label, want, out)
 			}
+		}
+	}
+}
+
+// A long action reports through an event stream: the page listens to the file
+// the action appends to, and the sentinel line ends the stream rather than the
+// response waiting for the whole command.
+// A build or a flash takes minutes, and the response is written after the
+// action returns. A write deadline would close the connection first, so the
+// generated server has none.
+func TestEmitGoServerAllowsLongActions(t *testing.T) {
+	out := EmitGoServer(greetIR(), ServerConfig{})
+	if !strings.Contains(out, "WriteTimeout:      0,") {
+		t.Errorf("expected no write deadline for long actions\n%s", out)
+	}
+	if !strings.Contains(out, "ReadTimeout:       0,") {
+		t.Error("expected no read deadline for a long-lived event stream")
+	}
+	if !strings.Contains(out, "ReadHeaderTimeout: 10 * time.Second,") {
+		t.Error("expected the request header timeout to remain")
+	}
+}
+
+func TestEmitGoServerStreamsProgress(t *testing.T) {
+	out := EmitGoServer(greetIR(), ServerConfig{})
+	for _, want := range []string{
+		"func sseFile(path string, intervalMs uint32) Response",
+		"func writeEventStream(w http.ResponseWriter, token string)",
+		"text/event-stream",
+		"__DONE__:",
+		"event: done",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected the server to carry %q\n%s", want, out)
 		}
 	}
 }

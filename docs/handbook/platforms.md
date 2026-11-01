@@ -130,6 +130,32 @@ The reference is spelled `{env:…}` rather than `${…}` because the command
 travels into a CMake file, and CMake reads `${…}` as its own: a reference
 written that way is a configure error rather than a placeholder.
 
+## What the board says about itself
+
+A board manifest can carry a one-line `board.summary` and a `capabilities` block
+so a deployment planner can offer it without a list written into the planner:
+
+```yaml
+board:
+  designation: PICO_2W
+  summary: A Pico 2W with WiFi, a 1-Wire bus, and USB serial.
+capabilities:
+  gateway: true
+  relay: true
+  node: true
+  edge: true
+  host: false
+  wireless: true
+  links: "uart console usb wifi socket"
+  buses: "uart i2c spi onewire gpio adc pwm"
+  deploy: "flash"
+```
+
+A host board also names how a gateway is deployed to it (`deployment.method`,
+`arch`, `apps_dir`, `user`, `path`). The schema validates both blocks; a new
+board is found by scanning the platform's `boards/` directory, not by editing a
+consumer.
+
 ## The platform's code
 
 The library a program links, and the board support package that registers the
