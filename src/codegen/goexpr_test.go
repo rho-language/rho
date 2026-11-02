@@ -426,3 +426,18 @@ func TestGoTypeForIRSliceIsSliceNotPointer(t *testing.T) {
 		t.Fatalf("expected *uint8 for a pointer, got %q", got)
 	}
 }
+
+func TestGoTypeForArrayParameterKeepsOneDimension(t *testing.T) {
+	array := ir.Type{Kind: ir.TypeStruct, Name: "Categories[64]", ArrayLen: 64}
+	if got := goTypeForIR(array); got != "[64]Categories" {
+		t.Fatalf("expected [64]Categories once, got %q", got)
+	}
+}
+
+func TestGoPtrLiteralFromReferenceCarriesAnAddress(t *testing.T) {
+	got := ToGoExpr("PtrCategories{ &categories[0] }")
+	want := "PtrCategories{uint64(uintptr(unsafe.Pointer(&categories[0])))}"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
