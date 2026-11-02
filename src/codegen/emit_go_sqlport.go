@@ -321,8 +321,40 @@ func rhoSqlStatements(schema string) []string {
 	out := []string{}
 	current := strings.Builder{}
 	inString := false
+	inLineComment := false
+	inBlockComment := false
 	for i := 0; i < len(schema); i++ {
 		c := schema[i]
+		if inLineComment {
+			current.WriteByte(c)
+			if c == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			current.WriteByte(c)
+			if c == '*' && i+1 < len(schema) && schema[i+1] == '/' {
+				current.WriteByte(schema[i+1])
+				i++
+				inBlockComment = false
+			}
+			continue
+		}
+		if !inString && c == '-' && i+1 < len(schema) && schema[i+1] == '-' {
+			current.WriteByte(c)
+			current.WriteByte(schema[i+1])
+			i++
+			inLineComment = true
+			continue
+		}
+		if !inString && c == '/' && i+1 < len(schema) && schema[i+1] == '*' {
+			current.WriteByte(c)
+			current.WriteByte(schema[i+1])
+			i++
+			inBlockComment = true
+			continue
+		}
 		switch {
 		case c == '\'':
 			inString = !inString

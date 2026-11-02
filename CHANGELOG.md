@@ -88,6 +88,31 @@ than through a shell, and what it said is written where the caller asked for
 it, so a program that orchestrates other programs means the same thing on
 either backend.
 
+## [0.1.3] - 2026-11-01
+
+A generated service can stream a file as Server-Sent Events with
+`web.http.sse_file`. Each line is one event, a `__DONE__:<status>` line closes
+the stream with a `done` event, and the stream follows a file that is still
+being written. The generated Go server keeps the connection open for the length
+of the action and sends keepalives; a long build or flash no longer trips a
+write deadline, and the read deadline no longer closes a stream after a minute.
+
+The `gateway` port gains `gateway_wall_time_ms`, the host's Unix time in
+milliseconds. A node's `timestamp_ms` is its own uptime; a gateway can now also
+record when it received the frame, which is what places a reading on a calendar.
+
+Module manifests may declare `capabilities` and `deployment`. A board says which
+roles it can take (`gateway`, `relay`, `node`, `edge`, `host`), what it has
+(`wireless`, `ethernet`, `links`, `buses`, `deploy`), and how a deployment
+reaches it (`method`, `arch`, `kconfig`, `apps_dir`). A driver says it is a
+sensor, its bus and what it measures, and names the example, image, Kconfig and
+boards a deployment builds. The module schema validates these blocks, including
+`board.summary`; the keeper's deployment wizard has a schema of its own.
+
+A generated Go runtime emitted `rhoGetenv` twice when a program read an
+environment variable, which was a redeclaration in the generated runtime. It is
+emitted once now, and a test holds it.
+
 ## [0.1.4] - 2026-11-02
 
 A module manifest may declare the plugins an application loads:
@@ -114,27 +139,8 @@ array parameter is emitted with one dimension rather than two, and a `Ptr[T]`
 built from a reference carries the address in the field the generated struct
 has. Both have tests in `src/codegen/goexpr_test.go`.
 
-## [0.1.3] - 2026-11-01
+The SQL port now splits a schema on statement boundaries that respect line and
+block comments as well as string literals, so a semicolon in a comment does not
+end a statement early. The version stays 0.1.4; the binary is rebuilt from the
+same source.
 
-A generated service can stream a file as Server-Sent Events with
-`web.http.sse_file`. Each line is one event, a `__DONE__:<status>` line closes
-the stream with a `done` event, and the stream follows a file that is still
-being written. The generated Go server keeps the connection open for the length
-of the action and sends keepalives; a long build or flash no longer trips a
-write deadline, and the read deadline no longer closes a stream after a minute.
-
-The `gateway` port gains `gateway_wall_time_ms`, the host's Unix time in
-milliseconds. A node's `timestamp_ms` is its own uptime; a gateway can now also
-record when it received the frame, which is what places a reading on a calendar.
-
-Module manifests may declare `capabilities` and `deployment`. A board says which
-roles it can take (`gateway`, `relay`, `node`, `edge`, `host`), what it has
-(`wireless`, `ethernet`, `links`, `buses`, `deploy`), and how a deployment
-reaches it (`method`, `arch`, `kconfig`, `apps_dir`). A driver says it is a
-sensor, its bus and what it measures, and names the example, image, Kconfig and
-boards a deployment builds. The module schema validates these blocks, including
-`board.summary`; the keeper's deployment wizard has a schema of its own.
-
-A generated Go runtime emitted `rhoGetenv` twice when a program read an
-environment variable, which was a redeclaration in the generated runtime. It is
-emitted once now, and a test holds it.
