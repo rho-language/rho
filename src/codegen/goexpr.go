@@ -261,7 +261,68 @@ func ToGoExpr(expr string) string {
 		i++
 	}
 
-	return strings.TrimSpace(out.String())
+	return strings.TrimSpace(rewritePtrLiterals(out.String()))
+}
+
+// rewritePtrLiterals turns a handle built from a reference into the address its
+// Go struct carries. `Ptr[T](&x)` lowers to `PtrT{ &x }`, but the field is a
+// uint64, so the pointer has to cross into Go's unsafe world once here rather
+// than at every use of a slice built from an array.
+func rewritePtrLiterals(expr string) string {
+	var out strings.Builder
+	src := []byte(expr)
+	for i := 0; i < len(src); {
+		if src[i] == '"' || src[i] == '\'' {
+			end := scanStringLiteral(src, i)
+			out.WriteString(string(src[i:end]))
+			i = end
+			continue
+		}
+		if isIdentStart(src[i]) {
+			end := scanIdent(src, i)
+			word := string(src[i:end])
+			if strings.HasPrefix(word, "Ptr") && end < len(src) && src[end] == '{' {
+				close, ok := scanBraces(src, end)
+				if ok {
+					content := string(src[end+1 : close])
+					trimmed := strings.TrimSpace(content)
+					if strings.HasPrefix(trimmed, "&") {
+						out.WriteString(word + "{uint64(uintptr(unsafe.Pointer(" +
+							trimmed + ")))}")
+						i = close + 1
+						continue
+					}
+				}
+			}
+			out.WriteString(word)
+			i = end
+			continue
+		}
+		out.WriteByte(src[i])
+		i++
+	}
+	return out.String()
+}
+
+// scanBraces finds the brace that closes the one at open, skipping braces in
+// string and character literals.
+func scanBraces(src []byte, open int) (int, bool) {
+	depth := 0
+	for i := open; i < len(src); i++ {
+		if src[i] == '"' || src[i] == '\'' {
+			i = scanStringLiteral(src, i) - 1
+			continue
+		}
+		if src[i] == '{' {
+			depth++
+		} else if src[i] == '}' {
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // translateWord maps a single identifier to its Go spelling.
@@ -711,6 +772,18 @@ func isValidGoIdent(name string) bool {
 
 // goTypeForIR maps an IR type to its Go spelling.
 func goTypeForIR(t ir.Type) string {
+	// A fixed-size array `T[N]` is `[N]T` in Go. The length is carried on the
+	// type as well as spelled in the name, so the length is consumed once; a
+	// name that still carries `[N]` would otherwise be prefixed a second time
+	// and become `[N][N]T`.
+	if t.ArrayLen > 0 {
+		element := t
+		element.ArrayLen = 0
+		if open := strings.IndexByte(t.Name, '['); open >= 0 {
+			element.Name = t.Name[:open]
+		}
+		return "[" + strconv.Itoa(t.ArrayLen) + "]" + goTypeForIR(element)
+	}
 	// More than one dimension is written into the name: `u32[2][2]` is
 	// `[2][2]uint32`. Each dimension prefixes the element type.
 	if base, dims, ok := goNameArrayDims(t.Name); ok {
@@ -721,16 +794,6 @@ func goTypeForIR(t ir.Type) string {
 		element := t
 		element.Name = base
 		return prefix + goTypeForIR(element)
-	}
-	// A fixed-size array `T[N]` is `[N]T` in Go. The length is carried on the
-	// type, and the element type is the same type with the length cleared.
-	if t.ArrayLen > 0 {
-		element := t
-		element.ArrayLen = 0
-		if open := strings.IndexByte(t.Name, '['); open >= 0 {
-			element.Name = t.Name[:open]
-		}
-		return "[" + strconv.Itoa(t.ArrayLen) + "]" + goTypeForIR(element)
 	}
 	switch t.Kind {
 	case ir.TypeBool:
