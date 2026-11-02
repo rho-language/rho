@@ -88,6 +88,32 @@ than through a shell, and what it said is written where the caller asked for
 it, so a program that orchestrates other programs means the same thing on
 either backend.
 
+## [0.1.4] - 2026-11-02
+
+A module manifest may declare the plugins an application loads:
+
+```yaml
+plugins:
+  - name: alert-log
+    enabled: true
+    config:
+      path: alert.log
+  - name: email-alert
+    enabled: false
+    config:
+      to_address: ops@example.internal
+```
+
+The list is validated: a plugin needs a name, `enabled` is a decision rather
+than a word, and `config` is a map whose keys belong to the plugin. The schema
+says what an application asks for; the plugin registry and its manager are the
+application's own.
+
+The Go backend also learned two shapes the expenses module needs: a fixed-size
+array parameter is emitted with one dimension rather than two, and a `Ptr[T]`
+built from a reference carries the address in the field the generated struct
+has. Both have tests in `src/codegen/goexpr_test.go`.
+
 ## [0.1.3] - 2026-11-01
 
 A generated service can stream a file as Server-Sent Events with
