@@ -380,6 +380,12 @@ func docsReleases(path string) string {
 	if len(out) == 0 {
 		return ""
 	}
+	// The changelog is written oldest first; a reader wants the newest
+	// release first, which is also what makes a limited overview show the
+	// current one rather than the first four releases ever.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
 	return strings.Join(out, "\n") + "\n"
 }
 
