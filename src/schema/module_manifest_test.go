@@ -589,6 +589,69 @@ application:
 	}
 }
 
+func TestValidateModuleManifestPluginsSection(t *testing.T) {
+	src := `module:
+  name: mesh
+  type: rho
+  version: 0.2.0
+main: src/main.rho
+plugins:
+  - name: alert-log
+    enabled: true
+    config:
+      path: alert.log
+  - name: email-alert
+    enabled: false
+    config:
+      from_address: alerts@robohub.internal
+      severity_threshold: ERROR
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := ValidateModuleManifest(data, "rho"); errs.HasErrors() {
+		t.Fatalf("expected the plugins section to validate, got %v", errs.ErrorString())
+	}
+}
+
+func TestValidateModuleManifestPluginNeedsAName(t *testing.T) {
+	src := `module:
+  name: mesh
+  type: rho
+  version: 0.2.0
+main: src/main.rho
+plugins:
+  - enabled: true
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "rho").HasErrors() {
+		t.Fatal("expected a plugin without a name to be rejected")
+	}
+}
+
+func TestValidateModuleManifestPluginEnabledIsABool(t *testing.T) {
+	src := `module:
+  name: mesh
+  type: rho
+  version: 0.2.0
+main: src/main.rho
+plugins:
+  - name: alert-log
+    enabled: sometimes
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "rho").HasErrors() {
+		t.Fatal("expected a plugin enabled that is not true or false to be rejected")
+	}
+}
+
 func TestValidateModuleManifestRejectsDocsSourcesThatAreNotAList(t *testing.T) {
 	src := `module:
   name: registry

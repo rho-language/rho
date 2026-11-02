@@ -403,6 +403,29 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// What an application starts when it is loaded. A plugin is a
+				// Rho module of its own under plugins/, and this block names the
+				// ones this application uses, whether they are on, and the
+				// settings they are started with. A plugin that is not listed is
+				// not loaded; an application that lists none runs without any.
+				Name:     "plugins",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindMap,
+					Fields: []FieldSchema{
+						{Name: "name", Required: true, RejectNull: true, Kind: KindString},
+						// enabled is a decision, not a value: a manifest writes
+						// true or false and the loader keeps it as text.
+						{Name: "enabled", Required: false, Kind: KindBool},
+						// config is the plugin's own settings. It is a map so a
+						// plugin can carry whatever keys it needs without this
+						// schema knowing any of them.
+						{Name: "config", Required: false, Kind: KindMap},
+					},
+				},
+			},
+			{
 				// The docs section is doc-as-code: the module names the sources
 				// its documentation is written in, and where the pages belong in
 				// a site. The generator is the rho-doc component, so a module
