@@ -147,3 +147,6 @@ same source.
 The documentation site lists the newest release first, so its overview shows the
 current version rather than the first four releases ever written.
 
+The gateway port provides `gateway_http_get` and `gateway_http_post`, the HTTP
+requests a gateway needs to poll and switch a network device.
+
