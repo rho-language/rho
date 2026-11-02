@@ -144,3 +144,6 @@ block comments as well as string literals, so a semicolon in a comment does not
 end a statement early. The version stays 0.1.4; the binary is rebuilt from the
 same source.
 
+The documentation site lists the newest release first, so its overview shows the
+current version rather than the first four releases ever written.
+
