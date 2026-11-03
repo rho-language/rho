@@ -595,6 +595,10 @@ body {
 
 .page p { margin: 0.85rem 0; }
 
+/* A screenshot is wider than the measure on most screens, so it is scaled to
+   the column rather than made to overflow it. */
+.page img { display: block; max-width: 100%; height: auto; margin: 1.25rem 0; border-radius: 0.35rem; }
+
 .page a { color: var(--accent); text-underline-offset: 0.15em; }
 .page a:hover { text-decoration: none; border-bottom: 1px solid var(--accent-line); }
 

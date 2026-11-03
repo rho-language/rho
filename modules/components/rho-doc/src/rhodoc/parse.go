@@ -827,7 +827,7 @@ func parseImage(text string) (*Node, int, bool) {
 	if space := strings.IndexAny(href, " \t"); space > 0 {
 		href = href[:space]
 	}
-	return &Node{Kind: InlineLink, Href: href, Text: alt}, len(text) - len(rest) + closing + 1, true
+	return &Node{Kind: InlineImage, Href: href, Text: alt}, len(text) - len(rest) + closing + 1, true
 }
 
 // readBracket reads a bracketed run and returns what is inside it, with the

@@ -64,6 +64,7 @@ The token is the only credential a publisher needs. Keep it out of a log.
 | `:::{note}` … `:::` | An admonition, or any other directive |
 | `:::{code-block}` … `:::` | A code block: its body is shown, not read |
 | `{ref}`label`` / `:ref:`label`` | A cross-reference |
+| `![Description](./images/shot.png)` | An image, copied into the site beside the page |
 | ```` ```rho ```` | A code block, tagged with its language |
 
 A construct that is not understood is kept as text rather than dropped, and a

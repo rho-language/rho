@@ -171,15 +171,20 @@ func (r *renderer) render(b *strings.Builder, node *Node) {
 		b.WriteString("</em>")
 
 	case InlineLink:
-		href := safeHref(node.Href)
-		// An image carries its own text rather than children.
-		if node.Text != "" && len(node.Children) == 0 {
-			b.WriteString("<a href=\"" + href + "\">" + html.EscapeString(node.Text) + "</a>")
-			return
-		}
-		b.WriteString("<a href=\"" + href + "\">")
+		b.WriteString("<a href=\"" + safeHref(node.Href) + "\">")
 		r.renderChildren(b, node)
 		b.WriteString("</a>")
+
+	case InlineImage:
+		// An image carries its alternative text rather than children. A source
+		// that is not a destination is written as its text, because a page that
+		// silently loses a picture is worse than one that shows the caption.
+		src := safeHref(node.Href)
+		if src == "" {
+			b.WriteString(html.EscapeString(node.Text))
+			break
+		}
+		b.WriteString("<img src=\"" + src + "\" alt=\"" + html.EscapeString(node.Text) + "\" />")
 
 	case InlineRole:
 		// A role resolves at site level, where every target is known. Here it
