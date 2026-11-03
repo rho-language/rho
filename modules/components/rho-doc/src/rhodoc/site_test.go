@@ -187,6 +187,39 @@ func TestBuildSiteWritesPagesASidebarAndAnIndex(t *testing.T) {
 	}
 }
 
+func TestBuildSiteCopiesAnImageBesideThePage(t *testing.T) {
+	root := t.TempDir()
+	writeComponentModule(t, root, "rho-log", "components", "    - docs/index.md\n")
+	writeFile(t, root, "rho-log/docs/index.md", "# Logger\n\n![Screenshot](./images/shot.png)\n")
+	writeFile(t, root, "rho-log/docs/images/shot.png", "png")
+
+	modules, _ := DiscoverModules(root)
+	site := BuildSite(modules, ApiSet{}, SiteOptions{Title: "Rho"})
+	if len(site.Diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got %+v", site.Diagnostics)
+	}
+
+	out := filepath.Join(root, "out")
+	if err := site.Write(out); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "rho-log", "images", "shot.png")); err != nil {
+		t.Fatalf("expected the image to travel with the page: %v", err)
+	}
+}
+
+func TestBuildSiteReportsAMissingImage(t *testing.T) {
+	root := t.TempDir()
+	writeComponentModule(t, root, "rho-log", "components", "    - docs/index.md\n")
+	writeFile(t, root, "rho-log/docs/index.md", "# Logger\n\n![Screenshot](./images/missing.png)\n")
+
+	modules, _ := DiscoverModules(root)
+	site := BuildSite(modules, ApiSet{}, SiteOptions{Title: "Rho"})
+	if len(site.Diagnostics) != 1 || !strings.Contains(site.Diagnostics[0].String(), "was not found") {
+		t.Fatalf("expected the missing image to be reported, got %+v", site.Diagnostics)
+	}
+}
+
 func TestBuildSiteResolvesACrossReference(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndocs:\n  section: guides\n")

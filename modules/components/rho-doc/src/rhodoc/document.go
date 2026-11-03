@@ -52,6 +52,7 @@ const (
 	InlineEmphasis Kind = "emphasis"
 	InlineStrong   Kind = "strong"
 	InlineLink     Kind = "link"
+	InlineImage    Kind = "image"
 	InlineRole     Kind = "role"
 	InlineBreak    Kind = "break"
 )

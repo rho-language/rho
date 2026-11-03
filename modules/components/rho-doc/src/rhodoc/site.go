@@ -132,6 +132,19 @@ type SitePage struct {
 	// ambiguous records, per target, the pages that answer to it, so a
 	// reference that needs to tell them apart can be reported.
 	ambiguous map[string][]string
+	// assets are the images the page refers to, already resolved to the file
+	// they are read from and the path they are written to, both relative to
+	// what they are relative to.
+	assets []pageAsset
+}
+
+// pageAsset is one file a page carries beside its prose: an image the source
+// refers to, resolved to where it is read and where it is written.
+type pageAsset struct {
+	// Source is the file on disk the image is read from.
+	Source string
+	// Dest is the image's address in the site, relative to the site root.
+	Dest string
 }
 
 // UnresolvedRef is a cross-reference that names a target no page declares.
@@ -225,6 +238,7 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 				document: document,
 				section:  module.Section,
 				module:   module.Name,
+				root:     module.Root,
 				landing:  landing,
 			}
 			documents = append(documents, page)
@@ -252,6 +266,8 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 	}
 
 	for _, page := range documents {
+		assets, diagnostics := planAssets(page.document, page.root, pageHref(page))
+		site.Diagnostics = append(site.Diagnostics, diagnostics...)
 		site.Pages = append(site.Pages, &SitePage{
 			Target:    page.document.Target,
 			Title:     page.document.Title,
@@ -262,6 +278,7 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 			Sections:  page.document.Sections,
 			Plain:     indexText(page),
 			Generated: page.generated,
+			assets:    assets,
 		})
 	}
 
@@ -276,6 +293,7 @@ type parsedPage struct {
 	document  *Document
 	section   string
 	module    string
+	root      string
 	generated bool
 	// searchText is text to index that the page body does not contain: a
 	// reference page's declarations are drawn as markup, so its names are
@@ -294,6 +312,98 @@ func readSource(path string) *Document {
 		return Parse(path, "The source could not be read: "+err.Error()+"\n")
 	}
 	return Parse(path, string(data))
+}
+
+// imageRefs collects the image destinations a document refers to, in document
+// order, so the site can carry the files beside the pages that show them.
+func imageRefs(document *Document) []string {
+	refs := []string{}
+	var walk func(*Node)
+	walk = func(node *Node) {
+		if node == nil {
+			return
+		}
+		if node.Kind == InlineImage && node.Href != "" {
+			refs = append(refs, node.Href)
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	for _, block := range document.Blocks {
+		walk(block)
+	}
+	return refs
+}
+
+// planAssets resolves a page's images to the file each is read from and the
+// address it is written to. A picture the source names but the tree does not
+// carry is reported, because a page that shows a broken image is a
+// documentation bug the reader cannot fix.
+func planAssets(document *Document, root, href string) ([]pageAsset, []Diagnostic) {
+	assets := []pageAsset{}
+	diagnostics := []Diagnostic{}
+	sourceDir := filepath.Dir(document.Path)
+	pageDir := filepath.Dir(filepath.FromSlash(href))
+	for _, ref := range imageRefs(document) {
+		ref = strings.TrimSpace(ref)
+		if !localAsset(ref) {
+			continue
+		}
+		relative := filepath.Clean(filepath.FromSlash(ref))
+		source := filepath.Clean(filepath.Join(sourceDir, relative))
+		if root != "" && !inside(root, source) {
+			diagnostics = append(diagnostics, Diagnostic{
+				Path:    document.Path,
+				Message: fmt.Sprintf("image %q is outside the module", ref),
+			})
+			continue
+		}
+		if info, err := os.Stat(source); err != nil || info.IsDir() {
+			diagnostics = append(diagnostics, Diagnostic{
+				Path:    document.Path,
+				Message: fmt.Sprintf("image %q was not found", ref),
+			})
+			continue
+		}
+		dest := filepath.Clean(filepath.Join(pageDir, relative))
+		if !inside(".", dest) {
+			diagnostics = append(diagnostics, Diagnostic{
+				Path:    document.Path,
+				Message: fmt.Sprintf("image %q is outside the site", ref),
+			})
+			continue
+		}
+		assets = append(assets, pageAsset{Source: source, Dest: filepath.ToSlash(dest)})
+	}
+	return assets, diagnostics
+}
+
+// localAsset reports whether a destination names a file beside the page,
+// rather than a page, a fragment or a resource on another server.
+func localAsset(ref string) bool {
+	if ref == "" || strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "#") {
+		return false
+	}
+	return !strings.Contains(ref, ":")
+}
+
+// inside reports whether path is root or beneath it, after both are made
+// absolute.
+func inside(root, path string) bool {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(absoluteRoot, absolutePath)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // stripDocsRoot is the directory a module documents itself in, which is left
@@ -690,11 +800,38 @@ func (site *Site) Write(out string) error {
 		if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 			return err
 		}
+		if err := writeAssets(out, page); err != nil {
+			return err
+		}
 	}
 	if err := os.WriteFile(filepath.Join(out, "index.html"), []byte(site.renderIndexHTML()), 0o644); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(out, "search-index.json"), []byte(site.searchIndex()), 0o644)
+}
+
+// writeAssets copies the images a page refers to into the site, at the address
+// the page already names. The address is resolved against the page's own
+// directory, so a source that writes `./images/x.png` or `../images/x.png`
+// keeps working once it is rendered.
+func writeAssets(out string, page *SitePage) error {
+	for _, asset := range page.assets {
+		dest, err := pagePath(out, asset.Dest)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(asset.Source)
+		if err != nil {
+			return fmt.Errorf("read image %s: %w", asset.Source, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // pagePath is where a page is written, checked to be inside the output

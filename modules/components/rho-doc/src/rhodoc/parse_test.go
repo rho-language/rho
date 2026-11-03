@@ -115,6 +115,15 @@ func TestParseInlineSpans(t *testing.T) {
 	}
 }
 
+func TestParseImageCarriesItsSourceAndAltText(t *testing.T) {
+	document := Parse("docs/index.md", "# Index\n\n![Dashboard](./images/dashboard.jpg)\n")
+
+	page := RenderPage(document)
+	if !strings.Contains(page.Body, `<img src="./images/dashboard.jpg" alt="Dashboard" />`) {
+		t.Fatalf("expected the image in the page, got:\n%s", page.Body)
+	}
+}
+
 func TestParseCodeBlockKeepsItsLanguageAndBody(t *testing.T) {
 	document := Parse("docs/index.md", "# Index\n\n```rho\nfn main() void {\n    print(\"hi\")\n}\n```\n")
 
