@@ -403,6 +403,12 @@ func sseFile(path string, intervalMs uint32) Response {
 	}
 }
 
+// stdWebHttpSseFile is the name an extern sse_file call carries, while the
+// helper above keeps the short name the server tests use.
+func stdWebHttpSseFile(path string, intervalMs uint32) Response {
+	return sseFile(path, intervalMs)
+}
+
 // writeEventStream follows the file named by a stream response and writes each
 // line as one event. A line beginning with __DONE__: ends the stream, because
 // the action that wrote it has returned. The file may not exist yet when the

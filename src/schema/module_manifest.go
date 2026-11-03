@@ -317,6 +317,32 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
+				// The signals a part presents to the rest of the tree. A
+				// device says what it can be switched and what it measures;
+				// a board says what its sensor produces. The daemon and a
+				// dashboard read this block instead of guessing a part's
+				// fields from its type: `direction` says whether the signal
+				// is an input or an output, `field` names it in the gateway
+				// payload, `unit` says how a person reads it, and `kinds`
+				// lists the widgets it can feed.
+				Name:     "signals",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindMap,
+					Fields: []FieldSchema{
+						{Name: "id", Required: true, RejectNull: true, Kind: KindString},
+						{Name: "label", Required: false, Kind: KindString},
+						{Name: "direction", Required: false, Kind: KindString,
+							AllowedValues: []string{"input", "output"}},
+						{Name: "unit", Required: false, Kind: KindString},
+						{Name: "field", Required: false, Kind: KindString},
+						{Name: "kinds", Required: false, Kind: KindString},
+						{Name: "summary", Required: false, Kind: KindString},
+					},
+				},
+			},
+			{
 				// How a deployment reaches the thing this module is. A driver
 				// names the example a node is built from and the Kconfig that
 				// example needs; a board names the method used to reach it and
