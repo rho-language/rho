@@ -6,12 +6,12 @@ module std.web.http
 
 // text builds a plain text response.
 fn text(status: u32, body: string) Response {
-    return Response{ status, body, "text/plain; charset=utf-8" }
+    return Response{ status, body, "text/plain; charset=utf-8", "" }
 }
 
 // json builds a JSON response.
 fn json(status: u32, body: string) Response {
-    return Response{ status, body, "application/json" }
+    return Response{ status, body, "application/json", "" }
 }
 
 // Common status codes, so handlers read as protocol rather than as numbers.
@@ -61,7 +61,7 @@ fn status_internal() u32 {
 
 // html builds an HTML response, for a page served alongside the API.
 fn html(status: u32, body: string) Response {
-    return Response{ status, body, "text/html; charset=utf-8" }
+    return Response{ status, body, "text/html; charset=utf-8", "" }
 }
 
 // sse_file streams a file as Server-Sent Events. Each line becomes one event;
@@ -75,3 +75,25 @@ fn html(status: u32, body: string) Response {
 extern fn sse_file(path: string, interval_ms: u32) Response
 
 
+
+// status_found is a redirect the browser follows with a GET.
+fn status_found() u32 {
+    return 302
+}
+
+// redirect sends the browser to a URL. Headers carry the Location line, the
+// same shape a handler uses for a cookie.
+fn redirect(location: string) Response {
+    return Response{ status_found(), "", "text/plain; charset=utf-8", "Location: " + location }
+}
+
+// with_headers returns a response with one more header, so a handler can add a
+// cookie without giving up the content type or body it already chose.
+fn with_headers(resp: Response, headers: string) Response {
+    var merged: string = resp.Headers
+    if merged != "" && headers != "" {
+        merged = merged + "\n"
+    }
+    merged = merged + headers
+    return Response{ resp.Status, resp.Body, "text/plain; charset=utf-8", merged }
+}

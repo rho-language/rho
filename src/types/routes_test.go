@@ -35,11 +35,11 @@ route GET "/health"          => handle_health
 route POST "/items/{id}"     => handle_item
 
 fn text(status: u32, body: string) Response {
-    return Response{ status, body, "text/plain" }
+    return Response{ status, body, "text/plain", "" }
 }
 
 fn json(status: u32, body: string) Response {
-    return Response{ status, body, "application/json" }
+    return Response{ status, body, "application/json", "" }
 }
 
 fn handle_health(req: Request) Response {
@@ -219,7 +219,7 @@ func TestRequestAndResponseNeedNoImport(t *testing.T) {
 route GET "/x" => h
 
 fn h(req: Request) Response {
-    return Response{ 200, "ok", "text/plain" }
+    return Response{ 200, "ok", "text/plain", "" }
 }
 
 fn main() void {
@@ -247,7 +247,7 @@ struct Response {
 route GET "/x" => h
 
 fn h(req: Request) Response {
-    return Response{ 200, "ok", "text/plain" }
+    return Response{ 200, "ok", "text/plain", "" }
 }
 
 fn main() void {

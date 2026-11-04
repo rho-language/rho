@@ -67,6 +67,15 @@ RHO_SITE_REPOSITORY=https://github.com/rho-language/rho \
 # rho docsite listening on :8080
 ```
 
+## Production image
+
+`applications/docsite/deploy/Dockerfile` runs the live docsite service in a Go
+builder stage and mirrors its pages, so the landing page, menu, release notes
+and generated documentation keep the service's look. The runtime is a slim
+Python image with that snapshot and no toolchain, source tree or Go cache
+(about 180 MB). The `rho run` service
+described above remains the development/preview path for on-demand generation.
+
 ## Deployment
 
 See [docs/deployment.md](docs/deployment.md). It is deployed exactly as the

@@ -23,6 +23,9 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -59,6 +62,12 @@ func run(args []string) int {
 		return inspect(args[1:])
 	case "revoke":
 		return revoke(args[1:])
+	case "keygen":
+		return keygen(args[1:])
+	case "ticket":
+		return ticket(args[1:])
+	case "verify":
+		return verify(args[1:])
 	case "help", "-h", "--help":
 		usage()
 		return 0
@@ -70,7 +79,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Println("Usage: rho auth <login|status|list|inspect|revoke> [flags]")
+	fmt.Println("Usage: rho auth <login|status|list|inspect|revoke|keygen|ticket|verify> [flags]")
 }
 
 // openStore opens the credential store in the user's Rho home.
@@ -315,5 +324,114 @@ func revoke(args []string) int {
 	}
 	log.Info("credential revoked", "registry", options.registry)
 	fmt.Printf("Revoked the stored credential for %s.\n", options.registry)
+	return 0
+}
+
+// authOptions is the small parser for the SSO commands, whose flags are not
+// the registry flags above.
+func authOptions(args []string) map[string]string {
+	out := map[string]string{}
+	for i := 0; i < len(args); i++ {
+		if !strings.HasPrefix(args[i], "--") {
+			continue
+		}
+		key := strings.TrimPrefix(args[i], "--")
+		if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+			out[key] = args[i+1]
+			i++
+		} else {
+			out[key] = "true"
+		}
+	}
+	return out
+}
+
+func keygen(args []string) int {
+	options := authOptions(args)
+	pair, err := auth.GenerateKeyPair()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho auth keygen:", err)
+		return 1
+	}
+	privatePath, publicPath, err := auth.WriteKeyPair(options["dir"], pair, options["force"] == "true")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho auth keygen:", err)
+		return 1
+	}
+	log.Info("signing key generated", "private", privatePath, "public", publicPath)
+	fmt.Printf("Private key: %s\nPublic key:  %s\nKey id:     %s\n", privatePath, publicPath, pair.KeyID)
+	return 0
+}
+
+func ticket(args []string) int {
+	options := authOptions(args)
+	path := options["private"]
+	if path == "" {
+		fmt.Fprintln(os.Stderr, "rho auth ticket: --private is required")
+		return 2
+	}
+	private, err := auth.LoadPrivateKey(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho auth ticket:", err)
+		return 1
+	}
+	ttl := 30 * time.Second
+	if options["ttl"] != "" {
+		ttl, err = time.ParseDuration(options["ttl"])
+		if err != nil || ttl <= 0 {
+			fmt.Fprintln(os.Stderr, "rho auth ticket: --ttl must be a positive duration")
+			return 2
+		}
+	}
+	subject := options["subject"]
+	if subject == "" {
+		subject = currentUser()
+	}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		fmt.Fprintln(os.Stderr, "rho auth ticket:", err)
+		return 1
+	}
+	now := time.Now()
+	claims := auth.TicketClaims{
+		Subject:     subject,
+		Issuer:      options["issuer"],
+		Audience:    options["audience"],
+		TokenID:     hex.EncodeToString(raw),
+		RedirectURI: options["redirect-uri"],
+		Nonce:       options["nonce"],
+		IssuedAt:    now.Unix(),
+		NotBefore:   now.Unix(),
+		ExpiresAt:   now.Add(ttl).Unix(),
+	}
+	token, err := auth.SignTicket(private, claims)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho auth ticket:", err)
+		return 1
+	}
+	fmt.Println(token)
+	return 0
+}
+
+func verify(args []string) int {
+	options := authOptions(args)
+	path := options["public"]
+	token := options["token"]
+	if path == "" || token == "" {
+		fmt.Fprintln(os.Stderr, "rho auth verify: --public and --token are required")
+		return 2
+	}
+	public, err := auth.LoadPublicKey(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho auth verify:", err)
+		return 1
+	}
+	claims, err := auth.VerifyTicket(public, token, options["issuer"], options["audience"], time.Now())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho auth verify:", err)
+		return 1
+	}
+	encoded, _ := json.MarshalIndent(claims, "", "  ")
+	fmt.Println(string(encoded))
 	return 0
 }

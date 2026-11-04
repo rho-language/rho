@@ -91,6 +91,9 @@ const (
 	// MiddlewareJWT verifies a bearer token and refuses the request without
 	// one that is valid.
 	MiddlewareJWT = "jwt"
+	// MiddlewareAuth verifies an ES256 session cookie and sends a browser to
+	// the authorization server when there is none.
+	MiddlewareAuth = "auth"
 )
 
 // registeredRouters lists the routers a target may name.
@@ -213,9 +216,16 @@ func emitHTTPRoutePort(ctx PortContext) ([]string, string) {
 		{Path: `"crypto/rand"`},
 		{Path: `"crypto/hmac"`},
 		{Path: `"crypto/sha256"`},
+		{Path: `"crypto/ecdsa"`},
+		{Path: `"crypto/x509"`},
 		{Path: `"encoding/base64"`},
+		{Path: `"encoding/pem"`},
+		{Path: `"errors"`},
+		{Alias: "jsonenc", Path: `"encoding/json"`},
+		{Path: `"math/big"`},
 		{Path: `"encoding/hex"`},
 		{Path: `"net"`},
+		{Path: `"path/filepath"`},
 		{Path: `"sync"`},
 		{Path: `"time"`},
 	}
@@ -642,6 +652,7 @@ var middlewareEmitters = map[string]func(name string, spec MiddlewareSpec) strin
 	MiddlewareCORS:      emitCORSMiddleware,
 	MiddlewareRateLimit: emitRateLimitMiddleware,
 	MiddlewareJWT:       emitJWTMiddleware,
+	MiddlewareAuth:      emitAuthMiddleware,
 }
 
 // middlewareFuncs are the Go names of the wrappers. The spellings follow the
@@ -651,6 +662,7 @@ var middlewareFuncs = map[string]string{
 	MiddlewareCORS:      "withCORS",
 	MiddlewareRateLimit: "withRateLimit",
 	MiddlewareJWT:       "withJWT",
+	MiddlewareAuth:      "withAuth",
 }
 
 // RegisteredMiddlewares lists the wrappers a target may compose.

@@ -1016,7 +1016,7 @@ route GET "/hello"        => hello
 route GET "/greet/{name}" => greet
 
 fn text(status: u32, body: string) Response {
-    return Response{ status, body, "text/plain; charset=utf-8" }
+    return Response{ status, body, "text/plain; charset=utf-8", "" }
 }
 
 fn hello(req: Request) Response {

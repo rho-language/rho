@@ -284,7 +284,7 @@ fn download_module(req: Request) Response {
         return error_json(status_not_found(), "not found")
     }
     debug("registry", "served " + name + "@" + version)
-    return Response{ status_ok(), payload, "application/gzip" }
+    return Response{ status_ok(), payload, "application/gzip", "" }
 }
 
 // search_modules lists the modules a caller may see.

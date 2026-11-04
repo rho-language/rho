@@ -927,3 +927,54 @@ func TestAQuotedDocumentSurvivesTheRoundTrip(t *testing.T) {
 		t.Fatalf("the quoted document is not a Go literal: %v", err)
 	}
 }
+
+func TestAuthMiddlewareCarriesBothDeploymentShapes(t *testing.T) {
+	body := emitPort(t, routedIR(), ServerConfig{Router: RouterServeMux,
+		Middleware: []MiddlewareSpec{{Name: MiddlewareAuth, Options: map[string]string{
+			"issuer":          "https://auth.example.com",
+			"audience":        "aquarium",
+			"cookie":          "aquarium_session",
+			"public_key":      "/etc/rho/auth/public.pem",
+			"mode":            "proxy",
+			"public_url":      "https://example.com",
+			"base_path":       "/aquarium",
+			"login_url":       "https://auth.example.com/auth/login",
+			"trust_forwarded": "true",
+			"scheme":          "https",
+		}}}})
+	for _, want := range []string{
+		`authSsoIssuer       = "https://auth.example.com"`,
+		`authSsoAudience     = "aquarium"`,
+		`authSsoCookie       = "aquarium_session"`,
+		`authSsoPublicKeyPath = "/etc/rho/auth/public.pem"`,
+		`authSsoMode         = "proxy"`,
+		`authSsoPublicURL    = "https://example.com"`,
+		`authSsoBasePath     = "/aquarium"`,
+		`authSsoLoginURL     = "https://auth.example.com/auth/login"`,
+		`authSsoTrustForwarded = true`,
+		`authSsoScheme       = "https"`,
+		"func withAuth(next http.Handler) http.Handler {",
+		`header.Algorithm != "ES256"`,
+		"ecdsa.Verify(key, digest[:], r, s)",
+		"http.Redirect(w, r,",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the auth middleware did not carry %q", want)
+		}
+	}
+}
+
+func TestAuthMiddlewareDefaultsToDirectOrigin(t *testing.T) {
+	body := emitPort(t, routedIR(), ServerConfig{Router: RouterServeMux,
+		Middleware: []MiddlewareSpec{{Name: MiddlewareAuth}}})
+	for _, want := range []string{
+		`authSsoMode         = "direct"`,
+		`authSsoCookie       = "rho_session"`,
+		`authSsoScheme       = "auto"`,
+		`authSsoSkipPaths = authSsoSplitPaths("/healthz,/auth/login,/auth/callback,/static")`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a direct-origin default did not apply: want %q", want)
+		}
+	}
+}

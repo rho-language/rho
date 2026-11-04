@@ -150,3 +150,20 @@ current version rather than the first four releases ever written.
 The gateway port provides `gateway_http_get` and `gateway_http_post`, the HTTP
 requests a gateway needs to poll and switch a network device.
 
+## [0.1.5] - 2026-11-04
+
+The documentation site image is now a multi-stage build: the live docsite
+service runs in a Go builder and is mirrored into static pages, so the runtime
+is a slim static server with the same landing page, menu, release notes and
+generated documentation as before.
+
+Release notes on the documentation site preserve changelog paragraph breaks
+instead of flattening a release into one block.
+
+Generated servers can carry an `auth` middleware: ES256 session cookies verified
+with a pinned public key, direct and reverse-proxy origins, one-use login
+tickets, local sessions, and HTTPS-aware cookies. `rho auth` gained `keygen`,
+`ticket` and `verify`, and generated responses can carry headers, which is what
+lets a login set a cookie and redirect.
+
+
