@@ -37,3 +37,20 @@ thing `rho auth` manages — there is one way to configure a registry, not two.
 - {ref}`handbook/registries` — the local and remote registries, and what each
   one is for.
 - {ref}`registry/index` — the registry application these credentials are for.
+
+## SSO tickets
+
+The same component carries the short-lived login ticket a resource server
+verifies locally:
+
+```sh
+rho auth keygen --dir ~/.rho/auth
+rho auth ticket --private ~/.rho/auth/private.pem \
+  --issuer keeper --audience aquarium --subject miraur --ttl 30s
+rho auth verify --public ~/.rho/auth/public.pem \
+  --issuer keeper --audience aquarium --token "$TICKET"
+```
+
+The keeper holds the private key; an application holds only the public key and
+checks the ticket's signature, issuer, audience and lifetime. The application
+still owns the one-use check for the ticket's `jti`.

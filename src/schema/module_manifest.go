@@ -30,7 +30,7 @@ import (
 
 // ValidModuleTypes lists all allowed module.type values.
 var ValidModuleTypes = []string{
-	"rho", "module", "component", "plugin",
+	"rho", "module", "component", "plugin", "provider",
 	"interfaces", "platform", "platform-board",
 	"driver", "driver-board",
 	"runtime", "middleware",
@@ -49,7 +49,7 @@ var ValidVisibilities = []string{"public", "private"}
 
 // RhoSourceModuleTypes are the module types written in Rho. They declare a
 // main entry point.
-var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin"}
+var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin", "provider"}
 
 // NativeModuleTypes are the module types that are native code rather than Rho:
 // they are compiled and linked through a project's build section, and they
@@ -794,6 +794,21 @@ func ModuleSchema() Schema {
 					// is told so by the build, which is the component that can
 					// say what there is.
 					{Name: "toolchain", Required: false, Kind: KindString},
+				},
+			},
+			{
+				// A provider implements a contract a plugin names. It is a
+				// module in its own right — versioned, documented and packaged —
+				// but it is not selected by an application: the plugin is that
+				// identity, and the provider is what the plugin dispatches to.
+				Name:     "provider",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "contract", Required: true, Kind: KindString},
+					{Name: "transport", Required: false, Kind: KindString},
+					{Name: "summary", Required: false, Kind: KindString},
+					{Name: "defaults", Required: false, Kind: KindMap},
 				},
 			},
 			{

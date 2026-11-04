@@ -92,7 +92,7 @@ fn doc_page(name: string, version: string, page: string) Response {
     if strlen(body) == 0 {
         return doc_missing(name, version)
     }
-    return Response{ status_ok(), body, doc_content_type(wanted) }
+    return Response{ status_ok(), body, doc_content_type(wanted), "" }
 }
 
 // doc_missing is what a reader sees when a version has no documentation: a page

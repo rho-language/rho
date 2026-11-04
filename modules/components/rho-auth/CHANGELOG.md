@@ -9,3 +9,9 @@ against that version.
 ## [0.1.0] - 2026-10-12
 
 Initial release.
+
+## [0.2.0] - 2026-11-04
+
+Adds the SSO half of the component: `keygen` creates the ECDSA P-256
+keypair, `ticket` mints a short-lived ES256 login ticket, and `verify` checks
+one against the public key. The registry credential commands are unchanged.

@@ -1,71 +1,53 @@
-# Build and run the Rho docsite service.
+# Build and serve the Rho documentation site.
 #
-# The image carries a properly installed rho, and starts the service through
-# `rho run`, exactly as the registry image does: the container generates the Go
-# project from the Rho sources and runs it, so it needs a Go toolchain for that
-# build. What it serves comes from the repository's own docs/ tree and
-# CHANGELOG.md, copied in below.
+# The generator and the docsite service run in a builder stage with the full
+# Rho toolchain. The service is crawled once into static files, so the runtime
+# carries only the same pages, menu and layout the live service serves, without
+# a compiler, source tree or cache.
 
-FROM golang:1.26.10-bookworm
+FROM golang:1.26.10-bookworm AS build
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc ca-certificates \
- && rm -rf /var/lib/apt/lists/* \
- && useradd --system --create-home --home-dir /home/rho --shell /usr/sbin/nologin rho
+ && apt-get install -y --no-install-recommends gcc ca-certificates wget \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 COPY . .
 
-# The core toolchain.
+# The core toolchain and the components the service needs.
 RUN CGO_ENABLED=0 go build -trimpath -o ./bin/rho     ./cmd/rho \
  && CGO_ENABLED=0 go build -trimpath -o ./bin/rho-deps ./cmd/rho-deps \
- && HOME=/home/rho ./bin/rho install --force
+ && HOME=/root ./bin/rho install --force \
+ && HOME=/root ./scripts/check.sh publish rho-fmt rho-log rho-doc
 
-# The components the service needs at build and run time:
-#
-#   rho-log   the logger the service writes its records with;
-#   rho-fmt   the formatter the compiler uses;
-#   rho-doc   the generator a page is rendered by — the service calls it per
-#             page, so it must be present in the running image.
-RUN HOME=/home/rho ./scripts/check.sh publish rho-fmt rho-log rho-doc
+# Run the real docsite service and mirror its pages, so the static site keeps
+# the landing page, menu, release notes and generated documentation exactly as
+# the service renders them.
+RUN rm -rf applications/docsite/build /out /site \
+ && mkdir -p /out \
+ && export HOME=/root PATH=/root/.rho/bin:$PATH RHO_HTTP_ADDR=:8080 \
+      RHO_DOCS_ROOT=/src RHO_DOCS_TREE=/src/docs \
+      RHO_SITE_RELEASES=/src/CHANGELOG.md \
+      RHO_SITE_TITLE="Rho language and toolchain" \
+      RHO_SITE_HOME=/ \
+      RHO_SITE_REPOSITORY=https://github.com/rho-language/rho \
+      GOPATH=/root/go GOMODCACHE=/root/go/pkg/mod GOCACHE=/tmp/go-build \
+ && (./bin/rho run applications/docsite >/tmp/docsite.log 2>&1 & echo $! >/tmp/docsite.pid) \
+ && for i in $(seq 1 90); do \
+        if wget -q -O /dev/null http://127.0.0.1:8080/; then break; fi; \
+        sleep 1; \
+    done \
+ && wget --recursive --level=inf --no-parent --domains=127.0.0.1 \
+      --convert-links --adjust-extension --page-requisites \
+      --no-host-directories --directory-prefix=/out \
+      http://127.0.0.1:8080/ \
+ && kill "$(cat /tmp/docsite.pid)" 2>/dev/null || true \
+ && cp -a /out /site
 
-# The tree the site is built from. The whole repository is copied, because a
-# documentation build reads a repository — the docs and the modules they
-# document — so a tree with only docs/ would generate a site with no pages in it.
-RUN mkdir -p /app \
- && cp -a /src/. /app/ \
- && rm -rf /app/applications/docsite/build \
- && chown -R rho:rho /app /home/rho
+FROM python:3.12-slim
 
-USER rho
 WORKDIR /app
-
-# A Go home the service can write: `rho run` compiles the generated project at
-# start-up, and a module cache it cannot write makes that fail.
-#
-# RHO_DOCS_ROOT is the project the site is built from and RHO_DOCS_TREE the
-# documentation directory the menu lists; RHO_SITE_HOME is where the built pages
-# link back to, and RHO_SITE_RELEASES the changelog the overview reads.
-ENV HOME=/home/rho \
-    PATH=/home/rho/.rho/bin:$PATH \
-    RHO_HTTP_ADDR=:8080 \
-    RHO_DOCS_ROOT=/app \
-    RHO_DOCS_TREE=/app/docs \
-    RHO_SITE_RELEASES=/app/CHANGELOG.md \
-    RHO_SITE_TITLE="Rho language and toolchain" \
-    RHO_SITE_HOME=/ \
-    RHO_SITE_REPOSITORY=https://github.com/rho-language/rho \
-    GOFLAGS=-buildvcs=false \
-    GOPATH=/home/rho/go \
-    GOMODCACHE=/home/rho/go/pkg/mod \
-    GOCACHE=/tmp/go-build
-
-# Build once as the service user so the module cache is populated and owned by
-# the user that rebuilds at start-up; the output is discarded.
-RUN rho build applications/docsite \
- && rm -rf /app/applications/docsite/build
+COPY --from=build /site /app/site
 
 EXPOSE 8080
-
-# Started by rho: it generates the Go project from the Rho sources and runs it.
-ENTRYPOINT ["rho", "run", "applications/docsite"]
+CMD ["python3", "-m", "http.server", "8080", "--directory", "/app/site"]

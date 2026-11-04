@@ -467,3 +467,416 @@ func splitPaths(list string) []string {
 `, secretEnv, issuer, audience, header, scheme, skip, name)
 	return b.String()
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Cookie sessions                                                            */
+/* -------------------------------------------------------------------------- */
+
+// emitAuthMiddleware renders the SSO session wrapper.
+//
+// It verifies an ES256 session token from a cookie against a pinned public
+// key. A request with no valid session is sent to the provider's login URL for
+// a browser, and answered with 401 for an API caller. The wrapper knows both
+// deployments from the start: a direct WAN address, where the origin is the
+// request's own host, and a reverse proxy, where the public origin and base
+// path are configured and forwarded headers are trusted only when asked for.
+func emitAuthMiddleware(name string, spec MiddlewareSpec) string {
+	issuer := option(spec, "issuer", "")
+	audience := option(spec, "audience", "")
+	cookie := option(spec, "cookie", "rho_session")
+	publicKey := option(spec, "public_key", "")
+	mode := option(spec, "mode", "direct")
+	publicURL := option(spec, "public_url", "")
+	basePath := option(spec, "base_path", "")
+	loginURL := option(spec, "login_url", "/auth/login")
+	keeperPort := option(spec, "keeper_port", "19090")
+	returnParam := option(spec, "return_param", "return_to")
+	skip := option(spec, "skip_paths", "/healthz,/auth/login,/auth/callback,/static")
+	trustForwarded := option(spec, "trust_forwarded", "false") == "true"
+	scheme := option(spec, "scheme", "auto")
+	sessionFile := option(spec, "session_file", "")
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `// The session this service accepts, written from the target's descriptor.
+// The public key is the only secret material here: the signing key never
+// leaves the authorization server.
+const (
+	authSsoIssuer       = %q
+	authSsoAudience     = %q
+	authSsoCookie       = %q
+	authSsoPublicKeyPath = %q
+	authSsoMode         = %q
+	authSsoPublicURL    = %q
+	authSsoBasePath     = %q
+	authSsoLoginURL     = %q
+	authSsoKeeperPort   = %q
+	authSsoReturnParam  = %q
+	authSsoTrustForwarded = %t
+	authSsoScheme       = %q
+	authSsoSessionFile  = %q
+)
+
+var authSsoSkipPaths = authSsoSplitPaths(%q)
+
+var (
+	authSsoKeyOnce sync.Once
+	authSsoKey     *ecdsa.PublicKey
+	authSsoKeyErr  error
+)
+
+type authSsoSessionClaims struct {
+	Subject   string   `+"`json:\"sub\"`"+`
+	Issuer    string   `+"`json:\"iss\"`"+`
+	Audience  string   `+"`json:\"aud\"`"+`
+	TokenID   string   `+"`json:\"jti\"`"+`
+	Scopes    []string `+"`json:\"scp,omitempty\"`"+`
+	IssuedAt  int64    `+"`json:\"iat\"`"+`
+	NotBefore int64    `+"`json:\"nbf,omitempty\"`"+`
+	ExpiresAt int64    `+"`json:\"exp\"`"+`
+}
+
+type authSsoSessionKey struct{}
+
+func authSsoLoadKey() (*ecdsa.PublicKey, error) {
+	authSsoKeyOnce.Do(func() {
+		path := os.Getenv("RHO_AUTH_PUBLIC_KEY")
+		if path == "" {
+			path = authSsoPublicKeyPath
+		}
+		if path == "" {
+			authSsoKeyErr = errors.New("no auth public key configured")
+			return
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			authSsoKeyErr = err
+			return
+		}
+		block, _ := pem.Decode(raw)
+		if block == nil {
+			authSsoKeyErr = errors.New("auth public key is not PEM")
+			return
+		}
+		var parsed any
+		if block.Type == "CERTIFICATE" {
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				authSsoKeyErr = err
+				return
+			}
+			parsed = cert.PublicKey
+		} else {
+			parsed, err = x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				authSsoKeyErr = err
+				return
+			}
+		}
+		key, ok := parsed.(*ecdsa.PublicKey)
+		if !ok {
+			authSsoKeyErr = errors.New("auth public key is not ECDSA")
+			return
+		}
+		authSsoKey = key
+	})
+	return authSsoKey, authSsoKeyErr
+}
+
+func authDecodeSegment(segment string) ([]byte, error) {
+	return base64.RawURLEncoding.DecodeString(segment)
+}
+
+func authSsoVerifySession(token string) (authSsoSessionClaims, bool) {
+	var claims authSsoSessionClaims
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 3 {
+		return claims, false
+	}
+	headerRaw, err := authDecodeSegment(parts[0])
+	if err != nil {
+		return claims, false
+	}
+	var header struct {
+		Algorithm string `+"`json:\"alg\"`"+`
+		KeyID     string `+"`json:\"kid,omitempty\"`"+`
+	}
+	if err := jsonenc.Unmarshal(headerRaw, &header); err != nil || header.Algorithm != "ES256" {
+		return claims, false
+	}
+	key, err := authSsoLoadKey()
+	if err != nil || key == nil {
+		return claims, false
+	}
+	signature, err := authDecodeSegment(parts[2])
+	if err != nil || len(signature) != 64 {
+		return claims, false
+	}
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	r := new(big.Int).SetBytes(signature[:32])
+	s := new(big.Int).SetBytes(signature[32:])
+	if !ecdsa.Verify(key, digest[:], r, s) {
+		return claims, false
+	}
+	payload, err := authDecodeSegment(parts[1])
+	if err != nil || jsonenc.Unmarshal(payload, &claims) != nil {
+		return claims, false
+	}
+	now := time.Now().Unix()
+	if claims.ExpiresAt > 0 && now >= claims.ExpiresAt+60 {
+		return claims, false
+	}
+	if claims.NotBefore > 0 && now+60 < claims.NotBefore {
+		return claims, false
+	}
+	if authSsoIssuer != "" && claims.Issuer != authSsoIssuer {
+		return claims, false
+	}
+	if authSsoAudience != "" && claims.Audience != authSsoAudience {
+		return claims, false
+	}
+	return claims, true
+}
+
+func authSsoSplitPaths(list string) []string {
+	out := []string{}
+	for _, path := range strings.Split(list, ",") {
+		path = strings.TrimSpace(path)
+		if path != "" {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func authSsoExempt(path string) bool {
+	for _, exempt := range authSsoSkipPaths {
+		if exempt == path || strings.HasPrefix(path, exempt+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func authSsoWantsJSON(r *http.Request) bool {
+	if strings.Contains(r.URL.Path, "/api/") {
+		return true
+	}
+	return strings.Contains(r.Header.Get("Accept"), "application/json")
+}
+
+func authSsoReturnTo(r *http.Request) string {
+	path := r.URL.RequestURI()
+	if authSsoBasePath != "" && !strings.HasPrefix(path, authSsoBasePath+"/") && path != authSsoBasePath {
+		path = authSsoBasePath + path
+	}
+	if authSsoMode == "proxy" && authSsoPublicURL != "" {
+		return strings.TrimRight(authSsoPublicURL, "/") + path
+	}
+	host := r.Host
+	proto := "http"
+	if r.TLS != nil || authSsoScheme == "https" {
+		proto = "https"
+	}
+	if authSsoTrustForwarded {
+		if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" {
+			host = forwarded
+		}
+		if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded == "http" || forwarded == "https" {
+			proto = forwarded
+		}
+	}
+	if authSsoScheme == "http" {
+		proto = "http"
+	}
+	return proto + "://" + host + path
+}
+
+func authSsoStateDir() string {
+	dir := os.Getenv("ROBOHUB_APP_WORKSPACE")
+	if dir != "" {
+		dir = dir + "/auth"
+	} else {
+		dir = filepath.Join(os.Getenv("HOME"), ".rho", "auth-app")
+	}
+	_ = os.MkdirAll(dir, 0o700)
+	return dir
+}
+
+func authSsoSessionPath() string {
+	if authSsoSessionFile != "" {
+		path := authSsoSessionFile
+		if strings.HasPrefix(path, "~/") {
+			path = filepath.Join(os.Getenv("HOME"), path[2:])
+		}
+		return path
+	}
+	return filepath.Join(authSsoStateDir(), "sessions.txt")
+}
+func authSsoJtiPath() string { return filepath.Join(authSsoStateDir(), "used-tickets.txt") }
+
+func authSsoNewID() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(raw)
+}
+
+func authSsoLookup(sid string) bool {
+	if sid == "" {
+		return false
+	}
+	raw, err := os.ReadFile(authSsoSessionPath())
+	if err != nil {
+		return false
+	}
+	now := time.Now().Unix()
+	for _, line := range strings.Split(string(raw), "\n") {
+		parts := strings.Split(line, "|")
+		if len(parts) < 2 || parts[0] != sid {
+			continue
+		}
+		exp, err := strconv.ParseInt(parts[1], 10, 64)
+		return err == nil && now < exp
+	}
+	return false
+}
+
+func authSsoCallback(w http.ResponseWriter, r *http.Request) bool {
+	path := authSsoBasePath + "/auth/callback"
+	if authSsoBasePath == "" {
+		path = "/auth/callback"
+	}
+	if r.URL.Path != path {
+		return false
+	}
+	ticket := r.URL.Query().Get("ticket")
+	claims, ok := authSsoVerifySession(ticket)
+	if !ok {
+		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+		return true
+	}
+	if claims.TokenID != "" {
+		used, _ := os.ReadFile(authSsoJtiPath())
+		if strings.Contains(string(used), claims.TokenID+"|") {
+			http.Error(w, "ticket already used", http.StatusUnauthorized)
+			return true
+		}
+		f, err := os.OpenFile(authSsoJtiPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, _ = f.WriteString(claims.TokenID + "|" + claims.Subject + "\n")
+			_ = f.Close()
+		}
+	}
+	sid := authSsoNewID()
+	if sid == "" {
+		http.Error(w, "could not open a session", http.StatusInternalServerError)
+		return true
+	}
+	expires := time.Now().Add(8 * time.Hour).Unix()
+	f, err := os.OpenFile(authSsoSessionPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		http.Error(w, "could not open a session", http.StatusInternalServerError)
+		return true
+	}
+	_, _ = f.WriteString(sid + "|" + strconv.FormatInt(expires, 10) + "|" + claims.Subject + "\n")
+	_ = f.Close()
+	cookiePath := authSsoBasePath
+	if cookiePath == "" {
+		cookiePath = "/"
+	}
+	http.SetCookie(w, &http.Cookie{Name: authSsoCookie, Value: sid, Path: cookiePath,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: authSsoScheme == "https" || (authSsoScheme == "auto" && r.TLS != nil)})
+	returnTo := r.URL.Query().Get("next")
+	if parsed, err := url.Parse(returnTo); err == nil && parsed.Host == r.Host {
+		returnTo = parsed.RequestURI()
+	}
+	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+		returnTo = authSsoBasePath
+		if returnTo == "" {
+			returnTo = "/"
+		}
+	}
+	http.Redirect(w, r, returnTo, http.StatusFound)
+	return true
+}
+
+func withAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authSsoCallback(w, r) {
+			return
+		}
+		if authSsoExempt(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			if claims, ok := authSsoVerifySession(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))); ok {
+				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, claims)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+		cookie, err := r.Cookie(authSsoCookie)
+		if err == nil && cookie.Value != "" {
+			if claims, ok := authSsoVerifySession(cookie.Value); ok {
+				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, claims)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			if authSsoLookup(cookie.Value) {
+				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, authSsoSessionClaims{Subject: "session"})
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+		if authSsoWantsJSON(r) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		target := authSsoLoginURL
+		if strings.HasPrefix(target, "/") {
+			target = authSsoAbsolute(r, target)
+		}
+		separator := "?"
+		if strings.Contains(target, "?") {
+			separator = "&"
+		}
+		callback := authSsoCallbackURL(r)
+		http.Redirect(w, r, target+separator+authSsoReturnParam+"="+
+			url.QueryEscape(callback)+"&next="+url.QueryEscape(authSsoReturnTo(r)),
+			http.StatusFound)
+	})
+}
+
+func authSsoCallbackURL(r *http.Request) string {
+	base := authSsoReturnTo(r)
+	if at := strings.Index(base, "://"); at >= 0 {
+		if slash := strings.Index(base[at+3:], "/"); slash >= 0 {
+			base = base[:at+3+slash]
+		}
+	}
+	return base + strings.TrimRight(authSsoBasePath, "/") + "/auth/callback"
+}
+
+func authSsoAbsolute(r *http.Request, path string) string {
+	base := authSsoReturnTo(r)
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Host == "" {
+		return path
+	}
+	host := parsed.Hostname()
+	if authSsoKeeperPort != "" {
+		host = net.JoinHostPort(host, authSsoKeeperPort)
+	}
+	return parsed.Scheme + "://" + host + path
+}
+
+func authSsoSession(r *http.Request) (authSsoSessionClaims, bool) {
+	claims, ok := r.Context().Value(authSsoSessionKey{}).(authSsoSessionClaims)
+	return claims, ok
+}
+`, issuer, audience, cookie, publicKey, mode, publicURL, basePath, loginURL,
+		keeperPort, returnParam, trustForwarded, scheme, sessionFile, skip)
+	return b.String()
+}

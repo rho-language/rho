@@ -119,6 +119,9 @@ const (
 	// MiddlewareJWT verifies a bearer token and refuses the request without
 	// one that is valid.
 	MiddlewareJWT = "jwt"
+	// MiddlewareAuth verifies an ES256 session cookie and redirects a browser
+	// to the authorization server when there is none.
+	MiddlewareAuth = "auth"
 )
 
 // Security schemes a service may declare. The list is deliberately short: a
@@ -140,6 +143,7 @@ var ValidMiddlewares = []string{
 	MiddlewareCORS,
 	MiddlewareRateLimit,
 	MiddlewareJWT,
+	MiddlewareAuth,
 }
 
 // ProjectDescriptorSchema returns the schema for project.yml.

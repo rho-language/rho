@@ -60,7 +60,7 @@ fn docs_index(req: Request) Response {
     if page == "" {
         return missing(req, "There is no page at that address.")
     }
-    return Response{ status_ok(), page, "text/html; charset=utf-8" }
+    return Response{ status_ok(), page, "text/html; charset=utf-8", "" }
 }
 
 // docs_page serves one page of the built site, as it was built.
@@ -70,7 +70,7 @@ fn docs_page(req: Request) Response {
     if page == "" {
         return missing(req, "There is no page at that address.")
     }
-    return Response{ status_ok(), page, content_type_of(path) }
+    return Response{ status_ok(), page, content_type_of(path), "" }
 }
 
 // releases lists the project's release notes in full.

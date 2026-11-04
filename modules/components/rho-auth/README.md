@@ -38,3 +38,22 @@ the command. The store is keyed by mechanism and by registry, so several kinds
 of credential coexist.
 
 Credentials live in `~/.rho/auth/credentials.json`, written owner-only.
+
+## SSO tickets
+
+`rho-auth` also carries the short-lived ticket a resource server verifies
+locally. The keeper holds the private key; every application holds only the
+public key.
+
+```sh
+rho auth keygen --dir ~/.rho/auth
+rho auth ticket --private ~/.rho/auth/private.pem \
+  --issuer keeper --audience aquarium --subject miraur --ttl 30s
+rho auth verify --public ~/.rho/auth/public.pem \
+  --issuer keeper --audience aquarium --token "$TICKET"
+```
+
+A ticket is an ES256 JWT with `sub`, `iss`, `aud`, `jti`, `iat`, `nbf`, `exp`,
+and optionally `redirect_uri` and `nonce`. `verify` checks the signature,
+issuer, audience and lifetime; the application must also keep the `jti` it has
+already used.

@@ -33,6 +33,7 @@ package codegen
 func emitDocStorePort(ctx PortContext) ([]string, string) {
 	imports := []string{
 		`"fmt"`,
+		`"html"`,
 		`"io"`,
 		`"io/fs"`,
 		`"os"`,
@@ -361,7 +362,14 @@ func docsReleases(path string) string {
 		if version == "" {
 			return
 		}
-		note := strings.Join(strings.Fields(strings.Join(body, " ")), " ")
+		paragraphs := []string{}
+		for _, paragraph := range strings.Split(strings.Join(body, "\n"), "\n\n") {
+			text := strings.Join(strings.Fields(paragraph), " ")
+			if text != "" {
+				paragraphs = append(paragraphs, html.EscapeString(text))
+			}
+		}
+		note := strings.Join(paragraphs, "<br><br>")
 		out = append(out, version+"\t"+date+"\t"+note)
 		version, date, body = "", "", nil
 	}
