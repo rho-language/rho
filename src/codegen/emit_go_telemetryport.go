@@ -216,9 +216,11 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 			project, gatewayID, int64(sequence), int64(area), int64(node),
 			field, value, status, received,
 		})
-		latest = append(latest, []any{
-			project, int64(area), int64(node), field, value, status, received,
-		})
+		if status == 0 {
+			latest = append(latest, []any{
+				project, int64(area), int64(node), field, value, status, received,
+			})
+		}
 		if sequence > maxSequence {
 			maxSequence = sequence
 		}
@@ -310,6 +312,131 @@ func telemetryLatest(project string, area uint32, node uint32, field string) str
 	})
 }
 
+// telemetryLatestText answers the newest value as text, for the live value a
+// source page shows. An empty string means the store has no reading yet, and
+// the caller falls back to the gateway's live state.
+func telemetryLatestText(project string, area uint32, node uint32, field string) string {
+	if !telemetryOpen("") {
+		return ""
+	}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return ""
+	}
+	var value float64
+	if err := handle.QueryRow(
+		"SELECT value FROM telemetry_latest "+
+			"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? AND status = 0",
+		project, int64(area), int64(node), field).Scan(&value); err != nil {
+		return ""
+	}
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+// telemetryJSONValue walks a decoded document by slash-separated segments.
+func telemetryJSONValue(document any, path string) (any, bool) {
+	current := document
+	for _, segment := range strings.Split(path, "/") {
+		switch node := current.(type) {
+		case map[string]any:
+			next, ok := node[segment]
+			if !ok {
+				return nil, false
+			}
+			current = next
+		case []any:
+			index, err := strconv.Atoi(segment)
+			if err != nil || index < 0 || index >= len(node) {
+				return nil, false
+			}
+			current = node[index]
+		default:
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+// telemetryJSONNumber answers a number at a JSON path, scaled, as text. An
+// empty string means the path was absent, which is not the same as zero.
+func telemetryJsonNumber(document string, path string, scaleText string) string {
+	var decoded any
+	if err := json.Unmarshal([]byte(document), &decoded); err != nil {
+		return ""
+	}
+	value, ok := telemetryJSONValue(decoded, path)
+	if !ok {
+		return ""
+	}
+	number, ok := value.(float64)
+	if !ok {
+		return ""
+	}
+	scale := 1.0
+	if parsed, err := strconv.ParseFloat(strings.TrimSpace(scaleText), 64); err == nil && parsed != 0 {
+		scale = parsed
+	}
+	return strconv.FormatFloat(number*scale, 'f', -1, 64)
+}
+
+// telemetryJSONBool answers a boolean at a JSON path as "true" or "false".
+func telemetryJsonBool(document string, path string) string {
+	var decoded any
+	if err := json.Unmarshal([]byte(document), &decoded); err != nil {
+		return ""
+	}
+	value, ok := telemetryJSONValue(decoded, path)
+	if !ok {
+		return ""
+	}
+	flag, ok := value.(bool)
+	if !ok {
+		return ""
+	}
+	if flag {
+		return "true"
+	}
+	return "false"
+}
+
+// telemetryRecord writes one reading a service read itself, rather than one a
+// gateway delivered. The synthetic feed is per field so the reading's unique
+// key stays meaningful, and the sequence is the receive time.
+func telemetryRecord(project string, area uint32, node uint32, field string, valueText string, status uint32) uint32 {
+	if !telemetryOpen("") {
+		return 0
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(valueText), 64)
+	if err != nil {
+		return 0
+	}
+	received := time.Now().UnixMilli()
+	feed := fmt.Sprintf("mesh:%s:%d:%d:%s", project, area, node, field)
+	reading := [][]any{{
+		project, feed, received, int64(area), int64(node), field, value,
+		int64(status), received,
+	}}
+	latest := [][]any{{
+		project, int64(area), int64(node), field, value, int64(status), received,
+	}}
+	return rhoSqlExecBatch(telemetryDB, "telemetry record", []rhoSqlStatementBatch{
+		{
+			SQL: "INSERT OR IGNORE INTO telemetry_reading " +
+				"(project, gateway_id, seq, area_id, node_id, field, value, status, received_ms) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			Rows: reading,
+		},
+		{
+			SQL: "INSERT INTO telemetry_latest " +
+				"(project, area_id, node_id, field, value, status, received_ms) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?) " +
+				"ON CONFLICT(project, area_id, node_id, field) DO UPDATE SET " +
+				"value = excluded.value, status = excluded.status, received_ms = excluded.received_ms",
+			Rows: latest,
+		},
+	})
+}
+
 // telemetrySeries answers a time range, raw when step is zero and averaged into
 // buckets when it is not. The bucket arithmetic is done by the database so a
 // long range is not walked one row at a time in this process.
@@ -369,13 +496,13 @@ func telemetrySeries(project string, area uint32, node uint32, field string, fro
 		rows, err = handle.Query(
 			"SELECT received_ms, value FROM telemetry_reading "+
 				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
-				"AND received_ms >= ? AND received_ms <= ? ORDER BY received_ms LIMIT 5000",
+				"AND received_ms >= ? AND received_ms <= ? AND status = 0 ORDER BY received_ms LIMIT 5000",
 			project, int64(area), int64(node), field, from, to)
 	default:
 		rows, err = handle.Query(
 			"SELECT (received_ms / ?) * ? AS bucket, AVG(value) FROM telemetry_reading "+
 				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
-				"AND received_ms >= ? AND received_ms <= ? GROUP BY bucket ORDER BY bucket LIMIT 5000",
+				"AND received_ms >= ? AND received_ms <= ? AND status = 0 GROUP BY bucket ORDER BY bucket LIMIT 5000",
 			step, step, project, int64(area), int64(node), field, from, to)
 	}
 	if err != nil {
@@ -412,7 +539,7 @@ func telemetrySeries(project string, area uint32, node uint32, field string, fro
 		fallback, fallbackErr = handle.Query(
 			"SELECT (received_ms / ?) * ? AS bucket, AVG(value) FROM telemetry_reading "+
 				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
-				"AND received_ms >= ? AND received_ms <= ? GROUP BY bucket ORDER BY bucket LIMIT 5000",
+				"AND received_ms >= ? AND received_ms <= ? AND status = 0 GROUP BY bucket ORDER BY bucket LIMIT 5000",
 			step, step, project, int64(area), int64(node), field, from, to)
 		if fallbackErr == nil {
 			if fallbackRows, ok := fallback.(rowSet); ok {
@@ -458,7 +585,7 @@ func telemetryRollup(project string) string {
 				"(project, area_id, node_id, field, bucket_ms, value_min, value_max, value_avg, samples) "+
 				"SELECT project, area_id, node_id, field, (received_ms / 60000) * 60000, "+
 				"MIN(value), MAX(value), AVG(value), COUNT(*) FROM telemetry_reading "+
-				"WHERE project = ? AND received_ms >= ? AND received_ms < ? "+
+				"WHERE project = ? AND received_ms >= ? AND received_ms < ? AND status = 0 "+
 				"GROUP BY project, area_id, node_id, field, (received_ms / 60000) * 60000",
 			project, lastMinute, minuteCutoff); err != nil {
 			return telemetryError("the minute rollup failed")

@@ -44,6 +44,7 @@ func emitGatewayPort(ctx PortContext) ([]string, string) {
 		`"net/http"`,
 		`"os"`,
 		`"path/filepath"`,
+		`"sort"`,
 		`"strconv"`,
 		`"strings"`,
 		`"sync"`,
@@ -539,6 +540,27 @@ func gatewayStateSet(key string, value string) {
 }
 
 // gatewayStateGet reads a value, or "" when the key is unset.
+// gatewayStateFields lists the generic sensor fields stored under a device
+// prefix. The firmware writes one per module and signal as m<index>.<field>;
+// the gateway listing shows them without knowing the module numbering.
+func gatewayStateFields(prefix string) string {
+	gatewayStateMu.RLock()
+	names := make([]string, 0)
+	for key := range gatewayState {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(key, prefix)
+		if len(name) < 2 || name[0] != 'm' || name[1] < '0' || name[1] > '9' {
+			continue
+		}
+		names = append(names, name)
+	}
+	gatewayStateMu.RUnlock()
+	sort.Strings(names)
+	return strings.Join(names, "\n")
+}
+
 func gatewayStateGet(key string) string {
 	gatewayStateMu.RLock()
 	value := gatewayState[key]
