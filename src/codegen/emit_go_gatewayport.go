@@ -35,12 +35,15 @@ package codegen
 // declares as `extern fn` and nothing more.
 func emitGatewayPort(ctx PortContext) ([]string, string) {
 	imports := []string{
+		`"bufio"`,
 		`"bytes"`,
+		`"encoding/json"`,
 		`"fmt"`,
 		`"io"`,
 		`"net"`,
 		`"net/http"`,
 		`"os"`,
+		`"path/filepath"`,
 		`"strconv"`,
 		`"strings"`,
 		`"sync"`,
@@ -608,6 +611,335 @@ func gatewayRpcSignal(tx uint32, payload string) bool {
 	default:
 		return false
 	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Telemetry outbox                                                          */
+/* -------------------------------------------------------------------------- */
+
+// gatewayF32FromStr converts a figure a device API returned as text. A figure
+// the device wrote differently is zero rather than a failed reading, because
+// the poll has already decided the field is present.
+func gatewayF32FromStr(value string) float32 {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		return 0
+	}
+	return float32(parsed)
+}
+
+// gatewayOutboxRecord is one normalized reading waiting for the aggregator.
+//
+// A frame carries a message; a reading is one signal of one device at one
+// moment, which is what a time-series store wants and what a consumer asks for
+// by name. The gateway normalizes a PowerReading into one record per valid
+// field, so the same record shape carries a temperature, a power and a state.
+type gatewayOutboxRecord struct {
+	Seq        uint32  ` + "`json:\"seq\"`" + `
+	AreaID     uint32  ` + "`json:\"area_id\"`" + `
+	NodeID     uint32  ` + "`json:\"node_id\"`" + `
+	Field      string  ` + "`json:\"field\"`" + `
+	Value      float32 ` + "`json:\"value\"`" + `
+	Status     uint32  ` + "`json:\"status\"`" + `
+	ReceivedMS int64   ` + "`json:\"received_ms\"`" + `
+}
+
+type gatewayOutboxState struct {
+	mu      sync.Mutex
+	file    *os.File
+	writer  *bufio.Writer
+	path    string
+	records []gatewayOutboxRecord
+	base    uint32
+	nextSeq uint32
+	dropped uint32
+	pending int
+	max     int
+	started bool
+}
+
+var gatewayOutbox gatewayOutboxState
+
+func gatewayOutboxPath() string {
+	if path := strings.TrimSpace(os.Getenv("OUTBOX_PATH")); path != "" {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".rho", "robohub", "gateway-outbox.jsonl")
+	}
+	return "gateway-outbox.jsonl"
+}
+
+func gatewayOutboxOpen(path string) bool {
+	gatewayOutbox.mu.Lock()
+	defer gatewayOutbox.mu.Unlock()
+	if gatewayOutbox.started {
+		return true
+	}
+	if path == "" {
+		path = gatewayOutboxPath()
+	}
+	if directory := filepath.Dir(path); directory != "" && directory != "." {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "gateway: outbox directory: %v\n", err)
+			return false
+		}
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gateway: outbox open: %v\n", err)
+		return false
+	}
+	if raw, err := os.ReadFile(path + ".ack"); err == nil {
+		if parsed, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 32); err == nil {
+			gatewayOutbox.base = uint32(parsed)
+		}
+	}
+	// The sequence must not restart at one after the outbox was emptied: an
+	// aggregator remembers the last sequence it committed, and a new reading
+	// with an old number would be skipped as already stored.
+	gatewayOutbox.nextSeq = gatewayOutbox.base
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var record gatewayOutboxRecord
+		if err := json.Unmarshal(line, &record); err != nil || record.Seq == 0 {
+			continue
+		}
+		if record.Seq <= gatewayOutbox.base {
+			continue
+		}
+		gatewayOutbox.records = append(gatewayOutbox.records, record)
+		if record.Seq > gatewayOutbox.nextSeq {
+			gatewayOutbox.nextSeq = record.Seq
+		}
+	}
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		file.Close()
+		return false
+	}
+	gatewayOutbox.file = file
+	gatewayOutbox.writer = bufio.NewWriterSize(file, 64*1024)
+	gatewayOutbox.path = path
+	gatewayOutbox.max = 200000
+	if raw := strings.TrimSpace(os.Getenv("OUTBOX_MAX_ROWS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			gatewayOutbox.max = parsed
+		}
+	}
+	gatewayOutbox.started = true
+	go gatewayOutboxFlushLoop()
+	return true
+}
+
+func gatewayOutboxFlushLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		gatewayOutboxFlush()
+	}
+}
+
+func gatewayOutboxFlush() {
+	gatewayOutbox.mu.Lock()
+	defer gatewayOutbox.mu.Unlock()
+	if gatewayOutbox.writer == nil {
+		return
+	}
+	if err := gatewayOutbox.writer.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "gateway: outbox flush: %v\n", err)
+		return
+	}
+	if err := gatewayOutbox.file.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "gateway: outbox sync: %v\n", err)
+	}
+	gatewayOutbox.pending = 0
+}
+
+// gatewayOutboxCompact rewrites the file from the records still held. The
+// caller holds the lock. An ack or an overflow therefore costs one sequential
+// write rather than a log that grows until the disk is full.
+func gatewayOutboxCompact() {
+	if gatewayOutbox.file == nil {
+		return
+	}
+	if err := gatewayOutbox.writer.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "gateway: outbox flush: %v\n", err)
+		return
+	}
+	temp := gatewayOutbox.path + ".tmp"
+	file, err := os.Create(temp)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gateway: outbox compact: %v\n", err)
+		return
+	}
+	writer := bufio.NewWriterSize(file, 64*1024)
+	for _, record := range gatewayOutbox.records {
+		line, err := json.Marshal(record)
+		if err != nil {
+			continue
+		}
+		writer.Write(line)
+		writer.WriteByte('\n')
+	}
+	if err := writer.Flush(); err != nil {
+		file.Close()
+		return
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return
+	}
+	file.Close()
+	gatewayOutbox.file.Close()
+	if err := os.Rename(temp, gatewayOutbox.path); err != nil {
+		fmt.Fprintf(os.Stderr, "gateway: outbox rename: %v\n", err)
+		return
+	}
+	file, err = os.OpenFile(gatewayOutbox.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gateway: outbox reopen: %v\n", err)
+		return
+	}
+	gatewayOutbox.file = file
+	gatewayOutbox.writer = bufio.NewWriterSize(file, 64*1024)
+	gatewayOutbox.pending = 0
+	_ = os.WriteFile(gatewayOutbox.path+".ack",
+		[]byte(strconv.FormatUint(uint64(gatewayOutbox.base), 10)), 0o644)
+}
+
+func gatewayOutboxAppend(areaID uint32, nodeID uint32, field string, value float32, status uint32, receivedMS string) uint32 {
+	if !gatewayOutboxOpen("") {
+		return 0
+	}
+	received := time.Now().UnixMilli()
+	if parsed, err := strconv.ParseInt(strings.TrimSpace(receivedMS), 10, 64); err == nil && parsed > 0 {
+		received = parsed
+	}
+	gatewayOutbox.mu.Lock()
+	defer gatewayOutbox.mu.Unlock()
+	gatewayOutbox.nextSeq++
+	record := gatewayOutboxRecord{
+		Seq:        gatewayOutbox.nextSeq,
+		AreaID:     areaID,
+		NodeID:     nodeID,
+		Field:      field,
+		Value:      value,
+		Status:     status,
+		ReceivedMS: received,
+	}
+	line, err := json.Marshal(record)
+	if err != nil {
+		gatewayOutbox.dropped++
+		return 0
+	}
+	if _, err := gatewayOutbox.writer.Write(line); err != nil {
+		gatewayOutbox.dropped++
+		return 0
+	}
+	if err := gatewayOutbox.writer.WriteByte('\n'); err != nil {
+		gatewayOutbox.dropped++
+		return 0
+	}
+	gatewayOutbox.records = append(gatewayOutbox.records, record)
+	gatewayOutbox.pending++
+	if gatewayOutbox.max > 0 && len(gatewayOutbox.records) > gatewayOutbox.max {
+		drop := len(gatewayOutbox.records) - gatewayOutbox.max
+		if dropped := gatewayOutbox.records[drop-1].Seq; dropped > gatewayOutbox.base {
+			gatewayOutbox.base = dropped
+		}
+		gatewayOutbox.records = append(gatewayOutbox.records[:0], gatewayOutbox.records[drop:]...)
+		gatewayOutbox.dropped += uint32(drop)
+		gatewayOutboxCompact()
+	}
+	if gatewayOutbox.pending >= 100 {
+		if err := gatewayOutbox.writer.Flush(); err != nil {
+			gatewayOutbox.dropped++
+		} else if err := gatewayOutbox.file.Sync(); err != nil {
+			gatewayOutbox.dropped++
+		}
+		gatewayOutbox.pending = 0
+	}
+	return record.Seq
+}
+
+func gatewayOutboxAppendU32(areaID uint32, nodeID uint32, field string, value uint32, status uint32, receivedMS string) uint32 {
+	return gatewayOutboxAppend(areaID, nodeID, field, float32(value), status, receivedMS)
+}
+
+func gatewayOutboxFetch(after uint32, limit uint32) string {
+	if !gatewayOutboxOpen("") {
+		return "[]"
+	}
+	if limit == 0 || limit > 1000 {
+		limit = 500
+	}
+	gatewayOutbox.mu.Lock()
+	out := make([]gatewayOutboxRecord, 0, limit)
+	for _, record := range gatewayOutbox.records {
+		if record.Seq <= after {
+			continue
+		}
+		out = append(out, record)
+		if uint32(len(out)) >= limit {
+			break
+		}
+	}
+	gatewayOutbox.mu.Unlock()
+	if len(out) == 0 {
+		return "[]"
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+func gatewayOutboxAck(seq uint32) uint32 {
+	if !gatewayOutboxOpen("") {
+		return 0
+	}
+	gatewayOutbox.mu.Lock()
+	defer gatewayOutbox.mu.Unlock()
+	kept := gatewayOutbox.records[:0]
+	var removed uint32
+	for _, record := range gatewayOutbox.records {
+		if record.Seq <= seq {
+			removed++
+			continue
+		}
+		kept = append(kept, record)
+	}
+	gatewayOutbox.records = kept
+	if removed > 0 && seq > gatewayOutbox.base {
+		gatewayOutbox.base = seq
+		_ = os.WriteFile(gatewayOutbox.path+".ack",
+			[]byte(strconv.FormatUint(uint64(gatewayOutbox.base), 10)), 0o644)
+	}
+	if len(gatewayOutbox.records) == 0 {
+		gatewayOutboxCompact()
+	}
+	return removed
+}
+
+func gatewayOutboxStatus() string {
+	if !gatewayOutboxOpen("") {
+		return "{\"available\":false}"
+	}
+	gatewayOutbox.mu.Lock()
+	path := gatewayOutbox.path
+	depth := len(gatewayOutbox.records)
+	base := gatewayOutbox.base
+	last := gatewayOutbox.nextSeq
+	dropped := gatewayOutbox.dropped
+	gatewayOutbox.mu.Unlock()
+	return fmt.Sprintf("{\"available\":true,\"path\":%q,\"depth\":%d,\"base_seq\":%d,\"last_seq\":%d,\"dropped\":%d}",
+		path, depth, base, last, dropped)
 }
 `
 }

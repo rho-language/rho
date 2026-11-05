@@ -155,6 +155,19 @@ extern fn sql_apply(db: SqlDb, schema: string) u32
 // were written, because that is the order a caller has them in.
 extern fn sql_exec(db: SqlDb, name: string, sql: string, values: Slice[SqlValue], affected: Ptr[u32]) u32
 
+// sql_exec_many runs one statement once per row, in a single transaction.
+//
+// `columns` is how many values one row has, so `values` is read as row-major:
+// the first `columns` values are row one, the next `columns` are row two, and so
+// on. A statement that inserts one row is the ordinary use: preparing it once
+// and executing it for every row is what makes a batch one write rather than
+// one write per row.
+//
+// The batch is atomic. If any row fails, the transaction is rolled back and the
+// call returns zero; a caller that sees zero reports the engine's message and
+// knows that no row of the batch was kept.
+extern fn sql_exec_many(db: SqlDb, name: string, sql: string, columns: u32, values: Slice[SqlValue], affected: Ptr[u32]) u32
+
 // sql_prepare compiles a statement and answers a handle to it.
 //
 // Preparing is separate from running because it is the only way to read a
