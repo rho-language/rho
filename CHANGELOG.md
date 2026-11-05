@@ -4,18 +4,6 @@ Notable changes to the Rho toolchain, one section per release. The section for
 the version being published is what a registry shows against that version, so
 this is the file the handbook's overview reads.
 
-## [Unreleased]
-
-`sql_exec_many` runs one prepared statement once per row in a single
-transaction, so a service can write a batch instead of committing every row.
-The `telemetry` port uses it to ingest a gateway's sequenced outbox into a
-project's store, and serves latest and time-range queries over the schema the
-project declared. The sql port now writes its affected count through the
-out-parameter instead of into a copy, and no longer takes the handle-table lock
-twice in a statement. The telemetry port folds raw readings into one-minute and
-hourly rollups, prunes each window separately, and sends a gateway bearer token
-when the deployment names one.
-
 ## [0.1.0] - 2026-10-12
 
 First release of the Rho toolchain: the compiler, the C and Go backends, the
@@ -178,4 +166,26 @@ tickets, local sessions, and HTTPS-aware cookies. `rho auth` gained `keygen`,
 `ticket` and `verify`, and generated responses can carry headers, which is what
 lets a login set a cookie and redirect.
 
+## [0.2.0] - 2026-11-05
+
+Telemetry is now a toolchain feature rather than an application convention.
+
+- `sql_exec_many` runs one prepared statement once per row in a single
+  transaction, so a service can write a batch instead of committing every row.
+  The sql port now writes its affected count through the out-parameter instead
+  of into a copy, and no longer takes the handle-table lock twice in a statement.
+- The `telemetry` port ingests a gateway's sequenced outbox into a project's
+  store: it polls the outbox, writes a page in one transaction, serves latest
+  and time-range queries, and rolls completed minutes and hours up before
+  retention. A service can serve latest and series over the schema its project
+  declares.
+- The gateway port lists the generic sensor fields a firmware publishes, so a
+  listing carries every `m<index>.<field>` a board reports, and records sensor
+  frames in its history.
+- The telemetry port excludes fault readings from latest values, rollups and
+  series, walks a JSON path for HTTP device descriptors, applies the
+  descriptor's scale before storing the value, and records a reading a service
+  read itself.
+- The gateway port also sends a gateway bearer token when the deployment names
+  one.
 
