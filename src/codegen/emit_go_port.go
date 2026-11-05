@@ -175,6 +175,7 @@ var portGenerators = map[string]portGenerator{
 	"httproute":   emitHTTPRoutePort,
 	"openapiemit": emitOpenAPIPort,
 	"sql":         emitSQLPort,
+	"telemetry":   emitTelemetryPort,
 }
 
 // RegisteredPorts lists the available port names.

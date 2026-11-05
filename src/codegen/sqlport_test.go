@@ -21,11 +21,13 @@
 package codegen
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rho/src/ir"
 )
@@ -115,14 +117,40 @@ func TestThePortImplementsTheWholeStandardSurface(t *testing.T) {
 	port := EmitGoPorts(PortContext{ModuleName: "billing"}, []string{"sql"})
 	for _, declared := range []string{
 		"func stdSqlSqlOpen(", "func stdSqlSqlClose(", "func stdSqlSqlLastMessage(",
-		"func stdSqlSqlApply(", "func stdSqlSqlExec(", "func stdSqlSqlPrepare(",
-		"func stdSqlSqlRun(", "func stdSqlSqlReset(", "func stdSqlSqlFinalize(",
+		"func stdSqlSqlApply(", "func stdSqlSqlExec(", "func stdSqlSqlExecMany(",
+		"func stdSqlSqlPrepare(", "func stdSqlSqlRun(", "func stdSqlSqlReset(", "func stdSqlSqlFinalize(",
 		"func stdSqlSqlColumnCount(", "func stdSqlSqlColumnName(", "func stdSqlSqlColumnType(",
 		"func stdSqlSqlReadColumn(", "func stdSqlSqlBind(",
 	} {
 		if !strings.Contains(port, declared) {
 			t.Errorf("the port does not implement %s", declared)
 		}
+	}
+}
+
+// A batch is one statement prepared once and executed per row inside one
+// transaction. The port must expose the whole of that, not a per-row call the
+// caller would have to wrap itself.
+func TestThePortImplementsBatchExecution(t *testing.T) {
+	port := EmitGoPorts(PortContext{ModuleName: "billing"}, []string{"sql"})
+	if !strings.Contains(port, "func stdSqlSqlExecMany(db SqlDb, name string, query string, columns uint32, values SliceSqlValue, affected PtrU32) uint32") {
+		t.Error("the port does not implement sql_exec_many")
+	}
+	for _, part := range []string{"handle.Begin()", "transaction.Prepare(", "transaction.Commit()", "transaction.Rollback()"} {
+		if !strings.Contains(port, part) {
+			t.Errorf("the batch path does not contain %s", part)
+		}
+	}
+}
+
+// Looking a handle up already takes the lock, so a caller that takes it first
+// would wait on itself forever. The generated port is checked at the source
+// level because the mistake is a deadlock rather than a wrong value, and a
+// test that ran it would time out instead of reporting what is wrong.
+func TestAStatementDoesNotLockAroundTheHandleLookup(t *testing.T) {
+	port := EmitGoPorts(PortContext{ModuleName: "billing"}, []string{"sql"})
+	if strings.Contains(port, "rhoSqlMu.Lock()\n\thandle, ok := rhoSqlHandle(") {
+		t.Error("a statement takes the handle-table lock and then asks for the handle, which locks it again")
 	}
 }
 
@@ -224,6 +252,196 @@ func TestTheGeneratedProgramWithThePortCompiles(t *testing.T) {
 	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Errorf("a project that declared SQL and got the port does not build: %v\n%s", err, out)
+	}
+}
+
+// The batch path is exercised against a driver that can refuse a row, because
+// the property that matters is not that the call compiles: it is that a failure
+// in the middle leaves none of the earlier rows committed.
+func TestABatchIsOneTransactionAndRollsBackOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	root := t.TempDir()
+
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("ports.go", EmitGoPorts(PortContext{ModuleName: "billing"}, []string{"sql"}))
+	write("types.go", `package main
+
+type SqlDb struct{ raw uint64 }
+type SqlStmt struct{ raw uint64 }
+type SqlValue struct {
+	kind    int32
+	integer int64
+	real    float64
+	boolean bool
+	text    string
+	blob    string
+	isNull  bool
+}
+type SliceSqlValue struct {
+	ptr PtrUnit
+	len uint32
+}
+type PtrUnit struct{ raw uint64 }
+type PtrU32 struct{ raw uint64 }
+type PtrSqlValue struct{ raw uint64 }
+type ResultSqlDbString struct {
+	isOk bool
+	ok   SqlDb
+	err  string
+}
+`)
+	// A driver that records what committed and refuses the sentinel 99. It is
+	// enough of database/sql to exercise the port's own transaction handling,
+	// and it keeps the test free of a database dependency.
+	write("driver.go", `package main
+
+import (
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+)
+
+type fakeDriver struct{}
+type fakeConn struct {
+	pending   int
+	committed int
+	executed  []string
+}
+type fakeStmt struct {
+	conn  *fakeConn
+	query string
+}
+type fakeTx struct{ conn *fakeConn }
+
+var fake *fakeConn
+
+func (fakeDriver) Open(string) (driver.Conn, error) { fake = &fakeConn{}; return fake, nil }
+func (c *fakeConn) Prepare(query string) (driver.Stmt, error) {
+	return &fakeStmt{conn: c, query: query}, nil
+}
+func (c *fakeConn) Close() error { return nil }
+func (c *fakeConn) Begin() (driver.Tx, error) { return &fakeTx{conn: c}, nil }
+func (s *fakeStmt) Close() error { return nil }
+func (s *fakeStmt) NumInput() int { return -1 }
+func (s *fakeStmt) Exec(args []driver.Value) (driver.Result, error) {
+	s.conn.executed = append(s.conn.executed, s.query)
+	for _, arg := range args {
+		if n, ok := arg.(int64); ok && n == 99 {
+			return nil, errors.New("refused")
+		}
+	}
+	s.conn.pending++
+	return driver.RowsAffected(1), nil
+}
+func (s *fakeStmt) Query([]driver.Value) (driver.Rows, error) { return nil, errors.New("no rows") }
+func (t *fakeTx) Commit() error {
+	t.conn.committed += t.conn.pending
+	t.conn.pending = 0
+	return nil
+}
+func (t *fakeTx) Rollback() error {
+	t.conn.pending = 0
+	return nil
+}
+
+func init() { sql.Register("fake", fakeDriver{}) }
+`)
+	write("main.go", `package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"unsafe"
+)
+
+func sliceOf(values []SqlValue) SliceSqlValue {
+	if len(values) == 0 {
+		return SliceSqlValue{}
+	}
+	return SliceSqlValue{
+		ptr: PtrUnit{raw: uint64(uintptr(unsafe.Pointer(&values[0])))},
+		len: uint32(len(values)),
+	}
+}
+
+func main() {
+	opened := stdSqlSqlOpen("fake.db")
+	if !opened.isOk {
+		fmt.Println("open failed:", opened.err)
+		os.Exit(1)
+	}
+	db := opened.ok
+
+	schema := "PRAGMA journal_mode=WAL; CREATE TABLE t (id INTEGER); CREATE INDEX i ON t(id);"
+	if applied := stdSqlSqlApply(db, schema); applied != 3 {
+		fmt.Println("schema apply did not run every statement:", applied)
+		os.Exit(1)
+	}
+	if len(fake.executed) < 3 ||
+		!strings.Contains(fake.executed[0], "PRAGMA") ||
+		!strings.Contains(fake.executed[1], "CREATE TABLE") ||
+		!strings.Contains(fake.executed[2], "CREATE INDEX") {
+		fmt.Println("schema apply did not pass every statement through:", fake.executed)
+		os.Exit(1)
+	}
+	fake.executed = nil
+	fake.pending = 0
+	fake.committed = 0
+
+	good := []SqlValue{
+		{kind: 1, integer: 1}, {kind: 4, text: "a"},
+		{kind: 1, integer: 2}, {kind: 4, text: "b"},
+	}
+	var affectedCount uint32
+	affected := PtrU32{raw: uint64(uintptr(unsafe.Pointer(&affectedCount)))}
+	ok := stdSqlSqlExecMany(db, "insert", "INSERT INTO t (id, name) VALUES (?, ?)", 2, sliceOf(good), affected)
+	if ok != 1 || affectedCount != 2 || fake.committed != 2 {
+		fmt.Printf("batch failed: ok=%d affected=%d committed=%d err=%s\n",
+			ok, affectedCount, fake.committed, rhoSqlLastErrMsg)
+		os.Exit(1)
+	}
+
+	before := fake.committed
+	bad := []SqlValue{
+		{kind: 1, integer: 3}, {kind: 4, text: "c"},
+		{kind: 1, integer: 99}, {kind: 4, text: "d"},
+	}
+	var rollbackCount uint32
+	rollbackAffected := PtrU32{raw: uint64(uintptr(unsafe.Pointer(&rollbackCount)))}
+	ok = stdSqlSqlExecMany(db, "insert", "INSERT INTO t (id, name) VALUES (?, ?)", 2, sliceOf(bad), rollbackAffected)
+	if ok != 0 || rollbackCount != 0 || fake.committed != before {
+		fmt.Printf("rollback failed: ok=%d affected=%d committed=%d err=%s\n",
+			ok, rollbackCount, fake.committed, rhoSqlLastErrMsg)
+		os.Exit(1)
+	}
+	fmt.Println("PASS")
+}
+`)
+	write("go.mod", "module batchtest\n\ngo 1.18\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	run := exec.CommandContext(ctx, "go", "run", ".")
+	run.Dir = root
+	run.Env = append(os.Environ(), "GOWORK=off", "RHO_SQL_DRIVER=fake")
+	out, err := run.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("the batch program did not finish: %v\n%s", ctx.Err(), out)
+	}
+	if err != nil {
+		t.Fatalf("the batch program failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Fatalf("the batch program did not pass:\n%s", out)
 	}
 }
 
@@ -354,4 +572,59 @@ func portLines(text, name string) string {
 		return line
 	}
 	return text
+}
+
+// The telemetry port is written against the sql port, so the two have to be
+// generated together and the result has to compile. This is the seam a project
+// with a `telemetry` port and a `sql:` block gets.
+func TestTheTelemetryPortCompilesWithTheSQLPort(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	root := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("types.go", `package main
+
+type SqlDb struct{ raw uint64 }
+type SqlStmt struct{ raw uint64 }
+type SqlValue struct {
+	kind    int32
+	integer int64
+	real    float64
+	boolean bool
+	text    string
+	blob    string
+	isNull  bool
+}
+type SliceSqlValue struct {
+	ptr PtrUnit
+	len uint32
+}
+type PtrUnit struct{ raw uint64 }
+type PtrU32 struct{ raw uint64 }
+type PtrSqlValue struct{ raw uint64 }
+type ResultSqlDbString struct {
+	isOk bool
+	ok   SqlDb
+	err  string
+}
+`)
+	write("ports.go", EmitGoPorts(PortContext{
+		ModuleName: "mesh",
+		SQLSchema:  "CREATE TABLE telemetry_reading (project TEXT, area_id INTEGER, node_id INTEGER, field TEXT, value REAL, status INTEGER, received_ms INTEGER);",
+	}, []string{"sql", "telemetry"}))
+	write("main.go", "package main\n\nfunc main() {}\n")
+	write("go.mod", "module telemetrytest\n\ngo 1.18\n")
+
+	build := exec.Command("go", "build", ".")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("the telemetry port does not compile with the sql port: %v\n%s", err, out)
+	}
 }

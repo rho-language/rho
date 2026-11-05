@@ -4,6 +4,18 @@ Notable changes to the Rho toolchain, one section per release. The section for
 the version being published is what a registry shows against that version, so
 this is the file the handbook's overview reads.
 
+## [Unreleased]
+
+`sql_exec_many` runs one prepared statement once per row in a single
+transaction, so a service can write a batch instead of committing every row.
+The `telemetry` port uses it to ingest a gateway's sequenced outbox into a
+project's store, and serves latest and time-range queries over the schema the
+project declared. The sql port now writes its affected count through the
+out-parameter instead of into a copy, and no longer takes the handle-table lock
+twice in a statement. The telemetry port folds raw readings into one-minute and
+hourly rollups, prunes each window separately, and sends a gateway bearer token
+when the deployment names one.
+
 ## [0.1.0] - 2026-10-12
 
 First release of the Rho toolchain: the compiler, the C and Go backends, the

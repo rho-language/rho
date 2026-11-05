@@ -43,7 +43,8 @@ to see what it does.
 | `fsstore` | A module store on the filesystem: put, get, search, list | the registry |
 | `logemit` | Writing a log record, with the formatter's own shape | any project that logs |
 | `docemit` | The documentation generator, as a page or a site | a project that serves documentation |
-| `gateway` | A serial link, UDP delivery, a monotonic clock and a wall clock, shared state and tx-id correlation | an edge gateway that reads a node and streams what it reads |
+| `gateway` | A serial link, UDP delivery, a monotonic clock and a wall clock, shared state, tx-id correlation and the telemetry outbox | an edge gateway that reads a node and streams what it reads |
+| `telemetry` | Polling a gateway outbox, writing a batch through the sql port, latest and time-range queries | an aggregator that keeps a series for other applications |
 
 ## A worked example
 

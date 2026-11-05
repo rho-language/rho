@@ -380,7 +380,6 @@ func rhoSqlStatements(schema string) []string {
 // statement's shape, which is how a caller types a result rather than guessing
 // at one from the select list.
 func stdSqlSqlPrepare(db SqlDb, query string, stmt *SqlStmt) uint32 {
-	rhoSqlMu.Lock()
 	handle, ok := rhoSqlHandle(db.raw)
 	if !ok {
 		return 0
@@ -546,7 +545,6 @@ func stdSqlSqlColumnType(stmt SqlStmt, index uint32) string {
 
 // stdSqlSqlExec runs a statement that changes rows, and answers how many it changed.
 func stdSqlSqlExec(db SqlDb, name string, query string, values SliceSqlValue, affected PtrU32) uint32 {
-	rhoSqlMu.Lock()
 	handle, ok := rhoSqlHandle(db.raw)
 	if !ok {
 		return 0
@@ -560,7 +558,117 @@ func stdSqlSqlExec(db SqlDb, name string, query string, values SliceSqlValue, af
 	// fact about the statement rather than a failure, and the caller is told 0
 	// rather than a number it would report as a change that did not happen.
 	if rows, err := result.RowsAffected(); err == nil && rows > 0 {
-		affected.raw = uint64(rows)
+		rhoSqlSetMore(affected, uint32(rows))
+	}
+	return 1
+}
+
+// stdSqlSqlExecMany runs one statement once per row, in one transaction.
+//
+// The values are row-major and columns says how many of them make a row. The
+// statement is prepared once and executed per row, so a batch of reads is one
+// prepare and one commit rather than one of each per row.
+func stdSqlSqlExecMany(db SqlDb, name string, query string, columns uint32, values SliceSqlValue, affected PtrU32) uint32 {
+	handle, ok := rhoSqlHandle(db.raw)
+	if !ok {
+		return 0
+	}
+	if columns == 0 {
+		rhoSqlFail(fmt.Errorf("%s: a batch with no columns has no rows", name))
+		return 0
+	}
+	args := rhoSqlArgs(values)
+	if len(args) == 0 || len(args)%int(columns) != 0 {
+		rhoSqlFail(fmt.Errorf("%s: %d values do not fill rows of %d", name, len(args), columns))
+		return 0
+	}
+	transaction, err := handle.Begin()
+	if err != nil {
+		rhoSqlFail(err)
+		return 0
+	}
+	statement, err := transaction.Prepare(query)
+	if err != nil {
+		_ = transaction.Rollback()
+		rhoSqlFail(err)
+		return 0
+	}
+	var total int64
+	for start := 0; start < len(args); start += int(columns) {
+		result, execErr := statement.Exec(args[start : start+int(columns)]...)
+		if execErr != nil {
+			_ = statement.Close()
+			_ = transaction.Rollback()
+			rhoSqlFail(execErr)
+			return 0
+		}
+		if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows > 0 {
+			total += rows
+		}
+	}
+	if err := statement.Close(); err != nil {
+		_ = transaction.Rollback()
+		rhoSqlFail(err)
+		return 0
+	}
+	if err := transaction.Commit(); err != nil {
+		rhoSqlFail(err)
+		return 0
+	}
+	if total > 0 {
+		rhoSqlSetMore(affected, uint32(total))
+	}
+	return 1
+}
+
+// rhoSqlStatementBatch is one statement and the rows it is executed for. It is
+// the shape another generated port uses to write a batch through one
+// transaction; it is not part of the Rho surface.
+type rhoSqlStatementBatch struct {
+	SQL  string
+	Rows [][]any
+}
+
+// rhoSqlExecBatch runs several statements in one transaction, each prepared
+// once and executed for every row it is given. A port that ingests a batch uses
+// this so a failure in the last row leaves none of the earlier rows committed.
+func rhoSqlExecBatch(db SqlDb, name string, statements []rhoSqlStatementBatch) uint32 {
+	handle, ok := rhoSqlHandle(db.raw)
+	if !ok {
+		return 0
+	}
+	transaction, err := handle.Begin()
+	if err != nil {
+		rhoSqlFail(fmt.Errorf("%s: %w", name, err))
+		return 0
+	}
+	for _, statement := range statements {
+		if len(statement.Rows) == 0 {
+			continue
+		}
+		prepared, err := transaction.Prepare(statement.SQL)
+		if err != nil {
+			_ = transaction.Rollback()
+			rhoSqlFail(fmt.Errorf("%s: %w", name, err))
+			return 0
+		}
+		for _, row := range statement.Rows {
+			if _, err := prepared.Exec(row...); err != nil {
+				_ = prepared.Close()
+				_ = transaction.Rollback()
+				rhoSqlFail(fmt.Errorf("%s: %w", name, err))
+				return 0
+			}
+		}
+		if err := prepared.Close(); err != nil {
+			_ = transaction.Rollback()
+			rhoSqlFail(fmt.Errorf("%s: %w", name, err))
+			return 0
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		rhoSqlFail(fmt.Errorf("%s: %w", name, err))
+		return 0
 	}
 	return 1
 }
