@@ -13,3 +13,7 @@ fn write(fd: u32, buf: Ptr[u8], len: u32) u32 {
 fn read(fd: u32, buf: Ptr[u8], len: u32) u32 {
     return u32(c_syscall(0, fd, buf.raw, len, 0, 0, 0))
 }
+
+// setenv sets an environment variable. It is the caller's responsibility not to
+// set a variable the generated service reads during its initialisation.
+extern fn setenv(key: string, value: string) void

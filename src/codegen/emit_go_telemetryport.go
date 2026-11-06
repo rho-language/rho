@@ -455,10 +455,21 @@ func telemetrySeries(project string, area uint32, node uint32, field string, fro
 	to := int64(0)
 	step := int64(0)
 	if fromText != "" {
-		from, _ = strconv.ParseInt(fromText, 10, 64)
+		// A relative window ("2h", "30m", "90s") means "from now minus
+		// that window", so a chart can ask for the last two hours without
+		// computing a millisecond timestamp in Rho.
+		if parsed, err := time.ParseDuration(fromText); err == nil {
+			from = time.Now().Add(-parsed).UnixMilli()
+		} else {
+			from, _ = strconv.ParseInt(fromText, 10, 64)
+		}
 	}
 	if toText != "" {
-		to, _ = strconv.ParseInt(toText, 10, 64)
+		if parsed, err := time.ParseDuration(toText); err == nil {
+			to = time.Now().Add(-parsed).UnixMilli()
+		} else {
+			to, _ = strconv.ParseInt(toText, 10, 64)
+		}
 	}
 	if stepText != "" {
 		step, _ = strconv.ParseInt(stepText, 10, 64)

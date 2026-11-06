@@ -57,3 +57,24 @@ A ticket is an ES256 JWT with `sub`, `iss`, `aud`, `jti`, `iat`, `nbf`, `exp`,
 and optionally `redirect_uri` and `nonce`. `verify` checks the signature,
 issuer, audience and lifetime; the application must also keep the `jti` it has
 already used.
+
+## Scoped tokens and revocation
+
+A token or ticket can carry scopes:
+
+```sh
+rho auth login --registry ... --scopes mesh:default,telemetry:read
+rho auth ticket --private private.pem --audience mesh --scopes mesh:default --ttl 1h
+```
+
+`verify` refuses a ticket whose id is in a revocation list:
+
+```sh
+rho auth revoke --jti <token-id> [--file <revoked.txt>]
+rho auth verify --public pub.pem --token <ticket> --issuer keeper --audience mesh \
+    --revoked /path/to/revoked.txt
+```
+
+The generated auth middleware reads the same `revoked.txt` from the application
+state directory, so a revoked service token is refused locally without a round
+trip to the keeper.

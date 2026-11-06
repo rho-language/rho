@@ -95,6 +95,7 @@ type flags struct {
 	host     string
 	days     int
 	token    string
+	scopes   []string
 	asJSON   bool
 }
 
@@ -128,6 +129,16 @@ func parseFlags(args []string) (flags, []string, error) {
 					err = fmt.Errorf("--days must be a number")
 				} else {
 					out.days = days
+				}
+			}
+		case "--scopes":
+			var text string
+			text, err = value("--scopes")
+			if err == nil {
+				for _, scope := range strings.Split(text, ",") {
+					if trimmed := strings.TrimSpace(scope); trimmed != "" {
+						out.scopes = append(out.scopes, trimmed)
+					}
 				}
 			}
 		case "--json":
@@ -185,7 +196,8 @@ func login(args []string) int {
 		fmt.Fprintln(os.Stderr, "rho auth login:", err)
 		return 1
 	}
-	token, claims, err := auth.IssueTokenFor(store, options.registry, user, host, options.days)
+	token, claims, err := auth.IssueTokenFor(store, options.registry, user, host,
+		options.days, options.scopes...)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho auth login:", err)
 		return 1
@@ -303,6 +315,28 @@ func inspect(args []string) int {
 }
 
 func revoke(args []string) int {
+	// A token id revokes the credential even before its expiry. The list is
+	// the same file the middleware reads, so the decision is local.
+	if containsFlag(args, "--jti") {
+		options := authOptions(args)
+		jti := options["jti"]
+		file := options["file"]
+		if file == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "rho auth revoke:", err)
+				return 1
+			}
+			file = auth.DefaultRevokedPath(home)
+		}
+		if err := auth.AppendRevoked(jti, file); err != nil {
+			fmt.Fprintln(os.Stderr, "rho auth revoke:", err)
+			return 1
+		}
+		log.Info("credential revoked", "jti", jti)
+		fmt.Printf("Revoked token %s.\n", jti)
+		return 0
+	}
 	options, _, err := parseFlags(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho auth revoke:", err)
@@ -329,6 +363,15 @@ func revoke(args []string) int {
 
 // authOptions is the small parser for the SSO commands, whose flags are not
 // the registry flags above.
+func containsFlag(args []string, flag string) bool {
+	for _, arg := range args {
+		if arg == flag {
+			return true
+		}
+	}
+	return false
+}
+
 func authOptions(args []string) map[string]string {
 	out := map[string]string{}
 	for i := 0; i < len(args); i++ {
@@ -387,6 +430,12 @@ func ticket(args []string) int {
 	if subject == "" {
 		subject = currentUser()
 	}
+	var scopes []string
+	for _, scope := range strings.Split(options["scopes"], ",") {
+		if trimmed := strings.TrimSpace(scope); trimmed != "" {
+			scopes = append(scopes, trimmed)
+		}
+	}
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		fmt.Fprintln(os.Stderr, "rho auth ticket:", err)
@@ -400,6 +449,7 @@ func ticket(args []string) int {
 		TokenID:     hex.EncodeToString(raw),
 		RedirectURI: options["redirect-uri"],
 		Nonce:       options["nonce"],
+		Scopes:      scopes,
 		IssuedAt:    now.Unix(),
 		NotBefore:   now.Unix(),
 		ExpiresAt:   now.Add(ttl).Unix(),
@@ -429,6 +479,10 @@ func verify(args []string) int {
 	claims, err := auth.VerifyTicket(public, token, options["issuer"], options["audience"], time.Now())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho auth verify:", err)
+		return 1
+	}
+	if revoked := options["revoked"]; revoked != "" && auth.IsRevoked(claims.TokenID, revoked) {
+		fmt.Fprintln(os.Stderr, "rho auth verify: ticket has been revoked")
 		return 1
 	}
 	encoded, _ := json.MarshalIndent(claims, "", "  ")

@@ -35,3 +35,26 @@ func TestTicketRoundTrip(t *testing.T) {
 		t.Fatal("a tampered ticket was accepted")
 	}
 }
+
+func TestTicketScopes(t *testing.T) {
+	pair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	token, err := SignTicket(pair.Private, TicketClaims{
+		Subject: "service", Issuer: "keeper", Audience: "mesh",
+		TokenID: "t1", Scopes: []string{"mesh:default", "telemetry:read"},
+		IssuedAt: now.Unix(), ExpiresAt: now.Add(60 * time.Second).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := VerifyTicket(pair.Public, token, "keeper", "mesh", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims.Scopes) != 2 || claims.Scopes[0] != "mesh:default" {
+		t.Fatalf("scopes = %v", claims.Scopes)
+	}
+}

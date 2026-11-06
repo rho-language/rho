@@ -12,9 +12,13 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -354,5 +358,33 @@ func TestIssuedCredentialVerifiesWhenPresented(t *testing.T) {
 	}
 	if !principal.HasScope(ScopePush) {
 		t.Error("expected the push scope")
+	}
+}
+
+func TestIssueTokenForScopes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scopes := r.URL.Query().Get("scopes")
+		claims := TokenClaims{
+			Subject: "miraur", TokenID: "id", Issuer: TokenIssuer, Audience: "reg",
+			Scopes: strings.Fields(scopes),
+		}
+		data, _ := json.Marshal(struct {
+			Token string `json:"token"`
+			TokenClaims
+		}{Token: "signed", TokenClaims: claims})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	store := newStore(t)
+	token, claims, err := IssueTokenFor(store, server.URL, "miraur", "host", 7, "mesh:default", "telemetry:read")
+	if err != nil {
+		t.Fatalf("IssueTokenFor: %v", err)
+	}
+	if token != "signed" {
+		t.Fatalf("token = %q", token)
+	}
+	if len(claims.Scopes) != 2 || claims.Scopes[0] != "mesh:default" || claims.Scopes[1] != "telemetry:read" {
+		t.Fatalf("scopes = %v", claims.Scopes)
 	}
 }

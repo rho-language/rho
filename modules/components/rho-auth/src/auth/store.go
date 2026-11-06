@@ -262,7 +262,7 @@ func StoreForHost() (*Store, error) {
 // The signing secret stays on the registry: a client asks for a token and
 // receives a signed one, so a stolen credential file cannot be used to mint new
 // credentials.
-func IssueTokenFor(store *Store, registry, subject, host string, days int) (string, TokenClaims, error) {
+func IssueTokenFor(store *Store, registry, subject, host string, days int, scopes ...string) (string, TokenClaims, error) {
 	var claims TokenClaims
 
 	if subject == "" {
@@ -271,12 +271,15 @@ func IssueTokenFor(store *Store, registry, subject, host string, days int) (stri
 	if days <= 0 {
 		days = int(DefaultTokenLifetime.Hours() / 24)
 	}
+	if len(scopes) == 0 {
+		scopes = []string{ScopePull, ScopePush}
+	}
 
 	query := url.Values{}
 	query.Set("user", subject)
 	query.Set("host", host)
 	query.Set("days", strconv.Itoa(days))
-	query.Set("scopes", strings.Join([]string{ScopePull, ScopePush}, " "))
+	query.Set("scopes", strings.Join(scopes, " "))
 	endpoint := strings.TrimRight(registry, "/") + "/auth/token?" + query.Encode()
 
 	req, err := http.NewRequest("POST", endpoint, nil)

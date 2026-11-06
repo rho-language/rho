@@ -15,3 +15,8 @@ Initial release.
 Adds the SSO half of the component: `keygen` creates the ECDSA P-256
 keypair, `ticket` mints a short-lived ES256 login ticket, and `verify` checks
 one against the public key. The registry credential commands are unchanged.
+
+## [0.3.0] - 2026-11-06
+
+Scoped tokens and tickets (--scopes), token revocation (--jti), TLS support
+in generated servers, UPLINK_BIND for gateway uplink.

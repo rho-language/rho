@@ -495,6 +495,7 @@ func emitAuthMiddleware(name string, spec MiddlewareSpec) string {
 	trustForwarded := option(spec, "trust_forwarded", "false") == "true"
 	scheme := option(spec, "scheme", "auto")
 	sessionFile := option(spec, "session_file", "")
+	scopes := option(spec, "scopes", "")
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `// The session this service accepts, written from the target's descriptor.
@@ -517,6 +518,7 @@ const (
 )
 
 var authSsoSkipPaths = authSsoSplitPaths(%q)
+var authSsoRequireScopes = authSsoSplitPaths(%q)
 
 var (
 	authSsoKeyOnce sync.Once
@@ -621,6 +623,9 @@ func authSsoVerifySession(token string) (authSsoSessionClaims, bool) {
 	if err != nil || jsonenc.Unmarshal(payload, &claims) != nil {
 		return claims, false
 	}
+	if authSsoRevoked(claims.TokenID) {
+		return claims, false
+	}
 	now := time.Now().Unix()
 	if claims.ExpiresAt > 0 && now >= claims.ExpiresAt+60 {
 		return claims, false
@@ -635,6 +640,30 @@ func authSsoVerifySession(token string) (authSsoSessionClaims, bool) {
 		return claims, false
 	}
 	return claims, true
+}
+
+// authSsoRevokedPath is the revocation list beside the sessions, the same file
+// the keeper's rho auth revoke --jti appends to.
+func authSsoRevokedPath() string {
+	return filepath.Join(authSsoStateDir(), "revoked.txt")
+}
+
+// authSsoRevoked reports whether a token id was revoked. A missing list is an
+// empty list, so a service that has never revoked anything stays open.
+func authSsoRevoked(jti string) bool {
+	if jti == "" {
+		return false
+	}
+	raw, err := os.ReadFile(authSsoRevokedPath())
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == jti {
+			return true
+		}
+	}
+	return false
 }
 
 func authSsoSplitPaths(list string) []string {
@@ -801,6 +830,36 @@ func authSsoCallback(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// authSsoHoldsScopes reports whether the presented scopes satisfy every scope
+// the service requires. A principal with no scopes has none, and "*" is a
+// wildcard that satisfies any requirement.
+func authSsoHoldsScopes(held []string) bool {
+	for _, required := range authSsoRequireScopes {
+		satisfied := false
+		for _, present := range held {
+			if present == required || present == "*" {
+				satisfied = true
+				break
+			}
+		}
+		if !satisfied {
+			return false
+		}
+	}
+	return true
+}
+
+// authSsoDenyScope answers a request whose verified token did not carry the
+// scopes the service requires. An API caller gets JSON; a browser gets a plain
+// forbidden page, which is not the login a missing session would cause.
+func authSsoDenyScope(w http.ResponseWriter, r *http.Request) {
+	if authSsoWantsJSON(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient scope"})
+		return
+	}
+	http.Error(w, "insufficient scope", http.StatusForbidden)
+}
+
 func withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authSsoCallback(w, r) {
@@ -812,6 +871,13 @@ func withAuth(next http.Handler) http.Handler {
 		}
 		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 			if claims, ok := authSsoVerifySession(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))); ok {
+				r.Header.Set("X-Rho-Subject", claims.Subject)
+				r.Header.Set("X-Rho-Scopes", strings.Join(claims.Scopes, ","))
+				r.Header.Set("X-Rho-Aud", claims.Audience)
+				if !authSsoHoldsScopes(claims.Scopes) {
+					authSsoDenyScope(w, r)
+					return
+				}
 				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, claims)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -820,12 +886,19 @@ func withAuth(next http.Handler) http.Handler {
 		cookie, err := r.Cookie(authSsoCookie)
 		if err == nil && cookie.Value != "" {
 			if claims, ok := authSsoVerifySession(cookie.Value); ok {
+				r.Header.Set("X-Rho-Subject", claims.Subject)
+				r.Header.Set("X-Rho-Scopes", strings.Join(claims.Scopes, ","))
+				r.Header.Set("X-Rho-Aud", claims.Audience)
 				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, claims)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 			if authSsoLookup(cookie.Value) {
-				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, authSsoSessionClaims{Subject: "session"})
+				identity := authSsoSessionClaims{Subject: "session"}
+				r.Header.Set("X-Rho-Subject", identity.Subject)
+				r.Header.Set("X-Rho-Scopes", "")
+				r.Header.Set("X-Rho-Aud", "")
+				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, identity)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -866,8 +939,12 @@ func authSsoAbsolute(r *http.Request, path string) string {
 		return path
 	}
 	host := parsed.Hostname()
-	if authSsoKeeperPort != "" {
-		host = net.JoinHostPort(host, authSsoKeeperPort)
+	keeperPort := os.Getenv("RHO_KEEPER_PORT")
+	if keeperPort == "" {
+		keeperPort = authSsoKeeperPort
+	}
+	if keeperPort != "" {
+		host = net.JoinHostPort(host, keeperPort)
 	}
 	return parsed.Scheme + "://" + host + path
 }
@@ -877,6 +954,6 @@ func authSsoSession(r *http.Request) (authSsoSessionClaims, bool) {
 	return claims, ok
 }
 `, issuer, audience, cookie, publicKey, mode, publicURL, basePath, loginURL,
-		keeperPort, returnParam, trustForwarded, scheme, sessionFile, skip)
+		keeperPort, returnParam, trustForwarded, scheme, sessionFile, skip, scopes)
 	return b.String()
 }
