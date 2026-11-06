@@ -1,7 +1,7 @@
 module:
   name: rho-auth
   type: component
-  version: 0.2.0
+  version: 0.3.0
   author: Aurel Miron
   description: Registry credentials
   command: auth

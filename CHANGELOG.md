@@ -189,3 +189,17 @@ Telemetry is now a toolchain feature rather than an application convention.
 - The gateway port also sends a gateway bearer token when the deployment names
   one.
 
+## [0.3.0] - 2026-11-06
+
+Security hardening across the telemetry chain.
+
+- `rho auth` now mints scoped tokens and tickets (`--scopes`), and can revoke a
+  ticket by id into a list the generated middleware reads locally.
+- The generated auth middleware enforces required scopes, injects the verified
+  subject, scopes and audience into request headers, and refuses revoked tokens.
+- Generated servers serve TLS when `RHO_TLS_CERT` and `RHO_TLS_KEY` are set.
+- The gateway uplink honours `UPLINK_BIND` so a relay listener can be confined
+  to one interface.
+- `sql_exec_many` and the `telemetry` port (outbox ingestion, latest, series,
+  rollups, retention) shipped in 0.2.0 are documented here as released.
+

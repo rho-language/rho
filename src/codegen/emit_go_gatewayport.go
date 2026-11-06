@@ -245,7 +245,12 @@ func gatewayUplinkStart(port uint32) bool {
 		return false
 	}
 	gatewayUplinkOnce.Do(func() {
-		address := ":" + strconv.FormatUint(uint64(port), 10)
+		// UPLINK_BIND chooses the interface a relay may dial in on. An empty
+		// value keeps the previous behaviour of listening on every interface;
+		// a loopback address confines the uplink to the host itself, and a
+		// specific address confines it to one interface on a private network.
+		bind := os.Getenv("UPLINK_BIND")
+		address := bind + ":" + strconv.FormatUint(uint64(port), 10)
 		listener, err := net.Listen("tcp", address)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gateway: uplink listen %s: %v\n", address, err)

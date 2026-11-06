@@ -144,3 +144,15 @@ func main() {
 		}
 	}
 }
+
+
+// The uplink must be able to confine itself to one interface, so a deployment
+// on a shared network can keep relay dial-ins off it.
+func TestGatewayPortHonoursUplinkBind(t *testing.T) {
+	port := EmitGoPorts(PortContext{ModuleName: "gateway"}, []string{"gateway"})
+	for _, part := range []string{"UPLINK_BIND", `bind + ":" + strconv.FormatUint`} {
+		if !strings.Contains(port, part) {
+			t.Errorf("gateway port missing %q", part)
+		}
+	}
+}

@@ -682,6 +682,10 @@ func EmitGoRuntime(implementation string) string {
 	body.WriteString("// rhoGetenv returns an environment variable, or \"\" when it is not set.\n")
 	body.WriteString("func rhoGetenv(name string) string {\n")
 	body.WriteString("\treturn os.Getenv(name)\n}\n\n")
+	body.WriteString("// rhoSetenv sets an environment variable.\n")
+	body.WriteString("func rhoSetenv(name string, value string) {\n")
+	body.WriteString("\tos.Setenv(name, value)\n}\n\n")
+
 	imports = addGoImport(imports, "strconv")
 	imports = addGoImport(imports, "strings")
 

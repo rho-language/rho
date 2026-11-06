@@ -310,7 +310,20 @@ func goServerShutdown() string {
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// A deployment that provides a certificate and key serves TLS; without
+		// them the service stays plain HTTP, so a reverse proxy or a private
+		// link is how a deployment chooses to end traffic. The variables are
+		// read here rather than at build time, so the same image can be static
+		// and public or loopback and plain.
+		cert := os.Getenv("RHO_TLS_CERT")
+		key := os.Getenv("RHO_TLS_KEY")
+		var err error
+		if cert != "" && key != "" {
+			err = server.ListenAndServeTLS(cert, key)
+		} else {
+			err = server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
