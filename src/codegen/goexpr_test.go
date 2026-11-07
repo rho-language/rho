@@ -441,3 +441,17 @@ func TestGoPtrLiteralFromReferenceCarriesAnAddress(t *testing.T) {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+// The pointer the SQL port carries over a builtin element is the same struct
+// the general spelling mangles to: `Ptr_u32` over the Rho spelling `u32` is
+// `PtrU32`, which is the name the port declares for a step counter and an
+// affected row count. A conversion that named it `PtrUint32T` would build a
+// struct nothing declared and break every database call that rounds up.
+func TestGoPtrLiteralOverABuiltinUsesThePortsName(t *testing.T) {
+	src := "(Ptr_u32){ &more }"
+	got := ToGoExpr(src)
+	want := "PtrU32{uint64(uintptr(unsafe.Pointer(&more)))}"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}

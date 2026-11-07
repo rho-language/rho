@@ -910,6 +910,157 @@ func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, depe
 	return nil
 }
 
+// resolveInclude turns the path in an `include` into the file it names.
+//
+// A path that resolves next to the including file is that file, which keeps the
+// many includes that live beside their source working. A path that names a
+// module or contract tree (`modules/forms/src/main.rho`) is anchored at the
+// nearest directory up that owns it, so an application names a module by its
+// location rather than by how many levels of `../` sit between the app and the
+// repository:
+//
+//	include "modules/forms/src/main.rho"
+//
+// resolves whether the application is one or three directories deep under the
+// root that holds `modules/`. A bare name (`include "forms"`) resolves to the
+// module's `src/main.rho` under that same tree.
+func resolveInclude(sourceFile, include string) (string, bool) {
+	if filepath.IsAbs(include) {
+		if _, err := os.Stat(include); err == nil {
+			return include, true
+		}
+		return "", false
+	}
+	direct := filepath.Join(filepath.Dir(sourceFile), include)
+	if _, err := os.Stat(direct); err == nil {
+		return direct, true
+	}
+
+	// Walk up from the including file to the root that owns the module or
+	// contract tree the path names. The root is where the whole path exists;
+	// an app anywhere below it names the same location.
+	current := filepath.Dir(sourceFile)
+	for {
+		candidate := filepath.Join(current, include)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+
+	// A bare name is a module: its main lives under `modules/<name>` at the
+	// root that owns the tree, and that is what the include means.
+	if !strings.ContainsRune(include, filepath.Separator) {
+		current = filepath.Dir(sourceFile)
+		for {
+			candidate := filepath.Join(current, "modules", include, "src", "main.rho")
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, true
+			}
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+			current = parent
+		}
+	}
+	return "", false
+}
+
+// includedModuleName is the name of the module an include path points at, when
+// it points at one. A path that runs through a `modules/<name>/` directory
+// names that module; anything else (a sibling file, a contract) names none.
+func includedModuleName(path string) string {
+	// Only a module's entry point (main.rho) counts as depending on that
+	// module. Sibling files such as text.rho live under the same module
+	// directory but are part of the module itself, not a dependency.
+	if filepath.Base(path) != "main.rho" {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == "modules" {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+
+// checkModuleDependency verifies that the module owning sourceFile declares
+// dep as one of its dependencies. The owning manifest is the first module.yml
+// found by walking up from sourceFile; a manifest with no `deps` section, or
+// one that names dep, passes, and any other answer is a refusal.
+func checkModuleDependency(sourceFile, dep string) error {
+	dir := filepath.Dir(sourceFile)
+	for {
+		manifest := filepath.Join(dir, "module.yml")
+		if _, err := os.Stat(manifest); err == nil {
+			data, err := os.ReadFile(manifest)
+			if err != nil {
+				return nil
+			}
+			// Parse deps: look for "dep:" under a "deps:" section. A simple
+			// line-based scan is enough: deps entries are "  name: version".
+			inDeps := false
+			inModules := false
+			found := false
+			hasDeps := false
+			hasModules := false
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "deps:" {
+					inDeps = true
+					inModules = false
+					hasDeps = true
+					continue
+				}
+				if trimmed == "modules:" || trimmed == "app_modules:" || trimmed == "robohub_modules:" {
+					inModules = true
+					inDeps = false
+					hasModules = true
+					continue
+				}
+				if trimmed == "" {
+					continue
+				}
+				if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+					inDeps = false
+					inModules = false
+					continue
+				}
+				if inDeps {
+					if strings.HasPrefix(trimmed, dep+":") || strings.HasPrefix(trimmed, dep+" :") {
+						found = true
+					}
+				}
+				if inModules {
+					if strings.Contains(trimmed, "name:") && strings.Contains(trimmed, dep) {
+						found = true
+					}
+				}
+			}
+			if found {
+				return nil
+			}
+			if hasDeps || hasModules {
+				return fmt.Errorf("module does not declare %q in its deps/modules; add it to module.yml", dep)
+			}
+			return nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return nil
+}
+
 func loadModuleFile(path, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) (*ast.Module, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -948,9 +1099,20 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		loadStdModuleFor(merged, name, abs, projectRoot, dependencyRoots, components, visited)
 	}
 	for _, include := range mod.Includes {
-		includePath := include.Path
-		if !filepath.IsAbs(includePath) {
-			includePath = filepath.Join(filepath.Dir(abs), includePath)
+		includePath, ok := resolveInclude(abs, include.Path)
+		if !ok {
+			return nil, fmt.Errorf("include %q from %q: no file at the direct path or the module tree", include.Path, abs)
+		}
+		// A module that includes another module has to declare it as a
+		// dependency: the include says where the code comes from, and the
+		// dependency says it is allowed to come from there. An include with
+		// no matching entry in the including module's `deps` is a build error,
+		// so a missing dependency is caught here rather than as a missing
+		// symbol later.
+		if included := includedModuleName(includePath); included != "" {
+			if err := checkModuleDependency(abs, included); err != nil {
+				return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
+			}
 		}
 		included, err := loadModuleFile(includePath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {

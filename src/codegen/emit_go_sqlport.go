@@ -379,7 +379,7 @@ func rhoSqlStatements(schema string) []string {
 // Preparing is separate from running because it is the only way to read a
 // statement's shape, which is how a caller types a result rather than guessing
 // at one from the select list.
-func stdSqlSqlPrepare(db SqlDb, query string, stmt *SqlStmt) uint32 {
+func stdSqlSqlPrepare(db SqlDb, query string, stmt PtrSqlStmt) uint32 {
 	handle, ok := rhoSqlHandle(db.raw)
 	if !ok {
 		return 0
@@ -397,9 +397,20 @@ func stdSqlSqlPrepare(db SqlDb, query string, stmt *SqlStmt) uint32 {
 	rhoSqlMu.Lock()
 	rhoSqlNextID++
 	rhoSqlRows[rhoSqlNextID] = held
-	stmt.raw = rhoSqlNextID
+	rhoSqlSetStmt(stmt, rhoSqlNextID)
 	rhoSqlMu.Unlock()
 	return 1
+}
+
+// rhoSqlSetStmt writes a prepared statement's handle through the address a Rho
+// caller gave. The address is the caller's own, so writing through it is what
+// the declaration means; a zero address is a caller that asked for a handle
+// and gave nowhere to put it, which is not a failure worth reporting.
+func rhoSqlSetStmt(stmt PtrSqlStmt, value uint64) {
+	if stmt.raw == 0 {
+		return
+	}
+	(*(*SqlStmt)(unsafe.Pointer(uintptr(stmt.raw)))).raw = value
 }
 
 // stdSqlSqlRun steps a prepared statement once, answering whether it has another row,

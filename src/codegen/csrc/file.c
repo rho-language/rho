@@ -70,3 +70,22 @@ int rho_write_text(const char* path, const char* text)
     fclose(file);
     return written == length ? 1 : 0;
 }
+
+/* rho_append_text appends to the end of a file, and says whether it did.
+ *
+ * A feed that accumulates one event per line — the file an SSE stream reads —
+ * is written by appending rather than replacing: append keeps every previous
+ * event, and only the newest is missing after a crash. It is how a page hears
+ * of a change without asking again.
+ */
+int rho_append_text(const char* path, const char* text)
+{
+    FILE* file = fopen(path, "ab");
+    if (file == NULL) {
+        return 0;
+    }
+    size_t length = strlen(text);
+    size_t written = fwrite(text, 1, length, file);
+    fclose(file);
+    return written == length ? 1 : 0;
+}

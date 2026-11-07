@@ -111,6 +111,7 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 
 	sawMain := false
 	emittedMain := false
+	sliceParams := goSliceParams(m)
 	for _, fn := range m.Funcs {
 		if fn.Extern {
 			continue
@@ -129,13 +130,29 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 			name = AppMainName
 			emittedMain = true
 		}
-		emitGoFunc(&body, fn, name)
+		emitGoFunc(&body, fn, name, sliceParams)
 	}
 
 	if !emittedMain && !sawMain {
 		// Keep the generated project buildable when the Rho module has no
 		// entry point at all, which is normal for a library.
 		fmt.Fprintf(&body, "// %s is a stub: the Rho module declares no main function.\nfunc %s() {}\n", AppMainName, AppMainName)
+	}
+
+	// A dynamic-array parameter is a Go slice, and every call hands its array
+	// argument to it as `arg[:]` — Go does not decay an array to a slice the
+	// way C does. The rewrite is a pass over the finished text because a call
+	// inside a longer expression is one lowered string, not an instruction.
+	// Rewrite to fixpoint: one pass over the whole body can lose a nested
+	// call when an earlier scan moves the cursor past it, and the next pass
+	// over that output finds it cleanly. A pass that adds nothing is done.
+	text := goDecaySliceArgs(body.String(), sliceParams)
+	for {
+		next := goDecaySliceArgs(text, sliceParams)
+		if next == text {
+			break
+		}
+		text = next
 	}
 
 	var b strings.Builder
@@ -189,7 +206,7 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 		b.WriteString("type PtrUnit struct {\n\traw uint64\n}\n")
 		b.WriteString("\n")
 	}
-	b.WriteString(body.String())
+	b.WriteString(text)
 	return b.String()
 }
 
@@ -278,7 +295,192 @@ func emitGoStructForTarget(b *strings.Builder, structure ir.StructIR, isServer b
 	b.WriteString("}\n")
 }
 
-func emitGoFunc(b *strings.Builder, fn ir.FuncIR, goName string) {
+// goSliceParams records, for each callable Rho function, which parameters are
+// dynamic arrays. Go has no implicit fixed-array to slice coercion the way C
+// decays an array to a pointer, so a `[FormField]` parameter is `[]FormField`
+// and every call passes the argument as `argument[:]`. A plain slice is also
+// a slice, and `s[:]` is valid Go either way, so the same conversion covers a
+// dynamic-array argument too.
+func goSliceParams(m ir.ModuleIR) map[string][]bool {
+	out := map[string][]bool{}
+	for _, fn := range m.Funcs {
+		if fn.Extern {
+			continue
+		}
+		flags := make([]bool, len(fn.Params))
+		for i, param := range fn.Params {
+			gt := goTypeForIR(param.Type)
+			flags[i] = strings.HasPrefix(gt, "[]")
+		}
+		out[goFuncName(irFuncName(fn))] = flags
+	}
+	return out
+}
+
+// goDecaySliceArgs rewrites, on the finished Go body, every call to a function
+// whose parameter is a dynamic array: Go has no implicit fixed-array to slice
+// coercion the way C decays an array to a pointer, so a `[FormField]`
+// parameter is `[]FormField` and each call passes the argument as `arg[:]`.
+//
+// The rewrite is a pass over the emitted text rather than a change in the
+// instruction emitter, because a call nested inside a longer expression — a
+// value read from the form on its way into a write — is one lowered string,
+// not an OpCall the emitter can special-case. A statement call carries its own
+// `[:]` from the OpCall branch; the pass leaves that alone because `x[:]` is
+// no longer a bare identifier.
+func goDecaySliceArgs(text string, sliceParams map[string][]bool) string {
+	if len(sliceParams) == 0 {
+		return text
+	}
+	var out strings.Builder
+	src := []byte(text)
+	for i := 0; i < len(src); {
+		c := src[i]
+		if c == '"' || c == '\'' {
+			end := scanStringLiteral(src, i)
+			out.Write(src[i:end])
+			i = end
+			continue
+		}
+		if isIdentStart(c) {
+			end := scanIdent(src, i)
+			word := string(src[i:end])
+			flags := sliceParams[word]
+
+			out.WriteString(word)
+			i = end
+			if len(flags) > 0 && end < len(src) && src[end] == '(' {
+				close, ok := scanParen(src, end)
+				if ok {
+					inner := src[end+1 : close]
+					parts := splitTopLevelCommas(inner)
+					rebuilt := make([]string, len(parts))
+					for j, part := range parts {
+						trimmed := strings.TrimSpace(string(part))
+						if j < len(flags) && flags[j] && isSimpleGoVar(trimmed) {
+							trimmed += "[:]"
+						}
+						rebuilt[j] = trimmed
+					}
+					out.WriteByte('(')
+					out.WriteString(strings.Join(rebuilt, ", "))
+					out.WriteByte(')')
+					i = close + 1
+					continue
+				}
+			}
+			continue
+		}
+		out.WriteByte(c)
+		i++
+	}
+	return out.String()
+}
+
+// scanBrackets finds the `)`, `]` or `}` that matches the opening bracket at
+// open, skipping string and character literals on its way.
+func scanBrackets(src []byte, open int) (int, bool) {
+	opening := src[open]
+	var closing byte
+	switch opening {
+	case '(':
+		closing = ')'
+	case '[':
+		closing = ']'
+	case '{':
+		closing = '}'
+	default:
+		return 0, false
+	}
+	depth := 0
+	for i := open; i < len(src); i++ {
+		if src[i] == '"' || src[i] == '\'' {
+			i = scanStringLiteral(src, i) - 1
+			continue
+		}
+		if src[i] == opening {
+			depth++
+		} else if src[i] == closing {
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// scanParen finds the parenthesis that closes the one at open, skipping
+// brackets and braces and string literals on its way.
+func scanParen(src []byte, open int) (int, bool) {
+	depth := 0
+	for i := open; i < len(src); i++ {
+		if src[i] == '"' || src[i] == '\'' {
+			i = scanStringLiteral(src, i) - 1
+			continue
+		}
+		if src[i] == '{' || src[i] == '[' {
+			if close, ok := scanBrackets(src, i); ok {
+				i = close
+				continue
+			}
+		}
+		if src[i] == '(' {
+			depth++
+		} else if src[i] == ')' {
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// splitTopLevelCommas splits an argument list on the commas at its top level,
+// leaving commas inside parentheses, brackets and braces alone.
+func splitTopLevelCommas(src []byte) [][]byte {
+	parts := [][]byte{}
+	start := 0
+	depth := 0
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if c == '"' || c == '\'' {
+			i = scanStringLiteral(src, i) - 1
+			continue
+		}
+		switch c {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, src[start:i])
+				start = i + 1
+			}
+		}
+	}
+	parts = append(parts, src[start:])
+	return parts
+}
+
+// isSimpleGoVar reports whether a lowered argument is a bare identifier, which
+// is the only shape `[:]` can be attached to at a call site.
+func isSimpleGoVar(arg string) bool {
+	trimmed := strings.TrimSpace(arg)
+	for i := 0; i < len(trimmed); i++ {
+		if !(trimmed[i] >= 'a' && trimmed[i] <= 'z') &&
+			!(trimmed[i] >= 'A' && trimmed[i] <= 'Z') &&
+			!(trimmed[i] >= '0' && trimmed[i] <= '9') &&
+			trimmed[i] != '_' {
+			return false
+		}
+	}
+	return trimmed != "" && (trimmed[0] >= 'a' && trimmed[0] <= 'z' || trimmed[0] >= 'A' && trimmed[0] <= 'Z' || trimmed[0] == '_')
+}
+
+func emitGoFunc(b *strings.Builder, fn ir.FuncIR, goName string, sliceParams map[string][]bool) {
 	returnType := goTypeForIR(fn.ReturnType)
 
 	// Names are tracked so a repeated assignment reuses `=` instead of `:=`,
@@ -303,13 +505,13 @@ func emitGoFunc(b *strings.Builder, fn ir.FuncIR, goName string) {
 		prefix, suffix = fn.Body[:len(fn.Body)-1], fn.Body[len(fn.Body)-1:]
 	}
 	for _, instr := range prefix {
-		emitGoInstr(b, instr, 1, declared)
+		emitGoInstr(b, instr, 1, declared, sliceParams)
 	}
 	for _, name := range unusedLocals(prefix, declared) {
 		fmt.Fprintf(b, "\t_ = %s\n", name)
 	}
 	for _, instr := range suffix {
-		emitGoInstr(b, instr, 1, declared)
+		emitGoInstr(b, instr, 1, declared, sliceParams)
 	}
 
 	// Go requires a terminating return on non-void paths.
@@ -389,7 +591,7 @@ func collectWords(text string, into map[string]bool) {
 	}
 }
 
-func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[string]bool) {
+func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[string]bool, sliceParams map[string][]bool) {
 	pad := strings.Repeat("\t", depth)
 
 	switch instr.Op {
@@ -448,16 +650,16 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 
 	case ir.OpIf:
 		fmt.Fprintf(b, "%sif %s {\n", pad, ToGoExpr(instr.Condition))
-		emitGoNested(b, instr.Then, depth+1, declared)
+		emitGoNested(b, instr.Then, depth+1, declared, sliceParams)
 		if len(instr.Else) > 0 {
 			b.WriteString(pad + "} else {\n")
-			emitGoNested(b, instr.Else, depth+1, declared)
+			emitGoNested(b, instr.Else, depth+1, declared, sliceParams)
 		}
 		fmt.Fprintf(b, "%s}\n", pad)
 
 	case ir.OpWhile:
 		fmt.Fprintf(b, "%sfor %s {\n", pad, ToGoExpr(instr.Condition))
-		emitGoNested(b, instr.Then, depth+1, declared)
+		emitGoNested(b, instr.Then, depth+1, declared, sliceParams)
 		fmt.Fprintf(b, "%s}\n", pad)
 
 	case ir.OpBreak:
@@ -468,11 +670,20 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 
 	case ir.OpCall:
 		if len(instr.Args) > 0 {
+			callee := ToGoExpr(instr.Args[0])
+			flags := sliceParams[callee]
 			args := make([]string, 0, len(instr.Args)-1)
-			for _, arg := range instr.Args[1:] {
-				args = append(args, ToGoExpr(arg))
+			for i, arg := range instr.Args[1:] {
+				translated := ToGoExpr(arg)
+				// A dynamic-array parameter is a Go slice; Go does not decay a
+				// fixed array to a slice the way C does, so the argument is
+				// passed as `arg[:]`. The same covers a slice argument.
+				if i < len(flags) && flags[i] && isSimpleGoVar(translated) {
+					translated = translated + "[:]"
+				}
+				args = append(args, translated)
 			}
-			call := fmt.Sprintf("%s(%s)", ToGoExpr(instr.Args[0]), strings.Join(args, ", "))
+			call := fmt.Sprintf("%s(%s)", callee, strings.Join(args, ", "))
 			if instr.Dest != "" {
 				name := goFieldName(instr.Dest)
 				// A second assignment to the same name must reuse `=`.
@@ -495,9 +706,9 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 	}
 }
 
-func emitGoNested(b *strings.Builder, instructions []ir.Instr, depth int, declared map[string]bool) {
+func emitGoNested(b *strings.Builder, instructions []ir.Instr, depth int, declared map[string]bool, sliceParams map[string][]bool) {
 	for _, instruction := range instructions {
-		emitGoInstr(b, instruction, depth, declared)
+		emitGoInstr(b, instruction, depth, declared, sliceParams)
 	}
 }
 
@@ -734,6 +945,21 @@ func EmitGoRuntime(implementation string) string {
 			call: "rhoWriteText(",
 			define: "func rhoWriteText(path string, text string) bool {\n" +
 				"\treturn os.WriteFile(path, []byte(text), 0644) == nil\n" +
+				"}\n",
+		},
+		{
+			// Append one event to a feed that accumulates. The file an SSE
+			// stream reads grows one line at a time, so a page hears of a
+			// change without asking again.
+			call: "rhoAppendText(",
+			define: "func rhoAppendText(path string, text string) bool {\n" +
+				"\tf, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn false\n" +
+				"\t}\n" +
+				"\tdefer f.Close()\n" +
+				"\t_, err = f.WriteString(text)\n" +
+				"\treturn err == nil\n" +
 				"}\n",
 		},
 		{

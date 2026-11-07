@@ -291,6 +291,7 @@ type SliceSqlValue struct {
 }
 type PtrUnit struct{ raw uint64 }
 type PtrU32 struct{ raw uint64 }
+type PtrSqlStmt struct{ raw uint64 }
 type PtrSqlValue struct{ raw uint64 }
 type ResultSqlDbString struct {
 	isOk bool
@@ -512,6 +513,7 @@ func irModuleWithHandle() ir.ModuleIR {
 				{Name: "is_null", Type: ir.Type{Kind: ir.TypeBool, Name: "bool"}}}},
 			{Name: "SqlStmt", CName: "SqlStmt", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
 			{Name: "PtrU32", CName: "PtrU32", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
+			{Name: "PtrSqlStmt", CName: "PtrSqlStmt", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
 			{Name: "PtrSqlValue", CName: "PtrSqlValue", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
 			{Name: "SliceSqlValue", CName: "SliceSqlValue", Fields: []ir.FieldIR{
 				{Name: "ptr", Type: ir.Type{Kind: ir.TypeStruct, Name: "PtrUnit"}},
@@ -607,6 +609,7 @@ type SliceSqlValue struct {
 }
 type PtrUnit struct{ raw uint64 }
 type PtrU32 struct{ raw uint64 }
+type PtrSqlStmt struct{ raw uint64 }
 type PtrSqlValue struct{ raw uint64 }
 type ResultSqlDbString struct {
 	isOk bool

@@ -463,6 +463,12 @@ func writeEventStream(w http.ResponseWriter, token string) {
 		opened, err := os.Open(path)
 		if err == nil {
 			file = opened
+			// Start at the end of the file: only events appended after this
+			// connection count, so a page that opens does not replay the whole
+			// history as a flood of toasts.
+			if info, statErr := file.Stat(); statErr == nil {
+				_, _ = file.Seek(info.Size(), io.SeekStart)
+			}
 			break
 		}
 		if time.Since(started) > time.Minute {

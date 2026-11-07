@@ -617,3 +617,46 @@ fn main() void {
 		t.Fatalf("unexpected output: got %q, want %q", string(got), "hello from the environment")
 	}
 }
+
+// A module is included by its location, not by how deep the application sits
+// below the repository: `include "modules/forms/src/main.rho"` has to resolve
+// when an application is nested under applications/, and a local include keeps
+// resolving next to its own file.
+func TestResolveIncludeFindsAModuleByLocation(t *testing.T) {
+	root := t.TempDir()
+	// The repository root owns the module tree and the applications.
+	moduleDir := filepath.Join(root, "modules", "forms", "src")
+	if err := os.MkdirAll(moduleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	moduleMain := filepath.Join(moduleDir, "main.rho")
+	if err := os.WriteFile(moduleMain, []byte("module forms\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// An application two directories deep below the root.
+	appSrc := filepath.Join(root, "applications", "aquarium", "src", "main.rho")
+	if err := os.MkdirAll(filepath.Dir(appSrc), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := resolveInclude(appSrc, "modules/forms/src/main.rho")
+	if !ok || got != moduleMain {
+		t.Fatalf("expected the module include to resolve to %s, got %q ok=%v", moduleMain, got, ok)
+	}
+
+	// A local include resolves beside its file, not in the module tree.
+	local := filepath.Join(filepath.Dir(appSrc), "storage.rho")
+	if err := os.WriteFile(local, []byte("module aquarium\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = resolveInclude(appSrc, "storage.rho")
+	if !ok || got != local {
+		t.Fatalf("expected the local include to stay local, got %q ok=%v", got, ok)
+	}
+
+	// A bare module name resolves to its main under the module tree.
+	got, ok = resolveInclude(appSrc, "forms")
+	if !ok || got != moduleMain {
+		t.Fatalf("expected a bare module name to resolve to its main, got %q ok=%v", got, ok)
+	}
+}

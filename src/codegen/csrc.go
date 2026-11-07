@@ -203,11 +203,13 @@ var runtimeFragments = []RuntimeFragment{
 		Provides: []string{
 			"rho_read_text",
 			"rho_write_text",
+			"rho_append_text",
 		},
 		Needs: []string{"rho_strlen"},
 		Decls: []string{
 			"char* rho_read_text(const char* path);",
 			"int rho_write_text(const char* path, const char* text);",
+			"int rho_append_text(const char* path, const char* text);",
 		},
 	},
 	{

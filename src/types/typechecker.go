@@ -1047,6 +1047,19 @@ func elementType(value ir.Type) ir.Type {
 	if (value.Kind == ir.TypePtr || value.Kind == ir.TypeSlice) && len(value.Args) > 0 {
 		return value.Args[0]
 	}
+	// A pointer named as its struct is still a pointer. The standard library's
+	// handle `Ptr[T]` is mangled to `Ptr_X` (or `X_Ptr`), and a field of that
+	// type no longer carries its element in its arguments, so indexing it used
+	// to hand back the pointer itself rather than the element: `Slice[T].ptr`
+	// is a `Ptr[T]`, and `fields.ptr[i]` was `Ptr_X`, which has no `value`
+	// field, instead of the `X` the index names.
+	if element, isPtr := stripPointerSpelling(value.Name); isPtr {
+		typ := ir.Type{Kind: ir.TypeStruct, Name: element}
+		if kind := primitiveKind(element); kind != ir.TypeInvalid {
+			typ.Kind = kind
+		}
+		return typ
+	}
 
 	if value.ArrayLen > 0 {
 		element := value
@@ -1129,6 +1142,24 @@ func substituteGeneric(value ir.Type, params []string, args []ir.Type) ir.Type {
 		if index < len(args) && value.Name == param {
 			return args[index]
 		}
+	}
+	// A type parameter nested inside a field's type is folded into the mangled
+	// name: `Ptr[T]` is stored as `Ptr_T`. Substitution has to rewrite the
+	// segment the parameter occupies, or `Slice[F].ptr`, a `Ptr[T]`, comes back
+	// as `Ptr_T` whose element is the parameter `T` rather than the argument
+	// `F` - and `fields.ptr[i].value` fails because `T` is not `F`.
+	parts := strings.Split(value.Name, "_")
+	changed := false
+	for i, part := range parts {
+		for index, param := range params {
+			if index < len(args) && part == param {
+				parts[i] = mangleTypeName(args[index].Name)
+				changed = true
+			}
+		}
+	}
+	if changed {
+		value.Name = strings.Join(parts, "_")
 	}
 	return value
 }
@@ -1268,7 +1299,58 @@ func assignable(want, got ir.Type) bool {
 		}
 		return assignable(want.Args[0], elementType(got))
 	}
+	// A pointer is the same pointer under two spellings: the `Ptr[T]` struct the
+	// standard library declares for ordinary Rho code, and the C pointer type a
+	// foreign signature names. A program holds storage through `Slice[T].ptr` and
+	// passes that field to a foreign function — `Slice[SqlStmt].ptr` into
+	// `sql_prepare` — and the two have to be one type at that boundary. Both
+	// spellings reduce to the element they point at, so two references that
+	// point at the same element are assignable wherever a pointer is wanted.
+	if wElement, wIsPtr := ptrElementName(want); wIsPtr {
+		if gElement, gIsPtr := ptrElementName(got); gIsPtr {
+			return wElement == gElement
+		}
+	}
 	return want.Kind == got.Kind || (numeric(want) && numeric(got))
+}
+
+// ptrElementName is the element a pointer points at, and whether the type is a
+// pointer at all.
+//
+// A pointer is spelled several ways and is still one type. The foreign pointer
+// type has kind `TypePtr`; the standard library's handle struct is `Ptr[T]`
+// mangled to `Ptr_T` or written as `T_Ptr`; an optional pointer is
+// `Option_Ptr_T` on top of one of those. Every spelling reduces to the element
+// `T`, which is what tells two references apart — a reference to a statement
+// and a reference to a value are not the same thing even though both are
+// pointers.
+func ptrElementName(value ir.Type) (string, bool) {
+	if value.Kind == ir.TypePtr {
+		if len(value.Args) == 1 {
+			return value.Args[0].Name, true
+		}
+		element, _ := stripPointerSpelling(value.Name)
+		return element, true
+	}
+	if value.Kind != ir.TypeStruct {
+		return "", false
+	}
+	return stripPointerSpelling(value.Name)
+}
+
+// stripPointerSpelling takes the element out of any pointer spelling a name
+// may be, and reports whether the name was a pointer spelling at all.
+func stripPointerSpelling(name string) (string, bool) {
+	if strings.HasPrefix(name, "Ptr[") && strings.HasSuffix(name, "]") && len(name) > len("Ptr[]") {
+		return name[len("Ptr[") : len(name)-1], true
+	}
+	if strings.HasPrefix(name, "Ptr_") && len(name) > len("Ptr_") {
+		return name[len("Ptr_"):], true
+	}
+	if strings.HasSuffix(name, "_Ptr") && len(name) > len("_Ptr") {
+		return strings.TrimSuffix(name, "_Ptr"), true
+	}
+	return "", false
 }
 func typeName(value ir.Type) string {
 	if value.Name != "" {
@@ -2144,7 +2226,13 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				if len(expr.TypeArgs) > 0 {
 					args := make([]string, 0, len(expr.TypeArgs))
 					for _, argument := range expr.TypeArgs {
-						args = append(args, tc.cTypeFor(tc.typeFor(argument.String())))
+						// The element is spelled as Rho writes it, not as C
+						// does. `Ptr[u32]` must mangle the same way the struct
+						// the field is declared with does: spelling `u32` as
+						// `uint32_t` here built `Ptr_uint32_t` while the
+						// definition built `Ptr_u32`, and the conversion named
+						// a struct nothing declared.
+						args = append(args, argument.String())
 					}
 					// Square brackets: a type application is `Ptr[u32]`, and
 					// spelling it with angle brackets named a type nothing
