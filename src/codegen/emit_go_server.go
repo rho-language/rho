@@ -332,7 +332,7 @@ func goServerShutdown() string {
 	case err := <-errCh:
 		return err
 	case <-stop:
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		return server.Shutdown(ctx)
 	}
@@ -389,7 +389,7 @@ func goResponseType() string {
 	b.WriteString("\tcontentType := resp.contentType\n")
 	b.WriteString("\tif contentType == \"\" {\n\t\tcontentType = \"text/plain; charset=utf-8\"\n\t}\n")
 	b.WriteString("\tif contentType == \"text/event-stream\" {\n")
-	b.WriteString("\t\twriteEventStream(w, resp.Body)\n")
+	b.WriteString("\t\twriteEventStream(r.Context(), w, resp.Body)\n")
 	b.WriteString("\t\treturn\n")
 	b.WriteString("\t}\n")
 	b.WriteString("\tfor _, line := range strings.Split(resp.Headers, \"\\n\") {\n")
@@ -435,7 +435,7 @@ func stdWebHttpSseFile(path string, intervalMs uint32) Response {
 // the action that wrote it has returned. The file may not exist yet when the
 // page connects: the request that starts the action and the event stream are
 // two requests, and either can arrive first.
-func writeEventStream(w http.ResponseWriter, token string) {
+func writeEventStream(ctx context.Context, w http.ResponseWriter, token string) {
 	path := token
 	interval := 250 * time.Millisecond
 	if at := strings.LastIndex(token, sseSeparator); at >= 0 {
@@ -512,7 +512,11 @@ func writeEventStream(w http.ResponseWriter, token string) {
 				flusher.Flush()
 				heartbeat = time.Now()
 			}
-			time.Sleep(interval)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(interval):
+			}
 			continue
 		}
 		if err != nil {
