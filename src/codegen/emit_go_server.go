@@ -385,11 +385,11 @@ func goResponseType() string {
 	b.WriteString("\tHeaders string\n")
 	b.WriteString("}\n\n")
 	b.WriteString("// write sends the response with its content type.\n")
-	b.WriteString("func (resp Response) write(w http.ResponseWriter) {\n")
+	b.WriteString("func (resp Response) write(ctx context.Context, w http.ResponseWriter) {\n")
 	b.WriteString("\tcontentType := resp.contentType\n")
 	b.WriteString("\tif contentType == \"\" {\n\t\tcontentType = \"text/plain; charset=utf-8\"\n\t}\n")
 	b.WriteString("\tif contentType == \"text/event-stream\" {\n")
-	b.WriteString("\t\twriteEventStream(r.Context(), w, resp.Body)\n")
+	b.WriteString("\t\twriteEventStream(ctx, w, resp.Body)\n")
 	b.WriteString("\t\treturn\n")
 	b.WriteString("\t}\n")
 	b.WriteString("\tfor _, line := range strings.Split(resp.Headers, \"\\n\") {\n")
@@ -983,7 +983,7 @@ func goRouteHandlers(m ir.ModuleIR) string {
 		b.WriteString("\tif r.ContentLength > httpMaxBody() {\n")
 		b.WriteString("\t\thttp.Error(w, \"request body too large\", http.StatusRequestEntityTooLarge)\n")
 		b.WriteString("\t\treturn\n\t}\n")
-		fmt.Fprintf(&b, "\t%s(*newRequest(r)).write(w)\n}\n\n", goFuncName(handler))
+		fmt.Fprintf(&b, "\t%s(*newRequest(r)).write(r.Context(), w)\n}\n\n", goFuncName(handler))
 	}
 	return b.String()
 }

@@ -446,7 +446,7 @@ func TestEmitGoServerStreamsProgress(t *testing.T) {
 	for _, want := range []string{
 		"func sseFile(path string, intervalMs uint32) Response",
 		"func stdWebHttpSseFile(path string, intervalMs uint32) Response",
-		"func writeEventStream(w http.ResponseWriter, token string)",
+		"func writeEventStream(ctx context.Context, w http.ResponseWriter, token string)",
 		"text/event-stream",
 		"__DONE__:",
 		"event: done",
