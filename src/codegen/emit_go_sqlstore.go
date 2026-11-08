@@ -70,16 +70,16 @@ func openRegistryDB() (*sql.DB, error) {
 	}
 	if directory := filepath.Dir(path); directory != "" {
 		if err := os.MkdirAll(directory, 0o755); err != nil {
-			return nil, fmt.Errorf("the registry's database directory cannot be created: %%w", err)
+			return nil, fmt.Errorf("the registry's database directory cannot be created: %w", err)
 		}
 	}
 	handle, err := sql.Open(registryDriverName(), path)
 	if err != nil {
-		return nil, fmt.Errorf("the registry's database cannot be opened: %%w", err)
+		return nil, fmt.Errorf("the registry's database cannot be opened: %w", err)
 	}
 	if err := handle.Ping(); err != nil {
 		handle.Close()
-		return nil, fmt.Errorf("the registry's database cannot be reached: %%w", err)
+		return nil, fmt.Errorf("the registry's database cannot be reached: %w", err)
 	}
 	if err := registryApplySchema(handle); err != nil {
 		handle.Close()
@@ -123,7 +123,7 @@ func registryApplySchema(db *sql.DB) error {
 	for _, statement := range registryStatements(registrySchemaText) {
 		if _, err := db.Exec(statement); err != nil &&
 			!strings.Contains(strings.ToLower(err.Error()), "already exists") {
-			return fmt.Errorf("the registry's tables cannot be created: %%w", err)
+			return fmt.Errorf("the registry's tables cannot be created: %w", err)
 		}
 	}
 	return nil
@@ -231,7 +231,7 @@ func registryClaimModule(db *sql.DB, name, owner, maintainer, visibility string)
 		return err
 	}
 	if !held {
-		return fmt.Errorf("%%s could not be claimed", name)
+		return fmt.Errorf("%s could not be claimed", name)
 	}
 	// The owner maintains what they own and the identity the manifest names as
 	// maintainer maintains it too. Both are recorded, because letting a second
@@ -397,7 +397,7 @@ func registrySetVisibility(db *sql.DB, name, visibility string) error {
 		return err
 	}
 	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
-		return fmt.Errorf("%%s is not published here", name)
+		return fmt.Errorf("%s is not published here", name)
 	}
 	return nil
 }
@@ -418,7 +418,7 @@ func registryRecordVersion(db *sql.DB, name, version, owner string, payload []by
 		return err
 	}
 	if !held {
-		return fmt.Errorf("%%s is not published here", name)
+		return fmt.Errorf("%s is not published here", name)
 	}
 	ownerID, err := registryUserID(db, owner)
 	if err != nil {

@@ -99,6 +99,12 @@ targets:
         file: templates/notfound.html
       - name: crumb
         file: templates/crumb.html
+      - name: list
+        file: templates/list.html
+      - name: shell
+        file: templates/shell.html
+      - name: trail-search
+        file: templates/trail-search.html
     files:
       - path: app.go
         role: implementation

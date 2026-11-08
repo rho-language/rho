@@ -105,27 +105,10 @@ fn version_page(req: Request) Response {
         vars("command", field_of(found, 5)) +
         vars("publisher", field_of(found, 6)) +
         vars("published", field_of(found, 7)) +
-        vars("release", release_section(field_of(found, 8), store_release(name, version))) +
-        vars("doc", doc_link(field_of(found, 0), version)))
+        vars("released", field_of(found, 8)) +
+        vars("release_note", store_release(name, version)) +
+        vars("doc_url", doc_url(field_of(found, 0), version)))
     ))
-}
-
-// release_section is what a version's page says about the release: when it was
-// cut, and what changed. It is empty when the module recorded nothing, so a
-// version published before notes were kept shows no heading promising one.
-//
-// The note is escaped rather than trusted: it is text a publisher wrote, and a
-// page that pasted it in raw would run whatever was written in it. It keeps its
-// line breaks inside a <pre>.
-fn release_section(released: string, note: string) string {
-    if note == "" {
-        return ""
-    }
-    let when: string = ""
-    if released != "" {
-        when = "<p class=\"when\">Released " + escape_html(released) + "</p>"
-    }
-    return "<h3>Release</h3>" + when + "<pre class=\"release\">" + escape_html(note) + "</pre>"
 }
 
 // missing renders a 404 page.
@@ -162,7 +145,10 @@ fn page_shell(title: string, query: string, body: string) string {
         vars("year", int_to_str(clock_year())) +
         vars("site_url", registry_site_url())
     )
-    return open + body + close
+    return template_fill(template_get("shell"),
+        vars("open", open) +
+        vars("body", body) +
+        vars("close", close))
 }
 
 /* -------------------------------------------------------------------------- */
@@ -186,15 +172,15 @@ fn module_rows(listing: string) string {
             vars("description", field_of(line, 3)) +
             vars("released", field_of(line, 8)) +
             vars("release", field_of(line, 9)) +
-            vars("doc", doc_badge(field_of(line, 0), field_of(line, 1)))
+            vars("doc_url", doc_url(field_of(line, 0), field_of(line, 1)))
         )
         count = count + 1
         rest = after_first_line(rest)
     }
     if count == 0 {
-        return empty("No modules published yet.")
+        return template_fill(template_get("list"), vars("empty", empty("No modules published yet.")))
     }
-    return "<ul>" + out + "</ul>"
+    return template_fill(template_get("list"), vars("rows", out))
 }
 
 // version_rows renders one row per version, each linking to its detail page.
@@ -214,15 +200,15 @@ fn version_rows(listing: string, when_empty: string) string {
             vars("description", field_of(line, 3)) +
             vars("released", field_of(line, 8)) +
             vars("release", field_of(line, 9)) +
-            vars("doc", doc_badge(field_of(line, 0), field_of(line, 1)))
+            vars("doc_url", doc_url(field_of(line, 0), field_of(line, 1)))
         )
         count = count + 1
         rest = after_first_line(rest)
     }
     if count == 0 {
-        return empty(when_empty)
+        return template_fill(template_get("list"), vars("empty", empty(when_empty)))
     }
-    return "<ul>" + out + "</ul>"
+    return template_fill(template_get("list"), vars("rows", out))
 }
 
 // crumb is the trail at the top of a page: where it is, and the way back up.
@@ -240,7 +226,7 @@ fn search_trail(query: string) string {
     if query == "" {
         return ""
     }
-    return " / <a href=\"/search?q=" + query + "\">search " + query + "</a>"
+    return template_fill(template_get("trail-search"), vars("query", query))
 }
 
 fn module_trail(name: string) string {

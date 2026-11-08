@@ -144,24 +144,15 @@ fn doc_home() void {
     store_doc_home(registry_url(), registry_title())
 }
 
-// doc_link is the anchor a module or version page carries, or "" when the
-// version has no documentation.
+// doc_url is the address a version's documentation is served under, or "" when
+// the version has none.
 //
 // A page offers the link only when the documentation is there: a link to a page
-// that would answer not-found is worse than no link.
-fn doc_link(name: string, version: string) string {
+// that would answer not-found is worse than no link. The anchor around it is
+// markup, so it lives in the template rather than in this address.
+fn doc_url(name: string, version: string) string {
     if !store_has_docs(name, version) {
         return ""
     }
-    return "<a class=\"doc-link\" href=\"" + doc_site(name, version) + "\">docs</a>"
-}
-
-// doc_badge is the documentation marker in a listing: a link, because a reader
-// looking at a list of modules wants to open the documentation from there, and a
-// marker that is not a link makes them walk into the version page first.
-fn doc_badge(name: string, version: string) string {
-    if !store_has_docs(name, version) {
-        return ""
-    }
-    return "<a class=\"doc-badge\" href=\"" + doc_site(name, version) + "\" title=\"documentation of " + name + "\">docs</a>"
+    return doc_site(name, version)
 }

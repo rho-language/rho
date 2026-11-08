@@ -2,6 +2,6 @@
   <a href="/modules/{{ name }}/{{ version }}"><span class="name">{{ version }}</span></a>
   <span class="when">{{ released }}</span>
   <span class="desc">{{ description }}</span>
-  <span class="note">{{ release }}</span>
-  {{{ doc }}}
+  {{#if release}}<span class="note">{{ release }}</span>{{/if}}
+  {{#if doc_url}}<a class="doc-badge" href="{{ doc_url }}" title="documentation of {{ name }}">docs</a>{{/if}}
 </li>

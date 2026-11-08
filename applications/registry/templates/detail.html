@@ -10,8 +10,10 @@
   <dt>publisher</dt><dd>{{ publisher }}</dd>
   <dt>published</dt><dd>{{ published }} UTC</dd>
 </dl>
-{{{ release }}}
-<h3>Documentation</h3>
-{{{ doc }}}
+{{#if release_note}}<h3>Release</h3>
+{{#if released}}<p class="when">Released {{ released }}</p>
+{{/if}}<pre class="release">{{ release_note }}</pre>
+{{/if}}<h3>Documentation</h3>
+{{#if doc_url}}<a class="doc-link" href="{{ doc_url }}">docs</a>{{/if}}
 <h3>Download</h3>
 <p class="sub"><code>GET /modules/{{ name }}/{{ version }}/rho-pkg</code></p>
