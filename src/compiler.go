@@ -983,13 +983,12 @@ func includedModuleName(path string) string {
 	}
 	parts := strings.Split(filepath.ToSlash(path), "/")
 	for i := 0; i+1 < len(parts); i++ {
-		if parts[i] == "modules" {
+		if parts[i] == "modules" || parts[i] == "plugins" {
 			return parts[i+1]
 		}
 	}
 	return ""
 }
-
 
 // checkModuleDependency verifies that the module owning sourceFile declares
 // dep as one of its dependencies. The owning manifest is the first module.yml
@@ -1004,53 +1003,24 @@ func checkModuleDependency(sourceFile, dep string) error {
 			if err != nil {
 				return nil
 			}
-			// Parse deps: look for "dep:" under a "deps:" section. A simple
-			// line-based scan is enough: deps entries are "  name: version".
-			inDeps := false
-			inModules := false
-			found := false
-			hasDeps := false
-			hasModules := false
-			for _, line := range strings.Split(string(data), "\n") {
-				trimmed := strings.TrimSpace(line)
-				if trimmed == "deps:" {
-					inDeps = true
-					inModules = false
-					hasDeps = true
-					continue
-				}
-				if trimmed == "modules:" || trimmed == "app_modules:" || trimmed == "robohub_modules:" {
-					inModules = true
-					inDeps = false
-					hasModules = true
-					continue
-				}
-				if trimmed == "" {
-					continue
-				}
-				if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-					inDeps = false
-					inModules = false
-					continue
-				}
-				if inDeps {
-					if strings.HasPrefix(trimmed, dep+":") || strings.HasPrefix(trimmed, dep+" :") {
-						found = true
-					}
-				}
-				if inModules {
-					if strings.Contains(trimmed, "name:") && strings.Contains(trimmed, dep) {
-						found = true
-					}
-				}
-			}
-			if found {
+			document, err := yaml.Load(string(data))
+			if err != nil {
 				return nil
 			}
-			if hasDeps || hasModules {
-				return fmt.Errorf("module does not declare %q in its deps/modules; add it to module.yml", dep)
+			deps := document.Map["deps"]
+			robohub := deps.Map["robohub"]
+			// A RoboHub module or plugin is declared under deps.robohub, not
+			// beside the Rho components. The include says where the code lives;
+			// this block says the module is allowed to bring it in.
+			if robohub.Kind == yaml.KindMap {
+				if _, ok := robohub.Map[dep]; ok {
+					return nil
+				}
 			}
-			return nil
+			if _, ok := deps.Map[dep]; ok {
+				return fmt.Errorf("RoboHub dependency %q must be under deps.robohub in module.yml", dep)
+			}
+			return fmt.Errorf("module does not declare %q under deps.robohub in module.yml", dep)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
