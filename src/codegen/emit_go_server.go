@@ -392,6 +392,10 @@ func goResponseType() string {
 	b.WriteString("\t\twriteEventStream(ctx, w, resp.Body)\n")
 	b.WriteString("\t\treturn\n")
 	b.WriteString("\t}\n")
+	b.WriteString("\tif contentType == \"text/event-stream; events\" {\n")
+	b.WriteString("\t\twriteNamedEventStream(ctx, w, resp.Body)\n")
+	b.WriteString("\t\treturn\n")
+	b.WriteString("\t}\n")
 	b.WriteString("\tfor _, line := range strings.Split(resp.Headers, \"\\n\") {\n")
 	b.WriteString("\t\tif name, value, ok := strings.Cut(line, \":\"); ok {\n")
 	b.WriteString("\t\t\tw.Header().Add(strings.TrimSpace(name), strings.TrimSpace(value))\n")
@@ -400,8 +404,27 @@ func goResponseType() string {
 	b.WriteString("\tw.Header().Set(\"Content-Type\", contentType)\n")
 	b.WriteString("\tw.WriteHeader(int(resp.Status))\n")
 	b.WriteString("\t_, _ = w.Write([]byte(resp.Body))\n}\n\n")
+	b.WriteString(goResponseHelpers())
 	b.WriteString(goSSEHelpers())
 	return b.String()
+}
+
+// goResponseHelpers returns the helpers a Rho handler calls to shape a
+// response without taking its fields apart in the language.
+func goResponseHelpers() string {
+	return `// stdWebHttpResponseHeader appends header lines to a response. It is the
+// extern behind std.web.http with_headers, so a handler can add a cookie or an
+// HTMX response header while keeping the status, body and content type it
+// chose.
+func stdWebHttpResponseHeader(resp Response, headers string) Response {
+	if resp.Headers != "" && headers != "" {
+		resp.Headers += "\n"
+	}
+	resp.Headers += headers
+	return resp
+}
+
+`
 }
 
 // goSSEHelpers returns the response helpers for a Server-Sent Events stream.
@@ -428,6 +451,24 @@ func sseFile(path string, intervalMs uint32) Response {
 // helper above keeps the short name the server tests use.
 func stdWebHttpSseFile(path string, intervalMs uint32) Response {
 	return sseFile(path, intervalMs)
+}
+
+// sseEvents returns a response that follows a named-event file as Server-Sent
+// Events. A line of the file is a JSON object {"event":"...","data":"..."};
+// data is HTML a target can swap, and may contain newlines. snapshot, when not
+// empty, is sent from its start before the live file is followed, so a page
+// that connects sees current state before later changes.
+func sseEvents(path string, snapshot string, intervalMs uint32) Response {
+	return Response{
+		Status:      200,
+		Body:        path + sseSeparator + snapshot + sseSeparator + strconv.FormatUint(uint64(intervalMs), 10),
+		contentType: "text/event-stream; events",
+	}
+}
+
+// stdWebHttpSseEvents is the name an extern sse_events call carries.
+func stdWebHttpSseEvents(path string, snapshot string, intervalMs uint32) Response {
+	return sseEvents(path, snapshot, intervalMs)
 }
 
 // writeEventStream follows the file named by a stream response and writes each
@@ -523,6 +564,154 @@ func writeEventStream(ctx context.Context, w http.ResponseWriter, token string) 
 			return
 		}
 	}
+}
+
+// writeNamedEventStream follows a JSON-lines file and writes each line as a
+// named Server-Sent Event. A snapshot file, when named, is sent from its start
+// first, so a page that connects sees current state before later changes. The
+// live file is then followed from its end.
+func writeNamedEventStream(ctx context.Context, w http.ResponseWriter, token string) {
+	path := token
+	snapshot := ""
+	interval := 250 * time.Millisecond
+	parts := strings.SplitN(token, sseSeparator, 3)
+	if len(parts) > 0 {
+		path = parts[0]
+	}
+	if len(parts) > 1 {
+		snapshot = parts[1]
+	}
+	if len(parts) > 2 {
+		if value, err := strconv.Atoi(parts[2]); err == nil && value > 0 {
+			interval = time.Duration(value) * time.Millisecond
+		}
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming is not supported by this connection", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// Open the live file before the snapshot is read, so an event appended
+	// while the snapshot is being sent is still after the starting offset.
+	var file *os.File
+	var offset int64
+	if opened, err := os.Open(path); err == nil {
+		file = opened
+		if info, statErr := file.Stat(); statErr == nil {
+			offset = info.Size()
+			_, _ = file.Seek(offset, io.SeekStart)
+		}
+	}
+
+	if snapshot != "" {
+		if snap, err := os.Open(snapshot); err == nil {
+			reader := bufio.NewReader(snap)
+			for {
+				line, readErr := reader.ReadString('\n')
+				if len(line) > 0 {
+					writeNamedEvent(w, line)
+					flusher.Flush()
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			_ = snap.Close()
+		}
+	}
+
+	started := time.Now()
+	for file == nil {
+		opened, err := os.Open(path)
+		if err == nil {
+			file = opened
+			if info, statErr := file.Stat(); statErr == nil {
+				offset = info.Size()
+				_, _ = file.Seek(offset, io.SeekStart)
+			}
+			break
+		}
+		if time.Since(started) > time.Minute {
+			fmt.Fprint(w, "event: error\ndata: the event file did not appear\n\n")
+			flusher.Flush()
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	heartbeat := time.Now()
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			offset += int64(len(line))
+			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(trimmed, "__DONE__:") {
+				fmt.Fprintf(w, "event: done\ndata: %s\n\n", strings.TrimPrefix(trimmed, "__DONE__:"))
+				flusher.Flush()
+				return
+			}
+			writeNamedEvent(w, trimmed)
+			flusher.Flush()
+			heartbeat = time.Now()
+		}
+		if err == io.EOF {
+			if info, statErr := file.Stat(); statErr == nil && info.Size() < offset {
+				_, _ = file.Seek(0, io.SeekStart)
+				reader.Reset(file)
+				offset = 0
+			}
+			if time.Since(heartbeat) > 15*time.Second {
+				fmt.Fprint(w, ": keepalive\n\n")
+				flusher.Flush()
+				heartbeat = time.Now()
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(interval):
+			}
+			continue
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// writeNamedEvent writes one JSON-lines record as an SSE event. A record that
+// is not an object with an event name is skipped rather than sent as markup.
+func writeNamedEvent(w io.Writer, line string) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "__DONE__:") {
+		return
+	}
+	var record map[string]string
+	if err := jsonenc.Unmarshal([]byte(line), &record); err != nil {
+		return
+	}
+	event := record["event"]
+	if event == "" {
+		return
+	}
+	fmt.Fprintf(w, "event: %s\n", event)
+	for _, dataLine := range strings.Split(record["data"], "\n") {
+		fmt.Fprintf(w, "data: %s\n", dataLine)
+	}
+	fmt.Fprint(w, "\n")
 }
 
 `

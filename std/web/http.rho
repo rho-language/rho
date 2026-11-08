@@ -74,6 +74,16 @@ fn html(status: u32, body: string) Response {
 // request to finish.
 extern fn sse_file(path: string, interval_ms: u32) Response
 
+// sse_events streams named HTML fragments as Server-Sent Events. Each line of
+// path is a JSON object {"event":"...","data":"..."}; data may contain
+// newlines. When snapshot names a readable file, its lines are sent from the
+// start first, so a page that connects sees current state before later
+// changes; path is then followed from its end.
+//
+// It is the stream a page uses with HTMX: the event name selects the target
+// and the data is the HTML fragment that target swaps in.
+extern fn sse_events(path: string, snapshot: string, interval_ms: u32) Response
+
 
 
 // status_found is a redirect the browser follows with a GET.
@@ -87,13 +97,14 @@ fn redirect(location: string) Response {
     return Response{ status_found(), "", "text/plain; charset=utf-8", "Location: " + location }
 }
 
+// response_header appends header lines to a response. The Go backend owns the
+// response's header block, so the lines are added there rather than by taking
+// the response apart in Rho.
+extern fn response_header(resp: Response, headers: string) Response
+
 // with_headers returns a response with one more header, so a handler can add a
-// cookie without giving up the content type or body it already chose.
+// cookie or an HTMX response header without giving up the content type or body
+// it already chose.
 fn with_headers(resp: Response, headers: string) Response {
-    var merged: string = resp.Headers
-    if merged != "" && headers != "" {
-        merged = merged + "\n"
-    }
-    merged = merged + headers
-    return Response{ resp.Status, resp.Body, "text/plain; charset=utf-8", merged }
+    return response_header(resp, headers)
 }
