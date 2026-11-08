@@ -82,29 +82,29 @@ targets:
     # template engine.
     templates:
       - name: layout-open
-        file: templates/layout-open.html
+        file: templates/layouts/layout-open.html
       - name: layout-close
-        file: templates/layout-close.html
+        file: templates/layouts/layout-close.html
       - name: index
-        file: templates/index.html
+        file: templates/pages/index.html
       - name: row
-        file: templates/row.html
+        file: templates/rows/row.html
       - name: version
-        file: templates/version.html
+        file: templates/rows/version.html
       - name: detail
-        file: templates/detail.html
+        file: templates/pages/detail.html
       - name: empty
-        file: templates/empty.html
+        file: templates/parts/empty.html
       - name: notfound
-        file: templates/notfound.html
+        file: templates/pages/notfound.html
       - name: crumb
-        file: templates/crumb.html
+        file: templates/parts/crumb.html
       - name: list
-        file: templates/list.html
+        file: templates/parts/list.html
       - name: shell
-        file: templates/shell.html
+        file: templates/layouts/shell.html
       - name: trail-search
-        file: templates/trail-search.html
+        file: templates/parts/trail-search.html
     files:
       - path: app.go
         role: implementation

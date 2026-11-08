@@ -45,21 +45,21 @@ targets:
     # template engine.
     templates:
       - name: layout-open
-        file: templates/layout-open.html
+        file: templates/layouts/layout-open.html
       - name: layout-close
-        file: templates/layout-close.html
+        file: templates/layouts/layout-close.html
       - name: index
-        file: templates/index.html
+        file: templates/pages/index.html
       - name: card
-        file: templates/card.html
+        file: templates/parts/card.html
       - name: releases
-        file: templates/releases.html
+        file: templates/parts/releases.html
       - name: release-row
-        file: templates/release-row.html
+        file: templates/rows/release-row.html
       - name: empty
-        file: templates/empty.html
+        file: templates/parts/empty.html
       - name: notfound
-        file: templates/notfound.html
+        file: templates/pages/notfound.html
     files:
       - path: app.go
         role: implementation
