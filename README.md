@@ -1,6 +1,6 @@
 # Rho
 
-**Version 0.3.0** · [rho-lang.org](https://rho-lang.org)
+**Version 0.4.0** · [rho-lang.org](https://rho-lang.org)
 
 Rho is a small systems programming language. It compiles to C and to Go: C for
 host tooling and embedded targets, Go for services that speak HTTP.
@@ -505,6 +505,38 @@ invocation come from the platform rather than from this program, and supporting
 another programmer is a change to a board spec. The external tool and the probe
 have to be installed and connected; see `rho target show <board>` for what a
 given board expects.
+
+### Signed artifacts
+
+`rho artifact` packs and verifies a signed rollout artifact: a manifest, a
+SHA-256 payload and an Ed25519 signature. Keeper and the deploy tools verify it
+before staging or flashing anything.
+
+```sh
+rho artifact pack -name aquarium -version 0.4.0 -kind service \
+  -target host-linux-amd64 -entrypoint aquarium -service aquarium \
+  -key build.key -out aquarium-0.4.0.tar.gz build/
+rho artifact verify -pub build.pub aquarium-0.4.0.tar.gz
+```
+
+`rho flash -artifact ...` and `rho deploy -artifact ...` verify the artifact
+first. Keeper can deploy a host service from a signed artifact with an atomic
+swap, health check and rollback.
+
+### Provisioning
+
+`rho bootstrap` reads a local provisioning contract, generates an instance UUID
+and Ed25519 identity, stores them `0600`, and optionally enrolls the instance
+with Keeper using a one-time token.
+
+```sh
+rho bootstrap token -device garden-01 -project default -area 1 -node 7
+rho bootstrap init -config /etc/robohub/provisioning.json -token <token>
+rho bootstrap status
+```
+
+Keeper keeps the enrolled node registry and answers credential verification
+before a gateway accepts node frames.
 
 ### Debugging
 

@@ -203,3 +203,25 @@ Security hardening across the telemetry chain.
 - `sql_exec_many` and the `telemetry` port (outbox ingestion, latest, series,
   rollups, retention) shipped in 0.2.0 are documented here as released.
 
+## [0.4.0] - 2026-11-08
+
+A web, telemetry, rollout and provisioning release.
+
+- The template engine nests blocks of the same kind, supports `{{else}}`,
+  `{{#each}}`, `{{#with}}`, whitespace control and `{{t "key"}}` translation.
+  Flat JSON locale catalogs are embedded at build time, with English and
+  Romanian catalogs and a build-time coverage report.
+- HTMX and Server-Sent Events are available as shared modules. Pages answer
+  fragments when `HX-Request` is set, and named SSE streams carry HTML
+  fragments; the template renderer gained the tests that keep these contracts
+  from drifting.
+- The telemetry port bounds the WAL, batches retention, supports incremental
+  and full vacuum, reports storage status, and stores actionable faults in a
+  dedicated table with list, clear, prune and live-event paths.
+- Added `rho-artifact` for signed host and firmware artifacts and `rho-bootstrap`
+  for first-boot identity, permissions and Keeper enrollment. Both are published
+  to the remote registry.
+- Flash and deploy verify signed artifacts before touching a board or target.
+- Cross-entity includes use bare names resolved by the compiler; RoboHub
+  dependencies are declared once under `deps.robohub` and checked at build time.
+- `scripts/check.sh` is idempotent when a version is already published.
