@@ -957,6 +957,71 @@ func telemetryFaultRows(project string, limit uint32) string {
 	return out.String()
 }
 
+// telemetryFaultMaxID is the newest fault id, used to start a live feed at the
+// current state instead of replaying every fault the store has ever held.
+func telemetryFaultMaxId(project string) uint32 {
+	if !telemetryOpen("") {
+		return 0
+	}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return 0
+	}
+	var value int64
+	if err := handle.QueryRow(
+		"SELECT COALESCE(MAX(id), 0) FROM telemetry_fault WHERE project = ?", project).Scan(&value); err != nil {
+		return 0
+	}
+	return uint32(value)
+}
+
+// telemetryFaultNew returns the faults newer than one id as tab-separated lines.
+func telemetryFaultNew(project string, afterID uint32, limit uint32) string {
+	if !telemetryOpen("") {
+		return ""
+	}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return ""
+	}
+	if limit == 0 {
+		limit = 100
+	}
+	rows, err := handle.Query(
+		"SELECT id, severity, created_ms, message FROM telemetry_fault "+
+			"WHERE project = ? AND id > ? ORDER BY id ASC LIMIT ?", project, int64(afterID), int64(limit))
+	if err != nil {
+		return ""
+	}
+	var rowsAny any = rows
+	typed, ok := rowsAny.(interface {
+		Next() bool
+		Scan(...any) error
+		Close() error
+	})
+	if !ok {
+		return ""
+	}
+	defer typed.Close()
+	var out strings.Builder
+	for typed.Next() {
+		var id, created int64
+		var severity, message string
+		if err := typed.Scan(&id, &severity, &created, &message); err != nil {
+			continue
+		}
+		out.WriteString(strconv.FormatInt(id, 10))
+		out.WriteString("\t")
+		out.WriteString(severity)
+		out.WriteString("\t")
+		out.WriteString(strconv.FormatInt(created, 10))
+		out.WriteString("\t")
+		out.WriteString(strings.ReplaceAll(message, "\t", " "))
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
 // telemetryFaultClear removes one acknowledged fault.
 func telemetryFaultClear(project string, id uint32) string {
 	if !telemetryOpen("") {
