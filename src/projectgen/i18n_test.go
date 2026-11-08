@@ -158,3 +158,17 @@ func TestGenerateLocalesRejectsNestedValues(t *testing.T) {
 		t.Fatalf("expected a nested-value error, got %v", err)
 	}
 }
+
+func TestLocaleReports(t *testing.T) {
+	reports := localeReports("en", map[string]map[string]string{
+		"en": {"a": "A", "b": "B"},
+		"ro": {"a": "A", "c": "C"},
+	})
+	report := reports["ro"]
+	if len(report.Missing) != 1 || report.Missing[0] != "b" {
+		t.Errorf("missing = %#v", report.Missing)
+	}
+	if len(report.Unused) != 1 || report.Unused[0] != "c" {
+		t.Errorf("unused = %#v", report.Unused)
+	}
+}

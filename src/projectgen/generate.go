@@ -477,6 +477,19 @@ func generateLocales(ctx Context, target Target) error {
 			catalogs[entry.Code][key] = text
 		}
 	}
+	// A missing or stray key is a translation gap, not a build failure: the
+	// page falls back to the default language. Reporting it here keeps the gap
+	// visible without making a partial catalog unusable.
+	for locale, report := range localeReports(target.DefaultLocale, catalogs) {
+		if len(report.Missing) > 0 {
+			fmt.Fprintf(os.Stderr, "rho i18n: %s is missing %d keys (first: %s)\n",
+				locale, len(report.Missing), report.Missing[0])
+		}
+		if len(report.Unused) > 0 {
+			fmt.Fprintf(os.Stderr, "rho i18n: %s has %d keys not in %s (first: %s)\n",
+				locale, len(report.Unused), target.DefaultLocale, report.Unused[0])
+		}
+	}
 	rendered := codegen.EmitGoI18n(target.DefaultLocale, catalogs)
 	if rendered == "" {
 		return nil
