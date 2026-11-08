@@ -924,15 +924,23 @@ func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, depe
 // resolves whether the application is one or three directories deep under the
 // root that holds `modules/`. A bare name (`include "forms"`) resolves to the
 // module's `src/main.rho` under that same tree.
-func resolveInclude(sourceFile, include string) (string, bool) {
+// regularSourceFile is a file, not a directory. A bare include such as
+// "notifications" would otherwise stop at the module directory while walking
+// up before the module entry point is tried.
+func regularSourceFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func resolveInclude(sourceFile, include string, dependencyRoots ...string) (string, bool) {
 	if filepath.IsAbs(include) {
-		if _, err := os.Stat(include); err == nil {
+		if regularSourceFile(include) {
 			return include, true
 		}
 		return "", false
 	}
 	direct := filepath.Join(filepath.Dir(sourceFile), include)
-	if _, err := os.Stat(direct); err == nil {
+	if regularSourceFile(direct) {
 		return direct, true
 	}
 
@@ -942,7 +950,7 @@ func resolveInclude(sourceFile, include string) (string, bool) {
 	current := filepath.Dir(sourceFile)
 	for {
 		candidate := filepath.Join(current, include)
-		if _, err := os.Stat(candidate); err == nil {
+		if regularSourceFile(candidate) {
 			return candidate, true
 		}
 		parent := filepath.Dir(current)
@@ -952,20 +960,42 @@ func resolveInclude(sourceFile, include string) (string, bool) {
 		current = parent
 	}
 
-	// A bare name is a module: its main lives under `modules/<name>` at the
-	// root that owns the tree, and that is what the include means.
+	// A bare name is a module, plugin, provider or contract. Its entry point is
+	// found under the tree that owns it, so an application names the entity and
+	// not the number of directories between the two. A dependency root is the
+	// same idea for an entity checked out on its own.
 	if !strings.ContainsRune(include, filepath.Separator) {
 		current = filepath.Dir(sourceFile)
 		for {
-			candidate := filepath.Join(current, "modules", include, "src", "main.rho")
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate, true
+			candidates := []string{
+				filepath.Join(current, "modules", include, "src", "main.rho"),
+				filepath.Join(current, "plugins", include, "src", "main.rho"),
+				filepath.Join(current, "providers", include, "src", "main.rho"),
+				filepath.Join(current, "contracts", include, "manager.rho"),
+				filepath.Join(current, "contracts", include, "src", "main.rho"),
+			}
+			for _, candidate := range candidates {
+				if regularSourceFile(candidate) {
+					return candidate, true
+				}
 			}
 			parent := filepath.Dir(current)
 			if parent == current {
 				break
 			}
 			current = parent
+		}
+		for _, root := range dependencyRoots {
+			candidates := []string{
+				filepath.Join(root, "src", "main.rho"),
+				filepath.Join(root, "main.rho"),
+				filepath.Join(root, "manager.rho"),
+			}
+			for _, candidate := range candidates {
+				if regularSourceFile(candidate) {
+					return candidate, true
+				}
+			}
 		}
 	}
 	return "", false
@@ -983,7 +1013,7 @@ func includedModuleName(path string) string {
 	}
 	parts := strings.Split(filepath.ToSlash(path), "/")
 	for i := 0; i+1 < len(parts); i++ {
-		if parts[i] == "modules" || parts[i] == "plugins" {
+		if parts[i] == "modules" || parts[i] == "plugins" || parts[i] == "providers" {
 			return parts[i+1]
 		}
 	}
@@ -1069,7 +1099,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		loadStdModuleFor(merged, name, abs, projectRoot, dependencyRoots, components, visited)
 	}
 	for _, include := range mod.Includes {
-		includePath, ok := resolveInclude(abs, include.Path)
+		includePath, ok := resolveInclude(abs, include.Path, dependencyRoots...)
 		if !ok {
 			return nil, fmt.Errorf("include %q from %q: no file at the direct path or the module tree", include.Path, abs)
 		}

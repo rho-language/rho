@@ -62,3 +62,49 @@ func TestIncludedModuleNameFindsPlugins(t *testing.T) {
 		t.Fatalf("sibling file = %q", got)
 	}
 }
+
+func TestResolveBareEntityIncludes(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "applications", "demo", "src", "main.rho")
+	for _, path := range []string{
+		filepath.Join(root, "modules", "forms", "src", "main.rho"),
+		filepath.Join(root, "plugins", "alert-log", "src", "main.rho"),
+		filepath.Join(root, "providers", "mesh", "src", "main.rho"),
+		filepath.Join(root, "contracts", "alert", "manager.rho"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("module test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, want := range map[string]string{
+		"forms":     filepath.Join(root, "modules", "forms", "src", "main.rho"),
+		"alert-log": filepath.Join(root, "plugins", "alert-log", "src", "main.rho"),
+		"mesh":      filepath.Join(root, "providers", "mesh", "src", "main.rho"),
+		"alert":     filepath.Join(root, "contracts", "alert", "manager.rho"),
+	} {
+		got, ok := resolveInclude(source, name)
+		if !ok || got != want {
+			t.Errorf("resolveInclude(%q) = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+}
+
+func TestResolveBareIncludeFromDependencyRoot(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "app", "src", "main.rho")
+	dependency := filepath.Join(t.TempDir(), "forms")
+	if err := os.MkdirAll(filepath.Join(dependency, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(dependency, "src", "main.rho")
+	if err := os.WriteFile(main, []byte("module forms\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := resolveInclude(source, "forms", dependency)
+	if !ok || got != main {
+		t.Fatalf("dependency include = %q, %v; want %q", got, ok, main)
+	}
+}
