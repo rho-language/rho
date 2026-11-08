@@ -72,7 +72,15 @@ publish_module() {
   local module="$1" name version
   name="$(basename "${module}")"
   echo "--> ${name}"
-  "${BIN}/rho" module publish "${module}"
+  # A check run on a machine that already published this version must still
+  # reach the tests; the version is a release identity, not a build counter.
+  local output
+  if ! output="$("${BIN}/rho" module publish "${module}" 2>&1)"; then
+    case "$output" in
+      *"version already published"*) echo "    ${name} is already published" ;;
+      *) echo "$output"; return 1 ;;
+    esac
+  fi
   version="$(sed -n 's/^  version:[[:space:]]*//p' "${module}module.yml" | head -1)"
   if [ -n "${version}" ]; then
     "${BIN}/rho" module enable "${name}@${version}" >/dev/null 2>&1 || true
