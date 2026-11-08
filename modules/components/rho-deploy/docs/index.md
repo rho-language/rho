@@ -41,3 +41,10 @@ The image is built here, saved, carried, loaded and started on the target.
 method can be redirected from the environment — `RH_DEPLOY_HOST`,
 `RH_DEPLOY_USER`, `RH_DEPLOY_PATH`, `RH_DEPLOY_PORT`, `RH_DEPLOY_METHOD` — so a
 spec is not a fact about one bench.
+
+## Signed artifacts
+
+`rho flash` and `rho deploy` accept `-artifact` with `-pub` (or
+`-allow-unsigned` for development). The artifact is verified and extracted
+before the flasher or deployment command runs. Remote OTA capability and
+firmware rollback are described in `rho-artifact`'s remaining-work notes.

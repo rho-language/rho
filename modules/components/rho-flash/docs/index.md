@@ -60,3 +60,10 @@ said, rather than being flashed with a guess.
 - {ref}`rho-monitor <rho-monitor/index>` — reading the board's console once it
   is running.
 - {ref}`rho-dbg <rho-dbg/index>` — debugging it.
+
+## Signed artifacts
+
+`rho flash` and `rho deploy` accept `-artifact` with `-pub` (or
+`-allow-unsigned` for development). The artifact is verified and extracted
+before the flasher or deployment command runs. Remote OTA capability and
+firmware rollback are described in `rho-artifact`'s remaining-work notes.
