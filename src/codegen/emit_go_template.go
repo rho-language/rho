@@ -62,7 +62,7 @@ func EmitGoTemplates(contents map[string]string) string {
 	var b strings.Builder
 	b.WriteString(goBanner(irModuleForBanner(), TemplateFileName, "Generated Rho page templates."))
 	b.WriteString("package main\n\n")
-	b.WriteString("import \"strings\"\n\n")
+	b.WriteString("import (\n\t\"fmt\"\n\t\"strings\"\n)\n\n")
 	b.WriteString("// The templates a Rho handler renders, keyed by name.\n")
 	b.WriteString("var rhoTemplates = map[string]string{\n")
 	for _, name := range names {
@@ -102,23 +102,51 @@ const templateSep = "\x1f"
 // handler built itself. A name that is not in the list is left as written, so
 // a typo shows up in the page rather than silently disappearing.
 //
-// Conditionals: {{#if name}}...{{/if}} renders its body when name is present
-// and non-empty; {{#unless name}}...{{/unless}} renders when it is absent or
-// empty. Partials: {{> name }} inserts another carried template. Comments:
-// {# note #} is removed. These four forms compose, so a page can be built
-// from small partials rather than one giant string.
+// Blocks compose and nest: {{#if name}}...{{else}}...{{/if}} and
+// {{#unless name}}...{{else}}...{{/unless}} choose a branch, {{#each name}}
+// repeats its body once per line with {{.}} / {{this}}, {{@index}},
+// {{@index1}}, {{@first}}, {{@last}}, {{@count}} and, for a tab-separated
+// item, {{@0}}, {{@1}} ... bound, and
+// {{#with prefix}} scopes lookups to prefix.* (or binds {{this}} to the value)
+// inside its body. A block with no items or scope may carry {{else}}.
+// Partials: {{> name }} inserts another carried template. Comments:
+// {# note #} is removed. A default: {{ name ?? fallback }} or
+// {{ name | "default" }}. These forms compose, so a page can be built from
+// small partials rather than one giant string.
 func templateFill(source, pairs string) string {
 	names, values := decodeTemplatePairs(pairs)
-	return renderTemplate(source, names, values)
+	return renderTemplate(source, names, values, 0)
 }
 
-// renderTemplate renders one template body against the supplied pairs, recursing
-// for partials and conditionals.
-func renderTemplate(source string, names []string, values []string) string {
+// templateMaxDepth bounds partial and block nesting, so a template that
+// includes itself stops rather than exhausting the stack.
+const templateMaxDepth = 64
+
+// renderTemplate renders one template body against the supplied pairs. It
+// recurses for partials and blocks, and for a loop's body once per item.
+func renderTemplate(source string, names []string, values []string, depth int) string {
+	if depth > templateMaxDepth {
+		return source
+	}
 	var out strings.Builder
 	i := 0
 	for i < len(source) {
 		open := strings.Index(source[i:], "{{")
+		comment := strings.Index(source[i:], "{#")
+		// A comment carries no value and disappears. It is found by its own
+		// opener, because "{#" does not begin with "{{".
+		if comment >= 0 && (open < 0 || comment < open) {
+			start := i + comment
+			out.WriteString(source[i:start])
+			rest := source[start:]
+			close := strings.Index(rest[2:], "#}")
+			if close < 0 {
+				out.WriteString(source[start:])
+				break
+			}
+			i = start + 2 + close + 2
+			continue
+		}
 		if open < 0 {
 			out.WriteString(source[i:])
 			break
@@ -127,17 +155,6 @@ func renderTemplate(source string, names []string, values []string) string {
 		out.WriteString(source[i:start])
 
 		rest := source[start:]
-
-		// A comment carries no value and disappears.
-		if strings.HasPrefix(rest, "{#") {
-			close := strings.Index(rest, "#}")
-			if close < 0 {
-				out.WriteString(source[start:])
-				break
-			}
-			i = start + close + 2
-			continue
-		}
 
 		// A partial inserts another carried template, rendered against the
 		// same values, so a page can be built from small pieces.
@@ -149,14 +166,15 @@ func renderTemplate(source string, names []string, values []string) string {
 			}
 			key := strings.TrimSpace(rest[3:close])
 			if tmpl, ok := rhoTemplates[key]; ok {
-				out.WriteString(renderTemplate(tmpl, names, values))
+				out.WriteString(renderTemplate(tmpl, names, values, depth+1))
 			}
 			i = start + close + 2
 			continue
 		}
 
-		// A conditional renders its body only when the named value is (or is
-		// not, for unless) present and non-empty.
+		// A block directive opens a body, closes with {{/kind}}, and may carry
+		// an {{else}} branch. The matching close is the one at the same depth,
+		// so a block of one kind can nest inside another of the same kind.
 		if strings.HasPrefix(rest, "{{#") {
 			close := strings.Index(rest, "}}")
 			if close < 0 {
@@ -173,24 +191,33 @@ func renderTemplate(source string, names []string, values []string) string {
 			if len(fields) > 1 {
 				key = fields[1]
 			}
-			endTag := "{{/" + kind + "}}"
-			endIdx := strings.Index(rest, endTag)
-			if endIdx < 0 {
+			bodyStart := close + 2
+			inner, otherwise, hasElse, consumed, ok := templateBlock(rest[bodyStart:], kind)
+			if !ok {
 				out.WriteString(source[start:])
 				break
 			}
-			inner := rest[close+2 : endIdx]
-			cond := false
-			if value, ok := lookupPair(names, values, key); ok {
-				cond = value != ""
+
+			switch kind {
+			case "each":
+				out.WriteString(templateEach(inner, otherwise, hasElse, key, names, values, depth))
+			case "with":
+				out.WriteString(templateWith(inner, otherwise, hasElse, key, names, values, depth))
+			default:
+				cond := false
+				if value, found := lookupPair(names, values, key); found {
+					cond = value != ""
+				}
+				if kind == "unless" {
+					cond = !cond
+				}
+				if cond {
+					out.WriteString(renderTemplate(inner, names, values, depth+1))
+				} else if hasElse {
+					out.WriteString(renderTemplate(otherwise, names, values, depth+1))
+				}
 			}
-			if kind == "unless" {
-				cond = !cond
-			}
-			if cond {
-				out.WriteString(renderTemplate(inner, names, values))
-			}
-			i = start + endIdx + len(endTag)
+			i = start + bodyStart + consumed
 			continue
 		}
 
@@ -206,9 +233,32 @@ func renderTemplate(source string, names []string, values []string) string {
 			out.WriteString(source[start:])
 			break
 		}
-		key := strings.TrimSpace(rest[openWidth : openWidth+close])
+		rawKey := strings.TrimSpace(rest[openWidth : openWidth+close])
+		key := rawKey
+		fallback := ""
+		hasFallback := false
+		if idx := strings.Index(rawKey, "??"); idx >= 0 {
+			key = strings.TrimSpace(rawKey[:idx])
+			fallback = strings.TrimSpace(rawKey[idx+2:])
+			hasFallback = true
+		} else if idx := strings.Index(rawKey, "|"); idx >= 0 {
+			key = strings.TrimSpace(rawKey[:idx])
+			fallback = strings.TrimSpace(rawKey[idx+1:])
+			hasFallback = true
+		}
+		// unquote a quoted fallback
+		if hasFallback && len(fallback) >= 2 && (fallback[0] == '"' || fallback[0] == '\'') {
+			fallback = fallback[1 : len(fallback)-1]
+		}
 		if !strings.HasPrefix(key, "#") {
-			if value, ok := lookupPair(names, values, key); ok {
+			value, found := lookupPair(names, values, key)
+			if !found || value == "" {
+				if hasFallback {
+					value = fallback
+					found = true
+				}
+			}
+			if found {
 				if raw {
 					out.WriteString(value)
 				} else {
@@ -223,6 +273,170 @@ func renderTemplate(source string, names []string, values []string) string {
 		i = start + openWidth + close + closeWidth
 	}
 	return out.String()
+}
+
+// templateBlock splits a block body at the {{else}} that belongs to it and
+// reports where its own close tag ends. Nesting is tracked for every kind, so
+// an else inside a nested block is not mistaken for the outer one.
+func templateBlock(body string, kind string) (inner string, otherwise string, hasElse bool, consumed int, ok bool) {
+	stack := []string{kind}
+	elseAt := -1
+	elseStart := -1
+	i := 0
+	for i < len(body) {
+		open := strings.Index(body[i:], "{{")
+		comment := strings.Index(body[i:], "{#")
+		if comment >= 0 && (open < 0 || comment < open) {
+			close := strings.Index(body[i+comment+2:], "#}")
+			if close < 0 {
+				return "", "", false, 0, false
+			}
+			i = i + comment + 2 + close + 2
+			continue
+		}
+		if open < 0 {
+			return "", "", false, 0, false
+		}
+		at := i + open
+		rest := body[at:]
+		close := strings.Index(rest, "}}")
+		if close < 0 {
+			return "", "", false, 0, false
+		}
+		token := strings.TrimSpace(rest[2:close])
+		switch {
+		case strings.HasPrefix(token, "#"):
+			name := ""
+			if fields := strings.Fields(strings.TrimSpace(token[1:])); len(fields) > 0 {
+				name = fields[0]
+			}
+			if name != "" {
+				stack = append(stack, name)
+			}
+		case strings.HasPrefix(token, "/"):
+			name := strings.TrimSpace(token[1:])
+			if name == "" {
+				break
+			}
+			found := false
+			for j := len(stack) - 1; j >= 0; j-- {
+				if stack[j] == name {
+					stack = stack[:j]
+					found = true
+					break
+				}
+			}
+			if !found {
+				break
+			}
+			if len(stack) == 0 {
+				end := at
+				if hasElse {
+					return body[:elseAt], body[elseStart:end], true, at + close + 2, true
+				}
+				return body[:end], "", false, at + close + 2, true
+			}
+		case token == "else":
+			if len(stack) == 1 && elseAt < 0 {
+				elseAt = at
+				elseStart = at + close + 2
+				hasElse = true
+			}
+		}
+		i = at + close + 2
+	}
+	return "", "", false, 0, false
+}
+
+// templateEach renders a loop body once per line of the named value. The item
+// bindings are placed before the outer names, so an inner loop shadows an
+// outer one and the index helpers describe the innermost item.
+func templateEach(inner string, otherwise string, hasElse bool, key string, names []string, values []string, depth int) string {
+	list := ""
+	if value, found := lookupPair(names, values, key); found {
+		list = value
+	}
+	items := templateLines(list)
+	if len(items) == 0 {
+		if hasElse {
+			return renderTemplate(otherwise, names, values, depth+1)
+		}
+		return ""
+	}
+	var out strings.Builder
+	for index, item := range items {
+		first := ""
+		if index == 0 {
+			first = "true"
+		}
+		last := ""
+		if index == len(items)-1 {
+			last = "true"
+		}
+		augNames := []string{".", "this", "@index", "@index1", "@first", "@last", "@count"}
+		augValues := []string{item, item, fmt.Sprintf("%d", index), fmt.Sprintf("%d", index+1), first, last, fmt.Sprintf("%d", len(items))}
+		// A tab-separated item can be read field by field, so a listing of
+		// rows does not need a Rho loop to be turned into markup.
+		for fieldIndex, fieldValue := range strings.Split(item, "\t") {
+			augNames = append(augNames, fmt.Sprintf("@%d", fieldIndex))
+			augValues = append(augValues, fieldValue)
+		}
+		augNames = append(augNames, names...)
+		augValues = append(augValues, values...)
+		out.WriteString(renderTemplate(inner, augNames, augValues, depth+1))
+	}
+	return out.String()
+}
+
+// templateWith scopes lookups to prefix.* inside its body, or binds {{this}}
+// to the named value when it is a plain value rather than a prefix. Scoped
+// names come first, so they shadow the outer ones; an outer name remains
+// reachable when the scope does not define it.
+func templateWith(inner string, otherwise string, hasElse bool, key string, names []string, values []string, depth int) string {
+	prefix := key + "."
+	scopedNames := []string{}
+	scopedValues := []string{}
+	for index, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			scopedNames = append(scopedNames, name[len(prefix):])
+			if index < len(values) {
+				scopedValues = append(scopedValues, values[index])
+			} else {
+				scopedValues = append(scopedValues, "")
+			}
+		}
+	}
+	if value, found := lookupPair(names, values, key); found {
+		scopedNames = append(scopedNames, ".", "this")
+		scopedValues = append(scopedValues, value, value)
+	}
+	if len(scopedNames) == 0 {
+		if hasElse {
+			return renderTemplate(otherwise, names, values, depth+1)
+		}
+		return ""
+	}
+	allNames := append([]string{}, scopedNames...)
+	allValues := append([]string{}, scopedValues...)
+	allNames = append(allNames, names...)
+	allValues = append(allValues, values...)
+	return renderTemplate(inner, allNames, allValues, depth+1)
+}
+
+// templateLines splits a loop value into its items. A trailing newline is a
+// terminator rather than an empty item, and CRLF line endings are accepted.
+func templateLines(value string) []string {
+	if value == "" {
+		return nil
+	}
+	lines := strings.Split(value, "\n")
+	for index := range lines {
+		lines[index] = strings.TrimSuffix(lines[index], "\r")
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
 
 // decodeTemplatePairs splits an encoded list into parallel name and value

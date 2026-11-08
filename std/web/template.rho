@@ -7,6 +7,24 @@ module std.web.template
 //	{{ name }}      substitute a value, HTML-escaped
 //	{{{ name }}}    substitute a value verbatim, for markup the Rho code built
 //	{# note #}      a comment, removed
+//	{{#if name}}...{{else}}...{{/if}}       pick a branch by presence
+//	{{#unless name}}...{{else}}...{{/unless}} the inverse
+//	{{#each name}}...{{else}}...{{/each}}   render the body once per line of
+//	                             name; {{.}} / {{this}} is the item, and
+//	                             {{@index}}, {{@index1}}, {{@first}},
+//	                             {{@last}} and {{@count}} describe the loop,
+//	                             and {{@0}}, {{@1}} ... are the item's
+//	                             tab-separated fields.
+//	                             The else branch renders when name is empty.
+//	{{#with name}}...{{else}}...{{/with}}   scope lookups to name.* inside the
+//	                             body, or bind {{this}} to a plain value
+//	{{ name ?? fallback }}        use fallback when name is missing or empty
+//	{{ name | "default" }}       same, with a quoted default
+//	{{> name }}     insert another carried template
+//
+// Blocks nest, including blocks of the same kind, and an {{else}} belongs to
+// the innermost open block. A comment is removed before any of the above is
+// read, so markup can be documented in place.
 //
 // Values are given as a single encoded list rather than a parameter per slot,
 // so a template can grow a new placeholder without any function signature
