@@ -101,10 +101,23 @@ const templateSep = "\x1f"
 // triple-brace form {{{ name }}} inserts a value verbatim, for markup a Rho
 // handler built itself. A name that is not in the list is left as written, so
 // a typo shows up in the page rather than silently disappearing.
+//
+// Conditionals: {{#if name}}...{{/if}} renders its body when name is present
+// and non-empty; {{#unless name}}...{{/unless}} renders when it is absent or
+// empty. Partials: {{> name }} inserts another carried template. Comments:
+// {# note #} is removed. These four forms compose, so a page can be built
+// from small partials rather than one giant string.
 func templateFill(source, pairs string) string {
 	names, values := decodeTemplatePairs(pairs)
+	return renderTemplate(source, names, values)
+}
+
+// renderTemplate renders one template body against the supplied pairs, recursing
+// for partials and conditionals.
+func renderTemplate(source string, names []string, values []string) string {
 	var out strings.Builder
-	for i := 0; i < len(source); {
+	i := 0
+	for i < len(source) {
 		open := strings.Index(source[i:], "{{")
 		if open < 0 {
 			out.WriteString(source[i:])
@@ -113,26 +126,87 @@ func templateFill(source, pairs string) string {
 		start := i + open
 		out.WriteString(source[i:start])
 
+		rest := source[start:]
+
+		// A comment carries no value and disappears.
+		if strings.HasPrefix(rest, "{#") {
+			close := strings.Index(rest, "#}")
+			if close < 0 {
+				out.WriteString(source[start:])
+				break
+			}
+			i = start + close + 2
+			continue
+		}
+
+		// A partial inserts another carried template, rendered against the
+		// same values, so a page can be built from small pieces.
+		if strings.HasPrefix(rest, "{{>") {
+			close := strings.Index(rest, "}}")
+			if close < 0 {
+				out.WriteString(source[start:])
+				break
+			}
+			key := strings.TrimSpace(rest[3:close])
+			if tmpl, ok := rhoTemplates[key]; ok {
+				out.WriteString(renderTemplate(tmpl, names, values))
+			}
+			i = start + close + 2
+			continue
+		}
+
+		// A conditional renders its body only when the named value is (or is
+		// not, for unless) present and non-empty.
+		if strings.HasPrefix(rest, "{{#") {
+			close := strings.Index(rest, "}}")
+			if close < 0 {
+				out.WriteString(source[start:])
+				break
+			}
+			directive := strings.TrimSpace(rest[3:close])
+			fields := strings.Fields(directive)
+			kind := ""
+			key := ""
+			if len(fields) > 0 {
+				kind = fields[0]
+			}
+			if len(fields) > 1 {
+				key = fields[1]
+			}
+			endTag := "{{/" + kind + "}}"
+			endIdx := strings.Index(rest, endTag)
+			if endIdx < 0 {
+				out.WriteString(source[start:])
+				break
+			}
+			inner := rest[close+2 : endIdx]
+			cond := false
+			if value, ok := lookupPair(names, values, key); ok {
+				cond = value != ""
+			}
+			if kind == "unless" {
+				cond = !cond
+			}
+			if cond {
+				out.WriteString(renderTemplate(inner, names, values))
+			}
+			i = start + endIdx + len(endTag)
+			continue
+		}
+
+		// A placeholder: {{ name }} is escaped, {{{ name }}} is verbatim.
 		raw := false
 		openWidth := 2
-		rest := source[start+2:]
-		if strings.HasPrefix(rest, "{") {
-			// The triple-brace form asks for a value verbatim.
+		if strings.HasPrefix(rest, "{{{") {
 			raw = true
 			openWidth = 3
-			rest = rest[1:]
 		}
-		closeWidth := 2
-		close := strings.Index(rest, "}}")
+		close := strings.Index(rest[openWidth:], "}}")
 		if close < 0 {
-			// An unterminated placeholder is emitted as written rather than
-			// silently dropped, so a typo is visible in the page.
 			out.WriteString(source[start:])
 			break
 		}
-
-		key := strings.TrimSpace(rest[:close])
-		// A comment carries no value and disappears.
+		key := strings.TrimSpace(rest[openWidth : openWidth+close])
 		if !strings.HasPrefix(key, "#") {
 			if value, ok := lookupPair(names, values, key); ok {
 				if raw {
@@ -142,9 +216,8 @@ func templateFill(source, pairs string) string {
 				}
 			}
 		}
-		// The closing braces match the opening form, so a verbatim
-		// placeholder is consumed whole rather than leaving a stray "}}".
-		if raw && strings.HasPrefix(rest[close+2:], "}") {
+		closeWidth := 2
+		if raw && openWidth+close+2 < len(rest) && rest[openWidth+close+2] == '}' {
 			closeWidth = 3
 		}
 		i = start + openWidth + close + closeWidth
@@ -176,7 +249,7 @@ func lookupPair(names []string, values []string, key string) (string, bool) {
 	return "", false
 }
 
-// escapeHTML makes a value safe to place in element text or an attribute.
+// escapeHtml makes a value safe to place in element text or an attribute.
 func escapeHtml(value string) string {
 	var out strings.Builder
 	for _, r := range value {
