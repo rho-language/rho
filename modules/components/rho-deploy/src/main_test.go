@@ -222,3 +222,11 @@ func TestEnvironmentSuppliesTheContainerFacts(t *testing.T) {
 		t.Errorf("the Dockerfile should be the one named: %v", steps[0])
 	}
 }
+
+// A missing or rejected artifact never reaches the target.
+func TestDeployArtifactRefusesMissingArchive(t *testing.T) {
+	err := DeployArtifactArchive("/definitely/missing/artifact.tar.gz", "uno-q", ".", "", true, false, false, true)
+	if err == nil {
+		t.Fatal("a missing artifact was accepted")
+	}
+}

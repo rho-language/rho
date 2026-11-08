@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"rho/src/artifact"
 	"rho/src/deps"
 	"rho/src/plugins"
 )
@@ -378,6 +379,33 @@ func platformToolEntry(project, tool string) string {
 	return ""
 }
 
+// FlashArtifact verifies a signed firmware artifact and flashes the entrypoint
+// it carries. The running image is not touched until verification succeeds.
+func FlashArtifact(archive, targetName, project, pubPath string, allowUnsigned bool) error {
+	temp, err := os.MkdirTemp("", "rho-flash-artifact-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(temp)
+	options := artifact.Options{AllowUnsigned: allowUnsigned, Target: targetName, ExtractDir: temp}
+	if pubPath != "" {
+		key, err := artifact.PublicKey(pubPath)
+		if err != nil {
+			return err
+		}
+		options.PublicKey = key
+	}
+	manifest, err := artifact.Verify(archive, options)
+	if err != nil {
+		return fmt.Errorf("the artifact was refused: %w", err)
+	}
+	binary := filepath.Join(temp, manifest.Entrypoint)
+	if _, err := os.Stat(binary); err != nil {
+		return fmt.Errorf("the artifact entrypoint is missing: %w", err)
+	}
+	return FlashFile(binary, targetName, project)
+}
+
 // FlashFile writes a binary to a board, using whatever the target says.
 //
 // The target is named rather than a family of parts, because "STM32" is not an
@@ -443,6 +471,9 @@ func main() {
 	fs := flag.NewFlagSet("rho flash", flag.ExitOnError)
 	target := fs.String("target", "", "the target to flash for: a board name from its spec")
 	project := fs.String("project", "", "the project whose target to read (default: the working directory)")
+	archive := fs.String("artifact", "", "verify and flash a signed artifact instead of a loose binary")
+	pubKey := fs.String("pub", "", "base64 Ed25519 public key for the artifact")
+	allowUnsigned := fs.Bool("allow-unsigned", false, "accept an unsigned artifact after verifying its checksum")
 
 	// Flags are read wherever they appear, because `rho flash firmware.elf
 	// -target pico` is what a person types first. Only the two that take a
@@ -454,7 +485,8 @@ func main() {
 		case arg == "-h" || arg == "--help":
 			usage()
 			os.Exit(0)
-		case arg == "-target" || arg == "--target" || arg == "-project" || arg == "--project":
+		case arg == "-target" || arg == "--target" || arg == "-project" || arg == "--project" ||
+			arg == "-artifact" || arg == "--artifact" || arg == "-pub" || arg == "--pub":
 			if i+1 < len(os.Args) {
 				argv = append(argv, arg, os.Args[i+1])
 				i++
@@ -472,13 +504,19 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "rho flash: name exactly one binary")
+	if *archive == "" && fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "rho flash: name exactly one binary, or pass -artifact")
 		usage()
 		os.Exit(2)
 	}
 
-	if err := FlashFile(fs.Arg(0), *target, *project); err != nil {
+	var err error
+	if *archive != "" {
+		err = FlashArtifact(*archive, *target, *project, *pubKey, *allowUnsigned)
+	} else {
+		err = FlashFile(fs.Arg(0), *target, *project)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho flash:", err)
 		os.Exit(1)
 	}
@@ -486,5 +524,6 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: rho flash -target <board> [-project dir] <file.bin>")
+	fmt.Fprintln(os.Stderr, "       rho flash -target <board> -artifact <file.tar.gz> [-pub key]")
 	fmt.Fprintln(os.Stderr, "       the board's own target spec says which tool writes to it")
 }

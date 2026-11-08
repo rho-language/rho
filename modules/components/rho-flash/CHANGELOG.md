@@ -47,3 +47,9 @@ run whatever a machine could be talked into.
 The reference is spelled `{env:…}` rather than `${…}` because the command
 travels into a CMake file, and CMake reads `${…}` as its own: a reference
 written that way is a configure error rather than a placeholder.
+
+## [0.1.4] - 2026-11-08
+
+`-artifact` verifies a signed rollout artifact before flashing anything. The
+payload checksum and Ed25519 manifest are checked first; the extracted entrypoint
+is what the target spec then flashes.

@@ -238,3 +238,10 @@ func TestInvocationReportsAMissingEnvironment(t *testing.T) {
 		t.Errorf("expected the variable to be named, got %q", err)
 	}
 }
+
+// A missing or rejected artifact never reaches the flasher.
+func TestFlashArtifactRefusesMissingArchive(t *testing.T) {
+	if err := FlashArtifact("/definitely/missing/artifact.tar.gz", "pico", ".", "", true); err == nil {
+		t.Fatal("a missing artifact was accepted")
+	}
+}

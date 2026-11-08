@@ -36,6 +36,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"rho/src/artifact"
 )
 
 // ComponentName is this component's own name, which is what a module says to be
@@ -234,7 +236,7 @@ func parseDeploy(data []byte) (Deploy, error) {
 // carried them would be a spec that only worked on one machine.
 func overrideFromEnv(d Deploy) Deploy {
 	for _, pair := range []struct {
-		name string
+		name   string
 		assign func(string)
 	}{
 		{"RH_DEPLOY_HOST", func(v string) { d.Host = v }},
@@ -353,6 +355,33 @@ func DeployArtifact(artifact, targetName, project string, asDocker, start, dryRu
 	return runSteps(steps, dryRun)
 }
 
+// DeployArtifactArchive verifies a signed artifact, extracts it to a temporary
+// directory, and deploys the entrypoint it names.
+func DeployArtifactArchive(archive, targetName, project, pubPath string, allowUnsigned, asDocker, start, dryRun bool) error {
+	temp, err := os.MkdirTemp("", "rho-deploy-artifact-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(temp)
+	options := artifact.Options{AllowUnsigned: allowUnsigned, Target: targetName, ExtractDir: temp}
+	if pubPath != "" {
+		key, err := artifact.PublicKey(pubPath)
+		if err != nil {
+			return err
+		}
+		options.PublicKey = key
+	}
+	manifest, err := artifact.Verify(archive, options)
+	if err != nil {
+		return fmt.Errorf("the artifact was refused: %w", err)
+	}
+	entry := filepath.Join(temp, manifest.Entrypoint)
+	if _, err := os.Stat(entry); err != nil {
+		return fmt.Errorf("the artifact entrypoint is missing: %w", err)
+	}
+	return DeployArtifact(entry, targetName, project, asDocker, start, dryRun)
+}
+
 /* -------------------------------------------------------------------------- */
 /*  CLI                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -364,11 +393,17 @@ func main() {
 	asDocker := fs.Bool("docker", false, "deploy as a container image")
 	start := fs.Bool("run", false, "start the program on the target after copying")
 	dryRun := fs.Bool("n", false, "print what would be run, and run nothing")
+	archive := fs.String("artifact", "", "verify and deploy a signed artifact instead of a loose file")
+	pubKey := fs.String("pub", "", "base64 Ed25519 public key for the artifact")
+	allowUnsigned := fs.Bool("allow-unsigned", false, "accept an unsigned artifact after verifying its checksum")
 
 	// Flags are read wherever they appear, so `rho deploy app -target uno-q` is
 	// what a person types first.
 	argv := []string{}
-	valueFlags := map[string]bool{"-target": true, "--target": true, "-project": true, "--project": true}
+	valueFlags := map[string]bool{
+		"-target": true, "--target": true, "-project": true, "--project": true,
+		"-artifact": true, "--artifact": true, "-pub": true, "--pub": true,
+	}
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		switch {
@@ -391,13 +426,20 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "rho deploy: name exactly one file or directory")
+	if *archive == "" && fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "rho deploy: name exactly one file or directory, or pass -artifact")
 		usage()
 		os.Exit(2)
 	}
 
-	if err := DeployArtifact(fs.Arg(0), *target, *project, *asDocker || envTruthy("RH_DEPLOY_DOCKER"), *start, *dryRun); err != nil {
+	var err error
+	if *archive != "" {
+		err = DeployArtifactArchive(*archive, *target, *project, *pubKey, *allowUnsigned,
+			*asDocker || envTruthy("RH_DEPLOY_DOCKER"), *start, *dryRun)
+	} else {
+		err = DeployArtifact(fs.Arg(0), *target, *project, *asDocker || envTruthy("RH_DEPLOY_DOCKER"), *start, *dryRun)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho deploy:", err)
 		os.Exit(1)
 	}
@@ -415,5 +457,6 @@ func envTruthy(name string) bool {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: rho deploy -target <board> [-project dir] [-docker] [-run] [-n] <file|dir>")
+	fmt.Fprintln(os.Stderr, "       rho deploy -target <board> -artifact <file.tar.gz> [-pub key] [-run]")
 	fmt.Fprintln(os.Stderr, "       the target's own spec says where it is reached and how")
 }
