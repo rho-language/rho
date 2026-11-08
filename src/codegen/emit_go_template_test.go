@@ -134,6 +134,25 @@ func TestWithScopesLookups(t *testing.T) {
 	}
 }
 
+func TestWhitespaceTrimming(t *testing.T) {
+	got := render(t, "trim", "value", "X")
+	if got != "AXB" {
+		t.Fatalf("placeholders: got %q, want %q", got, "AXB")
+	}
+	got = render(t, "trimnewline", "value", "X")
+	if got != "AX\nB" {
+		t.Fatalf("newline: got %q, want %q", got, "AX\nB")
+	}
+	got = render(t, "trimcomment")
+	if got != "AB" {
+		t.Fatalf("comment: got %q, want %q", got, "AB")
+	}
+	got = render(t, "trimblock", "flag", "true")
+	if got != "AyesB" {
+		t.Fatalf("block: got %q, want %q", got, "AyesB")
+	}
+}
+
 func TestPartialsShareTheValues(t *testing.T) {
 	got := render(t, "partial", "title", "T")
 	if got != "before T after" {
@@ -157,6 +176,10 @@ func TestGeneratedTemplateRenderer(t *testing.T) {
 		"eachfields":   `{{#each rows}}{{@0}}={{@1}};{{/each}}`,
 		"nestedeach":   `{{#each outer}}{{#each inner}}{{this}}{{/each}}{{/each}}`,
 		"with":         `{{#with user}}{{name}}|{{this}}{{else}}none{{/with}}`,
+		"trim":         `A {{- value -}} B`,
+		"trimnewline":  "A\n  {{- value }}\nB",
+		"trimcomment":  `A {#- note -#} B`,
+		"trimblock":    `A {{- #if flag -}} yes {{- /if -}} B`,
 		"partial":      `before {{> part }} after`,
 		"part":         `{{ title }}`,
 	}

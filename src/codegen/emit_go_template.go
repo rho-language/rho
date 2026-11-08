@@ -111,8 +111,10 @@ const templateSep = "\x1f"
 // inside its body. A block with no items or scope may carry {{else}}.
 // Partials: {{> name }} inserts another carried template. Comments:
 // {# note #} is removed. A default: {{ name ?? fallback }} or
-// {{ name | "default" }}. These forms compose, so a page can be built from
-// small partials rather than one giant string.
+// {{ name | "default" }}. A tag may absorb the whitespace around it with
+// {{- ... -}} (or {{~ ... ~}}), so conditional markup does not leave blank
+// lines. These forms compose, so a page can be built from small partials
+// rather than one giant string.
 func templateFill(source, pairs string) string {
 	names, values := decodeTemplatePairs(pairs)
 	return renderTemplate(source, names, values, 0)
@@ -122,12 +124,80 @@ func templateFill(source, pairs string) string {
 // includes itself stops rather than exhausting the stack.
 const templateMaxDepth = 64
 
+// trimTemplateWhitespace removes the whitespace a tag asks to absorb. A tag
+// written {{- ... }} absorbs the whitespace before it, and ... -}} absorbs the
+// whitespace after it. The same markers work on comments and block tags, and
+// "~" is accepted in place of "-". The markers are removed before rendering,
+// so the rest of the engine only ever sees ordinary tags.
+func trimTemplateWhitespace(source string) string {
+	var out strings.Builder
+	i := 0
+	for i < len(source) {
+		open := strings.Index(source[i:], "{{")
+		comment := strings.Index(source[i:], "{#")
+		if open < 0 && comment < 0 {
+			out.WriteString(source[i:])
+			break
+		}
+		at := 0
+		isComment := false
+		if comment >= 0 && (open < 0 || comment < open) {
+			at = i + comment
+			isComment = true
+		} else {
+			at = i + open
+		}
+		rest := source[at:]
+		opener := "{{"
+		closer := "}}"
+		if isComment {
+			opener = "{#"
+			closer = "#}"
+		} else if strings.HasPrefix(rest, "{{{") {
+			opener = "{{{"
+			closer = "}}}"
+		}
+		openLen := len(opener)
+		closeOffset := strings.Index(rest[openLen:], closer)
+		if closeOffset < 0 {
+			out.WriteString(source[i:])
+			break
+		}
+		closeAt := openLen + closeOffset
+		inner := rest[openLen:closeAt]
+		leftTrim := len(inner) > 0 && (inner[0] == '-' || inner[0] == '~')
+		rightTrim := len(inner) > 0 && (inner[len(inner)-1] == '-' || inner[len(inner)-1] == '~')
+		if leftTrim {
+			inner = inner[1:]
+		}
+		if rightTrim && len(inner) > 0 {
+			inner = inner[:len(inner)-1]
+		}
+		text := source[i:at]
+		if leftTrim {
+			text = strings.TrimRight(text, " \t\r\n")
+		}
+		out.WriteString(text)
+		out.WriteString(opener)
+		out.WriteString(inner)
+		out.WriteString(closer)
+		i = at + closeAt + len(closer)
+		if rightTrim {
+			for i < len(source) && (source[i] == ' ' || source[i] == '\t' || source[i] == '\r' || source[i] == '\n') {
+				i = i + 1
+			}
+		}
+	}
+	return out.String()
+}
+
 // renderTemplate renders one template body against the supplied pairs. It
 // recurses for partials and blocks, and for a loop's body once per item.
 func renderTemplate(source string, names []string, values []string, depth int) string {
 	if depth > templateMaxDepth {
 		return source
 	}
+	source = trimTemplateWhitespace(source)
 	var out strings.Builder
 	i := 0
 	for i < len(source) {

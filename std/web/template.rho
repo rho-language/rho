@@ -21,6 +21,8 @@ module std.web.template
 //	{{ name ?? fallback }}        use fallback when name is missing or empty
 //	{{ name | "default" }}       same, with a quoted default
 //	{{> name }}     insert another carried template
+//	{{- name -}}    absorb the whitespace before and/or after the tag, so
+//	                 conditional markup does not leave blank lines
 //
 // Blocks nest, including blocks of the same kind, and an {{else}} belongs to
 // the innermost open block. A comment is removed before any of the above is
