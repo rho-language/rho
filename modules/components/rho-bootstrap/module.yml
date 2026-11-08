@@ -1,0 +1,25 @@
+#
+# rho-bootstrap — first boot identity and credential bootstrap.
+#
+module:
+  name: rho-bootstrap
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Generates a local instance identity and enrolls it with Keeper
+  command: bootstrap
+
+main: rho-bootstrap
+
+features:
+  - provisioning
+  - identity
+  - bootstrap
+
+docs:
+  title: Provisioning and identity
+  section: components
+  order: "56"
+  index: docs/index.md
+  sources:
+    - docs/index.md

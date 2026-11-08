@@ -6,6 +6,7 @@ use (
 	.
 	./modules/components/rho-auth
 	./modules/components/rho-artifact
+	./modules/components/rho-bootstrap
 	./modules/components/rho-cimport
 	./modules/components/rho-dbg
 	./modules/components/rho-deploy
@@ -46,6 +47,7 @@ use (
 replace (
 	github.com/rho/rho-auth v0.0.0 => ./modules/components/rho-auth
 	github.com/rho/rho-artifact v0.0.0 => ./modules/components/rho-artifact
+	github.com/rho/rho-bootstrap v0.0.0 => ./modules/components/rho-bootstrap
 	github.com/rho/rho-cimport v0.0.0 => ./modules/components/rho-cimport
 	github.com/rho/rho-dbg v0.0.0 => ./modules/components/rho-dbg
 	github.com/rho/rho-deploy v0.0.0 => ./modules/components/rho-deploy
