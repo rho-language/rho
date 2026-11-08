@@ -224,6 +224,19 @@ func ProjectDescriptorSchema() Schema {
 								{Name: "file", Required: true, RejectNull: true, Kind: KindString},
 							},
 						}},
+						// default_locale is the language a request gets when
+						// it names none, and must name a locale file when
+						// any catalogs are declared.
+						{Name: "default_locale", Required: false, Kind: KindString},
+						// locales carries flat JSON catalogs into the generated
+						// project, each a language and a project-relative file.
+						{Name: "locales", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
+							Kind: KindMap,
+							Fields: []FieldSchema{
+								{Name: "locale", Required: true, RejectNull: true, Kind: KindString},
+								{Name: "file", Required: true, RejectNull: true, Kind: KindString},
+							},
+						}},
 						// copy lists hand-written files placed in the generated
 						// project, such as the Go implementations of extern ports.
 						{Name: "copy", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{

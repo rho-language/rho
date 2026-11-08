@@ -21,8 +21,15 @@ module std.web.template
 //	{{ name ?? fallback }}        use fallback when name is missing or empty
 //	{{ name | "default" }}       same, with a quoted default
 //	{{> name }}     insert another carried template
+//	{{t "key"}}     translate a key in the active language; a missing key
+//	                 falls back to the default language and then to the key
+//	{{t "key" val=name}} replace {{val}} in the translation with an escaped
+//	                 value from the current template variables
 //	{{- name -}}    absorb the whitespace before and/or after the tag, so
 //	                 conditional markup does not leave blank lines
+//
+// The active language is the reserved __locale value, for example
+// vars("__locale", "ro"). Without it the compiled default is used.
 //
 // Blocks nest, including blocks of the same kind, and an {{else}} belongs to
 // the innermost open block. A comment is removed before any of the above is

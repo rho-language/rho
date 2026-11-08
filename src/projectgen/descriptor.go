@@ -44,6 +44,16 @@ type Template struct {
 	File string
 }
 
+// Locale is one flat JSON catalog for a language. Several files may name the
+// same locale; later files override earlier ones, so an application can layer
+// its own strings over a module's.
+type Locale struct {
+	// Code is the language tag, lower-case, for example "en" or "ro".
+	Code string
+	// File is the path relative to the Rho project root.
+	File string
+}
+
 // CopyEntry is a hand-written file copied into a generated project, given as a
 // path relative to the Rho project root.
 type CopyEntry struct {
@@ -100,6 +110,11 @@ type Target struct {
 	// Templates are page templates carried into the generated project, which
 	// keeps markup out of the Rho sources.
 	Templates []Template
+	// Locales are flat JSON catalogs carried into the generated project.
+	Locales []Locale
+	// DefaultLocale is the language used when a request names none. Empty
+	// means "en".
+	DefaultLocale string
 	// Copy lists hand-written files to place in the generated project.
 	Copy []CopyEntry
 	// Files lists the output files for this target.
@@ -243,20 +258,22 @@ func ParseTarget(targetNode yaml.Value) (Target, error) {
 	}
 
 	target := Target{
-		ID:          targetNode.Map["id"].Str,
-		Emitter:     targetNode.Map["emitter"].Str,
-		Description: targetNode.Map["description"].Str,
-		Kind:        targetNode.Map["kind"].Str,
-		ModulePath:  targetNode.Map["module_path"].Str,
-		OutputDir:   targetNode.Map["output_dir"].Str,
-		Requires:    []string{},
-		BuildFlags:  []string{},
-		Ports:       []string{},
-		Router:      targetNode.Map["router"].Str,
-		Middleware:  []Middleware{},
-		Templates:   []Template{},
-		Copy:        []CopyEntry{},
-		Files:       []DescriptorFile{},
+		ID:            targetNode.Map["id"].Str,
+		Emitter:       targetNode.Map["emitter"].Str,
+		Description:   targetNode.Map["description"].Str,
+		Kind:          targetNode.Map["kind"].Str,
+		ModulePath:    targetNode.Map["module_path"].Str,
+		OutputDir:     targetNode.Map["output_dir"].Str,
+		Requires:      []string{},
+		BuildFlags:    []string{},
+		Ports:         []string{},
+		Router:        targetNode.Map["router"].Str,
+		Middleware:    []Middleware{},
+		Templates:     []Template{},
+		Locales:       []Locale{},
+		DefaultLocale: "en",
+		Copy:          []CopyEntry{},
+		Files:         []DescriptorFile{},
 	}
 
 	if target.OutputDir != "" && !isSafeRelativeDir(target.OutputDir) {
@@ -304,6 +321,47 @@ func ParseTarget(targetNode yaml.Value) (Target, error) {
 				target.ID, item.File)
 		}
 		target.Templates = append(target.Templates, item)
+	}
+
+	// Locale catalogs and the language a request gets when it names none.
+	if value := targetNode.Map["default_locale"].Str; value != "" {
+		target.DefaultLocale = strings.ToLower(value)
+	}
+	for _, entry := range targetNode.Map["locales"].List {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		item := Locale{
+			Code: strings.ToLower(entry.Map["locale"].Str),
+			File: entry.Map["file"].Str,
+		}
+		if item.Code == "" || item.File == "" {
+			return Target{}, fmt.Errorf("target %q has a locale entry without a locale and file", target.ID)
+		}
+		if !isLocaleCode(item.Code) {
+			return Target{}, fmt.Errorf("target %q names an invalid locale %q", target.ID, item.Code)
+		}
+		// Locale files may live beside a module the project includes, so a
+		// relative path may step out of the project root. The path is read at
+		// build time from the trusted project descriptor.
+		if filepath.IsAbs(item.File) || strings.HasPrefix(item.File, "~") {
+			return Target{}, fmt.Errorf("target %q locale file must be project-relative: %q",
+				target.ID, item.File)
+		}
+		target.Locales = append(target.Locales, item)
+	}
+	if len(target.Locales) > 0 {
+		found := false
+		for _, item := range target.Locales {
+			if item.Code == target.DefaultLocale {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Target{}, fmt.Errorf("target %q default_locale %q has no locale file",
+				target.ID, target.DefaultLocale)
+		}
 	}
 
 	// Built-in port implementations the backend generates.
@@ -533,4 +591,29 @@ func isTrueWord(value string) bool {
 	default:
 		return false
 	}
+}
+
+// isLocaleCode accepts the tags a flat catalog may name: a lower-case primary
+// language of two or three letters, optionally followed by subtags.
+func isLocaleCode(code string) bool {
+	parts := strings.Split(code, "-")
+	if len(parts) == 0 || len(parts[0]) < 2 || len(parts[0]) > 3 {
+		return false
+	}
+	for _, r := range parts[0] {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	for _, part := range parts[1:] {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+				return false
+			}
+		}
+	}
+	return true
 }

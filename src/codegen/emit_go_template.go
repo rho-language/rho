@@ -304,35 +304,39 @@ func renderTemplate(source string, names []string, values []string, depth int) s
 			break
 		}
 		rawKey := strings.TrimSpace(rest[openWidth : openWidth+close])
-		key := rawKey
-		fallback := ""
-		hasFallback := false
-		if idx := strings.Index(rawKey, "??"); idx >= 0 {
-			key = strings.TrimSpace(rawKey[:idx])
-			fallback = strings.TrimSpace(rawKey[idx+2:])
-			hasFallback = true
-		} else if idx := strings.Index(rawKey, "|"); idx >= 0 {
-			key = strings.TrimSpace(rawKey[:idx])
-			fallback = strings.TrimSpace(rawKey[idx+1:])
-			hasFallback = true
-		}
-		// unquote a quoted fallback
-		if hasFallback && len(fallback) >= 2 && (fallback[0] == '"' || fallback[0] == '\'') {
-			fallback = fallback[1 : len(fallback)-1]
-		}
-		if !strings.HasPrefix(key, "#") {
-			value, found := lookupPair(names, values, key)
-			if !found || value == "" {
-				if hasFallback {
-					value = fallback
-					found = true
-				}
+		if rawKey == "t" || strings.HasPrefix(rawKey, "t ") {
+			out.WriteString(templateTranslate(rawKey, names, values))
+		} else {
+			key := rawKey
+			fallback := ""
+			hasFallback := false
+			if idx := strings.Index(rawKey, "??"); idx >= 0 {
+				key = strings.TrimSpace(rawKey[:idx])
+				fallback = strings.TrimSpace(rawKey[idx+2:])
+				hasFallback = true
+			} else if idx := strings.Index(rawKey, "|"); idx >= 0 {
+				key = strings.TrimSpace(rawKey[:idx])
+				fallback = strings.TrimSpace(rawKey[idx+1:])
+				hasFallback = true
 			}
-			if found {
-				if raw {
-					out.WriteString(value)
-				} else {
-					out.WriteString(escapeHtml(value))
+			// unquote a quoted fallback
+			if hasFallback && len(fallback) >= 2 && (fallback[0] == '"' || fallback[0] == '\'') {
+				fallback = fallback[1 : len(fallback)-1]
+			}
+			if !strings.HasPrefix(key, "#") {
+				value, found := lookupPair(names, values, key)
+				if !found || value == "" {
+					if hasFallback {
+						value = fallback
+						found = true
+					}
+				}
+				if found {
+					if raw {
+						out.WriteString(value)
+					} else {
+						out.WriteString(escapeHtml(value))
+					}
 				}
 			}
 		}
@@ -343,6 +347,102 @@ func renderTemplate(source string, names []string, values []string, depth int) s
 		i = start + openWidth + close + closeWidth
 	}
 	return out.String()
+}
+
+// templateTranslate resolves {{t "key" name=value}}. The active language is
+// the reserved __locale value, falling back to the compiled default. A missing
+// key prints the key, so a missing translation is visible rather than blank.
+// Substituted values are HTML-escaped; the catalog itself is trusted markup
+// only as text.
+func templateTranslate(expression string, names []string, values []string) string {
+	locale := i18nDefaultLocale
+	if value, found := lookupPair(names, values, "__locale"); found && value != "" {
+		locale = value
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(expression, "t"))
+	key, rest := templateQuoted(rest)
+	if key == "" {
+		return ""
+	}
+	text, found := i18nText(locale, key)
+	if !found {
+		return key
+	}
+	for {
+		rest = strings.TrimSpace(rest)
+		if rest == "" {
+			break
+		}
+		equals := strings.Index(rest, "=")
+		if equals < 0 {
+			break
+		}
+		name := strings.TrimSpace(rest[:equals])
+		rest = rest[equals+1:]
+		if name == "" {
+			break
+		}
+		value, remaining := templateTranslationValue(rest, names, values)
+		text = strings.ReplaceAll(text, "{{"+name+"}}", escapeHtml(value))
+		rest = remaining
+	}
+	return text
+}
+
+// templateQuoted reads a single- or double-quoted token and returns it with
+// the rest of the expression.
+func templateQuoted(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	quote := value[0]
+	if quote != '"' && quote != '\'' {
+		return "", value
+	}
+	var out strings.Builder
+	index := 1
+	for index < len(value) {
+		ch := value[index]
+		if ch == '\\' && index+1 < len(value) {
+			index = index + 1
+			out.WriteByte(value[index])
+			index = index + 1
+			continue
+		}
+		if ch == quote {
+			return out.String(), value[index+1:]
+		}
+		out.WriteByte(ch)
+		index = index + 1
+	}
+	return "", value
+}
+
+// templateTranslationValue reads a quoted literal or a variable name and
+// returns its value with the rest of the expression.
+func templateTranslationValue(rest string, names []string, values []string) (string, string) {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return "", ""
+	}
+	if rest[0] == '"' || rest[0] == '\'' {
+		return templateQuoted(rest)
+	}
+	end := 0
+	for end < len(rest) {
+		ch := rest[end]
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			break
+		}
+		end = end + 1
+	}
+	name := rest[:end]
+	value := ""
+	if found, ok := lookupPair(names, values, name); ok {
+		value = found
+	}
+	return value, rest[end:]
 }
 
 // templateBlock splits a block body at the {{else}} that belongs to it and

@@ -27,7 +27,10 @@ import (
 // templateTests is the test file placed beside the generated renderer.
 const templateTests = `package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func render(t *testing.T, name string, kv ...string) string {
 	t.Helper()
@@ -153,6 +156,29 @@ func TestWhitespaceTrimming(t *testing.T) {
 	}
 }
 
+func TestTranslation(t *testing.T) {
+	got := render(t, "translate", "__locale", "ro")
+	if got != "Salut|missing" {
+		t.Fatalf("ro translation: got %q", got)
+	}
+	got = render(t, "translate", "__locale", "en")
+	if got != "Hello|missing" {
+		t.Fatalf("en translation: got %q", got)
+	}
+	got = render(t, "translatevars", "__locale", "ro", "value", "24.5")
+	if got != "Temperatură: 24.5°C" {
+		t.Fatalf("variable translation: got %q", got)
+	}
+	got = render(t, "translatevars", "__locale", "ro", "value", "<b>")
+	if !strings.Contains(got, "&lt;b&gt;") {
+		t.Fatalf("translation did not escape the value: %q", got)
+	}
+	got = render(t, "fallback", "__locale", "ro")
+	if got != "English only" {
+		t.Fatalf("default-language fallback: got %q", got)
+	}
+}
+
 func TestPartialsShareTheValues(t *testing.T) {
 	got := render(t, "partial", "title", "T")
 	if got != "before T after" {
@@ -167,21 +193,24 @@ func TestGeneratedTemplateRenderer(t *testing.T) {
 	requireGoToolchain(t)
 	dir := t.TempDir()
 	contents := map[string]string{
-		"placeholders": `{{ value }}|{{{ value }}}`,
-		"fallbacks":    `{{ missing ?? "fb" }}|{{ empty | "default" }}|{{ present ?? "x" }}`,
-		"comments":     `a{# ignored #}b{# another {{ bad }} #}{{ value }}`,
-		"conditionals": `{{#if flag}}yes{{else}}no{{/if}}|{{#unless flag}}none{{else}}some{{/unless}}|{{#if missing}}A{{else}}B{{/if}}`,
-		"nested":       `{{#if outer}}A{# note #}{{#if inner}}B{{else}}C{{/if}}D{{else}}E{{/if}}`,
-		"each":         `{{#each items}}[{{@index}}:{{this}}:{{@first}}:{{@last}}:{{@count}}]{{else}}empty{{/each}}`,
-		"eachfields":   `{{#each rows}}{{@0}}={{@1}};{{/each}}`,
-		"nestedeach":   `{{#each outer}}{{#each inner}}{{this}}{{/each}}{{/each}}`,
-		"with":         `{{#with user}}{{name}}|{{this}}{{else}}none{{/with}}`,
-		"trim":         `A {{- value -}} B`,
-		"trimnewline":  "A\n  {{- value }}\nB",
-		"trimcomment":  `A {#- note -#} B`,
-		"trimblock":    `A {{- #if flag -}} yes {{- /if -}} B`,
-		"partial":      `before {{> part }} after`,
-		"part":         `{{ title }}`,
+		"placeholders":  `{{ value }}|{{{ value }}}`,
+		"fallbacks":     `{{ missing ?? "fb" }}|{{ empty | "default" }}|{{ present ?? "x" }}`,
+		"comments":      `a{# ignored #}b{# another {{ bad }} #}{{ value }}`,
+		"conditionals":  `{{#if flag}}yes{{else}}no{{/if}}|{{#unless flag}}none{{else}}some{{/unless}}|{{#if missing}}A{{else}}B{{/if}}`,
+		"nested":        `{{#if outer}}A{# note #}{{#if inner}}B{{else}}C{{/if}}D{{else}}E{{/if}}`,
+		"each":          `{{#each items}}[{{@index}}:{{this}}:{{@first}}:{{@last}}:{{@count}}]{{else}}empty{{/each}}`,
+		"eachfields":    `{{#each rows}}{{@0}}={{@1}};{{/each}}`,
+		"nestedeach":    `{{#each outer}}{{#each inner}}{{this}}{{/each}}{{/each}}`,
+		"with":          `{{#with user}}{{name}}|{{this}}{{else}}none{{/with}}`,
+		"trim":          `A {{- value -}} B`,
+		"trimnewline":   "A\n  {{- value }}\nB",
+		"trimcomment":   `A {#- note -#} B`,
+		"trimblock":     `A {{- #if flag -}} yes {{- /if -}} B`,
+		"partial":       `before {{> part }} after`,
+		"part":          `{{ title }}`,
+		"translate":     `{{t "greet"}}|{{t "missing"}}`,
+		"translatevars": `{{t "temp" val=value}}`,
+		"fallback":      `{{t "english_only"}}`,
 	}
 	rendered := EmitGoTemplates(contents)
 	if !strings.Contains(rendered, "func templateFill") {
@@ -190,7 +219,18 @@ func TestGeneratedTemplateRenderer(t *testing.T) {
 	files := map[string]string{
 		"templates.go":      rendered,
 		"templates_test.go": templateTests,
-		"go.mod":            "module templates\n\ngo 1.21\n",
+		"i18n.go": EmitGoI18n("en", map[string]map[string]string{
+			"en": {
+				"greet":        "Hello",
+				"temp":         "Temp: {{val}}°C",
+				"english_only": "English only",
+			},
+			"ro": {
+				"greet": "Salut",
+				"temp":  "Temperatură: {{val}}°C",
+			},
+		}),
+		"go.mod": "module templates\n\ngo 1.21\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {

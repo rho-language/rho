@@ -445,6 +445,48 @@ func generateTemplates(ctx Context, target Target) error {
 	return nil
 }
 
+// generateLocales embeds the flat JSON catalogs a target carries. The JSON is
+// read here rather than by the generated program, so a server never parses a
+// catalog and a device needs nothing beyond the compiled binary.
+func generateLocales(ctx Context, target Target) error {
+	if len(target.Templates) == 0 && len(target.Locales) == 0 {
+		return nil
+	}
+	catalogs := map[string]map[string]string{}
+	for _, entry := range target.Locales {
+		path := filepath.Join(ctx.ProjectRoot, filepath.FromSlash(entry.File))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read locale %s: %w", entry.File, err)
+		}
+		var flat map[string]interface{}
+		if err := json.Unmarshal(data, &flat); err != nil {
+			return fmt.Errorf("locale %s is not a flat JSON object: %w", entry.File, err)
+		}
+		if catalogs[entry.Code] == nil {
+			catalogs[entry.Code] = map[string]string{}
+		}
+		for key, value := range flat {
+			text, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("locale %s key %q is not a string", entry.File, key)
+			}
+			if key == "" {
+				return fmt.Errorf("locale %s has an empty key", entry.File)
+			}
+			catalogs[entry.Code][key] = text
+		}
+	}
+	rendered := codegen.EmitGoI18n(target.DefaultLocale, catalogs)
+	if rendered == "" {
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(ctx.OutputDir, codegen.I18nFileName), []byte(rendered), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", codegen.I18nFileName, err)
+	}
+	return nil
+}
+
 // generatePorts writes the port implementations a target asked for. A port is
 // supplied by the backend, so a Rho project needs no hand-written host code.
 func generatePorts(ctx Context, target Target) error {
@@ -575,6 +617,9 @@ func Generate(ctx Context, target Target) (string, error) {
 		return "", err
 	}
 	if err := generateTemplates(ctx, target); err != nil {
+		return "", err
+	}
+	if err := generateLocales(ctx, target); err != nil {
 		return "", err
 	}
 	if err := generatePorts(ctx, target); err != nil {
