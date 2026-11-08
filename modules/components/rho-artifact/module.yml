@@ -1,0 +1,30 @@
+#
+# rho-artifact — pack and verify a deployable host or firmware artifact.
+#
+# The artifact is a signed tar.gz carrying a manifest and a payload. Keeper and
+# Mesh verify it before staging, so a corrupt or unsigned update never replaces
+# a running binary or an inactive firmware slot.
+#
+module:
+  name: rho-artifact
+  type: component
+  version: 0.1.0
+  author: Aurel Miron
+  description: Packs and verifies signed host and firmware artifacts
+  command: artifact
+
+main: rho-artifact
+
+features:
+  - artifact
+  - ota
+  - checksum
+  - signature
+
+docs:
+  title: Signed artifacts
+  section: components
+  order: "55"
+  index: docs/index.md
+  sources:
+    - docs/index.md
