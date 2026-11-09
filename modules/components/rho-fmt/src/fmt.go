@@ -162,6 +162,18 @@ func printDecl(b *strings.Builder, decl ast.Decl) {
 	case ast.RouteDecl:
 		b.WriteString("route " + x.Method + " \"" + x.Path + "\" => " + x.Handler + "\n")
 
+	case ast.ConstDecl:
+		b.WriteString("const " + x.Name)
+		if x.Type.Name != "" || len(x.Type.Args) > 0 ||
+			x.Type.ArrayLen != nil || len(x.Type.Dims) > 0 {
+			b.WriteString(": " + typeWithArgs(x.Type))
+		}
+		if x.Value != nil {
+			b.WriteString(" = ")
+			printExpr(b, x.Value, 0)
+		}
+		b.WriteString("\n")
+
 	case ast.StructDecl:
 		b.WriteString("struct " + x.Name + typeParams(x.TypeParams, x.TypeParamDefaults))
 		if len(x.Fields) == 0 {

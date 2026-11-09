@@ -44,7 +44,11 @@ func printStmt(b *strings.Builder, stmt ast.Stmt, depth int) {
 		b.WriteString(pad + "}\n")
 
 	case ast.LetStmt:
-		b.WriteString(pad + "let " + x.Name)
+		keyword := "let"
+		if x.Mutable {
+			keyword = "var"
+		}
+		b.WriteString(pad + keyword + " " + x.Name)
 		// The annotation is optional: a type-less binding takes its type from
 		// the value, so it is only written when the source declared one.
 		if x.Type.Name != "" || len(x.Type.Args) > 0 {
@@ -82,6 +86,40 @@ func printStmt(b *strings.Builder, stmt ast.Stmt, depth int) {
 
 	case ast.BreakStmt:
 		b.WriteString(pad + "break\n")
+
+	case ast.ContinueStmt:
+		b.WriteString(pad + "continue\n")
+
+	case ast.ForStmt:
+		b.WriteString(pad + "for " + x.Name + " in ")
+		printExpr(b, x.Collection, 0)
+		if x.Reverse {
+			b.WriteString(" reverse")
+		}
+		if x.Step != nil {
+			b.WriteString(" step ")
+			printExpr(b, x.Step, 0)
+		}
+		b.WriteString(" {\n")
+		printStmts(b, x.Body, depth+1)
+		b.WriteString(pad + "}\n")
+
+	case ast.MatchStmt:
+		b.WriteString(pad + "match ")
+		printExpr(b, x.Value, 0)
+		b.WriteString(" {\n")
+		for _, arm := range x.Arms {
+			b.WriteString(pad + "    ")
+			if arm.Wildcard || arm.Pattern == nil {
+				b.WriteString("_")
+			} else {
+				printExpr(b, arm.Pattern, 0)
+			}
+			b.WriteString(" => {\n")
+			printStmts(b, arm.Body, depth+2)
+			b.WriteString(pad + "    }\n")
+		}
+		b.WriteString(pad + "}\n")
 
 	case ast.IfStmt:
 		b.WriteString(pad + "if ")

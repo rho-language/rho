@@ -355,9 +355,10 @@ func (n BlockStmt) Position() Position { return n.Pos }
 
 type LetStmt struct {
 	Node
-	Name  string
-	Type  TypeExpr
-	Value Expr
+	Name    string
+	Type    TypeExpr
+	Value   Expr
+	Mutable bool
 }
 
 func (LetStmt) stmtNode() {}

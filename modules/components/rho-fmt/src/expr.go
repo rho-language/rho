@@ -122,8 +122,13 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 
 	case ast.CallExpr:
 		printExpr(b, x.Callee, 7)
+		if len(x.TypeArgs) > 0 {
+			b.WriteString("[")
+			printTypeArgs(b, x.TypeArgs)
+			b.WriteString("]")
+		}
 		b.WriteString("(")
-		printArguments(b, x.TypeArgs, x.Args)
+		printValueArgs(b, x.Args)
 		b.WriteString(")")
 
 	case ast.MemberExpr:
@@ -153,6 +158,10 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 	case ast.ArrayLiteralExpr:
 		b.WriteString("[ ")
 		printExprList(b, x.Values)
+		if x.Repeat != nil {
+			b.WriteString("; ")
+			printExpr(b, *x.Repeat, 0)
+		}
 		b.WriteString(" ]")
 
 	case ast.IfExpr:
@@ -171,22 +180,24 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 	}
 }
 
-// printArguments writes a call's type arguments followed by its arguments.
-func printArguments(b *strings.Builder, typeArgs []ast.TypeExpr, args []ast.Expr) {
-	first := true
-	for _, ta := range typeArgs {
-		if !first {
+// printTypeArgs writes a call's type arguments, inside the brackets the call
+// printer adds around them.
+func printTypeArgs(b *strings.Builder, typeArgs []ast.TypeExpr) {
+	for i, ta := range typeArgs {
+		if i > 0 {
 			b.WriteString(", ")
 		}
 		b.WriteString(typeWithArgs(ta))
-		first = false
 	}
-	for _, arg := range args {
-		if !first {
+}
+
+// printValueArgs writes a call's value arguments.
+func printValueArgs(b *strings.Builder, args []ast.Expr) {
+	for i, arg := range args {
+		if i > 0 {
 			b.WriteString(", ")
 		}
 		printExpr(b, arg, 0)
-		first = false
 	}
 }
 
@@ -203,14 +214,10 @@ func printExprList(b *strings.Builder, list []ast.Expr) {
 // typeWithArgs renders a type together with any type arguments, as in
 // Result[u32, u32].
 func typeWithArgs(t ast.TypeExpr) string {
-	if len(t.Args) == 0 {
-		return t.Name
-	}
-	parts := make([]string, 0, len(t.Args))
-	for _, arg := range t.Args {
-		parts = append(parts, arg.String())
-	}
-	return t.Name + "[" + strings.Join(parts, ", ") + "]"
+	// TypeExpr.String already carries generic arguments, an array length and
+	// further dimensions. Using it here is what keeps `u8[8]`, `u32[2][2]` and
+	// `Slice[u8]` from being flattened to their bare names.
+	return t.String()
 }
 
 // quoteRhoString re-quotes a string literal's contents.

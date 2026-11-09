@@ -808,6 +808,7 @@ func (p *Parser) parseStmt() ast.Stmt {
 	var stmt ast.Stmt
 	switch p.current.Kind {
 	case lexer.TokenLet, lexer.TokenConst, lexer.TokenVar:
+		keyword := p.current.Kind
 		p.readToken()
 		name := p.name()
 		// The type annotation is optional: `let x = expr` infers it, while
@@ -823,7 +824,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 			value = p.parseExpr(0)
 		}
 		p.consumeSemi()
-		stmt = ast.LetStmt{Name: name, Type: declaredType, Value: value}
+		stmt = ast.LetStmt{Name: name, Type: declaredType, Value: value,
+			Mutable: keyword == lexer.TokenVar}
 	case lexer.TokenReturn:
 		p.readToken()
 		if p.current.Kind == lexer.TokenRBrace || p.current.Kind == lexer.TokenSemicolon {
