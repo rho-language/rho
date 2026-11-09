@@ -44,7 +44,7 @@ index is a map rather than a second copy.
 |---|---|---|
 | {ref}`rho-fmt <rho-fmt/index>` | `rho fmt` | The source formatter |
 | {ref}`rho-doc <rho-doc/index>` | `rho doc` | The documentation generator that built this site |
-| {ref}`rho-log <rho-log/index>` | `rho log` | Structured logging |
+| {ref}`rho-log <rho-log/index>` | `rho log` | Structured logging: six levels, text or JSON, rotating files, runtime configuration |
 | {ref}`rho-lsp <rho-lsp/index>` | `rho lsp` | The language server |
 | {ref}`rho-doctor <rho-doctor/index>` | `rho doctor` | What the installed modules need from this machine, and what it has |
 | {ref}`rho-keeper <rho-keeper/index>` | `rho keeper` | A dashboard for the installation and its registry, and what it fixes |

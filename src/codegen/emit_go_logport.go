@@ -29,8 +29,11 @@ package codegen
 // emitLogPort renders the implementation of the logging port.
 func emitLogPort(ctx PortContext) ([]string, string) {
 	imports := []string{
+		`"encoding/json"`,
 		`"fmt"`,
 		`"os"`,
+		`"path/filepath"`,
+		`"strconv"`,
 		`"strings"`,
 		`"sync"`,
 		`"time"`,
@@ -40,49 +43,193 @@ func emitLogPort(ctx PortContext) ([]string, string) {
 // rhoLogLevels names each level, matching the levels the library passes.
 var rhoLogLevels = [...]string{"trace", "debug", "info", "warn", "error", "fatal"}
 
-// rhoLogFile is the application log, when one is configured.
-//
-// Standard error carries the process's own records, which a service manager
-// already collects. An application log is for the program's own domain events:
-// what it decided and why. Setting RHO_LOG_FILE sends them to a file as well,
-// so they survive independently of whoever captured the process output.
-var (
-	rhoLogFile     *os.File
-	rhoLogFileOnce sync.Once
-)
+func rhoLogLevel(name string) uint32 {
+	value := strings.ToLower(strings.TrimSpace(name))
+	for i, candidate := range rhoLogLevels {
+		if candidate == value {
+			return uint32(i)
+		}
+	}
+	return 2
+}
 
-func rhoLogOpen() *os.File {
-	rhoLogFileOnce.Do(func() {
-		path := strings.TrimSpace(os.Getenv("RHO_LOG_FILE"))
-		if path == "" {
-			return
+// rhoLogConfig is the process-wide logging configuration. A service configures
+// it once from its settings and may reconfigure it when the settings change.
+type rhoLogConfig struct {
+	mu       sync.Mutex
+	min      uint32
+	format   string
+	path     string
+	maxBytes int64
+	keep     int
+	stderr   bool
+	file     *os.File
+	size     int64
+}
+
+var rhoLogState = rhoLogConfig{
+	min:    2,
+	format: "text",
+	stderr: true,
+}
+
+var rhoLogOnce sync.Once
+
+// rhoLogInit applies the environment defaults. Environment values are for
+// tests and operators; an application's settings call log_configure on top.
+func rhoLogInit() {
+	rhoLogOnce.Do(func() {
+		if value := os.Getenv("RHO_LOG_LEVEL"); value != "" {
+			rhoLogState.min = rhoLogLevel(value)
 		}
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			// A log that cannot be opened must not stop the program; standard
-			// error still carries the record.
-			fmt.Fprintf(os.Stderr, "rho: cannot open the log file %s: %v\n", path, err)
-			return
+		if value := strings.ToLower(strings.TrimSpace(os.Getenv("RHO_LOG_FORMAT"))); value == "json" {
+			rhoLogState.format = "json"
 		}
-		rhoLogFile = file
+		rhoLogState.path = strings.TrimSpace(os.Getenv("RHO_LOG_FILE"))
+		if value := strings.TrimSpace(os.Getenv("RHO_LOG_MAX_BYTES")); value != "" {
+			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed >= 0 {
+				rhoLogState.maxBytes = parsed
+			}
+		}
+		if value := strings.TrimSpace(os.Getenv("RHO_LOG_KEEP")); value != "" {
+			if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+				rhoLogState.keep = parsed
+			}
+		}
+		if value := strings.ToLower(strings.TrimSpace(os.Getenv("RHO_LOG_STDERR"))); value == "0" || value == "false" || value == "off" {
+			rhoLogState.stderr = false
+		}
+		rhoLogState.mu.Lock()
+		rhoLogOpenLocked()
+		rhoLogState.mu.Unlock()
 	})
-	return rhoLogFile
+}
+
+func rhoLogOpenLocked() {
+	if rhoLogState.path == "" {
+		return
+	}
+	if dir := filepath.Dir(rhoLogState.path); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+	file, err := os.OpenFile(rhoLogState.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		// A log that cannot be opened must not stop the program; standard
+		// error still carries the record.
+		fmt.Fprintf(os.Stderr, "rho: cannot open the log file %s: %v\n", rhoLogState.path, err)
+		return
+	}
+	rhoLogState.file = file
+	rhoLogState.size = 0
+	if info, statErr := file.Stat(); statErr == nil {
+		rhoLogState.size = info.Size()
+	}
+}
+
+func rhoLogRotateLocked() {
+	if rhoLogState.file == nil || rhoLogState.maxBytes <= 0 {
+		return
+	}
+	if rhoLogState.size < rhoLogState.maxBytes {
+		return
+	}
+	_ = rhoLogState.file.Close()
+	rhoLogState.file = nil
+	keep := rhoLogState.keep
+	if keep < 1 {
+		keep = 1
+	}
+	for i := keep - 1; i >= 1; i-- {
+		_ = os.Rename(rhoLogState.path+"."+strconv.Itoa(i),
+			rhoLogState.path+"."+strconv.Itoa(i+1))
+	}
+	_ = os.Rename(rhoLogState.path, rhoLogState.path+".1")
+	rhoLogState.size = 0
+	rhoLogOpenLocked()
+}
+
+// log_configure is called by the application after it reads its log settings.
+// A zero level means info; an empty format means text; an empty path means no
+// file. The file is reopened and rotated by the port itself.
+func log_configure(level uint32, format string, path string, maxBytes int64,
+	keep uint32, stderr uint32) {
+	rhoLogInit()
+	rhoLogState.mu.Lock()
+	defer rhoLogState.mu.Unlock()
+	if level <= 5 {
+		rhoLogState.min = level
+	}
+	if value := strings.ToLower(strings.TrimSpace(format)); value == "json" || value == "text" {
+		rhoLogState.format = value
+	}
+	if rhoLogState.file != nil {
+		_ = rhoLogState.file.Close()
+		rhoLogState.file = nil
+	}
+	rhoLogState.path = strings.TrimSpace(path)
+	rhoLogState.maxBytes = maxBytes
+	rhoLogState.keep = int(keep)
+	if rhoLogState.keep < 1 {
+		rhoLogState.keep = 1
+	}
+	rhoLogState.stderr = stderr != 0
+	rhoLogState.size = 0
+	rhoLogOpenLocked()
+}
+
+// rhoLogLogConfigure is the name the imported library's configure wrapper
+// resolves to. It is the same policy as log_configure, kept as a separate
+// entry point because a library extern is qualified by its module.
+func rhoLogLogConfigure(level uint32, format string, path string, maxBytes int64,
+	keep uint32, stderr uint32) {
+	log_configure(level, format, path, maxBytes, keep, stderr)
+}
+
+type rhoLogRecord struct {
+	Time    string ` + "`json:\"time\"`" + `
+	Level   string ` + "`json:\"level\"`" + `
+	Subject string ` + "`json:\"subject\"`" + `
+	Message string ` + "`json:\"message\"`" + `
 }
 
 // emit writes one record to standard error and, when configured, to the
 // application log.
 func emit(level uint32, subject string, message string) {
-	name := "info"
-	if int(level) < len(rhoLogLevels) {
-		name = rhoLogLevels[level]
+	rhoLogInit()
+	rhoLogState.mu.Lock()
+	defer rhoLogState.mu.Unlock()
+	if level >= uint32(len(rhoLogLevels)) {
+		level = 2
 	}
-	line := fmt.Sprintf("[%s] [%s] [%s] %s\n",
-		time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		name, subject, strings.TrimRight(message, "\n"))
-
-	fmt.Fprint(os.Stderr, line)
-	if file := rhoLogOpen(); file != nil {
-		fmt.Fprint(file, line)
+	if level < rhoLogState.min {
+		return
+	}
+	name := rhoLogLevels[level]
+	message = strings.TrimRight(message, "\n")
+	stamp := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	var line string
+	if rhoLogState.format == "json" {
+		record, err := json.Marshal(rhoLogRecord{
+			Time: stamp, Level: name, Subject: subject, Message: message,
+		})
+		if err == nil {
+			line = string(record) + "\n"
+		} else {
+			line = fmt.Sprintf("[%s] [%s] [%s] %s\n", stamp, name, subject, message)
+		}
+	} else {
+		line = fmt.Sprintf("[%s] [%s] [%s] %s\n", stamp, name, subject, message)
+	}
+	if rhoLogState.stderr {
+		fmt.Fprint(os.Stderr, line)
+	}
+	if rhoLogState.file != nil {
+		rhoLogRotateLocked()
+		if rhoLogState.file != nil {
+			if _, err := rhoLogState.file.WriteString(line); err == nil {
+				rhoLogState.size += int64(len(line))
+			}
+		}
 	}
 }
 `

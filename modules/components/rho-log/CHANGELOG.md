@@ -9,3 +9,11 @@ against that version.
 ## [0.1.1] - 2026-10-12
 
 Initial release.
+
+## [0.1.2] - 2026-11-09
+
+The Rho surface now configures the logger: `log_configure` sets the minimum
+level, text or JSON format, the file path, rotation size and retention, and
+whether records also go to standard error. `fatal` is available alongside the
+other levels; the Go logger now has `Fatal` as well, without terminating the
+process.

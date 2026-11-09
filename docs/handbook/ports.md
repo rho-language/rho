@@ -41,7 +41,7 @@ to see what it does.
 | Port | What it supplies | Used by |
 |------|------------------|---------|
 | `fsstore` | A module store on the filesystem: put, get, search, list | the registry |
-| `logemit` | Writing a log record, with the formatter's own shape | any project that logs |
+| `logemit` | Level-filtered logging in text or JSON, with a rotating file and runtime configuration | any project that logs |
 | `docemit` | The documentation generator, as a page or a site | a project that serves documentation |
 | `gateway` | A serial link, UDP delivery, a monotonic clock and a wall clock, shared state, tx-id correlation and the telemetry outbox | an edge gateway that reads a node and streams what it reads |
 | `telemetry` | Polling a gateway outbox, writing a batch through the sql port, latest and time-range queries | an aggregator that keeps a series for other applications |
@@ -59,7 +59,7 @@ module rho.log
 extern fn emit(level: u32, subject: string, message: string) void
 
 fn info(subject: string, message: string) void {
-    emit(1, subject, message);
+    emit(2, subject, message);
 }
 ```
 
@@ -75,7 +75,12 @@ build:
 
 The project calls `info(...)`. The `logemit` port supplies `emit`, writing the
 record in the shape the formatter produces, so a device writing to a serial
-console and a server writing to stdout cannot drift apart.
+console and a server writing to stdout cannot drift apart. A service calls
+`configure(level, format, file, max_bytes, keep, stderr)` after reading its own
+settings; the port filters levels, writes text or JSON and rotates the file
+itself. Environment values (`RHO_LOG_LEVEL`, `RHO_LOG_FORMAT`, `RHO_LOG_FILE`,
+`RHO_LOG_MAX_BYTES`, `RHO_LOG_KEEP`, `RHO_LOG_STDERR`) are the operator and test
+defaults.
 
 ## Why a port and not a library
 

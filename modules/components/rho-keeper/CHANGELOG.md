@@ -6,21 +6,11 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
-## [0.1.3] - 2026-10-12
+## [0.1.0] - 2026-10-01
 
-Fixed the registry section listing a module once per published version; it is
-one row per module now, showing the newest release.
-
-The header reports the version that is installed and in use. A binary run from
-outside its module directory used to find no manifest and show `0.0.0`; it now
-reads the installed module's manifest instead.
-
-## [0.1.2] - 2026-10-12
-
-Added uninstall: a module that is not in use can be removed from this machine,
-with the same `rho module uninstall` a terminal would run. It is refused while
-the module is in use, so the page asks for it to be turned off first, and once
-removed the registry offers it again.
+Initial release: a local dashboard for the installation — every module, the
+version in use, the contracts each component needs filled, and what could not be
+read.
 
 ## [0.1.1] - 2026-10-12
 
@@ -32,8 +22,18 @@ Added a release history to every module: a `CHANGELOG.md` beside the manifest,
 carried in the package, with the section for the published version recorded on
 the registry against that release.
 
-## [0.1.0] - 2026-10-01
+## [0.1.2] - 2026-10-12
 
-Initial release: a local dashboard for the installation — every module, the
-version in use, the contracts each component needs filled, and what could not be
-read.
+Added uninstall: a module that is not in use can be removed from this machine,
+with the same `rho module uninstall` a terminal would run. It is refused while
+the module is in use, so the page asks for it to be turned off first, and once
+removed the registry offers it again.
+
+## [0.1.3] - 2026-10-12
+
+Fixed the registry section listing a module once per published version; it is
+one row per module now, showing the newest release.
+
+The header reports the version that is installed and in use. A binary run from
+outside its module directory used to find no manifest and show `0.0.0`; it now
+reads the installed module's manifest instead.

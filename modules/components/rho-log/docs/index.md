@@ -67,6 +67,18 @@ The port supplies the implementation and writes the record in the shape the
 formatter produces, which is why a device writing to a serial console and a
 server writing to standard output cannot drift apart.
 
+## Configuring a service
+
+The port reads the environment defaults (`RHO_LOG_LEVEL`, `RHO_LOG_FORMAT`,
+`RHO_LOG_FILE`, `RHO_LOG_MAX_BYTES`, `RHO_LOG_KEEP`, `RHO_LOG_STDERR`) and the
+application calls `configure(level, format, file, max_bytes, keep, stderr)`
+after reading its settings. The same policy filters levels, writes text or
+JSON, rotates the file itself and keeps standard error for journald.
+
+The library exposes `trace`, `debug`, `info`, `warn`, `error` and `fatal`.
+`fatal` is a level, not an exit: the logger records and the caller decides
+whether the process can continue.
+
 ## Where the records go
 
 Standard error carries the process's own records, which a service manager

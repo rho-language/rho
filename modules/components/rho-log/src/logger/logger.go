@@ -169,6 +169,10 @@ func (l *Logger) Info(message string, kv ...any)  { l.log(logfmt.LevelInfo, mess
 func (l *Logger) Warn(message string, kv ...any)  { l.log(logfmt.LevelWarn, message, pairs(kv)) }
 func (l *Logger) Error(message string, kv ...any) { l.log(logfmt.LevelError, message, pairs(kv)) }
 
+// Fatal writes at the fatal level. It does not terminate the process: a logger
+// records a decision, and the caller decides whether the program can continue.
+func (l *Logger) Fatal(message string, kv ...any) { l.log(logfmt.LevelFatal, message, pairs(kv)) }
+
 // Close releases every sink, which a component should do as it shuts down so
 // a buffered file is flushed.
 func (l *Logger) Close() error {

@@ -7,6 +7,20 @@ module rho.log
 
 extern fn emit(level: u32, subject: string, message: string)
 
+// log_configure applies the application's logging policy. The host calls it
+// after reading its settings; the port owns the level filter, the text/JSON
+// formatter and the rotating file.
+extern fn log_configure(level: u32, format: string, file: string,
+    max_bytes: i64, keep: u32, stderr: u32)
+
+// configure is a library function rather than a direct extern call so the
+// application's call is resolved inside this module; the port then supplies the
+// implementation, exactly as it does for emit.
+fn configure(level: u32, format: string, file: string, max_bytes: i64,
+    keep: u32, stderr: u32) void {
+    log_configure(level, format, file, max_bytes, keep, stderr)
+}
+
 fn trace(subject: string, message: string) void {
     emit(0, subject, message)
 }
@@ -25,4 +39,8 @@ fn warn(subject: string, message: string) void {
 
 fn error(subject: string, message: string) void {
     emit(4, subject, message)
+}
+
+fn fatal(subject: string, message: string) void {
+    emit(5, subject, message)
 }

@@ -6,12 +6,9 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
-## [0.1.2] - 2026-11-09
+## [0.1.0] - 2026-10-12
 
-The formatter now writes `continue`, `for ... in ...` (with `reverse` and
-`step`) and `match`, instead of replacing them with an unprinted-statement
-comment. A program that used any of them no longer changed meaning when it was
-formatted.
+Initial release.
 
 ## [0.1.1] - 2026-11-09
 
@@ -22,6 +19,9 @@ dimensions (`u8[8]`, `u32[2][2]`), `[value; count]` keeps its repeat count, and
 a call with the type as the first argument. Local `var` bindings are preserved
 rather than rewritten to `let`.
 
-## [0.1.0] - 2026-10-12
+## [0.1.2] - 2026-11-09
 
-Initial release.
+The formatter now writes `continue`, `for ... in ...` (with `reverse` and
+`step`) and `match`, instead of replacing them with an unprinted-statement
+comment. A program that used any of them no longer changed meaning when it was
+formatted.

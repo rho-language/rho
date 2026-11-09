@@ -170,3 +170,13 @@ type failingSink struct{}
 
 func (failingSink) Write([]byte) error { return os.ErrPermission }
 func (failingSink) Close() error       { return nil }
+
+// Fatal is a level like the others; the logger records it and leaves the
+// decision to stop the process to the caller.
+func TestFatalWritesAtFatalLevel(t *testing.T) {
+	logger, out := capture(logfmt.LevelTrace)
+	logger.Fatal("cannot continue")
+	if !strings.Contains(out.String(), "[fatal]") {
+		t.Errorf("expected a fatal record, got %q", out.String())
+	}
+}

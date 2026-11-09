@@ -31,6 +31,7 @@ RUN rm -rf applications/docsite/build /out /site \
       RHO_SITE_TITLE="Rho language and toolchain" \
       RHO_SITE_HOME=/ \
       RHO_SITE_REPOSITORY=https://github.com/rho-language/rho \
+      RHO_SITE_VERSION="$(cat cmd/rho/VERSION)" \
       GOPATH=/root/go GOMODCACHE=/root/go/pkg/mod GOCACHE=/tmp/go-build \
  && (./bin/rho run applications/docsite >/tmp/docsite.log 2>&1 & echo $! >/tmp/docsite.pid) \
  && for i in $(seq 1 90); do \

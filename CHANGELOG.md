@@ -225,3 +225,17 @@ A web, telemetry, rollout and provisioning release.
 - Cross-entity includes use bare names resolved by the compiler; RoboHub
   dependencies are declared once under `deps.robohub` and checked at build time.
 - `scripts/check.sh` is idempotent when a version is already published.
+
+## [0.5.0] - 2026-11-09
+
+Structured logging for services, and a formatter that keeps what it prints.
+
+- The `logemit` port now filters levels, writes text or JSON, rotates its own
+  file, and is configured at runtime with `log_configure`; the environment
+  supplies defaults for level, format, path, size, retention and stderr.
+- `rho.log` gained `configure` and `fatal`; the component's Go logger gained
+  `Fatal` without terminating the process.
+- `rho fmt` preserves `const` declarations, fixed array lengths and dimensions,
+  `[value; count]`, `Ptr[T](&x)`, local `var`, `continue`, `for ... in` with
+  `reverse` and `step`, and `match`.
+- Added port, rotation, filtering, format and fatal tests.
