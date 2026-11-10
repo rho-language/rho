@@ -1,6 +1,6 @@
 # Rho
 
-**Version 0.5.0** · [rho-lang.org](https://rho-lang.org)
+**Version 0.5.1** · [rho-lang.org](https://rho-lang.org)
 
 Rho is a small systems programming language. It compiles to C and to Go: C for
 host tooling and embedded targets, Go for services that speak HTTP.

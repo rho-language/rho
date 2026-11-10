@@ -162,3 +162,16 @@ func TestAZipFileOverTheLimitIsRefused(t *testing.T) {
 		t.Fatalf("an oversized zip file was unpacked: %v", err)
 	}
 }
+
+// The host tar path validates the listing before it hands the archive to the
+// host's tar. The preflight is the safety boundary there, so it is tested
+// without extracting anything.
+func TestHostTarPreflightRefusesAnEscapingEntry(t *testing.T) {
+	archive := tarGz(t,
+		[]tar.Header{{Name: "ok/file", Mode: 0o644, Typeflag: tar.TypeReg}, {Name: "../escaped", Mode: 0o644, Typeflag: tar.TypeReg}},
+		[]string{"fine", "owned"})
+	err := checkArchivePaths(archive, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "point outside") {
+		t.Fatalf("the preflight did not refuse the escaping entry: %v", err)
+	}
+}

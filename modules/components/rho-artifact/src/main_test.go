@@ -1,6 +1,9 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -79,5 +82,48 @@ func TestUnsignedAndTampered(t *testing.T) {
 	}
 	if err := verify([]string{"-allow-unsigned", artifact}); err != nil {
 		t.Fatalf("unsigned artifact was refused with the explicit flag: %v", err)
+	}
+}
+
+// The archive's member names are not paths this tool writes to: the manifest and
+// payload are recognized by their exact names and the payload is written under
+// the constant payload name. A member that walks out is ignored, not followed.
+func TestUnpackArchiveDoesNotWriteAnEscapingMember(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "artifact.rho")
+	var buffer bytes.Buffer
+	gz := gzip.NewWriter(&buffer)
+	tw := tar.NewWriter(gz)
+	entries := []struct {
+		name string
+		body string
+	}{
+		{"../escape", "owned"},
+		{"artifact.json", "{}"},
+		{"payload.tar.gz", "payload"},
+	}
+	for _, entry := range entries {
+		if err := tw.WriteHeader(&tar.Header{Name: entry.name, Mode: 0o644, Size: int64(len(entry.body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(entry.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, buffer.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	if _, _, err := unpackArchive(archive, out); err != nil {
+		t.Fatalf("a valid artifact with an ignored member failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "escape")); err == nil {
+		t.Fatal("an archive member was written outside the extraction directory")
 	}
 }

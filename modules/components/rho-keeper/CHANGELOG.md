@@ -37,3 +37,11 @@ one row per module now, showing the newest release.
 The header reports the version that is installed and in use. A binary run from
 outside its module directory used to find no manifest and show `0.0.0`; it now
 reads the installed module's manifest instead.
+
+## [0.1.4] - 2026-11-10
+
+Security fix for toolchain archives. Tar and zip extraction now use `os.Root`,
+which refuses a path outside the destination even after a link. The host-tar
+fallback validates the listing before extraction. The previous post-extraction
+cleanup, which could delete any path named in a malicious listing, is gone.
+Tests cover escaping tar and zip members and the preflight.

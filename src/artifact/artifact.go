@@ -143,7 +143,6 @@ func unpack(path, dir string) (schema.ArtifactManifest, string, error) {
 		if err != nil {
 			return manifest, "", err
 		}
-		target := filepath.Join(dir, filepath.Base(header.Name))
 		switch header.Name {
 		case manifestName:
 			data, err := io.ReadAll(io.LimitReader(reader, 1<<20))
@@ -158,6 +157,11 @@ func unpack(path, dir string) (schema.ArtifactManifest, string, error) {
 			if err != nil {
 				return manifest, "", err
 			}
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return manifest, "", err
+			}
+			// The payload name is a constant, not the archive's spelling of it.
+			target := filepath.Join(dir, payloadName)
 			if err := os.WriteFile(target, data, 0644); err != nil {
 				return manifest, "", err
 			}
@@ -168,6 +172,36 @@ func unpack(path, dir string) (schema.ArtifactManifest, string, error) {
 		return manifest, "", fmt.Errorf("artifact has no payload")
 	}
 	return manifest, payload, nil
+}
+
+// secureExtractPath resolves an archive member under root. It refuses an
+// absolute path, a Windows drive or UNC path, and a component that walks to the
+// parent; the final relative check catches a spelling that gets past those.
+func secureExtractPath(root, name string) (string, bool) {
+	if name == "" || strings.ContainsRune(name, 0) {
+		return "", false
+	}
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if strings.HasPrefix(normalized, "/") || pathIsAbs(normalized) {
+		return "", false
+	}
+	clean := filepath.Clean(normalized)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	target := filepath.Join(root, clean)
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return target, true
+}
+
+// pathIsAbs is filepath.IsAbs plus the volume test, so a Windows path in a tar
+// written on another host is refused on every host.
+func pathIsAbs(name string) bool {
+	return filepath.IsAbs(name) || filepath.VolumeName(name) != ""
 }
 
 func extractPayload(payload, dir string) error {
@@ -185,7 +219,11 @@ func extractPayload(payload, dir string) error {
 	}
 	defer gz.Close()
 	reader := tar.NewReader(gz)
-	root, _ := filepath.Abs(dir)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -194,28 +232,37 @@ func extractPayload(payload, dir string) error {
 		if err != nil {
 			return err
 		}
-		clean := filepath.Clean(header.Name)
-		if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
-			return fmt.Errorf("payload path escapes the extraction directory")
+		name := filepath.FromSlash(strings.ReplaceAll(header.Name, "\\", "/"))
+		if _, ok := secureExtractPath(dir, header.Name); !ok {
+			return fmt.Errorf("payload path escapes the extraction directory: %q", header.Name)
 		}
-		target := filepath.Join(root, clean)
-		if !strings.HasPrefix(target, root+string(os.PathSeparator)) && target != root {
-			return fmt.Errorf("payload path escapes the extraction directory")
+		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
+			// A link is a second path the containment check never saw.
+			continue
 		}
 		if header.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0755); err != nil {
+			if err := root.MkdirAll(name, 0755); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(name), 0755); err != nil {
 			return err
 		}
 		data, err := io.ReadAll(io.LimitReader(reader, header.Size+1))
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(target, data, os.FileMode(header.Mode)); err != nil {
+		out, err := root.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY,
+			os.FileMode(header.Mode).Perm())
+		if err != nil {
+			return err
+		}
+		if _, err := out.Write(data); err != nil {
+			out.Close()
+			return err
+		}
+		if err := out.Close(); err != nil {
 			return err
 		}
 	}

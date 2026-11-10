@@ -239,3 +239,18 @@ Structured logging for services, and a formatter that keeps what it prints.
   `[value; count]`, `Ptr[T](&x)`, local `var`, `continue`, `for ... in` with
   `reverse` and `step`, and `match`.
 - Added port, rotation, filtering, format and fatal tests.
+
+## [0.5.1] - 2026-11-10
+
+Security fix for archive extraction.
+
+- The artifact verifier and `rho-artifact` recognize the manifest and payload
+  by their exact names and write the payload under the constant payload name;
+  the payload extractor uses `os.Root` and refuses absolute, parent and volume
+  paths before writing.
+- The keeper's tar and zip unpackers use `os.Root` and validate every entry
+  before writing. The host-tar fallback validates the archive listing before
+  extraction instead of extracting first.
+- Removed the post-extraction “cleanup” that could delete any path named in a
+  malicious archive listing.
+- Added tests for escaping tar, zip and payload members.

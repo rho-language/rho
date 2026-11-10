@@ -351,7 +351,6 @@ func unpackArchive(path, dir string) (schema.ArtifactManifest, string, error) {
 		if err != nil {
 			return manifest, "", err
 		}
-		target := filepath.Join(dir, filepath.Base(header.Name))
 		switch header.Name {
 		case manifestName:
 			data, err := io.ReadAll(io.LimitReader(reader, 1<<20))
@@ -366,6 +365,11 @@ func unpackArchive(path, dir string) (schema.ArtifactManifest, string, error) {
 			if err != nil {
 				return manifest, "", err
 			}
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return manifest, "", err
+			}
+			// The payload name is a constant, not the archive's spelling of it.
+			target := filepath.Join(dir, payloadName)
 			if err := os.WriteFile(target, data, 0644); err != nil {
 				return manifest, "", err
 			}

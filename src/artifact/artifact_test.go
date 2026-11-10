@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -11,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"rho/src/schema"
@@ -68,5 +70,38 @@ func TestVerifyPayloadAndTarget(t *testing.T) {
 	}
 	if _, err := Verify(artifactPath, Options{}); err == nil {
 		t.Fatal("signed artifact without a key was accepted")
+	}
+}
+
+// A payload member that walks out of the extraction directory is refused before
+// it is written, and the refusal is not a warning that leaves the file behind.
+func TestExtractPayloadRefusesEscapingMember(t *testing.T) {
+	dir := t.TempDir()
+	payload := filepath.Join(t.TempDir(), "payload.tar.gz")
+	var buffer bytes.Buffer
+	gz := gzip.NewWriter(&buffer)
+	tw := tar.NewWriter(gz)
+	body := []byte("owned")
+	if err := tw.WriteHeader(&tar.Header{Name: "../escaped", Mode: 0o644, Size: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payload, buffer.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := extractPayload(payload, dir)
+	if err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("an escaping payload member was not refused: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escaped")); statErr == nil {
+		t.Fatal("a payload member was written outside the extraction directory")
 	}
 }

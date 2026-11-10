@@ -388,6 +388,11 @@ func unpackWithHostTar(archive string, into string, kind string) error {
 	if err != nil {
 		return fmt.Errorf("%s needs the host's tar to unpack, and there is no tar on this machine", kind)
 	}
+	// Every entry is checked before anything is written. A member outside the
+	// destination is refused here, so the host's tar is not trusted with paths.
+	if err := checkArchivePaths(archive, into); err != nil {
+		return err
+	}
 	// The flag first, because a tar built without a library for the format will
 	// otherwise read the file and fail halfway through it, leaving a half-written
 	// toolchain that looks installed.
@@ -408,7 +413,7 @@ func unpackWithHostTar(archive string, into string, kind string) error {
 		return fmt.Errorf("tar could not unpack %s: %w (%s)", filepath.Base(archive), err,
 			strings.TrimSpace(string(output)))
 	}
-	return checkNothingEscaped(archive, into)
+	return nil
 }
 
 func unpackTar(archive string, into string, compressed bool) error {
@@ -432,6 +437,14 @@ func unpackTar(archive string, into string, compressed bool) error {
 	// digest says this is the vendor's archive, but a vendor's archive that is a
 	// decompression bomb is still one, and a limit costs nothing.
 	entries := tar.NewReader(io.LimitReader(reader, unpackLimit))
+	if err := os.MkdirAll(into, 0o755); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(into)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	var count int
 	var total int64
 	for {
@@ -446,17 +459,17 @@ func unpackTar(archive string, into string, compressed bool) error {
 		if count > unpackEntries {
 			return fmt.Errorf("%s has more than %d entries", filepath.Base(archive), unpackEntries)
 		}
-		target, ok := safePath(into, header.Name)
-		if !ok {
+		if _, ok := safePath(into, header.Name); !ok {
 			// Refused, not skipped: an entry that climbs out of the destination is
 			// the archive saying something about itself, and carrying on with the
 			// rest of it would be unpacking an archive that is not what it claims.
 			return fmt.Errorf("%s contains a path that leaves where it is unpacked: %s",
 				filepath.Base(archive), header.Name)
 		}
+		name := filepath.FromSlash(strings.ReplaceAll(header.Name, "\\", "/"))
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := root.MkdirAll(name, 0o755); err != nil {
 				return err
 			}
 		case tar.TypeReg:
@@ -464,10 +477,10 @@ func unpackTar(archive string, into string, compressed bool) error {
 				return fmt.Errorf("%s in %s is %d bytes, more than the %d a file may be",
 					header.Name, filepath.Base(archive), header.Size, int64(unpackFileLimit))
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := root.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode)&0o755|0o600)
+			out, err := root.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode)&0o755|0o600)
 			if err != nil {
 				return err
 			}
@@ -498,15 +511,23 @@ func unpackZip(archive string, into string) error {
 	if len(reader.File) > unpackEntries {
 		return fmt.Errorf("%s has more than %d entries", filepath.Base(archive), unpackEntries)
 	}
+	if err := os.MkdirAll(into, 0o755); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(into)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	var total int64
 	for _, entry := range reader.File {
-		target, ok := safePath(into, entry.Name)
-		if !ok {
+		if _, ok := safePath(into, entry.Name); !ok {
 			return fmt.Errorf("%s contains a path that leaves where it is unpacked: %s",
 				filepath.Base(archive), entry.Name)
 		}
+		name := filepath.FromSlash(strings.ReplaceAll(entry.Name, "\\", "/"))
 		if entry.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := root.MkdirAll(name, 0o755); err != nil {
 				return err
 			}
 			continue
@@ -521,7 +542,7 @@ func unpackZip(archive string, into string) error {
 			return fmt.Errorf("%s in %s is more than the %d bytes a file may be",
 				entry.Name, filepath.Base(archive), unpackFileLimit)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 			return err
 		}
 		source, err := entry.Open()
@@ -530,7 +551,7 @@ func unpackZip(archive string, into string) error {
 		}
 		// The mode's permission bits only, so a setuid bit in an archive is not one
 		// on disk.
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, entry.Mode().Perm()|0o600)
+		out, err := root.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, entry.Mode().Perm()|0o600)
 		if err != nil {
 			source.Close()
 			return err
@@ -555,7 +576,7 @@ func unpackZip(archive string, into string) error {
 // here: a member named `../../.ssh/authorized_keys` would be written outside, and
 // the only defence is to notice afterwards and remove it. Removing it is not enough
 // on its own, so the paths are listed and anything outside is deleted and reported.
-func checkNothingEscaped(archive string, into string) error {
+func checkArchivePaths(archive string, into string) error {
 	entries, err := exec.Command("tar", "-tf", archive).Output()
 	if err != nil {
 		// The listing failed, so the paths cannot be checked. Refused rather than
@@ -572,13 +593,6 @@ func checkNothingEscaped(archive string, into string) error {
 		}
 		if _, ok := safePath(root, name); !ok {
 			outside = append(outside, name)
-			// Taken away again: whatever it wrote outside has already happened, and
-			// leaving it would be worse than the refusal.
-			resolved := name
-			if !strings.HasPrefix(name, "/") {
-				resolved = filepath.Join(root, name)
-			}
-			_ = os.RemoveAll(filepath.Clean(resolved))
 		}
 	}
 	if len(outside) > 0 {
