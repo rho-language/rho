@@ -178,3 +178,78 @@ func write(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// A generate file is named by the manifest, so it is read through the project
+// root and cannot point at a file outside it.
+func TestGeneratorsRefusesGenerateFileOutsideProject(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "module.yml"), `module:
+  name: escape
+  type: rho
+  version: 0.1.0
+
+main: src/main.rho
+
+generate: ../secret.yml
+`)
+	write(t, filepath.Join(filepath.Dir(root), "secret.yml"), "generators: []\n")
+	if _, err := Generators(root); err == nil {
+		t.Fatal("a generate file outside the project was read")
+	}
+}
+
+// The output path comes from the manifest; a path that climbs out of the
+// destination is refused before a directory is created.
+func TestRenderRefusesAnOutputPathOutsideDestination(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "module.yml"), `module:
+  name: escape
+  type: rho
+  version: 0.1.0
+
+main: src/main.rho
+
+generate:
+  - name: escape
+    outputs:
+      - path: ../../escaped
+        template: templates/t
+`)
+	write(t, filepath.Join(root, "templates", "t", "file.txt"), "data\n")
+	generator, ok, err := Find(root, "escape")
+	if err != nil || !ok {
+		t.Fatalf("Find: ok=%v err=%v", ok, err)
+	}
+	dest := t.TempDir()
+	if _, err := Render(root, generator, dest, map[string]string{"name": "x"}); err == nil {
+		t.Fatal("an output path outside the destination was rendered")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dest), "escaped")); err == nil {
+		t.Fatal("an output was written outside the destination")
+	}
+}
+
+// A template path is manifest-supplied too; it must stay inside the project.
+func TestRenderRefusesATemplateOutsideProject(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "module.yml"), `module:
+  name: escape
+  type: rho
+  version: 0.1.0
+
+main: src/main.rho
+
+generate:
+  - name: escape
+    outputs:
+      - path: out
+        template: ../outside
+`)
+	generator, ok, err := Find(root, "escape")
+	if err != nil || !ok {
+		t.Fatalf("Find: ok=%v err=%v", ok, err)
+	}
+	if _, err := Render(root, generator, t.TempDir(), map[string]string{"name": "x"}); err == nil {
+		t.Fatal("a template outside the project was rendered")
+	}
+}

@@ -372,8 +372,8 @@ type Manifest struct {
 	// definitions themselves, or a string naming a file that holds them. The
 	// scaffold package interprets it, so the manifest stays a description of
 	// the file and not a second reader of it.
-	Generate yaml.Value
-	Deps     []DepSpec
+	Generate      yaml.Value
+	Deps          []DepSpec
 	BuildLanguage string
 	// BuildTargets are the target ids a project requests, in order. An entry
 	// may name a target a descriptor already declares or define one, and a
@@ -590,29 +590,67 @@ func ManifestPath(projectRoot string) string {
 	if !ok {
 		return filepath.Join(".", "rho.mod")
 	}
-	path := filepath.Join(root, "module.yml")
-	if _, err := os.Stat(path); err == nil {
-		return path
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return filepath.Join(root, "rho.mod")
+	}
+	defer dir.Close()
+	if _, err := dir.Stat("module.yml"); err == nil {
+		return filepath.Join(root, "module.yml")
 	}
 	return filepath.Join(root, "rho.mod")
 }
 
-// LoadManifest loads a rho.mod manifest file.
-func LoadManifest(path string) (*Manifest, error) {
-	path = filepath.Clean(path)
-	if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-		path = filepath.Join(path, "module.yml")
-	} else if filepath.Base(path) == "rho.mod" {
-		candidate := filepath.Join(filepath.Dir(path), "module.yml")
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			path = candidate
+// readManifestFile reads a manifest from the directory that holds it. The
+// project root a caller names is a boundary, not a prefix to join without
+// checking: the file is opened through an os.Root, so a name or a link cannot
+// reach outside the directory the caller chose.
+func readManifestFile(path string) ([]byte, string, error) {
+	clean := filepath.Clean(path)
+	// A directory means its module.yml.
+	if dir, err := os.OpenRoot(clean); err == nil {
+		defer dir.Close()
+		data, readErr := dir.ReadFile("module.yml")
+		if readErr != nil {
+			return nil, "", fmt.Errorf("read manifest: %w", readErr)
+		}
+		return data, "module.yml", nil
+	} else if os.IsNotExist(err) {
+		// A missing rho.mod still falls back to module.yml beside it; only a
+		// missing path with no manifest name is the caller's error.
+		name := filepath.Base(clean)
+		if name != "module.yml" && name != "rho.mod" {
+			return nil, "", err
 		}
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read manifest: %w", err)
+	name := filepath.Base(clean)
+	if name != "module.yml" && name != "rho.mod" {
+		return nil, "", fmt.Errorf("not a manifest: %s", clean)
 	}
-	if filepath.Ext(path) == ".yml" || filepath.Ext(path) == ".yaml" {
+	dir, err := os.OpenRoot(filepath.Dir(clean))
+	if err != nil {
+		return nil, "", fmt.Errorf("read manifest: %w", err)
+	}
+	defer dir.Close()
+	if name == "rho.mod" {
+		if _, err := dir.Stat("module.yml"); err == nil {
+			name = "module.yml"
+		}
+	}
+	data, err := dir.ReadFile(name)
+	if err != nil {
+		return nil, "", fmt.Errorf("read manifest: %w", err)
+	}
+	return data, name, nil
+}
+
+// LoadManifest loads a rho.mod manifest file.
+func LoadManifest(path string) (*Manifest, error) {
+	data, name, err := readManifestFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Ext(name) == ".yml" || filepath.Ext(name) == ".yaml" {
 		return loadYAMLManifest(data)
 	}
 

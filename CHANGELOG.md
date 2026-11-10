@@ -253,4 +253,8 @@ Security fix for archive extraction.
   extraction instead of extracting first.
 - Removed the post-extraction “cleanup” that could delete any path named in a
   malicious archive listing.
+- Manifest loading and the scaffold generator open project files through
+  `os.Root`; a `generate:` file, template path or output path cannot leave the
+  project or the destination. Added tests for escaping generate, template and
+  output paths.
 - Added tests for escaping tar, zip and payload members.
