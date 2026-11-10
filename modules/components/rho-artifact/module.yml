@@ -8,7 +8,7 @@
 module:
   name: rho-artifact
   type: component
-  version: 0.1.1
+  version: 0.1.2
   author: Aurel Miron
   description: Packs and verifies signed host and firmware artifacts
   command: artifact

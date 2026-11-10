@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -125,5 +126,38 @@ func TestUnpackArchiveDoesNotWriteAnEscapingMember(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "escape")); err == nil {
 		t.Fatal("an archive member was written outside the extraction directory")
+	}
+}
+
+// The payload is the second archive layer; a member that walks out of it is
+// refused before it is written, not written and then reported.
+func TestExtractPayloadRefusesEscapingMember(t *testing.T) {
+	dir := t.TempDir()
+	payload := filepath.Join(dir, "payload.tar.gz")
+	var buffer bytes.Buffer
+	gz := gzip.NewWriter(&buffer)
+	tw := tar.NewWriter(gz)
+	body := []byte("owned")
+	if err := tw.WriteHeader(&tar.Header{Name: "../escaped", Mode: 0o644, Size: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payload, buffer.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := extractPayload(payload, filepath.Join(dir, "out"))
+	if err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("an escaping payload member was not refused: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "escaped")); statErr == nil {
+		t.Fatal("a payload member was written outside the extraction directory")
 	}
 }

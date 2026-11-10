@@ -382,6 +382,28 @@ func unpackArchive(path, dir string) (schema.ArtifactManifest, string, error) {
 	return manifest, payload, nil
 }
 
+func secureExtractPath(root, name string) (string, bool) {
+	if name == "" || strings.ContainsRune(name, 0) {
+		return "", false
+	}
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if strings.HasPrefix(normalized, "/") || filepath.IsAbs(normalized) ||
+		filepath.VolumeName(normalized) != "" {
+		return "", false
+	}
+	clean := filepath.Clean(normalized)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	target := filepath.Join(root, clean)
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return target, true
+}
+
 func extractPayload(payload, dir string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -397,7 +419,11 @@ func extractPayload(payload, dir string) error {
 	}
 	defer gz.Close()
 	reader := tar.NewReader(gz)
-	root, _ := filepath.Abs(dir)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -406,28 +432,36 @@ func extractPayload(payload, dir string) error {
 		if err != nil {
 			return err
 		}
-		clean := filepath.Clean(header.Name)
-		if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
-			return fmt.Errorf("payload path escapes the extraction directory")
+		if _, ok := secureExtractPath(dir, header.Name); !ok {
+			return fmt.Errorf("payload path escapes the extraction directory: %q", header.Name)
 		}
-		target := filepath.Join(root, clean)
-		if !strings.HasPrefix(target, root+string(os.PathSeparator)) && target != root {
-			return fmt.Errorf("payload path escapes the extraction directory")
+		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
+			continue
 		}
+		name := filepath.FromSlash(strings.ReplaceAll(header.Name, "\\", "/"))
 		if header.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0755); err != nil {
+			if err := root.MkdirAll(name, 0755); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(name), 0755); err != nil {
 			return err
 		}
 		data, err := io.ReadAll(io.LimitReader(reader, header.Size+1))
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(target, data, os.FileMode(header.Mode)); err != nil {
+		out, err := root.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY,
+			os.FileMode(header.Mode).Perm())
+		if err != nil {
+			return err
+		}
+		if _, err := out.Write(data); err != nil {
+			out.Close()
+			return err
+		}
+		if err := out.Close(); err != nil {
 			return err
 		}
 	}
