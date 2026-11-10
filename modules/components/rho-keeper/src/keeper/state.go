@@ -196,22 +196,30 @@ func readOne(kind, name string) Module {
 		return Module{}
 	}
 	// The version a run would use is the one the row shows: a machine may hold
-	// several, and the one in use is the one a person is asking about.
-	for _, version := range versions {
-		root := filepath.Join(home, "modules", "installed", kind, name+"@"+version)
-		if _, err := os.Stat(filepath.Join(root, "module.yml")); err != nil {
-			continue
-		}
-		state, err := deps.LoadEnabled()
-		if err != nil {
-			state = nil
-		}
-		return describe(kind, deps.InstalledModule{
-			Name: name, Version: version, Root: root,
-			Enabled: state.IsEnabled(kind, name, version),
-		}, state)
+	// several, and the one in use is the one a person is asking about. Prefer the
+	// version the enabled record names; the newest is only the fallback for a
+	// module no version of which has been enabled.
+	state, err := deps.LoadEnabled()
+	if err != nil {
+		state = nil
 	}
-	return Module{}
+	chosen := versions[0]
+	if state != nil {
+		for _, version := range versions {
+			if state.IsEnabled(kind, name, version) {
+				chosen = version
+				break
+			}
+		}
+	}
+	root := filepath.Join(home, "modules", "installed", kind, name+"@"+chosen)
+	if _, err := os.Stat(filepath.Join(root, "module.yml")); err != nil {
+		return Module{}
+	}
+	return describe(kind, deps.InstalledModule{
+		Name: name, Version: chosen, Root: root,
+		Enabled: state != nil && state.IsEnabled(kind, name, chosen),
+	}, state)
 }
 
 // Read reads the installation.

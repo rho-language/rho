@@ -331,7 +331,9 @@ tr:last-child td { border-bottom: none; }
 .facts dt { flex: 0 0 9.5rem; color: var(--faint); font-size: .8rem; }
 .facts dd { margin: 0; font-size: .87rem; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 
-.detail-actions { display: flex; align-items: center; gap: .75rem; padding: 0 1.1rem 1.1rem; }
+.detail-actions { display: flex; align-items: center; gap: .75rem; padding: 0 1.1rem 1.1rem; flex-wrap: wrap; }
+.version-cell { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; color: var(--soft); }
+.version-cell select { padding: .35rem .5rem; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; }
 
 /* settings ---------------------------------------------------------------- */
 

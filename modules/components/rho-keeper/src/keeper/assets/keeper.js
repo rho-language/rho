@@ -277,10 +277,13 @@ function moduleRow(m) {
 // A status beside a button says the same thing twice and can disagree with
 // itself. A switch cannot: it is on, or it is off, and pressing it is the one
 // way that changes.
-function toggle(m) {
+function toggle(m, selected) {
+  const chosen = selected || m.version;
   return `<button class="toggle" role="switch" aria-pressed="${m.enabled}" data-name="${esc(
     m.name
-  )}" title="${esc(m.enabled ? "in use" : "installed, not in use")}">
+  )}" data-version="${esc(chosen)}" data-active="${esc(m.version)}" title="${esc(
+    m.enabled ? "in use" : "installed, not in use"
+  )}">
     <span class="track"><span class="knob"></span></span>
     <span class="label">${m.enabled ? "on" : "off"}</span>
   </button>`;
@@ -509,7 +512,7 @@ async function openModule(name) {
 
   const facts = [
     ["Kind", detail.kind],
-    ["Version", detail.version + ((detail.versions || []).length > 1 ? "  (of " + detail.versions.length + " installed)" : "")],
+    ["Version", detail.version],
     ["Enabled", detail.enabled ? "yes" : detail.record ? "no — switched off" : "no — never enabled"],
     ["Description", detail.description || "—"],
     ["Import path", detail.importPath || "—"],
@@ -522,11 +525,15 @@ async function openModule(name) {
     ["Documentation", detail.docsPath || "—"],
   ];
   $("detail-facts").innerHTML = facts
-    .map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`)
+    .map(([k, v]) =>
+      k === "Version"
+        ? `<div><dt>${esc(k)}</dt><dd>${versionSelect(detail)}</dd></div>`
+        : `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`
+    )
     .join("");
 
   $("detail-actions").innerHTML = `
-    ${toggle(detail)}
+    ${toggle(detail, detail.version)}
     ${
       detail.enabled
         ? ""
@@ -538,6 +545,25 @@ async function openModule(name) {
 
   renderSettings(detail);
 }
+
+// versionSelect is the version field itself. Choosing a version here only
+// selects it; the toggle is what enables that selection, so there is one
+// enable action rather than two.
+function versionSelect(detail) {
+  const versions = detail.versions || [];
+  if (versions.length < 2) return esc(detail.version);
+  const options = versions
+    .map(
+      (version) =>
+        `<option value="${esc(version)}"${version === detail.version ? " selected" : ""}>${esc(
+          version
+        )}</option>`
+    )
+    .join("");
+  return `<span class="version-cell"><select id="detail-version">${options}</select>` +
+    ` <span class="hint">of ${versions.length} installed</span></span>`;
+}
+
 
 // uninstallModule removes this machine's copy of a module version.
 //
@@ -1118,7 +1144,14 @@ async function loadModuleDoc(name) {
 
 async function act(button) {
   const name = button.dataset.name;
-  const what = button.getAttribute("aria-pressed") === "true" ? "disable" : "enable";
+  const pressed = button.getAttribute("aria-pressed") === "true";
+  const selected = button.dataset.version || "";
+  const active = button.dataset.active || "";
+  // On a detail page the toggle enables the selected version. If it is already
+  // on and another version is selected, the same press switches to it; only a
+  // press while the active version is selected turns the module off.
+  const what = pressed ? (selected && selected !== active ? "enable" : "disable") : "enable";
+  const body = what === "enable" && selected ? JSON.stringify({ version: selected }) : "{}";
   button.disabled = true;
 
   let action;
@@ -1126,7 +1159,7 @@ async function act(button) {
     const response = await fetch("/api/v1/modules/" + encodeURIComponent(name) + "/" + what, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: body,
     });
     action = await response.json();
   } catch (err) {
@@ -1141,6 +1174,7 @@ async function act(button) {
   $("last-outcome").className = action.ok ? "" : "bad";
 
   button.disabled = false;
+  if (action.ok && (location.hash || "").startsWith("#/module/")) openModule(name);
   // The stream sends the new state. If it does not arrive, the button is
   // re-enabled above and the page still works, which is why nothing here writes
   // the row itself.

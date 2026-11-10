@@ -45,3 +45,17 @@ which refuses a path outside the destination even after a link. The host-tar
 fallback validates the listing before extraction. The previous post-extraction
 cleanup, which could delete any path named in a malicious listing, is gone.
 Tests cover escaping tar and zip members and the preflight.
+
+## [0.1.5] - 2026-11-10
+
+The module detail page now offers every installed version and can enable any of
+them, not only the newest. Switching versions is the same `rho module enable
+name@version` operation a terminal runs; the on/off switch remains separate.
+
+## [0.1.6] - 2026-11-10
+
+The version selector is now the Version field itself. Choosing a version updates
+that field; the toggle enables the selected version, switches to it when another
+is selected, or turns the module off when the active version is selected. The
+separate version-enable button is gone. The detail page also reports the enabled
+version rather than always showing the newest installed one.

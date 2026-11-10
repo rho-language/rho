@@ -144,6 +144,19 @@ func TestThePageDoesNotHideTheOtherVersionsInstalled(t *testing.T) {
 	}
 }
 
+func TestDetailShowsTheEnabledVersion(t *testing.T) {
+	t.Setenv("RHO_HOME", t.TempDir())
+	installed(t, deps.KindComponent, "rho-log", "0.1.0", "component", "Logger")
+	installed(t, deps.KindComponent, "rho-log", "0.2.0", "component", "Logger")
+	if err := deps.SetVersionEnabled(deps.KindComponent, "rho-log", "0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	detail := Detail("rho-log")
+	if detail == nil || detail.Version != "0.1.0" || !detail.Enabled {
+		t.Fatalf("detail = %+v, want the enabled 0.1.0", detail)
+	}
+}
+
 // A record that cannot be read is reported. Every answer below it would
 // otherwise come from a state nobody can see.
 func TestAStateThatCannotBeReadIsReported(t *testing.T) {
@@ -373,6 +386,33 @@ func TestAChangeReachesTheStream(t *testing.T) {
 // A dashboard that turned a module on by its own means would be a second
 // implementation of a rule the toolchain already has, and the two would disagree
 // about what enabling a version means.
+func TestEnableChoosesAnInstalledVersion(t *testing.T) {
+	t.Setenv("RHO_HOME", t.TempDir())
+	installed(t, deps.KindComponent, "rho-log", "0.1.0", "component", "Logger")
+	installed(t, deps.KindComponent, "rho-log", "0.2.0", "component", "Logger")
+
+	first := Enable("rho-log", "0.1.0")
+	if !first.OK || first.Command != "rho module enable rho-log@0.1.0" {
+		t.Fatalf("enabling 0.1.0: %+v", first)
+	}
+	state, err := deps.LoadEnabled()
+	if err != nil || !state.IsEnabled(deps.KindComponent, "rho-log", "0.1.0") {
+		t.Fatalf("0.1.0 was not enabled: %v", err)
+	}
+
+	second := Enable("rho-log", "0.2.0")
+	if !second.OK || second.Command != "rho module enable rho-log@0.2.0" {
+		t.Fatalf("switching to 0.2.0: %+v", second)
+	}
+	state, err = deps.LoadEnabled()
+	if err != nil || !state.IsEnabled(deps.KindComponent, "rho-log", "0.2.0") {
+		t.Fatalf("0.2.0 was not enabled: %v", err)
+	}
+	if state.IsEnabled(deps.KindComponent, "rho-log", "0.1.0") {
+		t.Fatal("the previous version stayed enabled")
+	}
+}
+
 func TestAnActionIsWhatTheCommandWouldHaveDone(t *testing.T) {
 	t.Setenv("RHO_HOME", t.TempDir())
 	installed(t, deps.KindComponent, "rho-doc", "0.1.0", "component", "Documentation generator")
