@@ -30,7 +30,7 @@ func writeDependencyManifest(t *testing.T, root, deps string) string {
 	return filepath.Join(root, "src", "main.rho")
 }
 
-func TestCheckModuleDependencyUnderRobohub(t *testing.T) {
+func TestCheckModuleDependencyUnderEcosystemGroup(t *testing.T) {
 	root := t.TempDir()
 	source := writeDependencyManifest(t, root, "deps:\n  robohub:\n    notifications: \">=0.1.0\"\n")
 	if err := checkModuleDependency(source, "notifications"); err != nil {
@@ -42,11 +42,11 @@ func TestCheckModuleDependencyUnderRobohub(t *testing.T) {
 	}
 }
 
-func TestCheckModuleDependencyRejectsFlatRobohub(t *testing.T) {
+func TestCheckModuleDependencyRejectsFlatEcosystemDependency(t *testing.T) {
 	root := t.TempDir()
 	source := writeDependencyManifest(t, root, "deps:\n  notifications: \">=0.1.0\"\n")
 	err := checkModuleDependency(source, "notifications")
-	if err == nil || !strings.Contains(err.Error(), "deps.robohub") {
+	if err == nil || !strings.Contains(err.Error(), "ecosystem") {
 		t.Fatalf("flat RoboHub dependency was accepted: %v", err)
 	}
 }

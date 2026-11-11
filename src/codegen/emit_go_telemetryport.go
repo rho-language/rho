@@ -64,6 +64,9 @@ func telemetryOpen(path string) bool {
 		return true
 	}
 	if path == "" {
+		path = strings.TrimSpace(os.Getenv("RHO_TELEMETRY_DB"))
+	}
+	if path == "" {
 		path = strings.TrimSpace(os.Getenv("ROBOHUB_MESH_TELEMETRY_DB"))
 	}
 	if path == "" {

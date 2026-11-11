@@ -105,7 +105,7 @@ func TestEmitCBus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	header, source := schema.EmitCBus()
+	header, source := schema.EmitCBus(testBus(t))
 	for _, want := range []string{
 		"#include \"robohub/core/event.h\"",
 		"RoboHubError SetMotorSpeed_publish_request(",
@@ -134,7 +134,7 @@ func TestEmitCGuardsCxx(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	protocolHeader, _ := schema.EmitC()
-	busHeader, _ := schema.EmitCBus()
+	busHeader, _ := schema.EmitCBus(testBus(t))
 
 	for name, header := range map[string]string{
 		"protocol.h":     protocolHeader,
@@ -364,5 +364,27 @@ func TestLoadFileReportsAMissingInclude(t *testing.T) {
 	root := writeSchema(t, dir, "root.rho", "module root\nnamespace robohub.v1\n\ninclude \"nope.rho\"\n")
 	if _, err := LoadFile(root); err == nil {
 		t.Fatal("expected a missing include to be reported")
+	}
+}
+
+// testBus is the binding a platform plugin ships, read from where this
+// repository keeps it, so the generator is tested against a real binding and
+// carries none of its own.
+func testBus(t *testing.T) *Bus {
+	t.Helper()
+	bus, err := LoadBus("../../modules/plugins/rho-robohub/bindings/c-bus.yml")
+	if err != nil {
+		t.Fatalf("load bus binding: %v", err)
+	}
+	return bus
+}
+
+func TestLoadBusNamesWhatIsMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bus.yml")
+	if err := os.WriteFile(path, []byte("publish: send\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBus(path); err == nil || !strings.Contains(err.Error(), "error_type") {
+		t.Fatalf("want an error naming error_type, got %v", err)
 	}
 }

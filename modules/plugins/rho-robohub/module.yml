@@ -21,7 +21,7 @@
 module:
   name: rho-robohub
   type: plugin
-  version: 0.2.0
+  version: 0.2.1
   author: Aurel Miron
   description: Maps the RoboHub platform's target, configuration, C and flashing conventions onto this toolchain's contracts
 

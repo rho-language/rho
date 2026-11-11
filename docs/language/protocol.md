@@ -69,8 +69,14 @@ found.
 ## Generating
 
 ```sh
-# C for the node: protocol.h/.c (the bytes) and protocol_bus.h/.c (transport)
+# C for the node: protocol.h/.c (the bytes)
 rho protocol generate --target c --out build/protocol/c .
+
+# ...and protocol_bus.h/.c, the rpc transport over a runtime's event bus. The bus's
+# own types and functions come from a binding the runtime's platform ships, so
+# name one: a file, or a platform whose plugin carries it.
+rho protocol generate --target c --platform robohub --out build/protocol/c .
+rho protocol generate --target c --bus bindings/c-bus.yml --out build/protocol/c .
 
 # Go for the edge: protocol.go
 rho protocol generate --target go --out build/protocol/go --package telemetry .

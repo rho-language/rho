@@ -6,6 +6,12 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.2.1] - 2026-11-12
+
+Ships `bindings/c-bus.yml`: the types and functions of robohub-core's event bus
+that generated C calls. `rho protocol generate --platform robohub` reads it, so
+the toolchain no longer carries RoboHub's names to generate `protocol_bus.h/.c`.
+
 ## [0.2.0] - 2026-11-11
 
 The plugin now answers `rho-module`'s `contract` hook with the module contract

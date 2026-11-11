@@ -1,0 +1,15 @@
+# How generated C reaches RoboHub's event bus (robohub-core). `rho protocol
+# generate --platform robohub` reads this; the toolchain itself names none of it.
+headers:
+  - robohub/core/event.h
+  - error.h
+error_type: RoboHubError
+ok: ROBOHUB_OK
+invalid_arg: ROBOHUB_ERR_INVALID_ARG
+protocol_error: ROBOHUB_ERR_PROTOCOL
+no_memory: ROBOHUB_ERR_NO_MEM
+event_id_type: robohub_event_id
+size_type: rh_size
+publish: robohub_core_event_publish
+subscribe: robohub_core_event_subscribe
+unsubscribe: robohub_core_event_unsubscribe

@@ -1038,19 +1038,23 @@ func checkModuleDependency(sourceFile, dep string) error {
 				return nil
 			}
 			deps := document.Map["deps"]
-			robohub := deps.Map["robohub"]
-			// A RoboHub module or plugin is declared under deps.robohub, not
-			// beside the Rho components. The include says where the code lives;
-			// this block says the module is allowed to bring it in.
-			if robohub.Kind == yaml.KindMap {
-				if _, ok := robohub.Map[dep]; ok {
+			// A module of an ecosystem is declared in that ecosystem's group
+			// (`deps.<ecosystem>`), not beside the Rho components. The include
+			// says where the code lives; the group says the module is allowed
+			// to bring it in. Any map under `deps` is such a group, so the
+			// toolchain names no ecosystem.
+			for _, group := range deps.Map {
+				if group.Kind != yaml.KindMap {
+					continue
+				}
+				if _, ok := group.Map[dep]; ok {
 					return nil
 				}
 			}
 			if _, ok := deps.Map[dep]; ok {
-				return fmt.Errorf("RoboHub dependency %q must be under deps.robohub in module.yml", dep)
+				return fmt.Errorf("dependency %q is declared beside the Rho components; declare it in its ecosystem's group, deps.<ecosystem>, in module.yml", dep)
 			}
-			return fmt.Errorf("module does not declare %q under deps.robohub in module.yml", dep)
+			return fmt.Errorf("module does not declare %q in an ecosystem group (deps.<ecosystem>) in module.yml", dep)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

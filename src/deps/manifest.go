@@ -899,11 +899,11 @@ func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 	// The name is kept whole and the constraint becomes the version range, so
 	// the dependency system and the import resolution see the same thing.
 	for name, constraint := range doc.Map["deps"].Map {
-		// A `robohub:` subsection groups the RoboHub module and plugin
-		// dependencies apart from the Rho components. Those are local modules
-		// resolved by `include`, not by rho-deps, so they are recorded for the
-		// dependency check but not handed to the resolver.
-		if name == "robohub" && constraint.Kind == yaml.KindMap {
+		// A subsection groups an ecosystem's module and plugin dependencies
+		// apart from the Rho components: `deps.<ecosystem>`. Those are local
+		// modules resolved by `include`, not by rho-deps, so they are recorded
+		// for the dependency check but not handed to the resolver.
+		if constraint.Kind == yaml.KindMap {
 			continue
 		}
 		spec := DepSpec{Name: name}

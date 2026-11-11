@@ -724,7 +724,12 @@ func authSsoReturnTo(r *http.Request) string {
 }
 
 func authSsoStateDir() string {
-	dir := os.Getenv("ROBOHUB_APP_WORKSPACE")
+	// RHO_APP_WORKSPACE is the toolchain's name; the name an ecosystem's
+	// deployments already set is honoured so none has to change.
+	dir := os.Getenv("RHO_APP_WORKSPACE")
+	if dir == "" {
+		dir = os.Getenv("ROBOHUB_APP_WORKSPACE")
+	}
 	if dir != "" {
 		dir = dir + "/auth"
 	} else {
