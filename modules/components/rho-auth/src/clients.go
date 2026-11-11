@@ -33,7 +33,7 @@ func clientsPath(options map[string]string) (string, error) {
 // add prints the secret once; the registry keeps only its hash.
 func client(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: rho auth client <add|remove|list> [--store FILE] [--id ID] [--audiences A,B] [--scopes S,T]")
+		fmt.Fprintln(os.Stderr, "usage: rho auth client <add|remove|list> [--store FILE] [--id ID] [--audiences A,B] [--scopes S,T] [--secret-out FILE]")
 		return 2
 	}
 	options := authOptions(args[1:])
@@ -48,6 +48,16 @@ func client(args []string) int {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "rho auth client add:", err)
 			return 1
+		}
+		// --secret-out hands the secret to the service that will use it without
+		// it passing through anyone's terminal or a log: the file is created
+		// readable by its owner only.
+		if out := options["secret-out"]; out != "" {
+			if err := auth.WriteSecretFile(out, secret+"\n"); err != nil {
+				fmt.Fprintln(os.Stderr, "rho auth client add:", err)
+				return 1
+			}
+			return 0
 		}
 		fmt.Println(secret)
 		return 0

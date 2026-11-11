@@ -57,6 +57,12 @@ Stated plainly, because a reference that implies otherwise is worse than none:
   `rho_write_secret`, which writes one only its owner can read (mode 0600, and an
   existing file is narrowed to it) for a token, a key or a credential; anything
   beyond that is a port.
+- A program runs another with `rho_exec(program, arguments, report)`, whose
+  arguments are split on spaces and double quotes, or with
+  `rho_exec_args(program, arguments, report)`, which takes one argument per line
+  and interprets nothing in it. A value that came from a request, a file or a
+  user goes through `rho_exec_args`: it reaches the program as exactly one
+  argument, and cannot become a second one or a command.
 - No closures, and no higher-order functions.
 - No statement-level reflection.
 

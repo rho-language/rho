@@ -191,10 +191,12 @@ var runtimeFragments = []RuntimeFragment{
 		Source: execSource,
 		Provides: []string{
 			"rho_exec",
+			"rho_exec_args",
 		},
 		Needs: []string{"rho_strlen"},
 		Decls: []string{
 			"unsigned int rho_exec(const char* program, const char* arguments, const char* output_path);",
+			"unsigned int rho_exec_args(const char* program, const char* arguments, const char* output_path);",
 		},
 	},
 	{

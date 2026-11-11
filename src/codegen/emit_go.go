@@ -1296,6 +1296,30 @@ func EmitGoRuntime(implementation string) string {
 			imports: []string{"os/exec", "path/filepath"},
 		},
 		{
+			// Running a program with one argument per line. Nothing in an
+			// argument is interpreted, so a value a user supplied is exactly one
+			// argument and never a second one or a command.
+			call:  "rhoExecArgs(",
+			needs: []string{"rhoExec("},
+			define: "func rhoExecArgs(program string, arguments string, outputPath string) uint32 {\n" +
+				"\targs := []string{}\n" +
+				"\tif arguments != \"\" {\n" +
+				"\t\targs = strings.Split(strings.TrimSuffix(arguments, \"\\n\"), \"\\n\")\n" +
+				"\t}\n" +
+				"\t_ = os.MkdirAll(filepath.Dir(outputPath), 0755)\n" +
+				"\toutput, err := exec.Command(program, args...).CombinedOutput()\n" +
+				"\t_ = os.WriteFile(outputPath, output, 0644)\n" +
+				"\tif err != nil {\n" +
+				"\t\tif exit, ok := err.(*exec.ExitError); ok {\n" +
+				"\t\t\treturn uint32(exit.ExitCode())\n" +
+				"\t\t}\n" +
+				"\t\treturn 255\n" +
+				"\t}\n" +
+				"\treturn 0\n" +
+				"}\n",
+			imports: []string{"os/exec", "path/filepath", "strings"},
+		},
+		{
 			call:   "rhoStrEq(",
 			define: "func rhoStrEq(a, b string) bool {\n\treturn a == b\n}\n",
 		},

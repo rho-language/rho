@@ -216,9 +216,6 @@ func validClientField(value string) bool {
 // saveClients writes the registry readable by its owner only, replacing it
 // atomically so a reader never sees half of it.
 func saveClients(path string, clients map[string]Client) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	ids := make([]string, 0, len(clients))
 	for id := range clients {
 		ids = append(ids, id)
@@ -230,7 +227,16 @@ func saveClients(path string, clients map[string]Client) error {
 		c := clients[id]
 		fmt.Fprintf(&b, "%s|%s|%s|%s\n", c.ID, c.SecretHash, strings.Join(c.Audiences, ","), strings.Join(c.Scopes, ","))
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".clients-*")
+	return WriteSecretFile(path, b.String())
+}
+
+// WriteSecretFile writes a file only its owner can read, creating its directory
+// readable by its owner only, and replaces any file that was there atomically.
+func WriteSecretFile(path, text string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".secret-*")
 	if err != nil {
 		return err
 	}
@@ -240,7 +246,7 @@ func saveClients(path string, clients map[string]Client) error {
 		os.Remove(name)
 		return err
 	}
-	if _, err := tmp.WriteString(b.String()); err != nil {
+	if _, err := tmp.WriteString(text); err != nil {
 		tmp.Close()
 		os.Remove(name)
 		return err

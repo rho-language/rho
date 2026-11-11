@@ -109,18 +109,12 @@ static char** rho_split_args(const char* arguments, size_t* count)
  * The answer is the program's own exit code, or 255 when the program could not
  * be run at all — which is not a status, and is the one answer that is not one.
  */
-unsigned int rho_exec(const char* program, const char* arguments, const char* output_path)
+/* rho_run_argv runs a program with an argument vector already split. */
+static unsigned int rho_run_argv(const char* program, char** args, size_t count, const char* output_path)
 {
-    size_t count = 0;
-    char** args = rho_split_args(arguments == NULL ? "" : arguments, &count);
-    if (args == NULL) {
-        return 255;
-    }
-
     /* The program is the first argument, whatever the arguments say. */
     char** argv = (char**)malloc((count + 2) * sizeof(char*));
     if (argv == NULL) {
-        free(args);
         return 255;
     }
     argv[0] = (char*)program;
@@ -132,7 +126,6 @@ unsigned int rho_exec(const char* program, const char* arguments, const char* ou
     pid_t child = fork();
     if (child < 0) {
         free(argv);
-        free(args);
         return 255;
     }
     if (child == 0) {
@@ -151,11 +144,71 @@ unsigned int rho_exec(const char* program, const char* arguments, const char* ou
     int status = 0;
     waitpid(child, &status, 0);
     free(argv);
-    free(args);
 
     if (WIFEXITED(status)) {
         int code = WEXITSTATUS(status);
         return code == 127 ? 255 : (unsigned int)code;
     }
     return 255;
+}
+
+unsigned int rho_exec(const char* program, const char* arguments, const char* output_path)
+{
+    size_t count = 0;
+    char** args = rho_split_args(arguments == NULL ? "" : arguments, &count);
+    if (args == NULL) {
+        return 255;
+    }
+    unsigned int code = rho_run_argv(program, args, count, output_path);
+    free(args);
+    return code;
+}
+
+/* rho_exec_args runs a program with one argument per line of `arguments`.
+ *
+ * Nothing in an argument is interpreted: no quotes, no spaces, no shell. A value
+ * a user supplied is passed as exactly one argument and cannot become a second
+ * one or a command, which rho_exec's quote-splitting cannot promise for a value
+ * that contains a quote. A trailing newline ends the last argument; an empty line
+ * is an empty argument.
+ */
+unsigned int rho_exec_args(const char* program, const char* arguments, const char* output_path)
+{
+    const char* text = arguments == NULL ? "" : arguments;
+    size_t length = strlen(text);
+    char* copy = (char*)malloc(length + 1);
+    if (copy == NULL) {
+        return 255;
+    }
+    memcpy(copy, text, length + 1);
+    size_t lines = 0;
+    for (size_t i = 0; i < length; i++) {
+        if (copy[i] == '\n') {
+            lines++;
+        }
+    }
+    if (length > 0 && copy[length - 1] != '\n') {
+        lines++;
+    }
+    char** args = (char**)malloc((lines + 1) * sizeof(char*));
+    if (args == NULL) {
+        free(copy);
+        return 255;
+    }
+    size_t count = 0;
+    char* start = copy;
+    for (size_t i = 0; i < length; i++) {
+        if (copy[i] == '\n') {
+            copy[i] = '\0';
+            args[count++] = start;
+            start = copy + i + 1;
+        }
+    }
+    if (length > 0 && copy[length - 1] != '\0' && start < copy + length) {
+        args[count++] = start;
+    }
+    unsigned int code = rho_run_argv(program, args, count, output_path);
+    free(args);
+    free(copy);
+    return code;
 }
