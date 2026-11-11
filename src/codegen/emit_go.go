@@ -1320,6 +1320,22 @@ func EmitGoRuntime(implementation string) string {
 			imports: []string{"os/exec", "path/filepath", "strings"},
 		},
 		{
+			// A service's identity, and the HTTP client and stream follower that
+			// carry it: rho_service_token, rho_http_request, rho_sse_follow.
+			// The source is gosrc/service.go.
+			call:    "rhoServiceToken(",
+			define:  goSourceBody(goServiceSource),
+			imports: []string{"bufio", "encoding/json", "io", "net/http", "net/url", "os", "path/filepath", "strings", "sync", "time"},
+		},
+		{
+			call:  "rhoHttpRequest(",
+			needs: []string{"rhoServiceToken("},
+		},
+		{
+			call:  "rhoSseFollow(",
+			needs: []string{"rhoServiceToken("},
+		},
+		{
 			call:   "rhoStrEq(",
 			define: "func rhoStrEq(a, b string) bool {\n\treturn a == b\n}\n",
 		},

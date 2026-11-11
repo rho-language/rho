@@ -63,6 +63,14 @@ Stated plainly, because a reference that implies otherwise is worse than none:
   and interprets nothing in it. A value that came from a request, a file or a
   user goes through `rho_exec_args`: it reaches the program as exactly one
   argument, and cannot become a second one or a command.
+- A Go program that is a service calls other services with an identity its
+  supervisor gave it (`RHO_CLIENT_ID`, `RHO_CLIENT_SECRET_FILE`, `RHO_AUTH_URL`):
+  `rho_service_token(audience, scopes)` is a short-lived token for one audience,
+  fetched and cached; `rho_http_request(method, url, body, content_type,
+  audience, scopes, report)` sends a request carrying one; and
+  `rho_sse_follow(url, audience, scopes, file)` follows another service's event
+  stream into a file that `sse_events` serves, reconnecting with a fresh token.
+  No token is put on a command line or in a URL.
 - No closures, and no higher-order functions.
 - No statement-level reflection.
 
