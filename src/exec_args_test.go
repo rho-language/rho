@@ -59,3 +59,24 @@ fn main() void {
 		}
 	}
 }
+
+// rho_sleep_ms waits at least as long as it was asked, on either backend.
+func TestSleepMsWaitsOnBothBackends(t *testing.T) {
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("gcc is not on the path")
+	}
+	c, g := runBothBackends(t, `module app
+
+extern fn rho_sleep_ms(milliseconds: u32) void
+
+fn main() void {
+    rho_sleep_ms(120)
+    print("slept")
+}
+`)
+	for name, o := range map[string]outcome{"c": c, "go": g} {
+		if o.failed != "" || o.stdout != "slept" {
+			t.Errorf("%s: %q %s", name, o.stdout, o.failed)
+		}
+	}
+}

@@ -1336,6 +1336,12 @@ func EmitGoRuntime(implementation string) string {
 			needs: []string{"rhoServiceToken("},
 		},
 		{
+			// Waiting: a background task that ticks sleeps between ticks.
+			call:    "rhoSleepMs(",
+			define:  "func rhoSleepMs(milliseconds uint32) {\n\ttime.Sleep(time.Duration(milliseconds) * time.Millisecond)\n}\n",
+			imports: []string{"time"},
+		},
+		{
 			call:   "rhoStrEq(",
 			define: "func rhoStrEq(a, b string) bool {\n\treturn a == b\n}\n",
 		},

@@ -212,3 +212,16 @@ unsigned int rho_exec_args(const char* program, const char* arguments, const cha
     free(copy);
     return code;
 }
+
+/* rho_sleep_ms waits, which is what a background task that ticks does between
+ * ticks. Interrupted by a signal, it sleeps the rest of the time. */
+#include <time.h>
+#include <errno.h>
+void rho_sleep_ms(unsigned int milliseconds)
+{
+    struct timespec wanted = { (time_t)(milliseconds / 1000u), (long)(milliseconds % 1000u) * 1000000L };
+    struct timespec left;
+    while (nanosleep(&wanted, &left) != 0 && errno == EINTR) {
+        wanted = left;
+    }
+}
