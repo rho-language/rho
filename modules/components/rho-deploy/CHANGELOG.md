@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1] - 2026-11-12
+
+The `docker` block takes `context` (relative to the project), named build
+`contexts` (`--build-context NAME=PATH`, with `${RHO_WORKSPACE}` expanded) and
+`build_args`. `rho deploy -docker -build-only` builds the image and stops, and
+`-push` publishes it (a build-only run names no artifact), so an image for a registry is built through `rho deploy`
+rather than `docker build` typed by hand.
+
 ## [0.1.0] - 2026-10-20
 
 Initial release.

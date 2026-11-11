@@ -18,6 +18,7 @@ package main
 import (
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -104,7 +105,7 @@ func TestDockerPlanRendersTheSteps(t *testing.T) {
 		Docker: &Docker{File: "deploy/Dockerfile", Image: "robohub-gateway", Tag: "v1",
 			Run: []string{"--net", "host", "-p", "8080:8080", "{image}"}}}
 
-	steps, err := deploy.dockerPlan("/work/gateway", "build/gateway")
+	steps, err := deploy.dockerPlan("/work/gateway", "build/gateway", dockerMode{})
 	if err != nil {
 		t.Fatalf("dockerPlan: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestDockerPlanRendersTheSteps(t *testing.T) {
 
 func TestDockerPlanRefusesWithoutAnImage(t *testing.T) {
 	deploy := Deploy{Host: "uno-q", Path: "/apps", Docker: &Docker{}}
-	if _, err := deploy.dockerPlan(".", "app"); err == nil {
+	if _, err := deploy.dockerPlan(".", "app", dockerMode{}); err == nil {
 		t.Fatal("expected a docker block with no image to be refused")
 	}
 }
@@ -214,7 +215,7 @@ func TestEnvironmentSuppliesTheContainerFacts(t *testing.T) {
 		t.Errorf("run arguments not applied: %+v", deploy.Docker.Run)
 	}
 
-	steps, err := deploy.dockerPlan("/work/gateway", "build/robohub-gateway")
+	steps, err := deploy.dockerPlan("/work/gateway", "build/robohub-gateway", dockerMode{})
 	if err != nil {
 		t.Fatalf("dockerPlan: %v", err)
 	}
@@ -228,5 +229,57 @@ func TestDeployArtifactRefusesMissingArchive(t *testing.T) {
 	err := DeployArtifactArchive("/definitely/missing/artifact.tar.gz", "uno-q", ".", "", true, false, false, true)
 	if err == nil {
 		t.Fatal("a missing artifact was accepted")
+	}
+}
+
+func TestDockerPlanBuildOnlyCarriesContextsAndPushes(t *testing.T) {
+	t.Setenv("RHO_WORKSPACE", "/ws")
+	deploy := Deploy{Docker: &Docker{
+		Image:     "me/gateway",
+		Tag:       "v1",
+		Contexts:  map[string]string{"rho": "${RHO_WORKSPACE}/rho"},
+		BuildArgs: map[string]string{"VERSION": "1"},
+	}}
+	steps, err := deploy.dockerPlan("/work/gateway", "", dockerMode{buildOnly: true, push: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("steps = %v, want a build and a push and nothing that needs a host", steps)
+	}
+	build := strings.Join(steps[0], " ")
+	for _, want := range []string{"--build-context rho=/ws/rho", "--build-arg VERSION=1", "-t me/gateway:v1", "/work/gateway/Dockerfile"} {
+		if !strings.Contains(build, want) {
+			t.Errorf("build step %q is missing %q", build, want)
+		}
+	}
+	if strings.Join(steps[1], " ") != "docker push me/gateway:v1" {
+		t.Errorf("push step = %v", steps[1])
+	}
+	// Without -build-only the image still goes to a host, which needs a path.
+	if _, err := deploy.dockerPlan(".", "", dockerMode{}); err == nil {
+		t.Error("a deployment to a host with no path must be refused")
+	}
+}
+
+func TestABuildOnlyDeploymentNamesNoArtifact(t *testing.T) {
+	err := DeployArtifact("", "nope", "", true, false, true, dockerMode{buildOnly: true})
+	if err == nil || strings.Contains(err.Error(), "nothing to deploy") {
+		t.Fatalf("a build-only run must get past the artifact check, got %v", err)
+	}
+	if err := DeployArtifact("", "nope", "", true, false, true); err == nil || !strings.Contains(err.Error(), "nothing to deploy") {
+		t.Fatalf("a deployment with no artifact must be refused, got %v", err)
+	}
+}
+
+func TestDockerPlanContextIsRelativeToTheProject(t *testing.T) {
+	deploy := Deploy{Docker: &Docker{File: "deploy/Dockerfile", Image: "me/site", Context: "../.."}}
+	steps, err := deploy.dockerPlan("/repo/applications/docsite", "", dockerMode{buildOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := strings.Join(steps[0], " ")
+	if !strings.Contains(build, "-f /repo/applications/docsite/deploy/Dockerfile") || !strings.HasSuffix(build, " /repo") {
+		t.Errorf("build step = %q", build)
 	}
 }

@@ -183,3 +183,21 @@ func TestGenerateNeedsATarget(t *testing.T) {
 		t.Fatalf("expected the missing target to be a usage error, got %d", code)
 	}
 }
+
+// A project that keeps targets of its own names the directory in its own
+// manifest, and `rho target` reads it without the project having to depend on a
+// platform to say so.
+func TestAProjectsOwnTargetsAreRead(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "targets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "module:\n  name: svc\n  version: 0.1.0\n  type: module\n  description: x\n\nmain: src/main.c\n\nhardware:\n  targets: targets/\n"
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirs := declaredSpecDirs(root)
+	if len(dirs) != 1 || dirs[0] != filepath.Join(root, "targets") {
+		t.Fatalf("dirs = %v", dirs)
+	}
+}

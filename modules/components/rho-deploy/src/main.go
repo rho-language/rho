@@ -34,10 +34,12 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
 	"rho/src/artifact"
+	"rho/src/deps"
 )
 
 // ComponentName is this component's own name, which is what a module says to be
@@ -64,6 +66,18 @@ type Docker struct {
 	Image string   `json:"image,omitempty"`
 	Tag   string   `json:"tag,omitempty"`
 	Run   []string `json:"run,omitempty"`
+	// Context is the build context, relative to the project: where the image's
+	// files are copied from. The project itself when left out; an image built
+	// from a repository's root while its Dockerfile lives in an application says
+	// `../..`.
+	Context string `json:"context,omitempty"`
+	// Contexts are named build contexts, `--build-context NAME=PATH`, for an image
+	// built from more than one checkout. A path may name the workspace with
+	// ${RHO_WORKSPACE} (or an ecosystem's own ${X_WORKSPACE}), so a spec is not a
+	// fact about one machine.
+	Contexts map[string]string `json:"contexts,omitempty"`
+	// BuildArgs are `--build-arg NAME=VALUE`.
+	BuildArgs map[string]string `json:"build_args,omitempty"`
 }
 
 // declared reports whether the target says anything about deploying.
@@ -147,11 +161,11 @@ func (d Deploy) sshStep(command string) []string {
 // dockerPlan renders the steps of a container deployment: build the image here,
 // save it, carry it, load it and start it on the target. Each step is a program
 // and its arguments.
-func (d Deploy) dockerPlan(project, artifact string) ([][]string, error) {
+func (d Deploy) dockerPlan(project, artifact string, mode dockerMode) ([][]string, error) {
 	if d.Docker == nil {
 		return nil, fmt.Errorf("the target declares no docker block")
 	}
-	if strings.TrimSpace(d.Path) == "" {
+	if !mode.buildOnly && strings.TrimSpace(d.Path) == "" {
 		return nil, fmt.Errorf("the target declares no deploy path to copy the image to")
 	}
 	file := strings.TrimSpace(d.Docker.File)
@@ -173,8 +187,33 @@ func (d Deploy) dockerPlan(project, artifact string) ([][]string, error) {
 	}
 	tarball := filepath.Join(context, "build", image+".tar")
 
+	dockerfile := filepath.Join(context, file)
+	if declared := strings.TrimSpace(d.Docker.Context); declared != "" {
+		context = filepath.Join(context, filepath.FromSlash(declared))
+	}
+	build := []string{"docker", "build", "-f", dockerfile, "-t", reference}
+	for _, name := range sortedKeys(d.Docker.Contexts) {
+		expanded, err := deps.ExpandPath(d.Docker.Contexts[name], context)
+		if err != nil {
+			return nil, fmt.Errorf("docker context %q: %w", name, err)
+		}
+		build = append(build, "--build-context", name+"="+expanded)
+	}
+	for _, name := range sortedKeys(d.Docker.BuildArgs) {
+		build = append(build, "--build-arg", name+"="+d.Docker.BuildArgs[name])
+	}
+	build = append(build, context)
+	if mode.buildOnly {
+		// An image for a registry or a local run: built, and pushed when asked,
+		// with no host to carry it to.
+		steps := [][]string{build}
+		if mode.push {
+			steps = append(steps, []string{"docker", "push", reference})
+		}
+		return steps, nil
+	}
 	steps := [][]string{
-		{"docker", "build", "-f", filepath.Join(context, file), "-t", reference, context},
+		build,
 		{"docker", "save", "-o", tarball, reference},
 	}
 	copyProgram, copyArgs, err := d.copyInvocation(tarball)
@@ -193,6 +232,23 @@ func (d Deploy) dockerPlan(project, artifact string) ([][]string, error) {
 	}
 	steps = append(steps, d.sshStep("docker run -d "+strings.Join(runArgs, " ")))
 	return steps, nil
+}
+
+// dockerMode says how far a container deployment goes.
+type dockerMode struct {
+	// buildOnly builds the image and stops: no copy to a host, no start.
+	buildOnly bool
+	// push publishes the built image to the registry its name points at.
+	push bool
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 /* -------------------------------------------------------------------------- */
@@ -314,12 +370,17 @@ func runSteps(steps [][]string, dryRun bool) error {
 
 // Deploy puts a built artefact on a target and, when the target says how,
 // starts it. `artifact` is a file or a directory to copy.
-func DeployArtifact(artifact, targetName, project string, asDocker, start, dryRun bool) error {
-	if strings.TrimSpace(artifact) == "" {
-		return fmt.Errorf("nothing to deploy: name a file or directory")
-	}
-	if _, err := os.Stat(artifact); err != nil {
-		return fmt.Errorf("nothing to deploy: %w", err)
+func DeployArtifact(artifact, targetName, project string, asDocker, start, dryRun bool, mode ...dockerMode) error {
+	// An image that is only built has nothing to carry anywhere, so it names no
+	// artifact; every other deployment does.
+	buildsOnly := asDocker && len(mode) > 0 && mode[0].buildOnly
+	if !buildsOnly {
+		if strings.TrimSpace(artifact) == "" {
+			return fmt.Errorf("nothing to deploy: name a file or directory")
+		}
+		if _, err := os.Stat(artifact); err != nil {
+			return fmt.Errorf("nothing to deploy: %w", err)
+		}
 	}
 
 	deploy, err := resolve(targetName, project)
@@ -335,7 +396,11 @@ func DeployArtifact(artifact, targetName, project string, asDocker, start, dryRu
 	}
 
 	if asDocker {
-		steps, err := deploy.dockerPlan(project, artifact)
+		var how dockerMode
+		if len(mode) > 0 {
+			how = mode[0]
+		}
+		steps, err := deploy.dockerPlan(project, artifact, how)
 		if err != nil {
 			return err
 		}
@@ -391,6 +456,8 @@ func main() {
 	target := fs.String("target", "", "the target to deploy to: a board name from its spec")
 	project := fs.String("project", "", "the project whose target to read (default: the working directory)")
 	asDocker := fs.Bool("docker", false, "deploy as a container image")
+	buildOnly := fs.Bool("build-only", false, "with -docker: build the image and stop; nothing is copied or started")
+	push := fs.Bool("push", false, "with -docker -build-only: push the built image to its registry")
 	start := fs.Bool("run", false, "start the program on the target after copying")
 	dryRun := fs.Bool("n", false, "print what would be run, and run nothing")
 	archive := fs.String("artifact", "", "verify and deploy a signed artifact instead of a loose file")
@@ -426,7 +493,7 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	if *archive == "" && fs.NArg() != 1 {
+	if *archive == "" && fs.NArg() != 1 && !(*buildOnly && fs.NArg() == 0) {
 		fmt.Fprintln(os.Stderr, "rho deploy: name exactly one file or directory, or pass -artifact")
 		usage()
 		os.Exit(2)
@@ -437,7 +504,20 @@ func main() {
 		err = DeployArtifactArchive(*archive, *target, *project, *pubKey, *allowUnsigned,
 			*asDocker || envTruthy("RH_DEPLOY_DOCKER"), *start, *dryRun)
 	} else {
-		err = DeployArtifact(fs.Arg(0), *target, *project, *asDocker || envTruthy("RH_DEPLOY_DOCKER"), *start, *dryRun)
+		inDocker := *asDocker || envTruthy("RH_DEPLOY_DOCKER")
+		if (*buildOnly || *push) && !inDocker {
+			fmt.Fprintln(os.Stderr, "rho deploy: -build-only and -push are for a container image; add -docker")
+			os.Exit(2)
+		}
+		if *push && !*buildOnly {
+			fmt.Fprintln(os.Stderr, "rho deploy: -push publishes a built image; add -build-only")
+			os.Exit(2)
+		}
+		artifactArg := ""
+		if fs.NArg() > 0 {
+			artifactArg = fs.Arg(0)
+		}
+		err = DeployArtifact(artifactArg, *target, *project, inDocker, *start, *dryRun, dockerMode{buildOnly: *buildOnly, push: *push})
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho deploy:", err)

@@ -67,3 +67,10 @@ func ExpandManifestPaths(doc yaml.Value, dir string) error {
 	}
 	return failure
 }
+
+// ExpandPath resolves `${VAR}` and `${VAR:-default}` in one path a component read
+// out of a manifest or a target spec, against the workspace of `base`. It is the
+// same expansion a manifest's own path fields get.
+func ExpandPath(value, base string) (string, error) {
+	return paths.Expand(value, base)
+}

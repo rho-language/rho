@@ -144,6 +144,17 @@ func declaredSpecDirs(projectRoot string) []string {
 		return nil
 	}
 	dirs := []string{}
+	// A project that keeps targets of its own — the container a service is built
+	// into, say — names the directory in its own manifest, and it is read first.
+	if manifest.Hardware.Declared() && manifest.Hardware.Targets != "" {
+		own := manifest.Hardware.Targets
+		if !filepath.IsAbs(own) {
+			own = filepath.Join(projectRoot, own)
+		}
+		if isDir(own) {
+			dirs = append(dirs, own)
+		}
+	}
 	for _, dep := range manifest.Deps {
 		if dep.Type != deps.DepTypeC || dep.Path == "" {
 			continue

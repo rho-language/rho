@@ -1562,6 +1562,14 @@ type DeployDocker struct {
 	// Run is the arguments a container is started with — ports, mounts, the
 	// network — with {image} naming the built image.
 	Run []string `json:"run,omitempty"`
+	// Context is the build context, relative to the project; the project itself
+	// when empty.
+	Context string `json:"context,omitempty"`
+	// Contexts are named build contexts for an image built from more than one
+	// checkout, name to path. A path may use ${RHO_WORKSPACE}.
+	Contexts map[string]string `json:"contexts,omitempty"`
+	// BuildArgs are the image's build arguments.
+	BuildArgs map[string]string `json:"build_args,omitempty"`
 }
 
 // declared reports whether the target says anything about deploying.

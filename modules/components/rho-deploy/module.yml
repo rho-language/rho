@@ -17,7 +17,7 @@
 module:
   name: rho-deploy
   type: component
-  version: 0.2.0
+  version: 0.3.1
   author: Aurel Miron
   description: Puts a built program on a host, using the target spec's deploy block
   command: deploy

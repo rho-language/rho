@@ -6,6 +6,13 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.1.9] - 2026-11-12
+
+A project that keeps targets of its own names the directory in its own manifest
+(`hardware.targets`), and `rho target` reads it without the project depending on a
+platform to say so. A container a service is built into is such a target. Its
+`docker` block carries `context`, named `contexts` and `build_args`.
+
 ## [0.1.0] - 2026-10-12
 
 Initial release.

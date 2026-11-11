@@ -37,6 +37,25 @@ A `docker` block in the same place deploys a container image instead:
 
 The image is built here, saved, carried, loaded and started on the target.
 
+An image that is only to be built — for a registry, or to run locally — needs no
+host. `-build-only` builds it and stops, with no artifact named, and `-push`
+publishes it. The block can also say where the image is built from and with what:
+
+```json
+"docker": {
+  "file": "deploy/Dockerfile", "context": "../..", "image": "me/site",
+  "contexts": {"rho": "${RHO_WORKSPACE}/rho"}, "build_args": {"VERSION": "1"}
+}
+```
+
+`context` is relative to the project, `contexts` are `--build-context` names whose
+paths may use `${RHO_WORKSPACE}`, and `build_args` are `--build-arg`s.
+
+```sh
+rho deploy -target container -docker -build-only          # build the image
+rho deploy -target container -docker -build-only -push    # and publish it
+```
+
 `-n` prints every step and runs nothing. The address, login, path, port and
 method can be redirected from the environment — `RH_DEPLOY_HOST`,
 `RH_DEPLOY_USER`, `RH_DEPLOY_PATH`, `RH_DEPLOY_PORT`, `RH_DEPLOY_METHOD` — so a

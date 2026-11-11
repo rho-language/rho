@@ -995,3 +995,19 @@ func TestTheBinaryIsStillTheBinary(t *testing.T) {
 		t.Errorf("expected the binary appended, got %v", arguments)
 	}
 }
+
+// A docker block carries what an image built from several checkouts needs, and
+// reading a spec keeps all of it: a field the reader drops is a field the deployer
+// never sees.
+func TestDockerBlockKeepsContextsAndBuildArgs(t *testing.T) {
+	var spec Spec
+	data := []byte(`{"kind":"board","name":"c","deploy":{"docker":{"image":"x","context":"../..",
+		"contexts":{"rho":"${RHO_WORKSPACE}/rho"},"build_args":{"V":"1"}}}}`)
+	if err := decodeSpec(data, "c.json", &spec); err != nil {
+		t.Fatal(err)
+	}
+	docker := spec.Deploy.Docker
+	if docker == nil || docker.Context != "../.." || docker.Contexts["rho"] != "${RHO_WORKSPACE}/rho" || docker.BuildArgs["V"] != "1" {
+		t.Fatalf("the docker block lost fields: %+v", docker)
+	}
+}
