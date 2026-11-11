@@ -6,6 +6,16 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.2.4] - 2026-11-12
+
+The telemetry port keeps a live feed per project. `telemetry_poll` takes the
+project's feed and appends the readings it stored, so readings from a gateway
+reach a page as they arrive (before, only readings Mesh read itself did);
+`telemetry_feed_record` appends one reading Mesh read itself; and
+`telemetry_latest_events` gives a project's current values as feed lines, the
+snapshot a stream opens with. The feed is written owner-only and starts again
+past 256 KB.
+
 ## [0.2.3] - 2026-11-12
 
 Ships the `gateway` and `telemetry` ports (`ports/*.go`, a Go module of its own), which the toolchain

@@ -159,7 +159,7 @@ func telemetryAck(gatewayURL string, sequence uint32, token string) {
 // transaction. A page is at most five hundred readings; the gateway's cursor
 // is advanced only after the commit, and the ack follows the commit, so a
 // failure leaves the page to be read again.
-func telemetryPoll(project string, gatewayID string, gatewayURL string, token string) string {
+func telemetryPoll(project string, gatewayID string, gatewayURL string, token string, eventsPath string) string {
 	if !telemetryOpen("") {
 		return telemetryError("the telemetry database could not be opened")
 	}
@@ -192,6 +192,7 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 	}
 
 	readings := make([][]any, 0, len(records))
+	events := make([]string, 0, len(records))
 	latest := make([][]any, 0, len(records))
 	faults := make([][]any, 0, 4)
 	maxSequence := cursor
@@ -210,6 +211,8 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 			project, gatewayID, int64(sequence), int64(area), int64(node),
 			field, value, status, received,
 		})
+		events = append(events, telemetryEventLine(project, area, node, field,
+			strconv.FormatFloat(value, 'f', -1, 64), status, received))
 		if status == 0 {
 			latest = append(latest, []any{
 				project, int64(area), int64(node), field, value, status, received,
@@ -268,6 +271,11 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 	ok := rhoSqlExecBatch(telemetryDB, "telemetry ingest", batches)
 	if ok == 0 {
 		return telemetryError("the batch was rolled back: " + rhoSqlLastErrMsg)
+	}
+	// The readings are on the project's live feed only once they are stored:
+	// a page is never shown a value the store does not hold.
+	if eventsPath != "" && len(events) > 0 {
+		telemetryEventAppend(eventsPath, strings.Join(events, ""))
 	}
 	rolled := telemetryRollup(project)
 	telemetryAck(base, maxSequence, token)
@@ -1051,4 +1059,77 @@ func telemetryFaultPrune(project string, days uint32) string {
 // telemetrySleep waits between polls without asking Rho for a clock.
 func telemetrySleep(milliseconds uint32) {
 	time.Sleep(time.Duration(milliseconds) * time.Millisecond)
+}
+
+// telemetryEventLimit is the size a project's live feed is allowed to reach
+// before it starts again. A reader follows it by offset and starts over when it
+// shrinks; the store, not the feed, is what keeps history.
+const telemetryEventLimit = 256 << 10
+
+// telemetryEventLine is one reading as a named Server-Sent Event line: the data
+// is the reading as JSON, the shape every reader of the feed parses.
+func telemetryEventLine(project string, area uint32, node uint32, field string, value string, status int64, receivedMs int64) string {
+	data, _ := json.Marshal(map[string]any{
+		"project": project, "area": area, "node": node, "field": field,
+		"value": value, "status": status, "received_ms": receivedMs,
+	})
+	line, _ := json.Marshal(map[string]string{"event": "telemetry", "data": string(data)})
+	return string(line) + "\n"
+}
+
+// telemetryEventAppend adds lines to a project's live feed, readable by its
+// owner only, starting it again when it has grown past its limit.
+func telemetryEventAppend(path string, lines string) bool {
+	if lines == "" {
+		return true
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	if info, err := os.Stat(path); err == nil && info.Size() > telemetryEventLimit {
+		_ = os.Truncate(path, 0)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return false
+	}
+	_, werr := file.WriteString(lines)
+	cerr := file.Close()
+	return werr == nil && cerr == nil
+}
+
+// telemetryFeedRecord is the live-feed half of recording a reading Mesh read
+// itself (an HTTP device): the same line the gateway path writes.
+func telemetryFeedRecord(path string, project string, area uint32, node uint32, field string, value string, status uint32) bool {
+	return telemetryEventAppend(path, telemetryEventLine(project, area, node, field, value, int64(status), time.Now().UnixMilli()))
+}
+
+// telemetryLatestEvents is a project's current values as feed lines, the
+// snapshot a stream sends before it follows the live feed, so a page that
+// connects starts from the present rather than waiting for the next change.
+func telemetryLatestEvents(project string) string {
+	if !telemetryOpen("") {
+		return ""
+	}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return ""
+	}
+	rows, err := handle.Query("SELECT area_id, node_id, field, value, status, received_ms "+
+		"FROM telemetry_latest WHERE project = ? ORDER BY area_id, node_id, field", project)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var area, node uint32
+		var field string
+		var value float64
+		var status, received int64
+		if rows.Scan(&area, &node, &field, &value, &status, &received) != nil {
+			continue
+		}
+		b.WriteString(telemetryEventLine(project, area, node, field,
+			strconv.FormatFloat(value, 'f', -1, 64), status, received))
+	}
+	return b.String()
 }
