@@ -1826,6 +1826,9 @@ func cDependencyChain(projectRoot string, roots []string) []string {
 				return
 			}
 		}
+		if err := deps.ExpandManifestPaths(document, base); err != nil {
+			return
+		}
 		for _, item := range document.Map["depends"].List {
 			if item.Kind != yaml.KindMap {
 				continue

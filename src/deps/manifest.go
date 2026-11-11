@@ -651,7 +651,11 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, err
 	}
 	if filepath.Ext(name) == ".yml" || filepath.Ext(name) == ".yaml" {
-		return loadYAMLManifest(data)
+		dir := filepath.Dir(path)
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			dir = path
+		}
+		return loadYAMLManifest(data, dir)
 	}
 
 	m := &Manifest{}
@@ -768,10 +772,13 @@ func LoadDepManifest(path string) (*Manifest, error) {
 	return LoadManifest(path)
 }
 
-func loadYAMLManifest(data []byte) (*Manifest, error) {
+func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 	doc, err := yaml.Load(string(data))
 	if err != nil {
 		return nil, fmt.Errorf("parse module.yml: %w", err)
+	}
+	if err := ExpandManifestPaths(doc, dir); err != nil {
+		return nil, fmt.Errorf("module.yml: %w", err)
 	}
 
 	// Schema validation. This is the loader for every module in a graph,

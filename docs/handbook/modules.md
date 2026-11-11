@@ -147,6 +147,48 @@ A plugin that names no contract is offered to every run of its component. That i
 deliberate: a component whose plugins are all of one kind has no reason to name
 them, and a rule with no failure behind it is only an obstacle.
 
+## Paths and the workspace
+
+A manifest that has to reach a sibling checkout does not name a place on the
+machine it was written on. It says where the sibling is relative to the
+*workspace*, the directory the checkouts sit in:
+
+```yaml
+depends:
+  - name: robohub-common
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-common
+    git: https://github.com/RoboHubPlatform/robohub-common
+c_connection:
+  include_dirs:
+    - ${ROBOHUB_WORKSPACE}/robohub-common/include
+```
+
+`${NAME}` and `${NAME:-default}` are expanded in the fields that are paths:
+`depends[].path`, `build.include_dirs`, `build.source_dirs`,
+`c_connection.path`, `c_connection.include_dirs` (and its variants') and
+`exports.cmake.include_dirs`. A variable that is not set and has no default stops
+the build and names it.
+
+The workspace is `$RHO_WORKSPACE` when it is set. Otherwise it is the directory
+that holds the repository the project is in. Any `<ECOSYSTEM>_WORKSPACE` that is
+not set means the same directory, so an ecosystem writes its manifests in its own
+terms without the toolchain knowing its name; set it to move that ecosystem's
+checkouts elsewhere.
+
+`rho env` shows what was resolved and where from:
+
+```sh
+$ rho env
+RHO_HOME           /home/me/.rho  (default)
+RHO_WORKSPACE      /home/me/projects  (the parent of the repository at /home/me/projects/app)
+```
+
+A path dependency that is not there is fetched into that path only when it is
+inside the project or the workspace; any other absolute path is not written to.
+`scripts/check-local-paths.sh` fails when a tracked file names a path under
+`/home/<user>` or `/Users/<user>`, and is what a CI job runs.
+
 ## What is installed and what is used
 
 Installing a component or a plugin makes it available. Using it is a separate

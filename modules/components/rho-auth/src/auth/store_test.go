@@ -298,7 +298,7 @@ func TestCredentialExpired(t *testing.T) {
 }
 
 func TestDefaultPaths(t *testing.T) {
-	home := "${RHO_HOME}"
+	home := "/home/user/.rho"
 	if got := DefaultStorePath(home); got != filepath.Join(home, "auth", "credentials.json") {
 		t.Errorf("store path: %q", got)
 	}

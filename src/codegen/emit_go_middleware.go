@@ -549,6 +549,9 @@ func authSsoLoadKey() (*ecdsa.PublicKey, error) {
 			authSsoKeyErr = errors.New("no auth public key configured")
 			return
 		}
+		if strings.HasPrefix(path, "~/") {
+			path = filepath.Join(os.Getenv("HOME"), path[2:])
+		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			authSsoKeyErr = err

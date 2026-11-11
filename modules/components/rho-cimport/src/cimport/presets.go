@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"rho/src/deps"
 	"strings"
 
 	"rho/src/yaml"
@@ -178,6 +179,9 @@ func ReadPreset(projectRoot string) (Preset, error) {
 		}
 		document, err := yaml.Load(string(content))
 		if err != nil {
+			return Preset{}, fmt.Errorf("%s: %w", name, err)
+		}
+		if err := deps.ExpandManifestPaths(document, projectRoot); err != nil {
 			return Preset{}, fmt.Errorf("%s: %w", name, err)
 		}
 

@@ -153,6 +153,9 @@ func main() {
 	case "protocol":
 		os.Exit(protocolCLI(os.Args[2:]))
 
+	case "env":
+		os.Exit(envCLI(os.Args[2:]))
+
 	default:
 		if !runDynamicModule(cmd, os.Args[2:]) {
 			fmt.Println("Unknown command:", cmd)

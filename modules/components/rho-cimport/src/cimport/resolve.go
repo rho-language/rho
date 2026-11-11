@@ -445,7 +445,15 @@ func loadDocument(root string) (yaml.Value, error) {
 		if err != nil {
 			continue
 		}
-		return yaml.Load(string(content))
+		document, err := yaml.Load(string(content))
+		if err != nil {
+			return document, err
+		}
+		// The paths a manifest declares are written against the workspace.
+		if err := deps.ExpandManifestPaths(document, root); err != nil {
+			return document, fmt.Errorf("%s: %w", name, err)
+		}
+		return document, nil
 	}
 	return yaml.Value{}, fmt.Errorf("no manifest in %s", root)
 }

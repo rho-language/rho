@@ -472,6 +472,9 @@ func manifestIncludeDirs(root string) []string {
 		if err != nil || document.Kind != yaml.KindMap {
 			continue
 		}
+		if deps.ExpandManifestPaths(document, root) != nil {
+			continue
+		}
 		build, ok := document.Map["build"]
 		if !ok || build.Kind != yaml.KindMap {
 			continue

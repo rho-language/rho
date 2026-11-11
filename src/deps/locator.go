@@ -279,7 +279,14 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 		if exists(p) {
 			return p, nil
 		}
-		cloneDest = p
+		// A path that is not there is where a missing checkout may be fetched
+		// to only when it is somewhere the user owns: inside the project, or
+		// inside the workspace. A manifest naming any other absolute path is
+		// naming a machine it was not written for, and the toolchain does not
+		// write into it.
+		if within(p, l.ProjectRoot) || within(p, workspaceOf(l.ProjectRoot)) {
+			cloneDest = p
+		}
 	}
 
 	// Dependencies declared by a local dependency are resolved relative to
@@ -375,4 +382,18 @@ func (e *MissingError) Error() string {
 func IsMissing(err error) bool {
 	var missing *MissingError
 	return errors.As(err, &missing)
+}
+
+func workspaceOf(projectRoot string) string {
+	dir, _ := paths.Workspace(projectRoot)
+	return dir
+}
+
+// within reports whether path is dir or inside it.
+func within(path, dir string) bool {
+	if path == "" || dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
