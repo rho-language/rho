@@ -483,7 +483,16 @@ func splitPaths(list string) []string {
 func emitAuthMiddleware(name string, spec MiddlewareSpec) string {
 	issuer := option(spec, "issuer", "")
 	audience := option(spec, "audience", "")
-	cookie := option(spec, "cookie", "rho_session")
+	// A cookie is scoped by host, not by port, so two services on one host that
+	// shared a cookie name would overwrite each other's session. The default is
+	// named for the audience, which is what makes each service's session its own.
+	cookie := option(spec, "cookie", "")
+	if cookie == "" {
+		cookie = "rho_session"
+		if audience != "" {
+			cookie += "_" + cookieToken(audience)
+		}
+	}
 	publicKey := option(spec, "public_key", "")
 	mode := option(spec, "mode", "direct")
 	publicURL := option(spec, "public_url", "")
@@ -733,7 +742,14 @@ func authSsoStateDir() string {
 	if dir != "" {
 		dir = dir + "/auth"
 	} else {
-		dir = filepath.Join(os.Getenv("HOME"), ".rho", "auth-app")
+		// Without a workspace each service still keeps its own sessions: a
+		// directory shared by every service would be a session one service
+		// opened and another accepted.
+		name := authSsoAudience
+		if name == "" {
+			name = "default"
+		}
+		dir = filepath.Join(os.Getenv("HOME"), ".rho", "auth-app", name)
 	}
 	_ = os.MkdirAll(dir, 0o700)
 	return dir
@@ -759,13 +775,17 @@ func authSsoNewID() string {
 	return hex.EncodeToString(raw)
 }
 
-func authSsoLookup(sid string) bool {
+// authSsoLookup finds a session this service opened, and the identity it was
+// opened for: the subject and the scopes of the ticket that opened it. The
+// audience is this service's own, because only this service writes the file.
+func authSsoLookup(sid string) (authSsoSessionClaims, bool) {
+	var identity authSsoSessionClaims
 	if sid == "" {
-		return false
+		return identity, false
 	}
 	raw, err := os.ReadFile(authSsoSessionPath())
 	if err != nil {
-		return false
+		return identity, false
 	}
 	now := time.Now().Unix()
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -774,9 +794,22 @@ func authSsoLookup(sid string) bool {
 			continue
 		}
 		exp, err := strconv.ParseInt(parts[1], 10, 64)
-		return err == nil && now < exp
+		if err != nil || now >= exp {
+			return identity, false
+		}
+		identity.Subject = "session"
+		if len(parts) > 2 && parts[2] != "" {
+			identity.Subject = parts[2]
+		}
+		if len(parts) > 3 && parts[3] != "" {
+			identity.Scopes = strings.Split(parts[3], ",")
+		}
+		identity.Audience = authSsoAudience
+		identity.Issuer = authSsoIssuer
+		identity.ExpiresAt = exp
+		return identity, true
 	}
-	return false
+	return identity, false
 }
 
 func authSsoCallback(w http.ResponseWriter, r *http.Request) bool {
@@ -816,7 +849,8 @@ func authSsoCallback(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "could not open a session", http.StatusInternalServerError)
 		return true
 	}
-	_, _ = f.WriteString(sid + "|" + strconv.FormatInt(expires, 10) + "|" + claims.Subject + "\n")
+	_, _ = f.WriteString(sid + "|" + strconv.FormatInt(expires, 10) + "|" +
+		authSsoField(claims.Subject) + "|" + authSsoField(strings.Join(claims.Scopes, ",")) + "\n")
 	_ = f.Close()
 	cookiePath := authSsoBasePath
 	if cookiePath == "" {
@@ -868,8 +902,24 @@ func authSsoDenyScope(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "insufficient scope", http.StatusForbidden)
 }
 
+// authSsoField keeps a value from breaking the session file's line format.
+func authSsoField(value string) string {
+	return strings.NewReplacer("|", "", "\n", "", "\r", "").Replace(value)
+}
+
+// authSsoIdentityHeaders are set by this middleware from a token or session it
+// verified, and by nothing else.
+var authSsoIdentityHeaders = []string{"X-Rho-Subject", "X-Rho-Scopes", "X-Rho-Aud"}
+
 func withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A client that sends the identity headers itself is claiming to be
+		// someone. They are removed before anything reads them, on every path
+		// including the exempt ones, so the only values a handler sees are the
+		// ones verified here.
+		for _, name := range authSsoIdentityHeaders {
+			r.Header.Del(name)
+		}
 		if authSsoCallback(w, r) {
 			return
 		}
@@ -901,11 +951,10 @@ func withAuth(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
-			if authSsoLookup(cookie.Value) {
-				identity := authSsoSessionClaims{Subject: "session"}
+			if identity, ok := authSsoLookup(cookie.Value); ok {
 				r.Header.Set("X-Rho-Subject", identity.Subject)
-				r.Header.Set("X-Rho-Scopes", "")
-				r.Header.Set("X-Rho-Aud", "")
+				r.Header.Set("X-Rho-Scopes", strings.Join(identity.Scopes, ","))
+				r.Header.Set("X-Rho-Aud", identity.Audience)
 				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, identity)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -963,5 +1012,20 @@ func authSsoSession(r *http.Request) (authSsoSessionClaims, bool) {
 }
 `, issuer, audience, cookie, publicKey, mode, publicURL, basePath, loginURL,
 		keeperPort, returnParam, trustForwarded, scheme, sessionFile, skip, scopes)
+	return b.String()
+}
+
+// cookieToken turns an audience into the part of a cookie name it can be: letters,
+// digits and underscores, so `gateway:edge-1` becomes `gateway_edge_1`.
+func cookieToken(audience string) string {
+	var b strings.Builder
+	for _, r := range audience {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
 	return b.String()
 }
