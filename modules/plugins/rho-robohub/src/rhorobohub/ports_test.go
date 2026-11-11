@@ -199,16 +199,16 @@ func TestTelemetryPortMaintenanceAndFaultsAreShipped(t *testing.T) {
 	}
 }
 
-// The ports are type-checked where they live: they are a Go module of their own,
-// so `go vet` in that directory is what proves a port compiles against the
-// contract its test file declares.
+// The ports are type-checked and tested where they live: they are a Go module of
+// their own, so `go test` in that directory proves a port compiles against the
+// contract its test file declares and behaves as its tests say.
 func TestShippedPortsCompile(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("the go toolchain is not on the path")
 	}
-	command := exec.Command("go", "vet", "./...")
+	command := exec.Command("go", "test", "./...")
 	command.Dir = filepath.Join("..", "..", "ports")
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("go vet in ports/: %v\n%s", err, output)
+		t.Fatalf("go test in ports/: %v\n%s", err, output)
 	}
 }

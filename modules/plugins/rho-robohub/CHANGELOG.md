@@ -6,6 +6,15 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.2.5] - 2026-11-12
+
+The gateway outbox keeps a cursor per consumer, by the subject of the token it
+presented (`gateway_outbox_ack_for`): a record is dropped once every known
+consumer has acknowledged it, so a second reader no longer deletes what Mesh has
+not stored, and OUTBOX_MAX_ROWS still bounds one that stopped. The outbox, its
+cursors and its acknowledgement mark are written owner-only. The ports' own tests
+run with the plugin's.
+
 ## [0.2.4] - 2026-11-12
 
 The telemetry port keeps a live feed per project. `telemetry_poll` takes the

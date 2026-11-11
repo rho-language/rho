@@ -662,6 +662,9 @@ type gatewayOutboxState struct {
 	pending int
 	max     int
 	started bool
+	// consumers is how far each consumer has acknowledged, by the subject of the
+	// token it presented. A record is dropped once every known consumer has it.
+	consumers map[string]uint32
 }
 
 var gatewayOutbox gatewayOutboxState
@@ -686,12 +689,12 @@ func gatewayOutboxOpen(path string) bool {
 		path = gatewayOutboxPath()
 	}
 	if directory := filepath.Dir(path); directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o755); err != nil {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
 			fmt.Fprintf(os.Stderr, "gateway: outbox directory: %v\n", err)
 			return false
 		}
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gateway: outbox open: %v\n", err)
 		return false
@@ -778,7 +781,7 @@ func gatewayOutboxCompact() {
 		return
 	}
 	temp := gatewayOutbox.path + ".tmp"
-	file, err := os.Create(temp)
+	file, err := os.OpenFile(temp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gateway: outbox compact: %v\n", err)
 		return
@@ -806,7 +809,7 @@ func gatewayOutboxCompact() {
 		fmt.Fprintf(os.Stderr, "gateway: outbox rename: %v\n", err)
 		return
 	}
-	file, err = os.OpenFile(gatewayOutbox.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	file, err = os.OpenFile(gatewayOutbox.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gateway: outbox reopen: %v\n", err)
 		return
@@ -815,7 +818,7 @@ func gatewayOutboxCompact() {
 	gatewayOutbox.writer = bufio.NewWriterSize(file, 64*1024)
 	gatewayOutbox.pending = 0
 	_ = os.WriteFile(gatewayOutbox.path+".ack",
-		[]byte(strconv.FormatUint(uint64(gatewayOutbox.base), 10)), 0o644)
+		[]byte(strconv.FormatUint(uint64(gatewayOutbox.base), 10)), 0o600)
 }
 
 func gatewayOutboxAppend(areaID uint32, nodeID uint32, field string, value float32, status uint32, receivedMS string) uint32 {
@@ -907,11 +910,52 @@ func gatewayOutboxFetch(after uint32, limit uint32) string {
 }
 
 func gatewayOutboxAck(seq uint32) uint32 {
+	return gatewayOutboxAckFor("default", seq)
+}
+
+// gatewayOutboxConsumersPath is where each consumer's cursor is kept.
+func gatewayOutboxConsumersPath() string {
+	return gatewayOutbox.path + ".consumers"
+}
+
+func gatewayOutboxLoadConsumers() {
+	if gatewayOutbox.consumers != nil {
+		return
+	}
+	gatewayOutbox.consumers = map[string]uint32{}
+	if raw, err := os.ReadFile(gatewayOutboxConsumersPath()); err == nil {
+		_ = json.Unmarshal(raw, &gatewayOutbox.consumers)
+	}
+}
+
+// gatewayOutboxAckFor records that one consumer has stored every reading up to
+// seq, and drops what every known consumer has stored. A consumer that reads the
+// outbox and acknowledges it (a backup, a debugger) no longer deletes what
+// another has not read yet; one that stops acknowledging holds records only
+// until OUTBOX_MAX_ROWS drops the oldest.
+func gatewayOutboxAckFor(consumer string, seq uint32) uint32 {
 	if !gatewayOutboxOpen("") {
 		return 0
 	}
+	if consumer == "" {
+		consumer = "default"
+	}
 	gatewayOutbox.mu.Lock()
 	defer gatewayOutbox.mu.Unlock()
+	gatewayOutboxLoadConsumers()
+	if seq > gatewayOutbox.consumers[consumer] {
+		gatewayOutbox.consumers[consumer] = seq
+		if data, err := json.Marshal(gatewayOutbox.consumers); err == nil {
+			_ = os.WriteFile(gatewayOutboxConsumersPath(), data, 0o600)
+		}
+	}
+	first := true
+	for _, cursor := range gatewayOutbox.consumers {
+		if first || cursor < seq {
+			seq = cursor
+		}
+		first = false
+	}
 	kept := gatewayOutbox.records[:0]
 	var removed uint32
 	for _, record := range gatewayOutbox.records {
@@ -925,7 +969,7 @@ func gatewayOutboxAck(seq uint32) uint32 {
 	if removed > 0 && seq > gatewayOutbox.base {
 		gatewayOutbox.base = seq
 		_ = os.WriteFile(gatewayOutbox.path+".ack",
-			[]byte(strconv.FormatUint(uint64(gatewayOutbox.base), 10)), 0o644)
+			[]byte(strconv.FormatUint(uint64(gatewayOutbox.base), 10)), 0o600)
 	}
 	if len(gatewayOutbox.records) == 0 {
 		gatewayOutboxCompact()
