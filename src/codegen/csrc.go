@@ -71,6 +71,9 @@ var fileSource string
 //go:embed csrc/exec.c
 var execSource string
 
+//go:embed csrc/crypto.c
+var cryptoSource string
+
 //go:embed csrc/bits.c
 var bitsSource string
 
@@ -185,6 +188,18 @@ var runtimeFragments = []RuntimeFragment{
 		Source:   envSource,
 		Provides: []string{"rho_env_or", "rho_getenv"},
 		Decls:    []string{"const char* rho_env_or(const char* name, const char* fallback);", "char* rho_getenv(const char* name);"},
+	},
+	{
+		Name:   "crypto",
+		Source: cryptoSource,
+		Provides: []string{
+			"rho_hmac_sha256_hex",
+			"rho_random_hex",
+		},
+		Decls: []string{
+			"char* rho_hmac_sha256_hex(const char* key_hex, const char* message_hex);",
+			"char* rho_random_hex(unsigned int bytes);",
+		},
 	},
 	{
 		Name:   "exec",

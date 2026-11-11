@@ -1336,6 +1336,35 @@ func EmitGoRuntime(implementation string) string {
 			needs: []string{"rhoServiceToken("},
 		},
 		{
+			// HMAC-SHA256 over hex text, for verifying a frame or a token: hex
+			// because the same call has to work where a string cannot hold a
+			// zero byte. "" when either argument is not hex.
+			call: "rhoHmacSha256Hex(",
+			define: "func rhoHmacSha256Hex(keyHex string, messageHex string) string {\n" +
+				"\tkey, err := hex.DecodeString(keyHex)\n" +
+				"\tif err != nil {\n\t\treturn \"\"\n\t}\n" +
+				"\tmessage, err := hex.DecodeString(messageHex)\n" +
+				"\tif err != nil {\n\t\treturn \"\"\n\t}\n" +
+				"\tmac := hmac.New(sha256.New, key)\n" +
+				"\tmac.Write(message)\n" +
+				"\treturn hex.EncodeToString(mac.Sum(nil))\n" +
+				"}\n",
+			imports: []string{"crypto/hmac", "crypto/sha256", "encoding/hex"},
+		},
+		{
+			// Random bytes from the operating system, as hex, or "" when there are
+			// none: a nonce or key that fell back to something predictable is one
+			// anybody could compute.
+			call: "rhoRandomHex(",
+			define: "func rhoRandomHex(bytes uint32) string {\n" +
+				"\tif bytes == 0 || bytes > 1024 {\n\t\treturn \"\"\n\t}\n" +
+				"\traw := make([]byte, bytes)\n" +
+				"\tif _, err := rand.Read(raw); err != nil {\n\t\treturn \"\"\n\t}\n" +
+				"\treturn hex.EncodeToString(raw)\n" +
+				"}\n",
+			imports: []string{"encoding/hex", "crypto/rand"},
+		},
+		{
 			// Waiting: a background task that ticks sleeps between ticks.
 			call:    "rhoSleepMs(",
 			define:  "func rhoSleepMs(milliseconds uint32) {\n\ttime.Sleep(time.Duration(milliseconds) * time.Millisecond)\n}\n",
