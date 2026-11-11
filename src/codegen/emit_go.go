@@ -948,6 +948,35 @@ func EmitGoRuntime(implementation string) string {
 				"}\n",
 		},
 		{
+			// A secret is written so that only its owner can read it: a token, a
+			// key or a credential in a world-readable file is a secret every user
+			// of the machine holds. The file is written beside its destination
+			// and renamed over it, so a reader never sees half of one, and the
+			// mode is set on the new file before it carries anything.
+			call:    "rhoWriteSecret(",
+			imports: []string{"os", "path/filepath"},
+			define: "func rhoWriteSecret(path string, text string) bool {\n" +
+				"\ttmp, err := os.CreateTemp(filepath.Dir(path), \".secret-*\")\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn false\n" +
+				"\t}\n" +
+				"\tname := tmp.Name()\n" +
+				"\tok := tmp.Chmod(0o600) == nil\n" +
+				"\tif ok {\n" +
+				"\t\t_, werr := tmp.WriteString(text)\n" +
+				"\t\tok = werr == nil\n" +
+				"\t}\n" +
+				"\tif tmp.Close() != nil {\n" +
+				"\t\tok = false\n" +
+				"\t}\n" +
+				"\tif !ok || os.Rename(name, path) != nil {\n" +
+				"\t\t_ = os.Remove(name)\n" +
+				"\t\treturn false\n" +
+				"\t}\n" +
+				"\treturn true\n" +
+				"}\n",
+		},
+		{
 			// Append one event to a feed that accumulates. The file an SSE
 			// stream reads grows one line at a time, so a page hears of a
 			// change without asking again.

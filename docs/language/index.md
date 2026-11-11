@@ -53,8 +53,10 @@ Stated plainly, because a reference that implies otherwise is worse than none:
   `var` at the top level, but state belongs to a value that is passed or reached
   through a struct field.
 - No time and no network, unless a port supplies it. File I/O is `rho_read_text`
-  and `rho_write_text`, which read and write a whole text file; anything beyond
-  that is a port.
+  and `rho_write_text`, which read and write a whole text file, and
+  `rho_write_secret`, which writes one only its owner can read (mode 0600, and an
+  existing file is narrowed to it) for a token, a key or a credential; anything
+  beyond that is a port.
 - No closures, and no higher-order functions.
 - No statement-level reflection.
 
