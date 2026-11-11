@@ -6,6 +6,15 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.4.0] - 2026-11-11
+
+Client credentials for service-to-service calls. `rho auth client add|remove|list`
+registers a service with the audiences and scopes it may be granted, keeping only a
+hash of its secret, in a file only its owner can read. `rho auth service-token`
+exchanges a client's secret, read from standard input or a file and never from the
+command line, for an ES256 token for one audience, with the scopes it asked for
+that it may hold and a lifetime of at most ten minutes.
+
 ## [0.1.0] - 2026-10-12
 
 Initial release.

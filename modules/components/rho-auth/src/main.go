@@ -68,6 +68,10 @@ func run(args []string) int {
 		return ticket(args[1:])
 	case "verify":
 		return verify(args[1:])
+	case "client":
+		return client(args[1:])
+	case "service-token":
+		return serviceToken(args[1:], os.Stdin)
 	case "help", "-h", "--help":
 		usage()
 		return 0
@@ -79,7 +83,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Println("Usage: rho auth <login|status|list|inspect|revoke|keygen|ticket|verify> [flags]")
+	fmt.Println("Usage: rho auth <login|status|list|inspect|revoke|keygen|ticket|verify|client|service-token> [flags]")
 }
 
 // openStore opens the credential store in the user's Rho home.
