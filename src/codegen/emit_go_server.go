@@ -870,11 +870,16 @@ func newRequest(r *http.Request) *Request {
 		log.Printf("read body: %v", err)
 		body = ""
 	}
-	head := make(map[string]string, len(r.Header))
+	head := make(map[string]string, len(r.Header)+1)
 	for name, values := range r.Header {
 		if len(values) > 0 {
 			head[name] = values[0]
 		}
+	}
+	// net/http moves Host out of the header map into r.Host, so a handler that
+	// asks for the host it was reached on would otherwise always be told nothing.
+	if r.Host != "" {
+		head["Host"] = r.Host
 	}
 	return &Request{
 		Method: r.Method,
