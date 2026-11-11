@@ -119,10 +119,14 @@ func moduleSchema(types []string) Schema {
 				Fields: []FieldSchema{
 					{Name: "name", Required: true, RejectNull: true, Kind: KindString},
 					// id is the module's stable identity in the ecosystem. A name
-					// is what a person reads; an id is what a consumer keys on,
-					// and it carries the repository and path the module lives
-					// under so two modules with the same name are two things.
+					// is what a person reads; an id is what a consumer keys on.
+					// It is declared by the author and is not derived from where
+					// the module lives: a repository or folder that is renamed
+					// must not change what the module is.
 					{Name: "id", Required: false, Kind: KindString},
+					// previous_ids are the ids the module had before it was
+					// renamed, so what refers to the old one still resolves.
+					{Name: "previous_ids", Required: false, Kind: KindList},
 					{Name: "type", Required: true, RejectNull: true, Kind: KindString, AllowedValues: types},
 					{Name: "version", Required: true, RejectNull: true, Kind: KindString},
 					{Name: "command", Required: false, Kind: KindString},

@@ -221,9 +221,13 @@ func ValidateModuleManifestWithContract(data yaml.Value, moduleType string, cont
 	return errs
 }
 
-// requireModuleID reports a type that declares module.id without a qualified
-// value. A dotted identity is the minimum that says which repository and path
-// the module belongs to; a bare name is what it was supposed to disambiguate.
+// requireModuleID reports a type that declares module.id without a usable value.
+//
+// The id is the module's identity, set by its author and kept: it is what a
+// registry, a lock file and a saved plan refer to the module by. It is therefore
+// not the repository and folder the module happens to live in, which are
+// renamed for reasons that have nothing to do with what the module is. A rename
+// of the module itself is declared in `previous_ids`.
 func requireModuleID(data yaml.Value, moduleType string) *ValidationError {
 	module, ok := data.Map["module"]
 	id := ""
@@ -237,14 +241,96 @@ func requireModuleID(data yaml.Value, moduleType string) *ValidationError {
 			Severity: SeverityError,
 		}
 	}
-	if strings.ContainsAny(id, " \t\n") || strings.Contains(id, "/") {
-		return &ValidationError{
-			Path:     "module.id",
-			Message:  fmt.Sprintf("module.id %q must be a single identity with no whitespace; prefix a nested module with its repository and path, such as 'repository.path.name'", id),
-			Severity: SeverityError,
+	if err := CheckModuleID(id); err != nil {
+		return &ValidationError{Path: "module.id", Message: err.Error(), Severity: SeverityError}
+	}
+	if module.Kind == yaml.KindMap {
+		for _, previous := range module.Map["previous_ids"].List {
+			if err := CheckModuleID(previous.Str); err != nil {
+				return &ValidationError{Path: "module.previous_ids", Message: err.Error(), Severity: SeverityError}
+			}
+			if previous.Str == id {
+				return &ValidationError{Path: "module.previous_ids",
+					Message: fmt.Sprintf("previous_ids lists %q, which is the current id", id), Severity: SeverityError}
+			}
 		}
 	}
 	return nil
+}
+
+// CheckModuleID reports whether an id is well formed: two or more dot-separated
+// segments of lowercase letters and digits, which may be joined by single hyphens
+// or underscores. The first segment is the namespace and the last the name, so
+// two modules called the same thing in different namespaces are two things. It
+// says nothing about where the module is, because the id must not.
+func CheckModuleID(id string) error {
+	segments := strings.Split(id, ".")
+	if len(segments) < 2 {
+		return fmt.Errorf("module.id %q needs a namespace and a name, such as 'namespace.name'; it is the module's identity, not its location", id)
+	}
+	for _, segment := range segments {
+		if !moduleIDSegment(segment) {
+			return fmt.Errorf("module.id %q: %q must be lowercase letters and digits, optionally joined by single '-' or '_'", id, segment)
+		}
+	}
+	return nil
+}
+
+func moduleIDSegment(segment string) bool {
+	if segment == "" {
+		return false
+	}
+	previousJoin := true // a segment may not begin with a join
+	for _, r := range segment {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			previousJoin = false
+		case r == '-' || r == '_':
+			if previousJoin {
+				return false
+			}
+			previousJoin = true
+		default:
+			return false
+		}
+	}
+	return !previousJoin
+}
+
+// IDEntry is one module's identity as found in a tree.
+type IDEntry struct {
+	// Path is the manifest the identity was read from.
+	Path string
+	// Name is module.name, ID is module.id and Previous is module.previous_ids.
+	Name     string
+	ID       string
+	Previous []string
+}
+
+// CheckIDs reports the identities of a tree that cannot all be true: two modules
+// with one id, and an id that is also another module's previous id, which is a
+// reference that would resolve to two things.
+func CheckIDs(entries []IDEntry) []string {
+	owner := map[string]string{}
+	var problems []string
+	for _, entry := range entries {
+		if entry.ID == "" {
+			continue
+		}
+		if first, taken := owner[entry.ID]; taken {
+			problems = append(problems, fmt.Sprintf("%s and %s both declare module.id %q", first, entry.Path, entry.ID))
+			continue
+		}
+		owner[entry.ID] = entry.Path
+	}
+	for _, entry := range entries {
+		for _, previous := range entry.Previous {
+			if other, taken := owner[previous]; taken && other != entry.Path {
+				problems = append(problems, fmt.Sprintf("%s lists %q as a previous id, but %s declares it as its id", entry.Path, previous, other))
+			}
+		}
+	}
+	return problems
 }
 
 // ValidateModuleManifestPackage validates the identity of a manifest whose

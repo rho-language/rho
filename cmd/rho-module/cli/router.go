@@ -46,6 +46,8 @@ func Main(args []string) int {
 		err = Init(args[1:])
 	case "validate":
 		err = Validate(args[1:])
+	case "ids":
+		err = Ids(args[1:])
 	case "info":
 		err = Info(args[1:])
 	case "publish":
