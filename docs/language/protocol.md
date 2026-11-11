@@ -82,7 +82,7 @@ rho protocol generate --target c --bus bindings/c-bus.yml --out build/protocol/c
 rho protocol generate --target go --out build/protocol/go --package telemetry .
 
 # Rho for an edge written in Rho: protocol.rho, included from the program
-rho protocol generate --target rho --out src/gateway schemas/telemetry.rho
+rho protocol generate --target rho --platform robohub --out src/gateway schemas/telemetry.rho
 ```
 
 Every `.rho` under the given paths is read into one schema, so messages may live
@@ -112,8 +112,10 @@ little-endian order, and `_valid` to reject a payload that is short or of anothe
 schema version. An enum becomes `u32` constants, because the wire is a 32-bit
 value and Rho has no cast from an enum to a number.
 
-It also carries the transport — `_frame` and `_unframe`, with COBS and the
-Fletcher-16 check — so a Rho edge speaks the same framing a node's
+Given a framing — `--transport FILE`, or `--platform NAME` for the one its plugin
+ships — it also carries the transport: with RoboHub's, `_frame` and `_unframe`,
+COBS and the Fletcher-16 check, so a Rho edge speaks the same framing a node's
 `robohub-transport` library does, from one description rather than from a second
-implementation that must be kept in step. A `TransportFrame` returns `ok`, the
+implementation that must be kept in step. The toolchain has no framing of its own;
+without one only the payloads are generated. A `TransportFrame` returns `ok`, the
 header and the payload, and the program decides what each message id means.

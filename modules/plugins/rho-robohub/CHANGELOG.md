@@ -8,9 +8,11 @@ against that version.
 
 ## [0.2.1] - 2026-11-12
 
-Ships `bindings/c-bus.yml`: the types and functions of robohub-core's event bus
-that generated C calls. `rho protocol generate --platform robohub` reads it, so
-the toolchain no longer carries RoboHub's names to generate `protocol_bus.h/.c`.
+Ships `bindings/c-bus.yml`, the types and functions of robohub-core's event bus
+that generated C calls, and `bindings/rho-transport.rho`, the COBS, Fletcher-16
+and header framing robohub-transport writes. `rho protocol generate --platform
+robohub` reads them, so the toolchain no longer carries RoboHub's names or wire
+framing to generate `protocol_bus.h/.c` or the transport in a schema's Rho.
 
 ## [0.2.0] - 2026-11-11
 

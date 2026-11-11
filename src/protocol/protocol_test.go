@@ -187,12 +187,16 @@ func TestEmitRhoWritesTransportAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	out, err := schema.EmitRho()
+	framing, err := os.ReadFile("../../modules/plugins/rho-robohub/bindings/rho-transport.rho")
+	if err != nil {
+		t.Fatalf("read transport binding: %v", err)
+	}
+	out, err := schema.EmitRho(string(framing))
 	if err != nil {
 		t.Fatalf("emit rho: %v", err)
 	}
 	for _, want := range []string{
-		// The robohub framing, generated so the gateway's copy cannot drift
+		// The platform's framing, generated so the gateway's copy cannot drift
 		// from robohub-transport's.
 		"fn telemetry_v1_fletcher16(",
 		"fn telemetry_v1_cobs_encode(",
@@ -386,5 +390,24 @@ func TestLoadBusNamesWhatIsMissing(t *testing.T) {
 	}
 	if _, err := LoadBus(path); err == nil || !strings.Contains(err.Error(), "error_type") {
 		t.Fatalf("want an error naming error_type, got %v", err)
+	}
+}
+
+func TestEmitRhoWithoutFramingSaysNothingAboutTransport(t *testing.T) {
+	schema, err := Parse(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := schema.EmitRho("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"fletcher16", "cobs_", "TransportFrame"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("no framing was given, yet the output carries %q", unwanted)
+		}
+	}
+	if !strings.Contains(out, "struct MotorTelemetry {") {
+		t.Error("the payloads are generated with or without a framing")
 	}
 }

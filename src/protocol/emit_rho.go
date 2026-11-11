@@ -12,15 +12,15 @@ import (
 /* -------------------------------------------------------------------------- */
 
 // EmitRho renders the schema as Rho: the same little-endian payloads the C and
-// Go emitters write, and the robohub transport frame that carries a payload on
-// the wire — COBS, a Fletcher-16 check and the six-byte header. The output is
-// Rho a program includes, so the bytes on the wire are code a reader can follow
-// rather than a hand-rolled copy that drifts from the firmware.
+// Go emitters write, and the transport framing a platform supplies, which carries
+// a payload on the wire. The output is Rho a program includes, so the bytes on
+// the wire are code a reader can follow rather than a hand-rolled copy that
+// drifts from the firmware.
 //
 // It returns an error for a field the emitter cannot lay out (an array, or a
 // type it does not know), because a Rho struct cannot hold a fixed array and a
 // silent omission would write a payload shorter than the C side reads.
-func (s *Schema) EmitRho() (string, error) {
+func (s *Schema) EmitRho(transport string) (string, error) {
 	l := s.newLayout()
 	p := s.prefix()
 	module := namespaceOr(s.Namespace, "protocol")
@@ -64,7 +64,7 @@ func (s *Schema) EmitRho() (string, error) {
 		emitRhoUnmarshal(&b, l, p, m)
 	}
 
-	emitRhoTransport(&b, p)
+	emitRhoTransport(&b, p, transport)
 	return b.String(), nil
 }
 
@@ -178,131 +178,27 @@ func emitRhoUnmarshal(b *strings.Builder, l *layout, p string, m ast.MessageDecl
 	fmt.Fprintf(b, "    return %s { %s }\n}\n\n", m.Name, strings.Join(locals, ", "))
 }
 
-// emitRhoTransport writes the robohub transport: the framing a node's
-// robohub-transport library writes, as Rho, so both ends of the link agree byte
-// for byte and neither side carries a hand-rolled copy.
+// emitRhoTransport writes the transport framing a platform ships, as Rho, so both
+// ends of a link agree byte for byte and neither side carries a hand-rolled
+// copy. The toolchain knows no framing of its own: with none given, a schema's
+// payloads are generated and nothing is said about how they are carried.
 //
 // The prefix is substituted rather than formatted, because the body is a Rho
 // program with its own percent signs and a format string would have to escape
 // them.
-func emitRhoTransport(b *strings.Builder, p string) {
-	body := `// TransportFrame is one decoded frame: the header, and the payload the
-// schema deserializes. ok is false when the frame was malformed or the check
-// did not match, so a caller reads the fields only when it is true.
-struct TransportFrame {
-    ok: bool
-    msg_id: u32
-    tx_id: u32
-    payload: string
-}
-
-// @P@_fletcher16 is the check robohub-transport writes: two sums modulo 255,
-// concatenated high byte first.
-fn @P@_fletcher16(data: string, length: u32) u32 {
-    var sum1: u32 = 0
-    var sum2: u32 = 0
-    var i: u32 = 0
-    while i < length {
-        sum1 = (sum1 + u32(str_at(data, i)) % 255) % 255
-        sum2 = (sum2 + sum1) % 255
-        i = i + 1
-    }
-    return (sum2 << 8) | sum1
-}
-
-// @P@_cobs_encode adds the Consistent Overhead Byte Stuffing a frame is sent
-// with, without the delimiter the link appends.
-fn @P@_cobs_encode(input: string) string {
-    let length: u32 = strlen(input)
-    var out: string = ""
-    var run: string = ""
-    var run_length: u32 = 0
-    var i: u32 = 0
-    while i < length {
-        let byte: u8 = str_at(input, i)
-        if byte == u8(0) {
-            out = out + str_from_byte(u8(run_length + 1)) + run
-            run = ""
-            run_length = 0
-        } else {
-            run = run + str_from_byte(byte)
-            run_length = run_length + 1
-            if run_length == 254 {
-                out = out + str_from_byte(u8(255)) + run
-                run = ""
-                run_length = 0
-            }
-        }
-        i = i + 1
-    }
-    return out + str_from_byte(u8(run_length + 1)) + run
-}
-
-// @P@_cobs_decode reverses it, or returns "" when the frame is malformed.
-fn @P@_cobs_decode(input: string) string {
-    let length: u32 = strlen(input)
-    var out: string = ""
-    var read: u32 = 0
-    while read < length {
-        let code: u32 = u32(str_at(input, read))
-        read = read + 1
-        if code == 0 {
-            return ""
-        }
-        var i: u32 = 1
-        while i < code {
-            if read >= length {
-                return ""
-            }
-            out = out + str_from_byte(str_at(input, read))
-            read = read + 1
-            i = i + 1
-        }
-        if code < 255 && read < length {
-            out = out + str_from_byte(u8(0))
-        }
-    }
-    return out
-}
-
-// @P@_frame wraps a payload in the header and the check, then the stuffing.
-// The link appends the 0x00 delimiter.
-fn @P@_frame(msg_id: u32, tx_id: u32, payload: string) string {
-    var body: string = @P@_put_u16(u16(msg_id)) + @P@_put_u16(u16(tx_id)) + @P@_put_u16(u16(strlen(payload))) + payload
-    let check: u32 = @P@_fletcher16(body, strlen(body))
-    return @P@_cobs_encode(body + @P@_put_u16(u16(check)))
-}
-
-// @P@_unframe decodes a frame and verifies it: the header, the length, and the
-// Fletcher-16 check over everything before it.
-fn @P@_unframe(encoded: string) TransportFrame {
-    var frame: TransportFrame
-    frame.ok = false
-    let body: string = @P@_cobs_decode(encoded)
-    let total: u32 = strlen(body)
-    if total < 8 {
-        return frame
-    }
-    let msg_id: u32 = u32(@P@_get_u16(body, 0))
-    let tx_id: u32 = u32(@P@_get_u16(body, 2))
-    let payload_len: u32 = u32(@P@_get_u16(body, 4))
-    if 6 + payload_len + 2 != total {
-        return frame
-    }
-    let expected: u32 = u32(@P@_get_u16(body, 6 + payload_len))
-    let actual: u32 = @P@_fletcher16(body, 6 + payload_len)
-    if expected != actual {
-        return frame
-    }
-    frame.msg_id = msg_id
-    frame.tx_id = tx_id
-    frame.payload = str_slice(body, 6, payload_len)
-    frame.ok = true
-    return frame
-}
-
-`
-	b.WriteString(strings.ReplaceAll(body, "@P@", p))
+func emitRhoTransport(b *strings.Builder, p, transport string) {
+	if transport == "" {
+		return
+	}
+	// Lines that start with `#` are the binding's notes to its own readers, not
+	// Rho, and are not carried into the output.
+	var kept []string
+	for _, line := range strings.SplitAfter(transport, "\n") {
+		if !strings.HasPrefix(line, "#") {
+			kept = append(kept, line)
+		}
+	}
+	b.WriteString(strings.ReplaceAll(strings.Join(kept, ""), "@P@", p))
 }
 
 // emitRhoWireHelpers writes the little-endian put/get the payload fields use.
