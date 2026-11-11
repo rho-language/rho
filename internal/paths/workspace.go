@@ -53,6 +53,12 @@ func lookup(name, base string) (string, bool) {
 	if value, ok := os.LookupEnv(name); ok && value != "" {
 		return value, true
 	}
+	// The installation is where it is whether or not RHO_HOME says so.
+	if name == RhoHomeEnvVar {
+		if home, err := GetRhoHome(); err == nil {
+			return home, true
+		}
+	}
 	if strings.HasSuffix(name, workspaceSuffix) {
 		dir, _ := Workspace(base)
 		return dir, true

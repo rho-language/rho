@@ -19,7 +19,7 @@ pattern=$(printf '%s\n' "${homes[@]}" | sed 's/[][\.*^$/]/\\&/g' | paste -sd'|')
 pattern="${pattern}|/home/[A-Za-z0-9_.-]+/projects|/Users/[A-Za-z0-9_.-]+"
 status=0
 for repo in "${@:-.}"; do
-  hits=$(git -C "$repo" grep -nIE "(${pattern})(/|\$|[^A-Za-z0-9_.-])" -- . ':!*.lock' ':!*/testdata/*' || true)
+  hits=$(git -C "$repo" grep -nIE "(${pattern})(/|\$|[^A-Za-z0-9_.-])" -- . ':!*/testdata/*' || true)
   if [ -n "$hits" ]; then
     echo "local paths in $repo:" >&2
     echo "$hits" | sed 's/^/  /' | cut -c1-200 >&2

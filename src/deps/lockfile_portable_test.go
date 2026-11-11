@@ -15,10 +15,13 @@ func TestLockfileRecordsWorkspacePathsPortably(t *testing.T) {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(project, "rho.lock")
+	home := t.TempDir()
+	t.Setenv("RHO_HOME", home)
 	outside := "/opt/elsewhere/lib"
 	lock := &Lockfile{Packages: []LockedPackage{
 		{Name: "inside", Path: filepath.Join(workspace, "lib", "inside"), Rev: "abc"},
 		{Name: "outside", Path: outside},
+		{Name: "installed", Path: filepath.Join(home, "modules", "installed", "component", "x@1")},
 	}}
 	if err := lock.Save(lockPath); err != nil {
 		t.Fatal(err)
@@ -43,6 +46,12 @@ func TestLockfileRecordsWorkspacePathsPortably(t *testing.T) {
 	}
 	if loaded.Packages[0].Path != filepath.Join(other, "lib", "inside") {
 		t.Errorf("inside = %q", loaded.Packages[0].Path)
+	}
+	if got := loaded.Packages[2].Path; got != filepath.Join(home, "modules", "installed", "component", "x@1") {
+		t.Errorf("installed = %q", got)
+	}
+	if !strings.Contains(string(raw), "${RHO_HOME}/modules/installed") || strings.Contains(string(raw), home) {
+		t.Errorf("the installation path was not written portably: %s", raw)
 	}
 	if loaded.Packages[1].Path != outside {
 		t.Errorf("a path outside the workspace must be kept as it was, got %q", loaded.Packages[1].Path)

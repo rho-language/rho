@@ -40,8 +40,9 @@ func (l *Lockfile) Save(path string) error {
 	// The record is written portable; the lockfile in memory is left as it was.
 	portable := &Lockfile{Packages: append([]LockedPackage{}, l.Packages...)}
 	workspace, _ := paths.Workspace(filepath.Dir(path))
+	home, _ := paths.GetRhoHome()
 	for i := range portable.Packages {
-		portable.Packages[i].Path = portablePath(portable.Packages[i].Path, workspace)
+		portable.Packages[i].Path = portablePath(portable.Packages[i].Path, workspace, home)
 	}
 	f, err := os.Create(path)
 	if err != nil {
@@ -82,18 +83,30 @@ func LoadLockfile(path string) (*Lockfile, error) {
 	return &l, nil
 }
 
-// portablePath writes a path inside the workspace as ${RHO_WORKSPACE}/relative,
-// and leaves any other path as it was: a package outside the workspace has no
-// portable name, and pretending it did would point a reader somewhere false.
-func portablePath(path, workspace string) string {
-	if path == "" || workspace == "" || !filepath.IsAbs(path) {
+// portablePath writes a path inside the installation as ${RHO_HOME}/relative and
+// one inside the workspace as ${RHO_WORKSPACE}/relative, and leaves any other path
+// as it was: a package outside both has no portable name, and pretending it did
+// would point a reader somewhere false.
+func portablePath(path, workspace, home string) string {
+	if path == "" || !filepath.IsAbs(path) {
 		return path
 	}
-	relative, err := filepath.Rel(workspace, path)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return path
+	// The installation first: it can sit inside the workspace, and a module that
+	// was installed is the installation's, wherever the installation is.
+	for _, root := range []struct{ dir, token string }{
+		{home, "${" + paths.RhoHomeEnvVar + "}"},
+		{workspace, workspaceToken},
+	} {
+		if root.dir == "" {
+			continue
+		}
+		relative, err := filepath.Rel(root.dir, path)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		return root.token + "/" + filepath.ToSlash(relative)
 	}
-	return workspaceToken + "/" + filepath.ToSlash(relative)
+	return path
 }
 
 func parseLegacyLockfile(data string) (Lockfile, error) {

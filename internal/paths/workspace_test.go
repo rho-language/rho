@@ -53,3 +53,12 @@ func TestPlatformWorkspaceFallsBackToTheWorkspace(t *testing.T) {
 		t.Errorf("platform variable must win: %q", got)
 	}
 }
+
+func TestRhoHomeResolvesWithoutBeingSet(t *testing.T) {
+	t.Setenv("RHO_HOME", "")
+	t.Setenv("HOME", "/h")
+	got, err := Expand("${RHO_HOME}/modules", "")
+	if err != nil || got != "/h/.rho/modules" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
