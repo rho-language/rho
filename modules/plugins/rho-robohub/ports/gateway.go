@@ -11,7 +11,6 @@
 // REST_PORT, GATEWAY_MODE and GATEWAY_AREA.
 //
 // A project of this platform asks for it by name (`ports: [gateway]`).
-//
 package main
 
 import (
@@ -66,7 +65,6 @@ func gatewayHttpPost(url string, body string, timeoutMS int) bool {
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
-
 
 // The defaults a deployment overrides. A gateway on another machine names its
 // own device and its own collector; the defaults are the lab setup.

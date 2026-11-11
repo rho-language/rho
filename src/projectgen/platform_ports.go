@@ -10,10 +10,11 @@ import (
 	"rho/src/plugins"
 )
 
-// platformPortSuffix names a port file a platform's plugin ships: ports/NAME.go.txt.
-// It is not `.go`, so the plugin's own module does not compile it as part of
-// itself; it is Go that belongs to the project the port is generated into.
-const platformPortSuffix = ".go.txt"
+// platformPortSuffix names a port file a platform's plugin ships: ports/NAME.go.
+// The directory is a Go module of its own, so the plugin's module does not
+// compile it as part of itself, while an editor and `go vet` treat it as the Go
+// it is. Test files in it are the port's own and are never generated.
+const platformPortSuffix = ".go"
 
 // platformPorts reads the ports shipped by the plugins that serve the platform
 // a project is built for, by port name. A project that names no platform gets
@@ -35,7 +36,7 @@ func platformPorts(projectRoot string) map[string]string {
 		}
 		for _, entry := range entries {
 			name, isPort := strings.CutSuffix(entry.Name(), platformPortSuffix)
-			if !isPort || entry.IsDir() {
+			if !isPort || entry.IsDir() || strings.HasSuffix(name, "_test") {
 				continue
 			}
 			if data, readErr := os.ReadFile(filepath.Join(plugin.Root, "ports", entry.Name())); readErr == nil {

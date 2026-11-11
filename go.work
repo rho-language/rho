@@ -30,6 +30,7 @@ use (
 	./modules/plugins/rho-doc-api
 	./modules/plugins/rho-doc-toc
 	./modules/plugins/rho-robohub
+	./modules/plugins/rho-robohub/ports
 	./modules/plugins/rho-sql-sqlite
 	./modules/plugins/rho-test-gtest
 	./modules/plugins/rho-test-junit

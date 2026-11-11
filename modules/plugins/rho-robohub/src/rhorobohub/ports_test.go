@@ -154,7 +154,7 @@ func TestGatewayPortHonoursUplinkBind(t *testing.T) {
 // which a project's generator merges into the port file it writes.
 func readPort(t *testing.T, name string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "ports", name+".go.txt"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "ports", name+".go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,5 +196,19 @@ func TestTelemetryPortMaintenanceAndFaultsAreShipped(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the telemetry port does not contain %q", want)
 		}
+	}
+}
+
+// The ports are type-checked where they live: they are a Go module of their own,
+// so `go vet` in that directory is what proves a port compiles against the
+// contract its test file declares.
+func TestShippedPortsCompile(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	command := exec.Command("go", "vet", "./...")
+	command.Dir = filepath.Join("..", "..", "ports")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("go vet in ports/: %v\n%s", err, output)
 	}
 }

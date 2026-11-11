@@ -8,7 +8,7 @@ against that version.
 
 ## [0.2.2] - 2026-11-12
 
-Ships the `gateway` and `telemetry` ports (`ports/*.go.txt`), which the toolchain
+Ships the `gateway` and `telemetry` ports (`ports/*.go`, a Go module of its own), which the toolchain
 used to carry. A project of this platform that asks for them by name gets them
 from here, merged into its generated port file; the toolchain keeps only the
 ports every project may ask for. The package now includes `bindings/` and

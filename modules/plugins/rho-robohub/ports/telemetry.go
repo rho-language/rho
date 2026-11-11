@@ -7,7 +7,6 @@
 // the project's schema and opens the database.
 //
 // A project of this platform asks for it by name (`ports: [telemetry]`).
-//
 package main
 
 import (
@@ -32,13 +31,13 @@ import (
 // the project's own, applied by the sql port before the first poll.
 
 var (
-	telemetryMu          sync.Mutex
-	telemetryDB          SqlDb
-	telemetryReady       bool
-	telemetryDBPath      string
-	telemetryLastPrune   int64
-	telemetryLastCheck   int64
-	telemetryLastVacuum  int64
+	telemetryMu         sync.Mutex
+	telemetryDB         SqlDb
+	telemetryReady      bool
+	telemetryDBPath     string
+	telemetryLastPrune  int64
+	telemetryLastCheck  int64
+	telemetryLastVacuum int64
 )
 
 // telemetryOpen opens the project's telemetry database and applies its schema.
@@ -708,9 +707,9 @@ func telemetryPrune(project string, rawDays uint32, minuteDays uint32, hourDays 
 	}
 	telemetryLastPrune = time.Now().UnixMilli()
 	return telemetryJSON(map[string]any{
-		"ok": true,
+		"ok":      true,
 		"removed": rawRemoved + minuteRemoved + hourRemoved,
-		"raw": rawRemoved, "minute": minuteRemoved, "hour": hourRemoved,
+		"raw":     rawRemoved, "minute": minuteRemoved, "hour": hourRemoved,
 		"before_ms": rawBefore,
 	})
 }
@@ -735,7 +734,7 @@ func telemetryCheckpoint(mode string) string {
 		return telemetryError("unknown checkpoint mode")
 	}
 	var busy, log, checkpointed int64
-	if err := handle.QueryRow("PRAGMA wal_checkpoint(" + mode + ")").Scan(&busy, &log, &checkpointed); err != nil {
+	if err := handle.QueryRow("PRAGMA wal_checkpoint("+mode+")").Scan(&busy, &log, &checkpointed); err != nil {
 		return telemetryError("the WAL checkpoint failed")
 	}
 	telemetryLastCheck = time.Now().UnixMilli()
@@ -809,15 +808,15 @@ func telemetryStorageStatus(project string) string {
 		return value
 	}
 	return telemetryJSON(map[string]any{
-		"ok": true,
+		"ok":       true,
 		"db_bytes": dbBytes, "wal_bytes": walBytes, "free_bytes": freeBytes,
-		"raw_rows": count("SELECT COUNT(*) FROM telemetry_reading WHERE project = ?"),
-		"minute_rows": count("SELECT COUNT(*) FROM telemetry_rollup_1m WHERE project = ?"),
-		"hour_rows": count("SELECT COUNT(*) FROM telemetry_rollup_1h WHERE project = ?"),
-		"fault_rows": count("SELECT COUNT(*) FROM telemetry_fault WHERE project = ?"),
-		"last_prune_ms": telemetryLastPrune,
+		"raw_rows":           count("SELECT COUNT(*) FROM telemetry_reading WHERE project = ?"),
+		"minute_rows":        count("SELECT COUNT(*) FROM telemetry_rollup_1m WHERE project = ?"),
+		"hour_rows":          count("SELECT COUNT(*) FROM telemetry_rollup_1h WHERE project = ?"),
+		"fault_rows":         count("SELECT COUNT(*) FROM telemetry_fault WHERE project = ?"),
+		"last_prune_ms":      telemetryLastPrune,
 		"last_checkpoint_ms": telemetryLastCheck,
-		"last_vacuum_ms": telemetryLastVacuum,
+		"last_vacuum_ms":     telemetryLastVacuum,
 	})
 }
 
