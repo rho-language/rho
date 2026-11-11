@@ -69,6 +69,11 @@ type PackageSpec struct {
 	Interface []string
 	// Require lists the paths that must exist.
 	Require []string
+	// KeepSources lists the included directories whose Go files travel in the
+	// package. Go sources are left out by default, because a command is shipped
+	// prebuilt; a directory that is Go *as data* — the ports a platform plugin
+	// hands to the projects it serves — is the exception, and says so here.
+	KeepSources []string
 }
 
 type ModuleYAML struct {
@@ -112,6 +117,11 @@ func readPackageSpec(root yaml.Value) PackageSpec {
 			spec.Require = append(spec.Require, item.Str)
 		}
 	}
+	for _, item := range section.Map["keep_sources"].List {
+		if item.Str != "" {
+			spec.KeepSources = append(spec.KeepSources, item.Str)
+		}
+	}
 	return spec
 }
 
@@ -132,6 +142,7 @@ func (m ModuleYAML) Layout() PackageLayout {
 	layout := LayoutFor(m.Module.Type).WithOverrides(
 		m.Package.Kind, m.Package.Binary, m.Package.HasBinary,
 		m.Package.ArtifactDir, m.Package.Include, m.Package.Require)
+	layout.KeepSources = m.Package.KeepSources
 
 	// A package with a declared interface is a library: it carries the header
 	// and nothing else. The implementation is supplied by a port, so shipping

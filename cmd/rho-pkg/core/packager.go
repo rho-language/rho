@@ -135,6 +135,9 @@ type PackageLayout struct {
 	// are not needed in an installed component, and leaving them out means
 	// there is nothing there for someone to edit.
 	Exclude []string
+	// KeepSources are the included directories whose Go files are packaged
+	// despite Exclude (test files still are not).
+	KeepSources []string
 }
 
 // layouts are the defaults, per module kind. A manifest may override any of them
@@ -362,11 +365,15 @@ func CollectLayoutFiles(dir string, layout PackageLayout) ([]string, error) {
 			}
 			continue
 		}
+		keep := containsPath(layout.KeepSources, entry)
 		filepath.Walk(path, func(walked string, walkedInfo os.FileInfo, walkErr error) error {
 			if walkErr != nil || walkedInfo.IsDir() || seen[walked] {
 				return nil
 			}
-			if excludedExtension(walked, exclude) {
+			if keep && strings.HasSuffix(walked, "_test.go") {
+				return nil
+			}
+			if excludedExtension(walked, exclude) && !(keep && filepath.Ext(walked) == ".go") {
 				return nil
 			}
 			out = append(out, walked)
@@ -375,6 +382,15 @@ func CollectLayoutFiles(dir string, layout PackageLayout) ([]string, error) {
 		})
 	}
 	return out, nil
+}
+
+func containsPath(list []string, entry string) bool {
+	for _, item := range list {
+		if filepath.Clean(item) == filepath.Clean(entry) {
+			return true
+		}
+	}
+	return false
 }
 
 // excludedExtension reports whether a path carries an extension the layout

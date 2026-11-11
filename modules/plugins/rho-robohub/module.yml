@@ -21,7 +21,7 @@
 module:
   name: rho-robohub
   type: plugin
-  version: 0.2.2
+  version: 0.2.3
   author: Aurel Miron
   description: Maps the RoboHub platform's target, configuration, C and flashing conventions onto this toolchain's contracts
 
@@ -121,6 +121,10 @@ package:
     # `rho protocol generate --platform` reads, and the Go ports a project of this
     # platform may ask for.
     - bindings
+    - ports
+  # The ports are Go, shipped as data for the projects this platform serves;
+  # sources are otherwise left out because a command is shipped prebuilt.
+  keep_sources:
     - ports
   require:
     - module.yml

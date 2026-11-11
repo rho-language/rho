@@ -6,7 +6,7 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
-## [0.2.2] - 2026-11-12
+## [0.2.3] - 2026-11-12
 
 Ships the `gateway` and `telemetry` ports (`ports/*.go`, a Go module of its own), which the toolchain
 used to carry. A project of this platform that asks for them by name gets them
