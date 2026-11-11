@@ -36,9 +36,14 @@ func TestPreviousIDsAreChecked(t *testing.T) {
 	if err := requireModuleID(same, "module"); err == nil || !strings.Contains(err.Message, "current id") {
 		t.Fatalf("the current id as a previous id was accepted: %v", err)
 	}
-	bad := load("module:\n  name: x\n  id: acme.relay\n  previous_ids:\n    - Old\n")
+	bad := load("module:\n  name: x\n  id: acme.relay\n  previous_ids:\n    - old one\n")
 	if requireModuleID(bad, "module") == nil {
-		t.Fatal("a malformed previous id was accepted")
+		t.Fatal("a previous id with whitespace was accepted")
+	}
+	// What a module used to be called was valid under the rule of its day.
+	legacy := load("module:\n  name: x\n  id: acme.relay\n  previous_ids:\n    - robohub-pico\n")
+	if err := requireModuleID(legacy, "module"); err != nil {
+		t.Fatalf("a one-segment previous id was refused: %v", err.Message)
 	}
 }
 

@@ -246,7 +246,7 @@ func requireModuleID(data yaml.Value, moduleType string) *ValidationError {
 	}
 	if module.Kind == yaml.KindMap {
 		for _, previous := range module.Map["previous_ids"].List {
-			if err := CheckModuleID(previous.Str); err != nil {
+			if err := CheckPreviousID(previous.Str); err != nil {
 				return &ValidationError{Path: "module.previous_ids", Message: err.Error(), Severity: SeverityError}
 			}
 			if previous.Str == id {
@@ -272,6 +272,16 @@ func CheckModuleID(id string) error {
 		if !moduleIDSegment(segment) {
 			return fmt.Errorf("module.id %q: %q must be lowercase letters and digits, optionally joined by single '-' or '_'", id, segment)
 		}
+	}
+	return nil
+}
+
+// CheckPreviousID reports whether a previous id is a usable token. It is not held
+// to the format a current id is: it names what the module used to be called, and
+// that was valid under whatever rule applied when it was written.
+func CheckPreviousID(id string) error {
+	if id == "" || strings.ContainsAny(id, " \t\n/") {
+		return fmt.Errorf("previous id %q must be one token with no whitespace or '/'", id)
 	}
 	return nil
 }

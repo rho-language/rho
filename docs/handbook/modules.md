@@ -147,6 +147,30 @@ A plugin that names no contract is offered to every run of its component. That i
 deliberate: a component whose plugins are all of one kind has no reason to name
 them, and a rule with no failure behind it is only an obstacle.
 
+## Module identity
+
+`module.name` is what a person reads. `module.id` is what a registry, a lock file
+and a saved plan refer to the module by, so it is declared by the module's author
+and kept: two or more lowercase dotted segments, a namespace and a name.
+
+```yaml
+module:
+  name: robohub-driver-ds18b20
+  id: robohub.driver.ds18b20
+  previous_ids:
+    - robohub-drivers.drivers.temperature.ds18b20
+```
+
+It is not the repository and folder the module lives in. Those are renamed for
+reasons that have nothing to do with what the module is, and an id built from them
+changes with them. A rename of the module itself is recorded in `previous_ids`, so
+what refers to an old id still resolves. A previous id is only a clean token: it
+was valid under the rule of its day.
+
+`rho module ids [dir...]` reads every `module.yml` under the directories, lists the
+ids, and fails on a malformed id, two modules with one id, or an id that is also
+another module's previous id.
+
 ## Paths and the workspace
 
 A manifest that has to reach a sibling checkout does not name a place on the

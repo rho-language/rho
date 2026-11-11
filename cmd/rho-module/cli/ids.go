@@ -76,7 +76,7 @@ func Ids(args []string) error {
 				malformed = append(malformed, fmt.Sprintf("%s: %v", path, idErr))
 			}
 			for _, previous := range found.Previous {
-				if idErr := schema.CheckModuleID(previous); idErr != nil {
+				if idErr := schema.CheckPreviousID(previous); idErr != nil {
 					malformed = append(malformed, fmt.Sprintf("%s: previous id: %v", path, idErr))
 				}
 			}
