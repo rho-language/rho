@@ -1,6 +1,11 @@
 # Standalone deployment package, produced by ./scripts/build.sh
 /deploy/
 
+# The toolchain's own binaries. They are built from this tree (scripts/check.sh,
+# `go build -o ./bin/rho ./cmd/rho`) and installed with `rho install --update`; a
+# committed copy is a copy that stops matching the source the moment it changes.
+/bin/
+
 # CMake build output
 /build/
 /build-*/
