@@ -241,10 +241,9 @@ func writeHalConf(project string, spec rhtarget.Spec) error {
 	if !ok {
 		return fmt.Errorf("this build is for %s, but no dependency declares a vendor tree to put %s in", spec.Name, name)
 	}
-	if _, err := os.Stat(destination); err == nil {
-		// Already there. Left as it is rather than regenerated, because it is a
-		// file a person may have looked at and a build that overwrites it every
-		// time is a build nobody will ever edit one.
+	existing, readErr := os.ReadFile(destination)
+	if readErr == nil && !strings.Contains(string(existing), halConfGeneratedMark) {
+		// A file someone wrote by hand is theirs, and is left as it is.
 		return nil
 	}
 
@@ -254,6 +253,13 @@ func writeHalConf(project string, spec rhtarget.Spec) error {
 	}
 	enabled := halModulesEnabled(cDependencyRoots(project))
 	content := deriveHalConf(string(source), name, enabled, spec.Defines)
+	// One this generator wrote is written again whenever what it is derived from
+	// has changed (a driver the platform now enables, a clock the target now
+	// names), as its own header promises; otherwise a platform that enabled a
+	// driver would keep building with it switched off.
+	if readErr == nil && string(existing) == content {
+		return nil
+	}
 
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
@@ -285,6 +291,10 @@ func vendorIncludeFor(project, name string) (string, bool) {
 // `_TEMPLATE_` in it and which would collide with the other families' headers if
 // they were all on one include path; the driver enables; and the clock values the
 // target spec declared.
+// halConfGeneratedMark is in the header of every configuration this generator
+// writes, and is how it tells its own file from one a person wrote.
+const halConfGeneratedMark = "written by rho-target from the vendor's"
+
 func deriveHalConf(template, name string, enabled, defines []string) string {
 	family := strings.TrimSuffix(name, halConfSuffix)
 	guard := strings.ToUpper(family) + "_CONF_H"

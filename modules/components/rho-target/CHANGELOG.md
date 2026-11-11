@@ -6,6 +6,14 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.1.10] - 2026-11-12
+
+A HAL configuration this component wrote is written again when what it is derived
+from changes, as its own header says: a driver the platform's manifest enables
+later is enabled at the next build, where before the first file written stayed
+for good. A configuration written by hand (one without the generated header) is
+still left alone.
+
 ## [0.1.9] - 2026-11-12
 
 A project that keeps targets of its own names the directory in its own manifest
