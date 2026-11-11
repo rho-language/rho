@@ -1,0 +1,78 @@
+#
+# rho-test-ctest — run the CTest suites a project declares.
+#
+# A plugin for the test runner. A C library's host tests are C, registered with
+# CMake and run with CTest, and a project says so once in its suite manifest. The
+# runner asks which suites a plugin knows how to run, and this one answers for the
+# ones of kind `ctest`: it resolves each into configure, build, run and report
+# steps, so `rho test` is the one entry point and nobody types `cmake` or `ctest`
+# to test a platform.
+#
+# What it reads for itself is CTest's JUnit report, because that is where CTest
+# states its results unambiguously, and a run that found no tests is an error
+# rather than a pass.
+#
+# @project Rho Programming Language
+# @license Apache-2.0
+#
+
+module:
+  name: rho-test-ctest
+  type: plugin
+  version: 0.1.0
+  author: Aurel Miron
+  description: Runs a project's CTest suites through the test runner: configure, build, run and read the JUnit report
+
+main: rho-test-ctest
+
+features:
+  - test
+  - ctest
+  - cmake
+
+# The component this plugin plugs into, and the hooks of it this plugin answers.
+# A run of that component is the only thing that ever calls it, and every hook
+# here has to be one the component offers.
+extends: rho-test
+
+# What this plugin is for, as a contract of rho-test. A plugin says what
+# it provides rather than leaving a reader to infer it from the hooks it
+# answers: two plugins may answer the same hook and be unrelated things.
+implements:
+  - discover
+
+hooks:
+  # Once, over what the project declared.
+  - discover
+
+# The executable that answers the hook. The request arrives as JSON on standard
+# input and the suites to run are read back as JSON from standard output.
+commands:
+  - name: ctest
+    run: rho-test-ctest
+    hook: discover
+
+# What this module is for, in the form the documentation generator reads.
+# A module that says nothing here is still documented — the README it
+# published is read — but a module that says so is addressed by its own
+# name, which is what lets another page link to it.
+docs:
+  title: CTest suites
+  section: plugins
+  order: "13"
+  index: docs/index.md
+  sources:
+    - docs/index.md
+
+package:
+  kind: plugin
+  interface: []
+  include:
+    - module.yml
+    - README.md
+    - CHANGELOG.md
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src

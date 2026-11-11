@@ -46,7 +46,7 @@ by hand.
 - `src/ide/` - What an editor reads, rendered from what a project declares (`rho ide`)
 - `src/sysdep/` - What a module needs from the machine: `system_deps`, versions, the fetched-toolchain layout
 - `src/privilege/` - Saying something when a run has more authority than it needs
-- `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-gtest`, `rho-test-junit`
+- `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-ctest`, `rho-test-gtest`, `rho-test-junit`
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
 `modules/components/` is a component: published, installed and dispatched to by

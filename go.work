@@ -33,6 +33,7 @@ use (
 	./modules/plugins/rho-robohub/ports
 	./modules/plugins/rho-sql-sqlite
 	./modules/plugins/rho-test-gtest
+	./modules/plugins/rho-test-ctest
 	./modules/plugins/rho-test-junit
 )
 
@@ -74,6 +75,7 @@ replace (
 	github.com/rho/rho-robohub v0.0.0 => ./modules/plugins/rho-robohub
 	github.com/rho/rho-sql-sqlite v0.0.0 => ./modules/plugins/rho-sql-sqlite
 	github.com/rho/rho-test-gtest v0.0.0 => ./modules/plugins/rho-test-gtest
+	github.com/rho/rho-test-ctest v0.0.0 => ./modules/plugins/rho-test-ctest
 	github.com/rho/rho-test-junit v0.0.0 => ./modules/plugins/rho-test-junit
 	rho v0.0.0 => ./
 )

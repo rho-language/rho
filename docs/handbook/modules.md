@@ -180,8 +180,8 @@ checkouts elsewhere.
 
 ```sh
 $ rho env
-RHO_HOME           /home/me/.rho  (default)
-RHO_WORKSPACE      /home/me/projects  (the parent of the repository at /home/me/projects/app)
+RHO_HOME           /root/.rho  (default)
+RHO_WORKSPACE      /work  (the parent of the repository at /work/app)
 ```
 
 A path dependency that is not there is fetched into that path only when it is
