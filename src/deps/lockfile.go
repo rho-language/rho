@@ -4,8 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"rho/internal/paths"
 )
+
+// workspaceToken is how a lockfile writes a path inside the workspace: the
+// lockfile is committed, and a path on the machine that wrote it is true for one
+// person. Read back, it is resolved against the reader's own workspace.
+const workspaceToken = "${" + paths.WorkspaceEnvVar + "}"
 
 type LockedPackage struct {
 	Name      string
@@ -29,13 +37,19 @@ func (l *Lockfile) Save(path string) error {
 	if err := validatePackages(l.Packages); err != nil {
 		return err
 	}
+	// The record is written portable; the lockfile in memory is left as it was.
+	portable := &Lockfile{Packages: append([]LockedPackage{}, l.Packages...)}
+	workspace, _ := paths.Workspace(filepath.Dir(path))
+	for i := range portable.Packages {
+		portable.Packages[i].Path = portablePath(portable.Packages[i].Path, workspace)
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create lockfile: %w", err)
 	}
 	defer f.Close()
 
-	if err := json.NewEncoder(f).Encode(l); err != nil {
+	if err := json.NewEncoder(f).Encode(portable); err != nil {
 		return fmt.Errorf("write lockfile: %w", err)
 	}
 	return f.Close()
@@ -58,7 +72,28 @@ func LoadLockfile(path string) (*Lockfile, error) {
 	if err := validatePackages(l.Packages); err != nil {
 		return nil, err
 	}
+	for i := range l.Packages {
+		expanded, err := paths.Expand(l.Packages[i].Path, filepath.Dir(path))
+		if err != nil {
+			return nil, fmt.Errorf("lockfile %s: %w", l.Packages[i].Name, err)
+		}
+		l.Packages[i].Path = expanded
+	}
 	return &l, nil
+}
+
+// portablePath writes a path inside the workspace as ${RHO_WORKSPACE}/relative,
+// and leaves any other path as it was: a package outside the workspace has no
+// portable name, and pretending it did would point a reader somewhere false.
+func portablePath(path, workspace string) string {
+	if path == "" || workspace == "" || !filepath.IsAbs(path) {
+		return path
+	}
+	relative, err := filepath.Rel(workspace, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return workspaceToken + "/" + filepath.ToSlash(relative)
 }
 
 func parseLegacyLockfile(data string) (Lockfile, error) {
