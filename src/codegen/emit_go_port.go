@@ -73,6 +73,10 @@ type portGenerator func(PortContext) (imports []string, body string)
 // shapes the generated service reads the router and the pipeline the project
 // declared, so the code it emits is the code the project asked for.
 type PortContext struct {
+	// PlatformPorts are the ports the project's platform plugin ships, by port
+	// name: each is a complete Go file in package main. A name that is not a
+	// built-in port is looked up here.
+	PlatformPorts map[string]string
 	// IR is the compiled Rho module the port supplies implementations for.
 	IR ir.ModuleIR
 	// ModuleName is the Rho module name, for banners and messages.
@@ -170,12 +174,10 @@ var portGenerators = map[string]portGenerator{
 	"docemit":     emitDocPort,
 	"docstore":    emitDocStorePort,
 	"fsstore":     emitFSStorePort,
-	"gateway":     emitGatewayPort,
 	"logemit":     emitLogPort,
 	"httproute":   emitHTTPRoutePort,
 	"openapiemit": emitOpenAPIPort,
 	"sql":         emitSQLPort,
-	"telemetry":   emitTelemetryPort,
 }
 
 // RegisteredPorts lists the available port names.
@@ -203,13 +205,22 @@ func EmitGoPorts(ctx PortContext, ports []string) string {
 	var body strings.Builder
 
 	for _, name := range ports {
-		generator, ok := portGenerators[name]
-		if !ok {
+		var needed []string
+		var portBody string
+		if generator, ok := portGenerators[name]; ok {
+			needed, portBody = generator(ctx)
+		} else if source, ok := ctx.PlatformPorts[name]; ok {
+			var err error
+			if needed, portBody, err = SplitPortSource(name, source); err != nil {
+				// A platform's port that is not Go is a fault in the plugin that
+				// shipped it; the generated file says so rather than omitting it.
+				portBody = "// " + strings.ReplaceAll(err.Error(), "\n", " ") + "\n"
+			}
+		} else {
 			// An unknown port is reported by the generator, which can name the
 			// available ones; nothing is emitted here.
 			continue
 		}
-		needed, portBody := generator(ctx)
 		for _, name := range needed {
 			imports[name] = true
 		}

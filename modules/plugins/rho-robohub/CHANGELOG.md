@@ -6,6 +6,14 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.2.2] - 2026-11-12
+
+Ships the `gateway` and `telemetry` ports (`ports/*.go.txt`), which the toolchain
+used to carry. A project of this platform that asks for them by name gets them
+from here, merged into its generated port file; the toolchain keeps only the
+ports every project may ask for. The package now includes `bindings/` and
+`ports/`.
+
 ## [0.2.1] - 2026-11-12
 
 Ships `bindings/c-bus.yml`, the types and functions of robohub-core's event bus

@@ -515,7 +515,11 @@ func generatePorts(ctx Context, target Target) error {
 	if len(ports) == 0 {
 		return nil
 	}
-	available := availablePorts(target.Emitter)
+	shipped := map[string]string{}
+	if target.Emitter == "go" {
+		shipped = platformPorts(ctx.ProjectRoot)
+	}
+	available := append(availablePorts(target.Emitter), sortedPortNames(shipped)...)
 	for _, name := range ports {
 		if !containsString(available, name) {
 			return fmt.Errorf("target %q: unknown port %q (available: %s)",
@@ -531,6 +535,7 @@ func generatePorts(ctx Context, target Target) error {
 	}
 
 	content := codegen.EmitGoPorts(codegen.PortContext{
+		PlatformPorts:    shipped,
 		IR:               ctx.IR,
 		ModuleName:       ctx.ModuleName,
 		ProjectRoot:      ctx.ProjectRoot,

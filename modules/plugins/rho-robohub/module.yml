@@ -21,7 +21,7 @@
 module:
   name: rho-robohub
   type: plugin
-  version: 0.2.1
+  version: 0.2.2
   author: Aurel Miron
   description: Maps the RoboHub platform's target, configuration, C and flashing conventions onto this toolchain's contracts
 
@@ -117,6 +117,11 @@ package:
     - README.md
     - CHANGELOG.md
     - src
+    # What the platform ships to the toolchain: the C bus and Rho framing bindings
+    # `rho protocol generate --platform` reads, and the Go ports a project of this
+    # platform may ask for.
+    - bindings
+    - ports
   require:
     - module.yml
     - src

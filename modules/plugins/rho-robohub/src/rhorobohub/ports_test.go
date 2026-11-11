@@ -1,5 +1,5 @@
 //
-// @file emit_go_gatewayport_test.go
+// @file ports_gateway_test.go
 // @brief Tests for the gateway port's generated host primitives.
 //
 // @project Rho Programming Language
@@ -9,18 +9,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package codegen
+package rhorobohub
 
 import (
 	"context"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"rho/src/ir"
 )
 
 // The gateway port supplies exactly what a Rho gateway declares: the serial
@@ -28,8 +28,7 @@ import (
 // the deployment's mode and area. A function the Rho source calls but the port
 // does not define is a link error, so each is named here.
 func TestGatewayPortSuppliesTheGateway(t *testing.T) {
-	imports, body := emitGatewayPort(PortContext{IR: ir.ModuleIR{Name: "gateway"}})
-	out := strings.Join(imports, "\n") + "\n" + body
+	out := readPort(t, "gateway")
 
 	for _, want := range []string{
 		"func gatewayConfig()",
@@ -87,12 +86,7 @@ func TestGatewayOutboxAppendFetchAck(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("the go toolchain is not on the path")
 	}
-	imports, body := emitGatewayPort(PortContext{IR: ir.ModuleIR{Name: "gateway"}})
-	port := "package main\n\nimport (\n"
-	for _, one := range imports {
-		port += "\t" + one + "\n"
-	}
-	port += ")\n\n" + body
+	port := readPort(t, "gateway")
 
 	root := t.TempDir()
 	write := func(name, content string) {
@@ -145,14 +139,62 @@ func main() {
 	}
 }
 
-
 // The uplink must be able to confine itself to one interface, so a deployment
 // on a shared network can keep relay dial-ins off it.
 func TestGatewayPortHonoursUplinkBind(t *testing.T) {
-	port := EmitGoPorts(PortContext{ModuleName: "gateway"}, []string{"gateway"})
+	port := readPort(t, "gateway")
 	for _, part := range []string{"UPLINK_BIND", `bind + ":" + strconv.FormatUint`} {
 		if !strings.Contains(port, part) {
 			t.Errorf("gateway port missing %q", part)
+		}
+	}
+}
+
+// readPort reads a port this plugin ships: a complete Go file in package main,
+// which a project's generator merges into the port file it writes.
+func readPort(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "ports", name+".go.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// A port is Go that parses, in package main: that is what the generator needs
+// to split it into imports and declarations.
+func TestShippedPortsParseAsGo(t *testing.T) {
+	for _, name := range []string{"gateway", "telemetry"} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, name, readPort(t, name), parser.ParseComments)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if file.Name.Name != "main" {
+			t.Errorf("%s is in package %s", name, file.Name.Name)
+		}
+	}
+}
+
+func TestTelemetryPortMaintenanceAndFaultsAreShipped(t *testing.T) {
+	body := readPort(t, "telemetry")
+	for _, want := range []string{
+		"func telemetryCheckpoint(mode string) string",
+		"PRAGMA wal_checkpoint(",
+		"LIMIT 5000",
+		"func telemetryVacuum(mode string) string",
+		"PRAGMA incremental_vacuum",
+		"func telemetryStorageStatus(project string) string",
+		"telemetry_fault",
+		"func telemetryFaultMaxId(project string) uint32",
+		"func telemetryFaultNew(project string, afterID uint32, limit uint32) string",
+		"func telemetryFaultList(project string, sinceText string, limit uint32) string",
+		"func telemetryFaultClear(project string, id uint32) string",
+		"func telemetryFaultPrune(project string, days uint32) string",
+		"func telemetryFaultRows(project string, limit uint32) string",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the telemetry port does not contain %q", want)
 		}
 	}
 }
