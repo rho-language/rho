@@ -117,11 +117,15 @@ func TestLoadYAMLManifestRejectsOrphanDependency(t *testing.T) {
 	}
 }
 
-func TestLoadYAMLManifestRejectsUnknownType(t *testing.T) {
+// The loader reads every module in a graph, including the ones whose type an
+// ecosystem defines. It validates the shape every manifest has and the rules the
+// toolchain owns; the contract that knows the ecosystem's word is applied by the
+// command that validates or publishes the module.
+func TestLoadYAMLManifestAcceptsAnEcosystemType(t *testing.T) {
 	path := writeManifest(t, "module:\n  name: app\n  type: bogus\n  version: 1.0.0\nmain: src/main.rho\n")
 
-	if _, err := LoadManifest(path); err == nil {
-		t.Fatal("expected error for unknown module type")
+	if _, err := LoadManifest(path); err != nil {
+		t.Fatalf("expected an ecosystem type to load, got: %v", err)
 	}
 }
 

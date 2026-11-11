@@ -56,7 +56,7 @@ func PublishModule(dir string) error {
 	// The manifest is loaded rather than rebuilt from metadata, so every
 	// section the packager reads travels with it. Rebuilding it dropped the
 	// `package:` section, which is what decides whether a command is built.
-	pkgManifest, err := pkgcore.LoadModuleYAML(filepath.Join(dir, "module.yml"))
+	pkgManifest, err := pkgcore.LoadModuleYAMLStrict(filepath.Join(dir, "module.yml"))
 	if err != nil {
 		return fmt.Errorf("cannot load module.yml: %w", err)
 	}
@@ -178,7 +178,7 @@ func packModuleSources(dir string, meta ModuleInfo) (string, error) {
 
 // mustManifest loads a manifest for a path that is known to have one.
 func mustManifest(dir string) pkgcore.ModuleYAML {
-	manifest, err := pkgcore.LoadModuleYAML(filepath.Join(dir, "module.yml"))
+	manifest, err := pkgcore.LoadModuleYAMLStrict(filepath.Join(dir, "module.yml"))
 	if err != nil {
 		return pkgcore.ModuleYAML{}
 	}
@@ -188,7 +188,7 @@ func mustManifest(dir string) pkgcore.ModuleYAML {
 // collectModuleFiles gathers what the source archive holds, which is the same
 // layout the binary package uses, so the two cannot disagree.
 func collectModuleFiles(dir string) ([]string, error) {
-	manifest, err := pkgcore.LoadModuleYAML(filepath.Join(dir, "module.yml"))
+	manifest, err := pkgcore.LoadModuleYAMLStrict(filepath.Join(dir, "module.yml"))
 	if err != nil {
 		return nil, err
 	}
@@ -290,12 +290,18 @@ func uploadModule(meta ModuleInfo, dir, pkgPath, sourceArchive string) error {
 /* -------------------------------------------------------------------------- */
 
 func installLocally(meta pkgcore.ModuleYAML, pkgPath, sourceArchive string) error {
-	// Install to ~/.rho/modules/installed/<type>/
+	// Install to ~/.rho/modules/installed/<kind>/, where the kind is the index
+	// kind the module is resolved by, not the ecosystem's word for it. A
+	// driver and a device install as libraries, which is what a project links.
+	kind, err := installKindFor(meta.Module.Type)
+	if err != nil {
+		return err
+	}
 	modulesDir, err := paths.GetModulesInstalledPath()
 	if err != nil {
 		return err
 	}
-	moduleDir := filepath.Join(modulesDir, meta.Module.Type, fmt.Sprintf("%s@%s", meta.Module.Name, meta.Module.Version))
+	moduleDir := filepath.Join(modulesDir, kind, fmt.Sprintf("%s@%s", meta.Module.Name, meta.Module.Version))
 
 	// The target is replaced rather than merged. Publishing a component in a
 	// different form, or one whose file list changed, must not leave the
@@ -319,7 +325,7 @@ func installLocally(meta pkgcore.ModuleYAML, pkgPath, sourceArchive string) erro
 	}
 
 	// Update registry.yaml
-	if err := updateRegistryForPublish(meta); err != nil {
+	if err := updateRegistryForPublish(meta, kind); err != nil {
 		return fmt.Errorf("failed to update registry: %w", err)
 	}
 
@@ -327,7 +333,7 @@ func installLocally(meta pkgcore.ModuleYAML, pkgPath, sourceArchive string) erro
 	return nil
 }
 
-func updateRegistryForPublish(manifest pkgcore.ModuleYAML) error {
+func updateRegistryForPublish(manifest pkgcore.ModuleYAML, kind string) error {
 	registryPath, err := paths.GetRegistryPath()
 	if err != nil {
 		return err
@@ -350,11 +356,11 @@ func updateRegistryForPublish(manifest pkgcore.ModuleYAML) error {
 	}
 
 	// Add to version list (avoid duplicates)
-	addVersionEntry(registry, manifest.Module.Type, entry)
+	addVersionEntry(registry, kind, entry)
 
 	// If no active version for this module, make this one active
-	if !hasActiveVersion(registry, manifest.Module.Type, manifest.Module.Name) {
-		setActiveVersion(registry, manifest.Module.Type, manifest.Module.Name, manifest.Module.Version)
+	if !hasActiveVersion(registry, kind, manifest.Module.Name) {
+		setActiveVersion(registry, kind, manifest.Module.Name, manifest.Module.Version)
 	}
 
 	// Write registry

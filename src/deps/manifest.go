@@ -774,9 +774,14 @@ func loadYAMLManifest(data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("parse module.yml: %w", err)
 	}
 
-	// Schema validation
+	// Schema validation. This is the loader for every module in a graph,
+	// including the ones whose type an ecosystem defines, so it validates the
+	// shape every manifest has and the rules the toolchain itself owns. The
+	// ecosystem's type contract is applied by the command that publishes or
+	// validates a module, which is where the plugin that carries it is known.
 	moduleType := yamlString(doc.Map["module"], "type")
-	scResult := schema.ValidateModuleManifest(doc, moduleType)
+	scResult := schema.ValidateModuleManifestPackage(doc)
+	scResult = append(scResult, schema.ValidateModuleRules(doc, moduleType)...)
 	if scResult.HasErrors() {
 		return nil, fmt.Errorf("schema validation failed:\n%s", scResult.ErrorString())
 	}

@@ -126,7 +126,7 @@ func writeManifest(t *testing.T, content string) string {
 func TestLoadRejectsUnknownType(t *testing.T) {
 	path := writeManifest(t, "module:\n  name: app\n  type: bogus\n  version: 0.1.0\n\nmain: src/main.rho\n")
 
-	_, err := LoadModuleYAML(path)
+	_, err := LoadModuleYAMLStrict(path)
 	if err == nil {
 		t.Fatal("expected schema error for unknown module type")
 	}

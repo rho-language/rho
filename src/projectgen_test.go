@@ -380,7 +380,7 @@ func TestBuildTargetIDsWithoutManifest(t *testing.T) {
 // A manifest that exists but is broken must be reported, not silently ignored.
 func TestBuildTargetIDsRejectsBadManifest(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte("module:\n  type: not-a-type\n  name: x\n  version: 1.0.0\nmain: src/main.rho\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "module.yml"), []byte("module:\n  type: rho\n  version: 1.0.0\nmain: src/main.rho\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := BuildTargetIDs(root); err == nil {

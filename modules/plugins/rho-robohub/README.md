@@ -8,9 +8,9 @@ includes by name, how a board is programmed — none of that is Rho's, and all o
 it used to be written into the toolchain itself. That is what made Rho a language
 for one ecosystem rather than a language with a platform attached.
 
-It is here instead. This plugin fills the `platform` contract of four components
-at once, and runs only for a project whose module graph names `platform:
-robohub`.
+It is here instead. This plugin fills the `platform` contract of four toolchain
+components and the `module-manifest` contract of `rho-module`, and runs only for
+a project whose module graph names `platform: robohub`.
 
 ## What it maps
 
@@ -20,6 +20,7 @@ robohub`.
 | `rho-kconfig` | `render` | Nothing: the dialect already writes what RoboHub's C includes |
 | `rho-cimport` | `map` | Nothing: RoboHub's interfaces are C the generator already reads |
 | `rho-flash` | `flash` | Nothing: every board names its own flash command in its spec |
+| `rho-module` | `contract` | The module types and schemas RoboHub publishes |
 
 Three of the four are deliberately empty, and saying so is the contract being
 implemented rather than a stub: each is there for the day the platform has
@@ -61,6 +62,9 @@ extends:
   - component: rho-flash
     implements: [platform]
     hooks: [flash]
+  - component: rho-module
+    implements: [module-manifest]
+    hooks: [contract]
 
 commands:
   - name: target-spec

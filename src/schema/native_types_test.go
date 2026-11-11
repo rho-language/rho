@@ -1,11 +1,12 @@
 //
 // @file native_types_test.go
-// @brief Tests for which module types are native, and which declare a main.
+// @brief What a type is, when the type belongs to an ecosystem.
 //
-// The type of a module decides what a manifest has to say about it. A Rho
-// module is entered through a main; a component's or a plugin's main is a
-// binary built while packing it; a native module's is nothing at all, because
-// it is linked into a project rather than run.
+// The toolchain defines a small set of types and knows nothing about the rest.
+// An ecosystem adds its own in a module contract, and the toolchain validates
+// them without knowing what they mean. These tests are about that boundary: a
+// type the contract adds is accepted, the sections it requires are enforced,
+// and a native type declares no entry point.
 //
 // @project Rho Programming Language
 // @license Apache-2.0
@@ -13,140 +14,255 @@
 
 package schema
 
-import "testing"
+import (
+	"testing"
+
+	"rho/src/yaml"
+)
 
 /* -------------------------------------------------------------------------- */
-/*  platform is a module type                                                  */
+/*  The toolchain's own types                                                 */
 /* -------------------------------------------------------------------------- */
 
-// A platform is a first-class module type, not an `interfaces` module wearing a
-// different name. It is what implements the interfaces a `interfaces` module
-// declares, and a manifest that says `platform` has to be accepted rather than
-// refused for a value the schema has never heard of.
-func TestPlatformIsAValidModuleType(t *testing.T) {
-	for _, candidate := range ValidModuleTypes {
-		if candidate == "platform" {
-			return
+func TestCoreModuleTypesAreTheToolchainsOwn(t *testing.T) {
+	for _, moduleType := range []string{"rho", "module", "component", "plugin", "provider"} {
+		found := false
+		for _, candidate := range ValidModuleTypes {
+			if candidate == moduleType {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s is not a core module type; got %v", moduleType, ValidModuleTypes)
 		}
 	}
-	t.Errorf("platform is not a valid module type; got %v", ValidModuleTypes)
 }
 
-// A board's support package is a third thing again: it is not the platform,
-// which implements a whole family, and it is not the interfaces, which declare
-// what a platform implements. Collapsing it into `platform` would leave a
-// reader unable to tell which of a board's files are the family's driver code
-// and which are that one board's pin map.
-func TestPlatformBoardIsAValidModuleType(t *testing.T) {
-	for _, candidate := range ValidModuleTypes {
-		if candidate == "platform-board" {
-			return
-		}
-	}
-	t.Errorf("platform-board is not a valid module type; got %v", ValidModuleTypes)
-}
-
-/* -------------------------------------------------------------------------- */
-/*  a device driver is a module type, and so is its board                      */
-/* -------------------------------------------------------------------------- */
-
-// A driver is a layer of its own, between a platform and an application: code
-// for one device, written against the HAL a platform implements and the driver
-// interface its kind declares. It is not a platform, which implements a family
-// of peripherals, and it is not the interfaces, which declare what a platform
-// implements and carry no code.
-func TestDriverIsAValidModuleType(t *testing.T) {
-	for _, candidate := range ValidModuleTypes {
-		if candidate == "driver" {
-			return
-		}
-	}
-	t.Errorf("driver is not a valid module type; got %v", ValidModuleTypes)
-}
-
-// A driver board is an eval or breakout module's support package, the way a
-// platform-board is an MCU board's. It describes an IC on a carrier rather than
-// the carrier's MCU, so collapsing it into platform-board would leave a reader
-// unable to tell which pins are the module's and which are the board's.
-func TestDriverBoardIsAValidModuleType(t *testing.T) {
-	for _, candidate := range ValidModuleTypes {
-		if candidate == "driver-board" {
-			return
-		}
-	}
-	t.Errorf("driver-board is not a valid module type; got %v", ValidModuleTypes)
-}
-
-// A runtime is the layer an application is built on: the event bus, the
-// scheduler, the app lifecycle and the diagnostics a program runs its modules
-// with. It is native — compiled and linked, never launched — so it declares no
-// entry point, exactly as a platform does.
-func TestRuntimeIsAValidModuleType(t *testing.T) {
-	for _, candidate := range ValidModuleTypes {
-		if candidate == "runtime" {
-			return
-		}
-	}
-	t.Errorf("runtime is not a valid module type; got %v", ValidModuleTypes)
-}
-
-// A middleware plugs an outside system into the ecosystem — an RTOS, a
-// filesystem — by implementing a contract the interfaces declare. It is native:
-// linked in place of the default, never launched.
-func TestMiddlewareIsAValidModuleType(t *testing.T) {
-	for _, candidate := range ValidModuleTypes {
-		if candidate == "middleware" {
-			return
-		}
-	}
-	t.Errorf("middleware is not a valid module type; got %v", ValidModuleTypes)
-}
-
-/* -------------------------------------------------------------------------- */
-/*  native types declare no main                                               */
-/* -------------------------------------------------------------------------- */
-
-// A native module is linked into a project rather than run, so it declares no
-// entry point. The distinction is what lets a hardware platform be published
-// without inventing a file to call its main.
-func TestNativeTypesAreInterfacesAndPlatform(t *testing.T) {
-	for _, moduleType := range []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime", "middleware"} {
-		if !IsNativeType(moduleType) {
-			t.Errorf("%s is not a native type", moduleType)
-		}
+// An ecosystem's words are not the toolchain's. A contract adds them, and the
+// toolchain does not carry them when no contract is present.
+func TestAnEcosystemTypeIsNotACoreType(t *testing.T) {
+	for _, moduleType := range []string{"driver", "device", "platform", "collection"} {
 		if IsRhoSourceType(moduleType) {
-			t.Errorf("%s is both native and a Rho source type", moduleType)
+			t.Errorf("%s should not be a Rho source type", moduleType)
+		}
+		if ModuleAllows(moduleType) {
+			t.Errorf("%s should not be a core type", moduleType)
 		}
 	}
 }
 
-// The native types are exactly the ones that are not written in Rho. A type
-// that were both would have two contradictory rules about its main, and which
-// one applied would depend on which check ran first.
-func TestNoTypeIsBothNativeAndRhoSource(t *testing.T) {
-	for _, moduleType := range ValidModuleTypes {
-		if IsNativeType(moduleType) && IsRhoSourceType(moduleType) {
-			t.Errorf("%s is classified as both native and Rho source", moduleType)
+// ModuleAllows reports whether the toolchain's own schema names a type.
+func ModuleAllows(moduleType string) bool {
+	for _, candidate := range ValidModuleTypes {
+		if candidate == moduleType {
+			return true
 		}
 	}
+	return false
 }
 
 /* -------------------------------------------------------------------------- */
-/*  a Rho library's main is a file                                             */
+/*  An ecosystem adds a type                                                  */
 /* -------------------------------------------------------------------------- */
 
-// Only a Rho library names a source file that has to exist. A component's and a
-// plugin's main is a binary, so requiring the file for those refused every
-// plugin whose binary had not been built yet.
-func TestOnlyRhoLibrariesHaveASourceFileAsMain(t *testing.T) {
-	for _, moduleType := range []string{"rho", "module"} {
-		if !IsRhoLibraryType(moduleType) {
-			t.Errorf("%s should have a source file as its main", moduleType)
-		}
+const gadgetContract = `{
+  "version": 1,
+  "types": {
+    "gadget": {
+      "native": true,
+      "required": ["gadget", "build"],
+      "fields": [
+        {"name": "gadget", "required": true, "kind": "map", "fields": [
+          {"name": "kind", "required": true, "kind": "string", "allowed": ["sensor", "switch"]},
+          {"name": "transports", "required": true, "kind": "list", "item": {"kind": "string"}}
+        ]}
+      ]
+    }
+  }
+}`
+
+func loadGadgetContract(t *testing.T) *ModuleContract {
+	t.Helper()
+	contract, err := ParseModuleContract([]byte(gadgetContract))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, moduleType := range []string{"component", "plugin", "interfaces", "platform"} {
-		if IsRhoLibraryType(moduleType) {
-			t.Errorf("%s should not have a source file as its main", moduleType)
-		}
+	return contract
+}
+
+func TestAnEcosystemTypeIsAcceptedWithAContract(t *testing.T) {
+	src := `module:
+  name: a-gadget
+  type: gadget
+  version: 0.1.0
+build:
+  language: c
+gadget:
+  kind: sensor
+  transports: [gpio]
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ValidateModuleManifestWithContract(data, "gadget", loadGadgetContract(t))
+	if result.HasErrors() {
+		t.Fatalf("expected the contract's type to validate, got: %s", result.String())
+	}
+}
+
+func TestAnEcosystemTypeIsRefusedWithoutAContract(t *testing.T) {
+	src := `module:
+  name: a-gadget
+  type: gadget
+  version: 0.1.0
+build:
+  language: c
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifest(data, "gadget").HasErrors() {
+		t.Fatal("expected a type the toolchain does not define to be refused")
+	}
+}
+
+func TestAContractRequiresItsSections(t *testing.T) {
+	src := `module:
+  name: a-gadget
+  type: gadget
+  version: 0.1.0
+build:
+  language: c
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifestWithContract(data, "gadget", loadGadgetContract(t)).HasErrors() {
+		t.Fatal("expected a gadget without its gadget section to be refused")
+	}
+}
+
+func TestAContractValidatesItsFields(t *testing.T) {
+	src := `module:
+  name: a-gadget
+  type: gadget
+  version: 0.1.0
+build:
+  language: c
+gadget:
+  kind: spaceship
+  transports: [gpio]
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifestWithContract(data, "gadget", loadGadgetContract(t)).HasErrors() {
+		t.Fatal("expected a gadget kind outside the contract's enum to be refused")
+	}
+}
+
+// A native type is linked, not run, so a manifest that gives it a main says
+// two things at once.
+func TestANativeContractTypeDeclaresNoMain(t *testing.T) {
+	src := `module:
+  name: a-gadget
+  type: gadget
+  version: 0.1.0
+main: src/main.c
+build:
+  language: c
+gadget:
+  kind: sensor
+  transports: [gpio]
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifestWithContract(data, "gadget", loadGadgetContract(t)).HasErrors() {
+		t.Fatal("expected a native type with a main to be refused")
+	}
+}
+
+func TestContractMergeAddsTypes(t *testing.T) {
+	first := loadGadgetContract(t)
+	second := &ModuleContract{
+		Version: 1,
+		Types: map[string]TypeContract{
+			"widget": {Native: true, Required: []string{"build"}},
+		},
+	}
+	first.Merge(second)
+	if !first.Allows("gadget") || !first.Allows("widget") {
+		t.Fatalf("expected both types after merge, got %v", first.TypeNames())
+	}
+}
+
+func TestContractRejectsAnUnknownVersion(t *testing.T) {
+	if _, err := ParseModuleContract([]byte(`{"version":2,"types":{"gadget":{}}}`)); err == nil {
+		t.Fatal("expected an unsupported contract version to be refused")
+	}
+}
+
+// A package read from an archive is not re-litigated: the type it names belongs
+// to an ecosystem whose contract the installing machine may not carry. The
+// package was validated when it was published.
+func TestAPackageManifestAcceptsAnEcosystemType(t *testing.T) {
+	src := `module:
+  name: a-gadget
+  type: gadget
+  version: 0.1.0
+build:
+  language: c
+`
+	data, err := yaml.Load(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := ValidateModuleManifestPackage(data); result.HasErrors() {
+		t.Fatalf("expected a package manifest to accept its ecosystem type, got: %s", result.String())
+	}
+}
+
+// A contract can make the identity a fact rather than a convention. A module
+// whose name can be shared by another repository is not identified by its name.
+func TestAContractCanRequireAQualifiedModuleID(t *testing.T) {
+	contract, err := ParseModuleContract([]byte(`{"version":1,"types":{"gadget":{"native":true,"module_id":true,"required":["build"]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	without := `module:
+  name: a-gadget
+  type: gadget
+  version: 0.1.0
+build:
+  language: c
+`
+	data, err := yaml.Load(without)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateModuleManifestWithContract(data, "gadget", contract).HasErrors() {
+		t.Fatal("expected a gadget without module.id to be refused")
+	}
+
+	with := `module:
+  name: a-gadget
+  id: examples.gadgets.a-gadget
+  type: gadget
+  version: 0.1.0
+build:
+  language: c
+`
+	data, err = yaml.Load(with)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := ValidateModuleManifestWithContract(data, "gadget", contract); result.HasErrors() {
+		t.Fatalf("expected a qualified module.id to validate, got: %s", result.String())
 	}
 }

@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"rho/src/schema"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -141,25 +143,34 @@ var layouts = map[string]PackageLayout{
 	"component": {
 		Kind:    "component",
 		Binary:  true,
-		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "lib", "config"},
+		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "lib", "config", "contracts"},
 		Require: []string{"module.yml", "README.md", "src"},
 	},
 	"plugin": {
 		Kind:    "plugin",
 		Binary:  true,
-		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "lib", "plugin", "config"},
+		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "lib", "plugin", "config", "contracts"},
 		Require: []string{"module.yml", "README.md", "src"},
 	},
 	"application": {
 		// An application is a Rho program, so it carries no command binary;
 		// the rho toolchain builds it.
 		Kind:    "application",
-		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "config", "project.yml"},
+		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "config", "project.yml", "contracts"},
 		Require: []string{"module.yml", "src"},
 	},
 	"library": {
 		Kind:    "library",
-		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "lib"},
+		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "lib", "contracts"},
+		Require: []string{"module.yml", "src"},
+	},
+	// native is the layout of a module an ecosystem defines as compiled and
+	// linked rather than run. The toolchain does not know the type; it knows
+	// only that it is not one of its own Rho types, and that a native module
+	// carries its headers and the Kconfig fragments a project compiles against.
+	"native": {
+		Kind:    "library",
+		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "inc", "include", "config", "cmake", "Kconfig", "contracts"},
 		Require: []string{"module.yml", "src"},
 	},
 }
@@ -169,6 +180,9 @@ var layouts = map[string]PackageLayout{
 func LayoutFor(moduleType string) PackageLayout {
 	if layout, ok := layouts[moduleType]; ok {
 		return layout
+	}
+	if !schema.IsRhoSourceType(moduleType) {
+		return layouts["native"]
 	}
 	return layouts["component"]
 }

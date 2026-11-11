@@ -221,3 +221,50 @@ func TestAComponentThisPluginDoesNotFillIsReported(t *testing.T) {
 		t.Errorf("unexpected diagnostic %+v", response.Diagnostics[0])
 	}
 }
+
+// The module contract is data the ecosystem carries, not something this plugin
+// restates. The plugin finds it in the project's module graph and returns the
+// document as it was written, so the toolchain parses the ecosystem's own file.
+func TestTheModuleContractIsReadFromTheModuleGraph(t *testing.T) {
+	root := t.TempDir()
+	contract := `{"version":1,"types":{"device":{"native":true,"required":["device","build"]}}}`
+	if err := os.MkdirAll(filepath.Join(root, "contracts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "contracts", "module-types.json"), []byte(contract), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	answer := contractAnswer(ContractRequest{ProjectRoot: t.TempDir(), ModuleRoots: []string{root}})
+	if len(answer.Contract) == 0 {
+		t.Fatal("expected the contract to be returned")
+	}
+	if !strings.Contains(string(answer.Contract), "\"device\"") {
+		t.Fatalf("expected the contract's types, got %s", answer.Contract)
+	}
+}
+
+// A project with no contract in its graph gets an empty answer, which is how the
+// toolchain knows to use its own types alone.
+func TestAProjectWithNoContractGetsNoAnswer(t *testing.T) {
+	answer := contractAnswer(ContractRequest{ProjectRoot: t.TempDir()})
+	if len(answer.Contract) != 0 {
+		t.Fatalf("expected no contract, got %s", answer.Contract)
+	}
+}
+
+// The contract is one more thing the one program answers, and it is answered
+// for the component the toolchain asks.
+func TestTheModuleContractIsAnsweredByTheOneProgram(t *testing.T) {
+	request := Request{
+		Version: ProtocolVersion, Hook: "contract", Command: "module-contract",
+		Component: ComponentModule, Payload: json.RawMessage(`{"project_root":"/nonexistent"}`),
+	}
+	response := answer(request)
+	if len(response.Diagnostics) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", response.Diagnostics)
+	}
+	if len(response.Payload) == 0 {
+		t.Fatal("expected a payload")
+	}
+}

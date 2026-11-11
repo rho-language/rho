@@ -32,6 +32,7 @@ import (
 	"rho/cmd/rho-module/remote"
 	pkgcore "rho/cmd/rho-pkg/core"
 	"rho/internal/paths"
+	"rho/src/schema"
 )
 
 // InstallResult is what an install produced, so a caller can report it.
@@ -149,27 +150,37 @@ func archiveKind(archive []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	kind := manifest.Module.Type
-	if kind == "" {
+	return installKindFor(manifest.Module.Type)
+}
+
+// installKindFor maps a module type to the index kind a module is installed
+// under. The toolchain installs under the index's own words; an ecosystem's
+// type is not one of them, and a native module is a library because that is
+// what a project links.
+func installKindFor(moduleType string) (string, error) {
+	if moduleType == "" {
 		return "", fmt.Errorf("the package's manifest names no type")
 	}
 	// The toolchain installs under these four, and a type outside them would be
 	// a directory nothing resolves against: a module that is installed and
 	// unusable.
 	for _, known := range IndexKinds {
-		if kind == known {
-			return kind, nil
+		if moduleType == known {
+			return moduleType, nil
 		}
 	}
-	switch kind {
+	switch moduleType {
 	case "rho", "application":
 		// A Rho application is installed as a module, which is what the
 		// toolchain resolves a dependency against.
 		return KindModule, nil
-	case "interfaces", "platform", "platform-board", "driver", "driver-board", "runtime", "middleware":
-		// All of them are native code a project links rather than something it
-		// runs, so all of them install as a library.
+	}
+	// An ecosystem's type is installed as a library when it is not one of the
+	// toolchain's Rho source types: a native module is compiled and linked into
+	// a project rather than run, which is what a library is here. The toolchain
+	// does not need to know the ecosystem's word for it.
+	if !schema.IsRhoSourceType(moduleType) {
 		return KindLibrary, nil
 	}
-	return "", fmt.Errorf("a module of type %q has nowhere to install to", kind)
+	return "", fmt.Errorf("a module of type %q has nowhere to install to", moduleType)
 }

@@ -13,8 +13,8 @@ could not be supported without editing the toolchain, and a build for the host
 carried the machinery of a platform it was not using.
 
 As a contract, each of those is a question a component asks a plugin, and a
-platform is whatever answers them. Four components ask, through four hooks, and
-one plugin answers all four.
+platform is whatever answers them. Five components ask, through five hooks, and
+one plugin answers all five.
 
 ## What it declares
 
@@ -29,6 +29,7 @@ than four unrelated things.
 | `rho-kconfig` | `render` | Nothing — the dialect writes what RoboHub's C includes |
 | `rho-cimport` | `map` | Nothing — RoboHub's interfaces are C the generator already reads |
 | `rho-flash` | `flash` | Nothing — every board names its own flash command |
+| `rho-module` | `contract` | The module types and schemas RoboHub publishes |
 
 ## The macro and the header
 
@@ -66,3 +67,15 @@ A project whose graph names no platform is built the standard way: only
 platform-agnostic plugins run, and a target spec carries everything the build
 needs. That is the case that matters — Rho is a language first, and a platform
 is something a project may have.
+
+## The module contract
+
+The toolchain does not carry RoboHub's module types. It asks this plugin for
+them, and the plugin returns `robohub-common/contracts/module-types.json` from
+the project's module graph. The toolchain parses the contract and validates a
+manifest against it, so `driver`, `device`, `platform` and the rest are words
+RoboHub owns rather than words the language has learned.
+
+The published form of the same contract is in `robohub-common/contracts/module/`:
+a core schema, one schema per type extending it, and the shared definitions a
+device, a signal and a board use.

@@ -38,7 +38,9 @@ package core
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"rho/src/modulecontract"
 	"rho/src/schema"
 	"rho/src/yaml"
 )
@@ -119,7 +121,23 @@ type Requirement struct {
 /*  Public API                                                                 */
 /* -------------------------------------------------------------------------- */
 
+// LoadModuleYAML reads a manifest for a caller that only needs to know what it
+// says. A type the toolchain does not define is accepted when its ecosystem's
+// contract is unavailable, because an installed module has to remain readable
+// on a machine that has not installed the plugin it was built with.
 func LoadModuleYAML(path string) (ModuleYAML, error) {
+	return loadModuleYAML(path, false)
+}
+
+// LoadModuleYAMLStrict reads a manifest and refuses a type whose ecosystem
+// contract cannot be loaded. It is what validation and publishing use: the
+// contract is the authority on an ecosystem's types, and a machine that cannot
+// find it cannot say the module is valid.
+func LoadModuleYAMLStrict(path string) (ModuleYAML, error) {
+	return loadModuleYAML(path, true)
+}
+
+func loadModuleYAML(path string, strict bool) (ModuleYAML, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ModuleYAML{}, fmt.Errorf("cannot read module.yml: %w", err)
@@ -190,10 +208,29 @@ func LoadModuleYAML(path string) (ModuleYAML, error) {
 		}
 	}
 
-	// Schema validation
-	schemaResult := schema.ValidateModuleManifest(root, mod.Module.Type)
-	if schemaResult.HasErrors() {
-		return ModuleYAML{}, fmt.Errorf("schema validation failed:\n%s", schemaResult.ErrorString())
+	// Schema validation. The toolchain's own types are always known; an
+	// ecosystem's type is checked against the contract its platform plugin
+	// publishes.
+	contract, diagnostics := modulecontract.Load(filepath.Dir(path))
+	if !schema.IsCoreModuleType(mod.Module.Type) && !contract.Allows(mod.Module.Type) {
+		if strict {
+			message := fmt.Sprintf(
+				"module.type %q is not one this toolchain defines and no module contract for it was found; install the plugin that serves the module's platform",
+				mod.Module.Type)
+			if len(diagnostics) > 0 {
+				message += " (" + diagnostics[0].Message + ")"
+			}
+			return ModuleYAML{}, fmt.Errorf("%s", message)
+		}
+		schemaResult := schema.ValidateModuleManifestPackage(root)
+		if schemaResult.HasErrors() {
+			return ModuleYAML{}, fmt.Errorf("schema validation failed:\n%s", schemaResult.ErrorString())
+		}
+	} else {
+		schemaResult := schema.ValidateModuleManifestWithContract(root, mod.Module.Type, contract)
+		if schemaResult.HasErrors() {
+			return ModuleYAML{}, fmt.Errorf("schema validation failed:\n%s", schemaResult.ErrorString())
+		}
 	}
 
 	// Validate required fields

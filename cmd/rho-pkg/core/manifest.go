@@ -31,8 +31,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"rho/src/modulecontract"
+	"rho/src/plugins"
 	"rho/src/schema"
 	"rho/src/yaml"
 )
@@ -141,17 +144,37 @@ func (m ModuleYAML) Layout() PackageLayout {
 	return layout
 }
 
+// LoadModuleYAML reads a manifest for a caller that only needs to know what a
+// package says. A type the toolchain does not define is accepted when its
+// ecosystem contract is unavailable: the package was validated when it was
+// published, and installing it is not the authority on another ecosystem's
+// words.
 func LoadModuleYAML(path string) (ModuleYAML, error) {
+	return loadModuleYAML(path, false)
+}
+
+// LoadModuleYAMLStrict reads a manifest and refuses a type whose ecosystem
+// contract cannot be loaded. Publishing uses it, because the publisher is the
+// gate that decides a module is valid.
+func LoadModuleYAMLStrict(path string) (ModuleYAML, error) {
+	return loadModuleYAML(path, true)
+}
+
+func loadModuleYAML(path string, strict bool) (ModuleYAML, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ModuleYAML{}, fmt.Errorf("cannot read module.yml: %w", err)
 	}
-	return ParseModuleYAML(string(data))
+	return parseModuleYAML(string(data), filepath.Dir(path), strict)
 }
 
 // ParseModuleYAML reads a manifest that is already in memory, which is what a
 // package carries and what a caller reading one has rather than a file.
 func ParseModuleYAML(text string) (ModuleYAML, error) {
+	return parseModuleYAML(text, "", false)
+}
+
+func parseModuleYAML(text, dir string, strict bool) (ModuleYAML, error) {
 	root, err := yaml.Load(text)
 	if err != nil {
 		return ModuleYAML{}, fmt.Errorf("invalid YAML: %w", err)
@@ -178,9 +201,30 @@ func ParseModuleYAML(text string) (ModuleYAML, error) {
 		}
 	}
 
-	// Schema validation
+	// Schema validation. The toolchain's own types are always known; an
+	// ecosystem's type is checked against the contract its platform plugin
+	// publishes.
 	moduleType := modMap["type"].Str
-	result := schema.ValidateModuleManifest(root, moduleType)
+	var contract *schema.ModuleContract
+	diagnostics := []plugins.Diagnostic(nil)
+	if dir != "" {
+		contract, diagnostics = modulecontract.Load(dir)
+	}
+	var result schema.ValidationErrors
+	if !schema.IsCoreModuleType(moduleType) && !contract.Allows(moduleType) {
+		if strict {
+			message := fmt.Sprintf(
+				"module.type %q is not one this toolchain defines and no module contract for it was found; install the plugin that serves the module's platform",
+				moduleType)
+			if len(diagnostics) > 0 {
+				message += " (" + diagnostics[0].Message + ")"
+			}
+			return ModuleYAML{}, fmt.Errorf("%s", message)
+		}
+		result = schema.ValidateModuleManifestPackage(root)
+	} else {
+		result = schema.ValidateModuleManifestWithContract(root, moduleType, contract)
+	}
 	if result.HasErrors() {
 		return ModuleYAML{}, fmt.Errorf("schema validation failed:\n%s", result.ErrorString())
 	}

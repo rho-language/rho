@@ -21,7 +21,7 @@
 module:
   name: rho-robohub
   type: plugin
-  version: 0.1.0
+  version: 0.2.0
   author: Aurel Miron
   description: Maps the RoboHub platform's target, configuration, C and flashing conventions onto this toolchain's contracts
 
@@ -72,13 +72,21 @@ extends:
       - platform
     hooks:
       - flash
+  # rho-module is not a program: it is the toolchain's manifest contract. The
+  # plugin answers it with the module contract RoboHub publishes, so the
+  # toolchain can validate RoboHub's types without carrying them itself.
+  - component: rho-module
+    implements:
+      - module-manifest
+    hooks:
+      - contract
 
-# One executable answers all four hooks. The hook names them; the program needs
+# One executable answers all five hooks. The hook names them; the program needs
 # no arguments and no state, so a session is not worth having and each request
 # is answered and the process is finished.
 #
 # Each command names its component, because a hook name is not unique across the
-# toolchain and this plugin extends four components at once.
+# toolchain and this plugin extends more than one component.
 commands:
   - name: target-spec
     run: rho-robohub
@@ -96,6 +104,10 @@ commands:
     run: rho-robohub
     hook: flash
     component: rho-flash
+  - name: module-contract
+    run: rho-robohub
+    hook: contract
+    component: rho-module
 
 package:
   kind: plugin

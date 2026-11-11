@@ -75,6 +75,10 @@ const (
 	ComponentKconfig = "rho-kconfig"
 	ComponentCimport = "rho-cimport"
 	ComponentFlash   = "rho-flash"
+	// ComponentModule is the toolchain's manifest contract. It is not a
+	// program the plugin maps onto; it is where the ecosystem says how its
+	// module manifests are written.
+	ComponentModule = "rho-module"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -408,6 +412,15 @@ func answer(request Request) Response {
 			return badRequest(request, err)
 		}
 		payload = flashAnswer(flash)
+	case ComponentModule:
+		if request.Hook != "contract" {
+			return unsupported(request)
+		}
+		contract := ContractRequest{}
+		if err := decode(request.Payload, &contract); err != nil {
+			return badRequest(request, err)
+		}
+		payload = contractAnswer(contract)
 	default:
 		return unsupported(request)
 	}
@@ -417,6 +430,49 @@ func answer(request Request) Response {
 	}
 	response.Payload = encoded
 	return response
+}
+
+/* -------------------------------------------------------------------------- */
+/*  rho-module — the manifest contract                                        */
+/* -------------------------------------------------------------------------- */
+
+// ContractRequest is what the toolchain sends when it asks for an ecosystem's
+// module contract: the roots a contract may be found from. The plugin does not
+// decide which file is the contract; it looks in the places the project's
+// modules were found and returns the first contract it carries.
+type ContractRequest struct {
+	ProjectRoot  string   `json:"project_root"`
+	PlatformRoot string   `json:"platform_root,omitempty"`
+	ModuleRoots  []string `json:"module_roots,omitempty"`
+}
+
+// ContractResponse is the contract a plugin found, as the document the
+// ecosystem published. The toolchain parses it; the plugin does not have to
+// know its shape.
+type ContractResponse struct {
+	Contract json.RawMessage `json:"contract,omitempty"`
+}
+
+// contractAnswer looks for the contract in the project, its platform and the
+// modules the project is built from. RoboHub keeps it in robohub-common, which
+// every module depends on, so the graph is what makes it findable without the
+// plugin carrying a path that only means something on one machine.
+func contractAnswer(request ContractRequest) ContractResponse {
+	roots := append([]string{request.ProjectRoot, request.PlatformRoot}, request.ModuleRoots...)
+	seen := map[string]bool{}
+	for _, root := range roots {
+		if root == "" || seen[root] {
+			continue
+		}
+		seen[root] = true
+		path := filepath.Join(root, "contracts", "module-types.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		return ContractResponse{Contract: data}
+	}
+	return ContractResponse{}
 }
 
 // unsupported reports a hook or a component this plugin does not fill.

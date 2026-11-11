@@ -27,7 +27,6 @@ import (
 
 	"rho/src/deps"
 	"rho/src/schema"
-	"rho/src/yaml"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -35,32 +34,15 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func ValidateModule(dir string) error {
-	// Step 1: Schema-validate module.yml
+	// Step 1: Read the manifest and validate it against the toolchain's schema
+	// and, when the module's platform publishes one, its ecosystem contract.
+	// Validation is strict here: a type the toolchain does not define is only
+	// valid when the contract that defines it can be loaded.
 	modPath := filepath.Join(dir, "module.yml")
 	if _, err := os.Stat(modPath); err != nil {
 		return fmt.Errorf("module.yml not found")
 	}
-
-	data, err := os.ReadFile(modPath)
-	if err != nil {
-		return fmt.Errorf("cannot read module.yml: %w", err)
-	}
-
-	root, err := yaml.Load(string(data))
-	if err != nil {
-		return fmt.Errorf("invalid YAML in module.yml: %w", err)
-	}
-
-	// Determine module type for type-aware validation
-	moduleType := root.Map["module"].Map["type"].Str
-
-	result := schema.ValidateModuleManifest(root, moduleType)
-	if result.HasErrors() {
-		return fmt.Errorf("schema validation failed:\n%s", result.ErrorString())
-	}
-
-	// Step 2: Load via existing loader (also validates required fields)
-	manifest, err := LoadModuleYAML(modPath)
+	manifest, err := LoadModuleYAMLStrict(modPath)
 	if err != nil {
 		return err
 	}
@@ -253,9 +235,33 @@ func validateContracts(target deps.ExtendsTarget, component *deps.Manifest) erro
 	return nil
 }
 
+// coreComponents are the toolchain's own commands, which are part of the
+// installed toolchain rather than components installed under the module tree.
+//
+// A plugin may extend one of them — the RoboHub plugin answers `rho-module`'s
+// manifest contract — so validation has to know what the command offers without
+// a module manifest on disk. The contracts here are the same ones the command
+// documents; the data an ecosystem's answer carries is its own and is not
+// declared here.
+var coreComponents = map[string]*deps.Manifest{
+	"rho-module": {
+		ModuleName: "rho-module",
+		ModuleType: "component",
+		Provides: &deps.Provides{
+			Hooks: []string{"contract"},
+			Contracts: []deps.Contract{
+				{Name: "module-manifest", Description: "The ecosystem's module types and the manifest structure each one is written to.", Hooks: []string{"contract"}},
+			},
+		},
+	},
+}
+
 // findComponent loads the manifest of a named component, from the installation
 // or from the tree the caller is in.
 func findComponent(from, name string) (*deps.Manifest, error) {
+	if component, ok := coreComponents[name]; ok {
+		return component, nil
+	}
 	locator := &deps.DefaultLocator{ProjectRoot: from}
 	root, err := locator.Locate(deps.DepSpec{Name: name})
 	if err != nil {

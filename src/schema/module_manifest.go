@@ -28,17 +28,14 @@ import (
 	"rho/src/yaml"
 )
 
-// ValidModuleTypes lists all allowed module.type values.
-var ValidModuleTypes = []string{
-	"rho", "module", "component", "plugin", "provider",
-	"interfaces", "platform", "platform-board",
-	"driver", "driver-board",
-	"runtime", "middleware",
-	// A collection is a repository of modules rather than one module: it has no
-	// entry point of its own, and what it carries is a `generate:` section
-	// describing the projects a person starts from it.
-	"collection",
-}
+// ValidModuleTypes lists the module types the toolchain itself defines.
+//
+// An ecosystem adds its own types in a module contract (see ModuleContract),
+// and the toolchain validates them without knowing what they mean. A type is
+// not Rho's merely because a project written in Rho uses it: `driver`, `board`
+// and `platform` belong to the ecosystem that declares them, not to the
+// language that reads the manifest.
+var ValidModuleTypes = []string{"rho", "module", "component", "plugin", "provider"}
 
 // ValidVisibilities lists the visibilities a module may be published under.
 //
@@ -47,80 +44,10 @@ var ValidModuleTypes = []string{
 // to a registry means unless it is said otherwise.
 var ValidVisibilities = []string{"public", "private"}
 
-// RhoSourceModuleTypes are the module types written in Rho. They declare a
-// main entry point.
-var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin", "provider"}
-
-// NativeModuleTypes are the module types that are native code rather than Rho:
-// they are compiled and linked through a project's build section, and they
-// declare no Rho entry point.
-//
-// The three of them are the layers of a hardware platform, and each says
-// something the other two do not:
-//
-//   - `interfaces` declares the abstractions. A module that only declares
-//     interfaces has nothing to compile; it is headers, error codes and
-//     contracts, and it is shared by every platform.
-//   - `platform` implements those abstractions against one family of hardware.
-//     It is the code that drives a peripheral, and it knows nothing about any
-//     particular board.
-//   - `platform-board` is one board's support package: the pin map, the clock
-//     configuration and the startup that make a platform usable on the piece of
-//     hardware it is fitted to.
-//
-// Two more are the layers of a device rather than of a board, and they sit
-// between a platform and an application:
-//
-//   - `driver` is a device driver: code for one part — a temperature sensor, a
-//     display, a radio — written against the HAL interfaces a platform
-//     implements, and against the driver interface its own kind declares. It is
-//     platform-agnostic, which is the point: the same DS18B20 driver runs on an
-//     RP2350 or an STM32 because it reaches the bus through a contract and not
-//     through a vendor's SDK.
-//   - `driver-board` is one eval or breakout module's support package: which
-//     driver it carries and how the module's pins are named, the way a
-//     platform-board is one MCU board's pin map. It is not a platform-board
-//     because it describes an IC on a carrier rather than the carrier's MCU.
-//
-// One more sits above both, and it is what a program is built on rather than
-// what it is built from:
-//
-//   - `runtime` is the application runtime: the event bus, the scheduler, the
-//     application lifecycle and the diagnostics a program uses to run several
-//     modules together. It is native and platform-agnostic, and it declares no
-//     entry point because it is linked into a program, not run as one.
-//   - `middleware` plugs an outside system into the ecosystem — an RTOS, a
-//     filesystem, a network stack. It implements a contract the interfaces
-//     declare (the OSAL, say) and is linked in place of the default that ships
-//     with the runtime, so the program above it is unchanged whether the
-//     middleware is there or not.
-//
-// They are kept apart because they are not the same thing, and a module that
-// implements a platform while claiming to be its interfaces — or a board that
-// claims to be a platform — describes itself as something it is not, in the
-// one place a reader looks to find out what a module is.
-//
-// A board carries no `depends`, and that is the whole of what it says about
-// where it sits. It cannot be built on its own: a board is a support package,
-// and a support package is only ever compiled into something that has a platform,
-// an interface and a set of dependencies to compile it against. All three belong
-// to the application, so the application declares them and the board is found
-// through the platform it belongs to.
-//
-// The alternative is what twenty-seven board manifests did, each declaring the
-// interfaces and the platform it is part of — the second of them being the
-// repository the board lives in. Every one of those was a dependency resolved by a
-// path relative to itself, which works on a checkout and on nothing else, and a
-// board that cannot resolve its own dependencies cannot be the thing that
-// decides them.
-//
-// None of them declares `main`: each is native code a project links rather than
-// something it runs.
-var NativeModuleTypes = []string{"interfaces", "platform", "platform-board", "driver", "driver-board", "runtime", "middleware"}
-
-// IsRhoSourceType reports whether a module type is written in Rho.
-func IsRhoSourceType(moduleType string) bool {
-	for _, candidate := range RhoSourceModuleTypes {
+// IsCoreModuleType reports whether a type is one the toolchain itself defines.
+// Every other type belongs to an ecosystem and comes from its module contract.
+func IsCoreModuleType(moduleType string) bool {
+	for _, candidate := range ValidModuleTypes {
 		if candidate == moduleType {
 			return true
 		}
@@ -128,10 +55,13 @@ func IsRhoSourceType(moduleType string) bool {
 	return false
 }
 
-// IsNativeType reports whether a module type is native code consumed through a
-// project's build section rather than a Rho entry point.
-func IsNativeType(moduleType string) bool {
-	for _, candidate := range NativeModuleTypes {
+// RhoSourceModuleTypes are the module types written in Rho. They declare a
+// main entry point.
+var RhoSourceModuleTypes = []string{"rho", "module", "component", "plugin", "provider"}
+
+// IsRhoSourceType reports whether a module type is written in Rho.
+func IsRhoSourceType(moduleType string) bool {
+	for _, candidate := range RhoSourceModuleTypes {
 		if candidate == moduleType {
 			return true
 		}
@@ -168,10 +98,18 @@ var ValidBuildLanguages = []string{"c", "go", "cgo"}
 var ValidBuildTargets = []string{"c", "go"}
 
 // ModuleSchema returns a schema for validating module.yml content.
-// It returns a base schema that requires module.name, module.type,
-// module.version, and main at minimum.
+// It returns the toolchain's base schema, restricted to the types the
+// toolchain defines.
 func ModuleSchema() Schema {
-	return Schema{
+	return moduleSchema(ValidModuleTypes)
+}
+
+// moduleSchema is the base schema with module.type restricted to the types a
+// caller allows. An empty list means the type is not restricted at all, which
+// is what a package being read needs: it was validated when it was published,
+// and the toolchain that reads it may not carry the ecosystem's contract.
+func moduleSchema(types []string) Schema {
+	schema := Schema{
 		Name: "module.yml",
 		Fields: []FieldSchema{
 			{
@@ -180,7 +118,12 @@ func ModuleSchema() Schema {
 				Kind:     KindMap,
 				Fields: []FieldSchema{
 					{Name: "name", Required: true, RejectNull: true, Kind: KindString},
-					{Name: "type", Required: true, RejectNull: true, Kind: KindString, AllowedValues: ValidModuleTypes},
+					// id is the module's stable identity in the ecosystem. A name
+					// is what a person reads; an id is what a consumer keys on,
+					// and it carries the repository and path the module lives
+					// under so two modules with the same name are two things.
+					{Name: "id", Required: false, Kind: KindString},
+					{Name: "type", Required: true, RejectNull: true, Kind: KindString, AllowedValues: types},
 					{Name: "version", Required: true, RejectNull: true, Kind: KindString},
 					{Name: "command", Required: false, Kind: KindString},
 					// import_path is the dotted name Rho code uses to reach this
@@ -299,133 +242,6 @@ func ModuleSchema() Schema {
 				Kind:     KindList,
 				ItemSchema: &ListItemSchema{
 					Kind: KindString,
-				},
-			},
-			{
-				// The functions a driver presents, one per driver interface the
-				// interfaces module declares. A part that measures one thing
-				// lists it; a mixed part — a BMP180 is a thermometer, a
-				// barometer and an altimeter — lists each, so a search for any
-				// one of them finds it. It is a top-level declaration because it
-				// is what the module is, not a fact about how it is built, and
-				// it is the map a driver index is read from.
-				Name:     "functions",
-				Required: false,
-				Kind:     KindList,
-				ItemSchema: &ListItemSchema{
-					Kind: KindString,
-				},
-			},
-			{
-				// The signals a part presents to the rest of the tree. A
-				// device says what it can be switched and what it measures;
-				// a board says what its sensor produces. The daemon and a
-				// dashboard read this block instead of guessing a part's
-				// fields from its type: `direction` says whether the signal
-				// is an input or an output, `field` names it in the gateway
-				// payload, `unit` says how a person reads it, and `kinds`
-				// lists the widgets it can feed.
-				Name:     "signals",
-				Required: false,
-				Kind:     KindList,
-				ItemSchema: &ListItemSchema{
-					Kind: KindMap,
-					Fields: []FieldSchema{
-						{Name: "id", Required: true, RejectNull: true, Kind: KindString},
-						{Name: "label", Required: false, Kind: KindString},
-						{Name: "direction", Required: false, Kind: KindString,
-							AllowedValues: []string{"input", "output"}},
-						{Name: "unit", Required: false, Kind: KindString},
-						{Name: "field", Required: false, Kind: KindString},
-						{Name: "kinds", Required: false, Kind: KindString},
-						{Name: "summary", Required: false, Kind: KindString},
-					},
-				},
-			},
-			{
-				// How a deployment reaches the thing this module is. A driver
-				// names the example a node is built from and the Kconfig that
-				// example needs; a board names the method used to reach it and
-				// the architecture a gateway is built for. The keeper reads
-				// these at runtime, which is what lets a board or driver be
-				// added to the tree without rebuilding the keeper.
-				Name:     "deployment",
-				Required: false,
-				Kind:     KindMap,
-				Fields: []FieldSchema{
-					{Name: "example", Required: false, Kind: KindString},
-					{Name: "boards", Required: false, Kind: KindString},
-					{Name: "binary", Required: false, Kind: KindString},
-					{Name: "kconfig", Required: false, Kind: KindString},
-					{Name: "method", Required: false, Kind: KindString},
-					{Name: "arch", Required: false, Kind: KindString},
-					{Name: "apps_dir", Required: false, Kind: KindString},
-					{Name: "user", Required: false, Kind: KindString},
-					{Name: "path", Required: false, Kind: KindString},
-				},
-			},
-			{
-				// What a module can be in a deployment. A board says which
-				// roles it can take — gateway, relay, node — and what it has to
-				// do them with; a driver says it is a sensor, the bus it sits
-				// on, and what it measures. A deployment planner reads these
-				// instead of carrying a list of boards, so a board added to the
-				// tree is offered as soon as its manifest says it can do the job.
-				Name:     "capabilities",
-				Required: false,
-				Kind:     KindMap,
-				Fields: []FieldSchema{
-					{Name: "gateway", Required: false, Kind: KindBool},
-					{Name: "relay", Required: false, Kind: KindBool},
-					{Name: "node", Required: false, Kind: KindBool},
-					{Name: "edge", Required: false, Kind: KindBool},
-					{Name: "host", Required: false, Kind: KindBool},
-					{Name: "wireless", Required: false, Kind: KindBool},
-					{Name: "ethernet", Required: false, Kind: KindBool},
-					{Name: "sensor", Required: false, Kind: KindBool},
-					{Name: "buses", Required: false, Kind: KindString},
-					{Name: "transports", Required: false, Kind: KindString},
-					{Name: "links", Required: false, Kind: KindString},
-					{Name: "deploy", Required: false, Kind: KindString},
-					{Name: "measures", Required: false, Kind: KindString},
-					{Name: "summary", Required: false, Kind: KindString},
-				},
-			},
-			{
-				// What a module is when it is a web application rather than a
-				// library or a tool. The keeper reads this block to list the
-				// applications on the machine and to launch them, so the block
-				// says what the keeper cannot guess: whether the application
-				// is the keeper itself, where it listens, and the route it
-				// answers on.
-				//
-				// A module without the block is not an application the keeper
-				// offers — a documentation site or a component has a command
-				// and no listener of its own — which is how the two kinds of
-				// module stay apart without either naming the other.
-				Name:     "application",
-				Required: false,
-				Kind:     KindMap,
-				Fields: []FieldSchema{
-					// keeper is the dashboard a person is looking at; it is
-					// listed so the page has a complete picture but it cannot
-					// be started, stopped or removed from itself.
-					// keeper-hosted is an application the keeper runs on its
-					// own port, standalone or from the keeper's registry.
-					{Name: "kind", Required: true, Kind: KindString,
-						AllowedValues: []string{"keeper", "keeper-hosted"}},
-					{Name: "title", Required: false, Kind: KindString},
-					{Name: "description", Required: false, Kind: KindString},
-					// route is the path the application answers on, with its
-					// leading slash. The page uses it for the launch link.
-					{Name: "route", Required: false, Kind: KindString},
-					// port is the listener the application opens; kept as text
-					// so a manifest is not a number type and the keeper can put
-					// it into an address without a conversion.
-					{Name: "port", Required: false, Kind: KindString},
-					// command is the binary the build writes into build/, which
-					// is what the keeper starts and stops.
-					{Name: "command", Required: false, Kind: KindString},
 				},
 			},
 			{
@@ -858,109 +674,6 @@ func ModuleSchema() Schema {
 				},
 			},
 			{
-				// What a board *is*, when this module is one.
-				//
-				// A board is two things that are easy to confuse: the piece of
-				// hardware, and the part of the tree that knows how to reach it.
-				// This block says which hardware it is — the part, the family, the
-				// pins it brings out, the connector on it — and which driver
-				// speaks for it, so a program that fits the board says which
-				// device it now has.
-				//
-				// The pinout is here because a board's pins are the board's facts:
-				// which connector position carries which signal, and which
-				// interface a part hangs off. They are what a person wiring the
-				// board needs, and they are what an editor's pin view is drawn
-				// from.
-				Name:     "board",
-				Required: false,
-				Kind:     KindMap,
-				Fields: []FieldSchema{
-					// The board's designation, as the manufacturer writes it.
-					{Name: "designation", Required: false, Kind: KindString},
-					// The part the board carries.
-					{Name: "mcu", Required: false, Kind: KindString},
-					// The family of parts the board belongs to.
-					{Name: "family", Required: false, Kind: KindString},
-					// The processor core the part has.
-					{Name: "core", Required: false, Kind: KindString},
-					// The build preset and the target the board is built for.
-					{Name: "preset", Required: false, Kind: KindString},
-					{Name: "target", Required: false, Kind: KindString},
-					// What kind of board it is: an eval module, a platform, a
-					// transceiver carrier. The category is what a tree is indexed
-					// by.
-					{Name: "category", Required: false, Kind: KindString},
-					// The driver that speaks for the board's part.
-					{Name: "driver", Required: false, Kind: KindString},
-					// The driver interfaces the board's part presents, so the board
-					// is found by what it does and not only by its name.
-					{Name: "functions", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
-						Kind: KindString,
-					}},
-					// What the board has: memory, storage, and the machine it runs
-					// on.
-					{Name: "resources", Required: false, Kind: KindMap},
-					{Name: "host", Required: false, Kind: KindMap},
-					// A second part on the same board, with a life of its own —
-					// a companion MCU beside a Linux one.
-					{Name: "companion_mcu", Required: false, Kind: KindMap},
-					// The connector on the board: what each position carries.
-					{Name: "connectors", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
-						Kind: KindMap,
-						Fields: []FieldSchema{
-							{Name: "name", Required: true, Kind: KindString},
-							// What the position carries: a power, a ground, a
-							// signal, a bus line.
-							{Name: "signal", Required: false, Kind: KindString},
-							// The position itself, counted from one end.
-							{Name: "position", Required: false, Kind: KindString},
-						},
-					}},
-					// The pinout: a name for each pin, and what it is.
-					{Name: "pins", Required: false, Kind: KindMap},
-					// The interfaces the board brings out.
-					{Name: "peripherals", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
-						Kind: KindMap,
-						Fields: []FieldSchema{
-							{Name: "name", Required: true, Kind: KindString},
-							{Name: "instance", Required: false, Kind: KindString},
-							{Name: "type", Required: false, Kind: KindString},
-							{Name: "channel", Required: false, Kind: KindString},
-							{Name: "gpio", Required: false, Kind: KindString},
-							{Name: "tx", Required: false, Kind: KindString},
-							{Name: "rx", Required: false, Kind: KindString},
-							{Name: "sck", Required: false, Kind: KindString},
-							{Name: "sda", Required: false, Kind: KindString},
-							{Name: "scl", Required: false, Kind: KindString},
-							{Name: "csn", Required: false, Kind: KindString},
-							{Name: "dq", Required: false, Kind: KindString},
-						},
-					}},
-					// How the board is reached by a programmer, and how a program
-					// is written to it or carried to it.
-					{Name: "programmer", Required: false, Kind: KindMap},
-					{Name: "flash", Required: false, Kind: KindMap},
-					{Name: "deploy", Required: false, Kind: KindMap},
-				},
-			},
-			{
-				// Where a platform keeps the declarations of the hardware it supports.
-				//
-				// Declared rather than found. A directory called `targets` beside a
-				// dependency is a guess that reads as a contract and is not one.
-				Name:     "hardware",
-				Required: false,
-				Kind:     KindMap,
-				Fields: []FieldSchema{
-					{Name: "boards", Required: false, Kind: KindString},
-					{Name: "presets", Required: false, Kind: KindString},
-					{Name: "targets", Required: false, Kind: KindString},
-					{Name: "target", Required: false, Kind: KindString},
-					{Name: "kconfig", Required: false, Kind: KindString},
-				},
-			},
-			{
 				// What this module needs from the machine it runs on: the programs it
 				// runs, the environment it expects, the host permissions it needs.
 				//
@@ -1196,18 +909,25 @@ func ModuleSchema() Schema {
 			},
 		},
 	}
+	return schema
 }
 
-// ValidateModuleManifest performs type-aware validation of a module.yml.
-// It validates the base schema and adds type-specific rules:
-//   - component: 'command' is recommended for dynamic dispatch
-//   - plugin: 'extends:' should name a component, and 'hooks:' the stages of it
-//     the plugin answers
-//   - rho/module: 'main' should point to a .rho source file
-//   - depends: each entry must specify 'git' or 'path'
+// ValidateModuleManifest validates a module.yml against the toolchain's own
+// schema and the rules the toolchain defines. It is the check for a module
+// that carries no ecosystem contract; a module that has one is validated with
+// ValidateModuleManifestWithContract instead.
 func ValidateModuleManifest(data yaml.Value, moduleType string) ValidationErrors {
 	result := Validate(data, ModuleSchema())
 	errs := ValidationErrors(result.Errors)
+	return append(errs, ValidateModuleRules(data, moduleType)...)
+}
+
+// ValidateModuleRules applies the rules that are about the toolchain's own
+// types rather than about an ecosystem's: a component's command, a plugin's
+// attachment, a Rho entry point, and the shape of a dependency and an
+// extension.
+func ValidateModuleRules(data yaml.Value, moduleType string) ValidationErrors {
+	errs := ValidationErrors{}
 
 	// Type-specific validations
 	switch moduleType {
