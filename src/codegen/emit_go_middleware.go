@@ -551,7 +551,7 @@ type authSsoSessionKey struct{}
 
 // authSsoLoadKey is the issuer's public key. It is read from the key file when
 // the machine has one; otherwise, when the application was told where its
-// issuer is (RHO_AUTH_URL), it is fetched from the issuer's published key and a
+// issuer is (RHO_AUTH_URL, or the keeper's port on this machine), it is fetched from the issuer's published key and a
 // copy is kept, which is what lets an issuer that is briefly down not lock
 // everyone out. A key that could not be had is asked for again after a while
 // rather than never, so an application started before its issuer recovers.
@@ -594,6 +594,11 @@ func authSsoKeyBytes() ([]byte, error) {
 		}
 	}
 	issuer := strings.TrimRight(os.Getenv("RHO_AUTH_URL"), "/")
+	// An application the keeper started is told the keeper's port; the key
+	// is fetched from the keeper on this machine, where the application runs.
+	if issuer == "" && os.Getenv("RHO_KEEPER_PORT") != "" {
+		issuer = "http://127.0.0.1:" + os.Getenv("RHO_KEEPER_PORT")
+	}
 	if issuer == "" {
 		if path == "" {
 			return nil, errors.New("no auth public key configured")
