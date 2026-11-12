@@ -1189,6 +1189,12 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 				return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
 			}
 		}
+		// Including another module by name pastes its source into this one,
+		// every helper with it. A module that publishes an import name is meant
+		// to be imported; say so, once per build and module.
+		if !strings.ContainsAny(include.Path, "/\\") && !strings.HasSuffix(include.Path, ".rho") {
+			warnIncludedModule(include.Path, includePath)
+		}
 		included, err := loadModuleFile(includePath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
@@ -1197,22 +1203,150 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		merged.Features = append(merged.Features, included.Features...)
 	}
 	for _, imp := range mod.Imports {
-		importPath, err := resolveImport(imp.Name, abs, projectRoot, dependencyRoots, components)
+		// A module a declared dependency provides under this name comes first:
+		// its manifest says what it is imported as and what it exports.
+		entry, exports, provided, err := providedImport(imp.Name, abs, dependencyRoots)
 		if err != nil {
 			return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
+		}
+		owner := ""
+		importPath := entry
+		if provided {
+			owner = imp.Name
+		} else {
+			importPath, err = resolveImport(imp.Name, abs, projectRoot, dependencyRoots, components)
+			if err != nil {
+				return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
+			}
 		}
 		imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			return nil, err
 		}
-		markModuleOwnership(imported, imported.Name)
+		if owner == "" {
+			owner = imported.Name
+		}
+		markModuleOwnership(imported, owner)
 		merged.Decls = append(merged.Decls, imported.Decls...)
 		merged.Features = append(merged.Features, imported.Features...)
+		if merged.Exports == nil {
+			merged.Exports = map[string][]string{}
+		}
+		if provided && exports != nil {
+			merged.Exports[owner] = exports
+		}
+		for name, names := range imported.Exports {
+			merged.Exports[name] = names
+		}
 	}
 	if err := loadFeatureModules(merged, abs, projectRoot, dependencyRoots, components, visited); err != nil {
 		return nil, err
 	}
 	return merged, nil
+}
+
+// warnedIncludes keeps the warning about including another module to once per
+// module and build.
+var warnedIncludes = map[string]bool{}
+
+// warnIncludedModule says, when another module is included by name, how to use
+// it instead: by the import name its manifest publishes, when it publishes one.
+func warnIncludedModule(name, entry string) {
+	if warnedIncludes[name] {
+		return
+	}
+	warnedIncludes[name] = true
+	for dir := filepath.Dir(entry); ; {
+		if manifest, err := deps.LoadManifest(filepath.Join(dir, "module.yml")); err == nil && manifest != nil {
+			if manifest.Provides != nil && manifest.Provides.Import != "" {
+				fmt.Fprintf(os.Stderr, "warning: include %q pastes %s's source into this module; import %s instead, which uses only what it exports\n",
+					name, manifest.ModuleName, manifest.Provides.Import)
+			}
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return
+		}
+		dir = parent
+	}
+}
+
+// providedImport finds the module a declared dependency provides under an import
+// name: a dependency of the module the importing file belongs to whose manifest
+// says `provides: import: <name>`. It answers the module's entry file and the
+// names it exports. A module that only something undeclared provides is refused,
+// with the dependency to declare in the message: a module uses what it says it
+// uses.
+func providedImport(name, sourceFile string, dependencyRoots []string) (entry string, exports []string, provided bool, err error) {
+	if strings.HasPrefix(name, "std.") {
+		return "", nil, false, nil
+	}
+	moduleDir, importer, declared := declaredDependencies(sourceFile)
+	for _, dep := range declared {
+		root := declaredDependencyRoot(moduleDir, dep, dependencyRoots)
+		if root == "" {
+			continue
+		}
+		manifest, loadErr := deps.LoadManifest(deps.ManifestPath(root))
+		if loadErr != nil || manifest == nil || manifest.Provides == nil || manifest.Provides.Import != name {
+			continue
+		}
+		file, ok := moduleEntry(root)
+		if !ok {
+			return "", nil, false, fmt.Errorf("%s provides %s but has no Rho entry file", manifest.ModuleName, name)
+		}
+		return file, manifest.Provides.Exports, true, nil
+	}
+	// Nothing declared provides it. A dependency root that does is named, so the
+	// fix is in the message.
+	for _, root := range dependencyRoots {
+		manifest, loadErr := deps.LoadManifest(deps.ManifestPath(root))
+		if loadErr == nil && manifest != nil && manifest.Provides != nil && manifest.Provides.Import == name {
+			return "", nil, false, fmt.Errorf("%s is provided by %s, which %s does not declare; add %s to deps in its module.yml",
+				name, manifest.ModuleName, importer, manifest.ModuleName)
+		}
+	}
+	return "", nil, false, nil
+}
+
+// declaredDependencyRoot is where a declared dependency is: among the roots the
+// build resolved, or found by the same rules the resolver uses — an installed
+// module, a module of the same repository, a module of the repository its group
+// names in the workspace.
+func declaredDependencyRoot(moduleDir string, dep deps.DepSpec, dependencyRoots []string) string {
+	for _, root := range dependencyRoots {
+		if moduleNamed(root, dep.Name) {
+			return root
+		}
+	}
+	if root := deps.InstalledModuleRoot(dep.Name); root != "" {
+		return root
+	}
+	if root := deps.RepositoryModuleRoot(moduleDir, dep.Name); root != "" {
+		return root
+	}
+	return deps.WorkspaceGroupModuleRoot(moduleDir, dep.Group, dep.Name)
+}
+
+// declaredDependencies are the dependencies the module a source file belongs to
+// declares, with the module's folder and name: the nearest module.yml above the
+// file is the module.
+func declaredDependencies(sourceFile string) (string, string, []deps.DepSpec) {
+	for dir := filepath.Dir(sourceFile); ; {
+		if _, err := os.Stat(filepath.Join(dir, "module.yml")); err == nil {
+			manifest, loadErr := deps.LoadManifest(filepath.Join(dir, "module.yml"))
+			if loadErr != nil || manifest == nil {
+				return dir, filepath.Base(dir), nil
+			}
+			return dir, manifest.ModuleName, manifest.Deps
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Dir(sourceFile), filepath.Base(sourceFile), nil
+		}
+		dir = parent
+	}
 }
 
 // sourceDiagnostic is a failure reported against a place in a source file.

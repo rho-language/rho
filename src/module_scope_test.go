@@ -66,3 +66,63 @@ func TestAQualifiedCallMustNameAModuleAndItsFunction(t *testing.T) {
 		}
 	}
 }
+
+// A module says in its manifest what it is imported as and what it exports. An
+// application that declares it imports it by that name and uses what it exports;
+// anything else in the module is its own, so a private helper neither leaks nor
+// collides with the application's function of the same name. An application
+// that does not declare the module cannot import it.
+func TestAnImportIsTheInterfaceADeclaredDependencyExports(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	workspace := t.TempDir()
+	write := func(path, text string) {
+		full := filepath.Join(workspace, filepath.FromSlash(path))
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("acme/.git/HEAD", "ref: refs/heads/main\n")
+	write("acme/modules/greet/module.yml", "module:\n  name: acme-greet\n  type: module\n  version: 0.1.0\nmain: src/greet.rho\nprovides:\n  import: acme.greet\n  exports:\n    - hello\n")
+	write("acme/modules/greet/src/greet.rho", "module greet\nfn helper() string { return \"hello from greet\" }\nfn hello() string { return helper() }\n")
+	write("app/.git/HEAD", "ref: refs/heads/main\n")
+	manifest := "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndeps:\n  acme:\n    acme-greet: \">=0.1.0\"\nbuild:\n  language: go\n  targets:\n    - go\n"
+	write("app/module.yml", manifest)
+	write("app/src/main.rho", "module main\nimport acme.greet\nfn helper() string { return \"app\" }\nfn main() void {\n    print(greet.hello() + \"|\" + hello() + \"|\" + helper())\n}\n")
+	t.Setenv("RHO_WORKSPACE", workspace)
+
+	entry := filepath.Join(workspace, "app", "src", "main.rho")
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	binary := filepath.Join(t.TempDir(), "app")
+	// The .git folders above only mark repository roots for the resolver.
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, ".")
+	build.Dir = dirs[0]
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	out, err := exec.Command(binary).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if string(out) != "hello from greet|hello from greet|app" {
+		t.Errorf("output = %q", out)
+	}
+
+	// A private name is refused, with what the module does export.
+	write("app/src/main.rho", "module main\nimport acme.greet\nfn main() void {\n    print(greet.helper())\n}\n")
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "helper is not exported by acme.greet (it exports hello)") {
+		t.Errorf("private call: error = %v", err)
+	}
+
+	// An undeclared module is not importable.
+	write("app/module.yml", strings.Replace(manifest, "deps:\n  acme:\n    acme-greet: \">=0.1.0\"\n", "", 1))
+	write("app/src/main.rho", "module main\nimport acme.greet\nfn main() void {\n    print(greet.hello())\n}\n")
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil {
+		t.Error("an undeclared module was imported")
+	}
+}

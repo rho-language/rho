@@ -213,6 +213,58 @@ inside the project or the workspace; any other absolute path is not written to.
 `scripts/check-local-paths.sh` fails when a tracked file names a path under
 `/home/<user>` or `/Users/<user>`, and is what a CI job runs.
 
+## What a module gives, and what it keeps
+
+A module that other code is meant to use says so in its manifest: the name it
+is imported by, and the names that import may use.
+
+```yaml
+module:
+  name: acme-forms
+  type: module
+  version: 0.2.0
+
+main: src/forms.rho
+
+provides:
+  import: acme.forms
+  exports:
+    - open
+    - parse
+    - validate
+```
+
+An application, or another module, declares it and imports it:
+
+```yaml
+deps:
+  acme:
+    acme-forms: "^0.2"
+```
+
+```rho
+import acme.forms
+
+fn page() string {
+    return forms.open("/save", "post")
+}
+```
+
+The toolchain holds both sides to it:
+
+- An import resolves through the dependencies the importing module's own
+  manifest declares. A module that only something undeclared provides is
+  refused, and the message names the dependency to add.
+- Only exported names can be used from outside the module; anything else is
+  the module's own. `forms.trim()` from an application is refused with the
+  names the module does export, and a private helper never collides with an
+  application function of the same name.
+- Including another module by name, which pastes its whole source into the
+  includer, is reported with the import that replaces it.
+
+A module with no `exports` list lets every name through, which is how modules
+written before export lists keep working.
+
 ## A module's own files
 
 A module that reads a template, a schema or a page of its own does not look for

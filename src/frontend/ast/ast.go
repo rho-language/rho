@@ -76,6 +76,10 @@ type Module struct {
 	// root module only: what the program is made of, so the modules it draws on
 	// (and their assets) are known without loading it twice.
 	LoadedFiles []string
+	// Exports are the names each imported module lets its importers use, by the
+	// module's import path. A module with no entry exports everything, which is
+	// what a module written before export lists does.
+	Exports map[string][]string
 }
 
 // TypeExpr represents a named type with optional generic arguments and array

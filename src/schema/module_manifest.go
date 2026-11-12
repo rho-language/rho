@@ -303,6 +303,11 @@ func moduleSchema(types []string) Schema {
 				Required: false,
 				Kind:     KindMap,
 				Fields: []FieldSchema{
+					// import is the dotted name Rho code imports this module by,
+					// and exports are the names that import may use: every other
+					// declaration in the module is its own.
+					{Name: "import", Required: false, Kind: KindString},
+					{Name: "exports", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "hooks", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					// contracts say what a plugin has to be for this component,
 					// which the hooks alone do not: two plugins may answer the

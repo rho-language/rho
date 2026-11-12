@@ -40,6 +40,9 @@ func RhoHome() string {
 // Both the component and the plugin trees are searched, so a dependency does not
 // have to care how the module was published. This is what lets a project depend
 // on a component and import its Rho sources.
+// InstalledModuleRoot is where an installed module of any kind lives, or "".
+func InstalledModuleRoot(name string) string { return installedModuleRoot(name) }
+
 func installedModuleRoot(name string) string {
 	return highestInstalledRoot(name, "component", "plugin", "library", "module")
 }

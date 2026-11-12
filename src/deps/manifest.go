@@ -136,6 +136,10 @@ type Provides struct {
 	// person enabling one can see what they are enabling and a component can
 	// say how many of them it takes.
 	Contracts []Contract
+	// Import is the dotted name Rho code imports this module by
+	// (`provides.import`), and Exports the names that import may use.
+	Import  string
+	Exports []string
 }
 
 // DebugMapping is what a project says about debugging the chip it is built for.
@@ -1758,8 +1762,10 @@ func parseProvides(node yaml.Value) *Provides {
 	provides := &Provides{
 		Hooks:     yamlStrings(node.Map["hooks"]),
 		Contracts: parseContracts(node.Map["contracts"]),
+		Import:    yamlString(node, "import"),
+		Exports:   yamlStrings(node.Map["exports"]),
 	}
-	if len(provides.Hooks) == 0 && len(provides.Contracts) == 0 {
+	if len(provides.Hooks) == 0 && len(provides.Contracts) == 0 && provides.Import == "" {
 		// A section with neither says nothing, which is how a module says it
 		// offers no place for a plugin to stand.
 		return nil

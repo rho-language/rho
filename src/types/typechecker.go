@@ -22,7 +22,9 @@ package types
 /* -------------------------------------------------------------------------- */
 
 import (
+	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -50,6 +52,9 @@ type TypeChecker struct {
 	// written `log.info(...)`. A name two modules share maps to "" and is
 	// refused when used, rather than guessed.
 	moduleAliases map[string]string
+	// exports are the names each module lets other modules use, by module; a
+	// module with no entry lets them use every name.
+	exports       map[string]map[string]bool
 	fields        map[string]map[string]ir.Type
 	genericParams map[string][]string
 
@@ -126,6 +131,8 @@ type functionType struct {
 	// called by the name its header gave it, and a function Rho emits is called
 	// by the name Rho chose for it.
 	extern bool
+	// owner is the module that declared it.
+	owner string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -184,6 +191,16 @@ func New() *TypeChecker {
 // CheckModule validates all declarations inside a module.
 func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	standaloneStdlib := strings.HasPrefix(m.Name, "std.")
+	if len(m.Exports) > 0 {
+		tc.exports = map[string]map[string]bool{}
+		for module, names := range m.Exports {
+			set := map[string]bool{}
+			for _, name := range names {
+				set[name] = true
+			}
+			tc.exports[module] = set
+		}
+	}
 
 	// Handler signature types are registered first so a handler's signature
 	// resolves when the function table is built below.
@@ -244,6 +261,7 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				result: signatureType(fn.ReturnType),
 				cName:  qualifiedCName(fn.Owner, fn.Name),
 				extern: fn.Extern,
+				owner:  fn.Owner,
 			}
 			if fn.Extern {
 				tc.foreign--
@@ -758,6 +776,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				foreign = true
 			}
 			signature, exists = tc.lookupFunc(identifier.Name)
+			if exists {
+				if reason := tc.notExported(signature, identifier.Name); reason != "" {
+					return ir.Type{}, errors.New(reason)
+				}
+			}
 			if !exists && identifier.Name != "print" && !isCallableBuiltin(identifier.Name, tc.types) && !isExternalBuiltin(identifier.Name) && !tc.isTypeName(identifier.Name) {
 				// A call to a type is a construction, not a call to something
 				// missing: `SqlDb(0)` builds a value of that type, and a program
@@ -2867,6 +2890,26 @@ func (tc *TypeChecker) lookupFunc(name string) (functionType, bool) {
 	return entry, found
 }
 
+// notExported says why a function cannot be called from the module being
+// checked: it belongs to another module, which exports a list of names, and
+// this one is not on it. "" when the call may be made. A foreign function is a
+// runtime symbol rather than a module's, and is never private.
+func (tc *TypeChecker) notExported(entry functionType, name string) string {
+	if entry.owner == "" || entry.owner == tc.owner || entry.extern {
+		return ""
+	}
+	exported, listed := tc.exports[entry.owner]
+	if !listed || exported[name] {
+		return ""
+	}
+	names := make([]string, 0, len(exported))
+	for exportedName := range exported {
+		names = append(names, exportedName)
+	}
+	sort.Strings(names)
+	return fmt.Sprintf("%s is not exported by %s (it exports %s)", name, entry.owner, strings.Join(names, ", "))
+}
+
 // moduleFunc resolves a qualified call, `log.info`, to the function the module
 // the alias names declares. ok is false when the alias names no imported
 // module; err says why a module was named but the call cannot be made.
@@ -2881,6 +2924,9 @@ func (tc *TypeChecker) moduleFunc(alias, name string) (functionType, bool, error
 	entry, found := tc.owned[owner][name]
 	if !found {
 		return functionType{}, true, fmt.Errorf("module %s has no function %q", owner, name)
+	}
+	if reason := tc.notExported(entry, name); reason != "" {
+		return functionType{}, true, errors.New(reason)
 	}
 	return entry, true, nil
 }
