@@ -1164,6 +1164,209 @@ func EmitGoRuntime(implementation string) string {
 			imports: []string{"strconv"},
 		},
 		{
+			// A YAML document of nested maps as flat key=value lines, its keys
+			// joined by dots, and those lines written back as such a document.
+			// A program that keeps a document it edits key by key — a plan, a
+			// settings file — reads and writes it this way, so the file stays
+			// YAML a person can read, diff and correct by hand.
+			call: "rhoYamlFlat(",
+			define: `// rhoYamlFlat reads a YAML document of nested maps into flat key=value lines,
+// one per scalar, its keys joined by dots: "node: {1: {name: x}}" is
+// "node.1.name=x". A key "_" stands for the map's own value, which is how a key
+// that has both a value and keys under it is written.
+func rhoYamlFlat(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	type frame struct {
+		indent int
+		key    string
+	}
+	stack := []frame{}
+	var out strings.Builder
+	for _, raw := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimLeft(raw, " ")
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || trimmed == "---" {
+			continue
+		}
+		indent := len(raw) - len(trimmed)
+		key, rest, ok := rhoYamlSplitKey(trimmed)
+		if !ok {
+			continue
+		}
+		for len(stack) > 0 && stack[len(stack)-1].indent >= indent {
+			stack = stack[:len(stack)-1]
+		}
+		parts := make([]string, 0, len(stack)+1)
+		for _, f := range stack {
+			parts = append(parts, f.key)
+		}
+		value := strings.TrimSpace(rest)
+		if value == "" {
+			stack = append(stack, frame{indent: indent, key: key})
+			continue
+		}
+		if key != "_" {
+			parts = append(parts, key)
+		}
+		out.WriteString(strings.Join(parts, "."))
+		out.WriteString("=")
+		out.WriteString(rhoYamlScalar(value))
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
+// rhoYamlSplitKey splits "key: rest", the key plain or quoted.
+func rhoYamlSplitKey(line string) (string, string, bool) {
+	if strings.HasPrefix(line, "\"") || strings.HasPrefix(line, "'") {
+		quote := line[0]
+		end := strings.IndexByte(line[1:], quote)
+		if end < 0 {
+			return "", "", false
+		}
+		key := line[1 : end+1]
+		rest := strings.TrimLeft(line[end+2:], " ")
+		if !strings.HasPrefix(rest, ":") {
+			return "", "", false
+		}
+		return key, rest[1:], true
+	}
+	colon := strings.Index(line, ": ")
+	if colon < 0 {
+		if strings.HasSuffix(line, ":") {
+			return strings.TrimSpace(line[:len(line)-1]), "", true
+		}
+		return "", "", false
+	}
+	return strings.TrimSpace(line[:colon]), line[colon+2:], true
+}
+
+// rhoYamlScalar is a scalar's text: a quoted one unquoted, a plain one without
+// its trailing comment.
+func rhoYamlScalar(value string) string {
+	if strings.HasPrefix(value, "\"") {
+		if unquoted, err := strconv.Unquote(value[:strings.LastIndex(value, "\"")+1]); err == nil {
+			return strings.NewReplacer("\n", " ", "\r", " ").Replace(unquoted)
+		}
+	}
+	if strings.HasPrefix(value, "'") && strings.LastIndex(value, "'") > 0 {
+		return strings.ReplaceAll(value[1:strings.LastIndex(value, "'")], "''", "'")
+	}
+	if hash := strings.Index(value, " #"); hash >= 0 {
+		value = value[:hash]
+	}
+	return strings.TrimSpace(value)
+}
+`,
+			imports: []string{"os", "strconv", "strings"},
+		},
+		{
+			call: "rhoYamlWriteFlat(",
+			define: `// rhoYamlWriteFlat writes flat key=value lines as a YAML document of nested
+// maps, keys in order (a numeric key by its number), every value quoted, the
+// header as comments at the top. The file is replaced in one step: written
+// beside it and renamed over it.
+func rhoYamlWriteFlat(path string, flat string, header string) bool {
+	values := map[string]string{}
+	keys := []string{}
+	for _, line := range strings.Split(flat, "\n") {
+		eq := strings.Index(line, "=")
+		if eq <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eq])
+		if _, seen := values[key]; !seen {
+			keys = append(keys, key)
+		}
+		values[key] = line[eq+1:]
+	}
+	parent := map[string]bool{}
+	for _, key := range keys {
+		parts := strings.Split(key, ".")
+		for i := 1; i < len(parts); i++ {
+			parent[strings.Join(parts[:i], ".")] = true
+		}
+	}
+	sort.Slice(keys, func(a, b int) bool { return rhoYamlKeyLess(keys[a], keys[b]) })
+	var out strings.Builder
+	for _, line := range strings.Split(strings.TrimRight(header, "\n"), "\n") {
+		if line != "" || header != "" {
+			out.WriteString("# " + line + "\n")
+		}
+	}
+	if header != "" {
+		out.WriteString("\n")
+	}
+	written := map[string]bool{}
+	for _, key := range keys {
+		parts := strings.Split(key, ".")
+		for i := 1; i < len(parts); i++ {
+			prefix := strings.Join(parts[:i], ".")
+			if !written[prefix] {
+				written[prefix] = true
+				out.WriteString(strings.Repeat("  ", i-1) + rhoYamlKey(parts[i-1]) + ":\n")
+			}
+		}
+		depth := len(parts) - 1
+		name := rhoYamlKey(parts[depth])
+		if parent[key] {
+			if !written[key] {
+				written[key] = true
+				out.WriteString(strings.Repeat("  ", depth) + name + ":\n")
+			}
+			depth++
+			name = "_"
+		}
+		out.WriteString(strings.Repeat("  ", depth) + name + ": " + strconv.Quote(values[key]) + "\n")
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".yaml-*")
+	if err != nil {
+		return false
+	}
+	name := tmp.Name()
+	_, werr := tmp.WriteString(out.String())
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil || os.Rename(name, path) != nil {
+		os.Remove(name)
+		return false
+	}
+	return true
+}
+
+func rhoYamlKey(segment string) string {
+	for _, r := range segment {
+		if !(r == '_' || r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return strconv.Quote(segment)
+		}
+	}
+	if segment == "" {
+		return "\"\""
+	}
+	return segment
+}
+
+func rhoYamlKeyLess(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		if pa[i] == pb[i] {
+			continue
+		}
+		na, ea := strconv.Atoi(pa[i])
+		nb, eb := strconv.Atoi(pb[i])
+		if ea == nil && eb == nil {
+			return na < nb
+		}
+		return pa[i] < pb[i]
+	}
+	return len(pa) < len(pb)
+}
+`,
+			imports: []string{"os", "path/filepath", "sort", "strconv", "strings"},
+		},
+		{
 			// A named lock, held between rho_lock and rho_unlock. A service runs
 			// its requests and its background work on several goroutines at
 			// once, so reading a counter and writing the next value back is two
