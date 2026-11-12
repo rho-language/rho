@@ -59,13 +59,26 @@ same one, because a module that is to build on its own says what it calls; the
 program has one function. Two declarations of one name with different types are
 refused.
 
-`import` keeps the names apart, so two modules may declare the same name without
-colliding:
+`import` brings in another module and keeps its names its own. Each module's
+code resolves a name in its own declarations first, so two imported modules may
+both declare `init` and each calls its own. A function of an imported module is
+called by the last segment of the module's name:
 
 ```rho
 module app
-import std.core.option
+import rho.log
+import app.storage
+
+fn main() void {
+    log.info("app", "starting")
+    storage.open("data")
+}
 ```
+
+The bare name of an imported function still resolves when only one module
+declares it, which is how programs written before qualified calls keep
+building. A qualified call to a module that was not imported, or to a function
+the module does not declare, is refused with what is wrong.
 
 ## Functions
 

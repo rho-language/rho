@@ -17,3 +17,10 @@ board needs, and a hosted target needs none — the machine already has its
 compiler and its libraries — so an empty list is a hosted build rather than a
 preset that says too little. A preset that does fetch something is still checked
 dependency by dependency.
+
+## [0.1.2] - 2026-11-12
+
+Republished so an installation picks up what changed since 0.1.1 without a new
+number: paths in a manifest are expanded (`${ROBOHUB_WORKSPACE}`, `${RHO_HOME}`)
+before the platform's headers are looked for, so a project that names its
+platform by the workspace builds.

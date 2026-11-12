@@ -36,8 +36,20 @@ import (
 
 // TypeChecker performs deterministic type validation on AST modules.
 type TypeChecker struct {
-	types         map[string]ir.Type // known types
-	funcs         map[string]functionType
+	types map[string]ir.Type // known types
+	funcs map[string]functionType
+	// owned holds each module's own functions, by the module that declared
+	// them. A call is resolved in the calling module's table first, so a
+	// module's call to its own `init` is always its own, whatever another
+	// module declares under the same name.
+	owned map[string]map[string]functionType
+	// owner is the module whose code is being checked or lowered.
+	owner string
+	// moduleAliases maps the name code uses for an imported module — the last
+	// segment of its name, `log` for `rho.log` — to the module, for a call
+	// written `log.info(...)`. A name two modules share maps to "" and is
+	// refused when used, rather than guessed.
+	moduleAliases map[string]string
 	fields        map[string]map[string]ir.Type
 	genericParams map[string][]string
 
@@ -125,6 +137,8 @@ func New() *TypeChecker {
 	tc := &TypeChecker{
 		types:              map[string]ir.Type{},
 		funcs:              map[string]functionType{},
+		owned:              map[string]map[string]functionType{},
+		moduleAliases:      map[string]string{},
 		fields:             map[string]map[string]ir.Type{},
 		genericParams:      map[string][]string{},
 		userStructs:        map[string]bool{},
@@ -263,6 +277,27 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			if !exists || (len(existing.genericParams) > 0 && len(fn.TypeParams) == 0) {
 				entry.genericParams = fn.TypeParams
 				tc.funcs[fn.Name] = entry
+			}
+			// The same rule, inside the declaring module's own table.
+			own := tc.owned[fn.Owner]
+			if own == nil {
+				own = map[string]functionType{}
+				tc.owned[fn.Owner] = own
+				if fn.Owner != "" {
+					alias := fn.Owner
+					if at := strings.LastIndex(alias, "."); at >= 0 {
+						alias = alias[at+1:]
+					}
+					if previous, taken := tc.moduleAliases[alias]; taken && previous != fn.Owner {
+						tc.moduleAliases[alias] = ""
+					} else {
+						tc.moduleAliases[alias] = fn.Owner
+					}
+				}
+			}
+			if mine, declared := own[fn.Name]; !declared || (len(mine.genericParams) > 0 && len(fn.TypeParams) == 0) {
+				entry.genericParams = fn.TypeParams
+				own[fn.Name] = entry
 			}
 		}
 	}
@@ -449,6 +484,10 @@ func isIntegerKind(kind ir.TypeKind) bool {
 /* -------------------------------------------------------------------------- */
 
 func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
+	// Names in the body resolve as the declaring module sees them.
+	previousOwner := tc.owner
+	tc.owner = fn.Owner
+	defer func() { tc.owner = previousOwner }()
 	// An extern's signature is foreign, so `Ptr[T]` in it is a C pointer rather
 	// than the language handle. The context is set for the whole declaration.
 	if fn.Extern {
@@ -543,7 +582,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if typ, ok := tc.moduleConstTypes[value.Name]; ok {
 			return typ, nil
 		}
-		if _, ok := tc.funcs[value.Name]; ok {
+		if _, ok := tc.lookupFunc(value.Name); ok {
 			return ir.Type{Kind: ir.TypeStruct, Name: "function"}, nil
 		}
 		return ir.Type{}, fmt.Errorf("undefined name %q", value.Name)
@@ -718,7 +757,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			if tc.isExternName(identifier.Name) {
 				foreign = true
 			}
-			signature, exists = tc.funcs[identifier.Name]
+			signature, exists = tc.lookupFunc(identifier.Name)
 			if !exists && identifier.Name != "print" && !isCallableBuiltin(identifier.Name, tc.types) && !isExternalBuiltin(identifier.Name) && !tc.isTypeName(identifier.Name) {
 				// A call to a type is a construction, not a call to something
 				// missing: `SqlDb(0)` builds a value of that type, and a program
@@ -798,6 +837,14 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 					return ir.Type{}, nil
 				}
 			}
+		} else if qualified, named, err := tc.qualifiedCall(value.Callee, scope); named {
+			// `log.info(...)`: a function of an imported module, by the name the
+			// module is imported under.
+			if err != nil {
+				return ir.Type{}, err
+			}
+			signature = qualified
+			foreign = qualified.extern
 		} else if member, ok := value.Callee.(ast.MemberExpr); ok && isBuiltinMemberCall(member) {
 			switch {
 			case member.Name == "load":
@@ -817,6 +864,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				signature = functionType{params: []ir.Type{{Kind: ir.TypeI32, Name: "i32"}}, result: ir.Type{Kind: ir.TypeString, Name: "string"}}
 			}
 		} else {
+			if member, ok := value.Callee.(ast.MemberExpr); ok {
+				if object, ok := member.Object.(ast.IdentifierExpr); ok {
+					return ir.Type{}, fmt.Errorf("%s.%s: %q is not a value in scope or an imported module", object.Name, member.Name, object.Name)
+				}
+			}
 			return ir.Type{}, fmt.Errorf("unsupported call target")
 		}
 		if len(value.Args) != len(signature.params) {
@@ -1542,6 +1594,9 @@ func (tc *TypeChecker) structToIR(s ast.StructDecl) ir.StructIR {
 }
 
 func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
+	previousOwner := tc.owner
+	tc.owner = fn.Owner
+	defer func() { tc.owner = previousOwner }()
 	// An extern's signature is foreign: `Ptr[T]` in it is the C pointer the
 	// declaration means, not the handle struct the language declares.
 	if fn.Extern {
@@ -2217,7 +2272,17 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			}
 			return "rho_print(\"\")"
 		}
-		callee := tc.lowerExpr(expr.Callee, scope)
+		callee := ""
+		if qualified, named, err := tc.qualifiedCall(expr.Callee, scope); named && err == nil {
+			// A qualified call is emitted under the name the module's function
+			// is emitted under; an extern under the name its header gave it.
+			callee = qualified.cName
+			if qualified.extern || callee == "" {
+				callee = expr.Callee.(ast.MemberExpr).Name
+			}
+		} else {
+			callee = tc.lowerExpr(expr.Callee, scope)
+		}
 		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok {
 			switch {
 			case identifier.Name == "str_eq":
@@ -2307,7 +2372,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				// the backend supplies it unprefixed, so a module that declares
 				// one is documenting it rather than defining it.
 				_, isIntrinsic := intrinsicSignatures[identifier.Name]
-				if signature, found := tc.funcs[identifier.Name]; found && signature.cName != "" && !isIntrinsic {
+				if signature, found := tc.lookupFunc(identifier.Name); found && signature.cName != "" && !isIntrinsic {
 					// A foreign function is called by the name its header gave
 					// it. The qualified name is what the language uses to tell two
 					// of its own declarations apart, and applying it here would
@@ -2781,13 +2846,60 @@ func isUnitOrVoid(t ir.Type) bool {
 // call that names no types is not a call that wants them deduced, it is a call to
 // the declaration that has none.
 func (tc *TypeChecker) isGenericName(name string) bool {
-	entry, declared := tc.funcs[name]
+	entry, declared := tc.lookupFunc(name)
 	if !declared {
 		// Nothing concrete was declared, so the generic declaration is the one
 		// the call names.
 		return true
 	}
 	return len(entry.genericParams) > 0
+}
+
+// lookupFunc resolves a function name as the module being checked sees it: its
+// own declaration first, then the one the program declares under that name.
+func (tc *TypeChecker) lookupFunc(name string) (functionType, bool) {
+	if own, ok := tc.owned[tc.owner]; ok {
+		if entry, found := own[name]; found {
+			return entry, true
+		}
+	}
+	entry, found := tc.funcs[name]
+	return entry, found
+}
+
+// moduleFunc resolves a qualified call, `log.info`, to the function the module
+// the alias names declares. ok is false when the alias names no imported
+// module; err says why a module was named but the call cannot be made.
+func (tc *TypeChecker) moduleFunc(alias, name string) (functionType, bool, error) {
+	owner, known := tc.moduleAliases[alias]
+	if !known {
+		return functionType{}, false, nil
+	}
+	if owner == "" {
+		return functionType{}, true, fmt.Errorf("%q names more than one imported module; import one of them under another name", alias)
+	}
+	entry, found := tc.owned[owner][name]
+	if !found {
+		return functionType{}, true, fmt.Errorf("module %s has no function %q", owner, name)
+	}
+	return entry, true, nil
+}
+
+// qualifiedCall is the module function a call written `alias.name(...)` names,
+// when alias is an imported module and not a value in scope.
+func (tc *TypeChecker) qualifiedCall(callee ast.Expr, scope map[string]ir.Type) (functionType, bool, error) {
+	member, ok := callee.(ast.MemberExpr)
+	if !ok || isBuiltinMemberCall(member) {
+		return functionType{}, false, nil
+	}
+	object, ok := member.Object.(ast.IdentifierExpr)
+	if !ok {
+		return functionType{}, false, nil
+	}
+	if _, isValue := scope[object.Name]; isValue {
+		return functionType{}, false, nil
+	}
+	return tc.moduleFunc(object.Name, member.Name)
 }
 
 // isExternName reports whether a name is one this project declared as an extern.
