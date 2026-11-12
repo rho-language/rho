@@ -1326,7 +1326,10 @@ func assignable(want, got ir.Type) bool {
 // pointers.
 func ptrElementName(value ir.Type) (string, bool) {
 	if value.Kind == ir.TypePtr {
-		if len(value.Args) == 1 {
+		// A foreign signature can point at a struct the checker has no
+		// definition of — an opaque C type — and then carries no element; the
+		// name still says what it points at.
+		if len(value.Args) == 1 && value.Args[0].Name != "" {
 			return value.Args[0].Name, true
 		}
 		element, _ := stripPointerSpelling(value.Name)

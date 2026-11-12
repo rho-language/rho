@@ -415,9 +415,12 @@ func (tc *TypeChecker) unifyTypeArgs(typeParams []string, declared, actual ir.Ty
 	// argument from one — otherwise `is_some(handle)` needs the caller to spell
 	// out the type the value already has.
 	if declBase == "Option" && IsOptionalPointer(actual.Name) && len(declArgs) == 1 {
+		// The pointer is named as every pointer is, `Ptr[X]`: bound under its
+		// payload's name, `value(handle)` was typed as the struct it points to.
+		payload := npoPayload(actual.Name)
 		tc.unifyTypeArgs(typeParams, declArgs[0],
-			ir.Type{Kind: ir.TypePtr, Name: actual.Name[len("Option_Ptr_"):],
-				Args: []ir.Type{{Kind: ir.TypeStruct, Name: actual.Name[len("Option_Ptr_"):]}}},
+			ir.Type{Kind: ir.TypePtr, Name: "Ptr[" + payload + "]",
+				Args: []ir.Type{{Kind: ir.TypeStruct, Name: payload}}},
 			subs)
 		return
 	}

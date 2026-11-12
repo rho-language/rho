@@ -613,3 +613,29 @@ func instructionsHold(body []ir.Instr, op ir.OpCode) bool {
 	}
 	return false
 }
+
+// A generic over `Option[T]` given an optional pointer binds `T` to the pointer,
+// `Ptr[Thing]`, so `value(handle)` is the pointer a foreign function wants and
+// not the struct it points to. `Thing` is a C structure with no Rho declaration,
+// as the ones rho-cimport hands a program are.
+func TestValueOfAnOptionalPointerIsThePointer(t *testing.T) {
+	compileGeneric(t, `module app
+
+struct Option[T] {
+    is_some: bool
+    value: T
+}
+
+fn value[T](o: Option[T]) T {
+    return o.value
+}
+
+extern fn get_thing(name: Ptr[u8]) Option[Ptr[Thing]]
+extern fn use_thing(thing: Ptr[Thing], level: u32) i32
+
+fn main() void {
+    let thing: Option[Ptr[Thing]] = get_thing("led")
+    let done: i32 = use_thing(value(thing), 1)
+}
+`)
+}
