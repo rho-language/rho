@@ -27,33 +27,41 @@ char* rho_concat(const char* a, const char* b)
     return out;
 }
 
-char* rho_string_from_i32(int32_t value)
+/* rho_digits copies a number's decimal digits, with a sign when negative, into
+ * a string of its own. Every call has its own: a program that writes two
+ * numbers into one expression - `int_to_str(a) + int_to_str(b)` - reads both,
+ * and a buffer the second call overwrote would make the first read the
+ * second. */
+static char* rho_digits(uint32_t magnitude, bool negative)
 {
-    /* Signed, because this is the one a program prints a number with, and the
-     * magnitude is taken in a wider type so that the most negative value does not
-     * overflow on the way to being positive. */
     char buffer[12];
     char* at = buffer + sizeof(buffer);
-    uint32_t magnitude;
     *--at = 0;
-    if (value < 0) {
-        magnitude = (uint32_t)(0u - (uint32_t)value);
-        *--at = '-';
-    } else {
-        magnitude = (uint32_t)value;
-    }
     do {
         *--at = (char)('0' + (magnitude % 10u));
         magnitude /= 10u;
-    } while (magnitude != 0);
+    } while (magnitude != 0u);
+    /* The text is written backwards, so the sign goes in front last. */
+    if (negative) {
+        *--at = '-';
+    }
     size_t len = (size_t)(buffer + sizeof(buffer) - at);
-    char* out = (char*)malloc(len + 1);
+    char* out = (char*)malloc(len);
     if (out == NULL) {
         return "";
     }
     memcpy(out, at, len);
-    out[len] = 0;
     return out;
+}
+
+char* rho_string_from_i32(int32_t value)
+{
+    /* The magnitude is taken in a wider type so that the most negative value
+     * does not overflow on the way to being positive. */
+    if (value < 0) {
+        return rho_digits((uint32_t)(0u - (uint32_t)value), true);
+    }
+    return rho_digits((uint32_t)value, false);
 }
 
 char* rho_str_from_byte(uint8_t b)
@@ -84,16 +92,7 @@ uint32_t rho_int_from_str(const char* s)
 
 const char* rho_int_to_str(uint32_t value)
 {
-    /* A static buffer, because the result is a printf argument; a program that
-     * needs two at once copies the first. */
-    static char buffer[12];
-    char* end = buffer + sizeof(buffer);
-    *--end = 0;
-    do {
-        *--end = (char)('0' + (value % 10u));
-        value /= 10u;
-    } while (value != 0u);
-    return end;
+    return rho_digits(value, false);
 }
 
 uint32_t rho_strlen(const char* s)

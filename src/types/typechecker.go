@@ -1851,6 +1851,7 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 				// pass so both agree on the emitted specialisation.
 				declared := tc.declaredType(declaredName)
 				value = tc.lowerExprExpected(stmt.Value, scope, tc.expectedHint(declaredName, declared))
+				value = tc.converted(value, stmt.Value, scope, declared)
 			}
 			if value == "" {
 				value = tc.lowerExpr(stmt.Value, scope)
@@ -1882,13 +1883,18 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 				return []ir.Instr{{Op: ir.OpAssign, Dest: storage, Args: []string{rmw}}}
 			}
 		}
-		return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{tc.lowerExpr(stmt.Value, scope)}}}
+		value := tc.lowerExpr(stmt.Value, scope)
+		if target, err := tc.exprType(stmt.Target, scope); err == nil {
+			value = tc.converted(value, stmt.Value, scope, target)
+		}
+		return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{value}}}
 	case ast.ExprStmt:
 		return []ir.Instr{{Op: ir.OpExpr, Args: []string{tc.lowerExpr(stmt.Expr, scope)}}}
 	case ast.ReturnStmt:
 		value := ""
 		if stmt.Value != nil {
 			value = tc.lowerExprExpected(stmt.Value, scope, tc.currentReturnHint)
+			value = tc.converted(value, stmt.Value, scope, tc.currentReturnHint)
 		}
 		return []ir.Instr{{Op: ir.OpReturn, Args: []string{value}}}
 	case ast.IfStmt:
@@ -2114,6 +2120,43 @@ func (tc *TypeChecker) integerPrint(expr ast.Expr, scope map[string]ir.Type) (st
 		return "rho_print_u32(" + tc.lowerExpr(call.Args[0], scope) + ")", true
 	}
 	return "", false
+}
+
+// converted is a lowered value made the numeric type it is stored as, passed
+// as or returned as. The checker lets a number of one kind stand where another
+// is declared, as C does implicitly; Go converts nothing implicitly, so the
+// conversion is written out, in the cast spelling both backends read. A bare
+// literal is untyped and takes the type it meets.
+func (tc *TypeChecker) converted(lowered string, expr ast.Expr, scope map[string]ir.Type, target ir.Type) string {
+	if !numeric(target) || isNumericLiteral(expr) {
+		return lowered
+	}
+	if unary, ok := expr.(ast.UnaryExpr); ok && isNumericLiteral(unary.Value) {
+		return lowered
+	}
+	source, err := tc.exprType(expr, scope)
+	if err != nil || !numeric(source) || source.Kind == target.Kind {
+		return lowered
+	}
+	return "(" + cTypeForKind(target.Kind) + ")(" + lowered + ")"
+}
+
+// calleeParams are the parameter types of the function a call names, when it
+// is a concrete function: a generic one deduces its own.
+func (tc *TypeChecker) calleeParams(callee ast.Expr, scope map[string]ir.Type) []ir.Type {
+	if identifier, ok := callee.(ast.IdentifierExpr); ok {
+		if signature, found := intrinsicSignatures[identifier.Name]; found {
+			return signature.params
+		}
+		if signature, found := tc.lookupFunc(identifier.Name); found && len(signature.genericParams) == 0 {
+			return signature.params
+		}
+		return nil
+	}
+	if signature, found, err := tc.qualifiedCall(callee, scope); found && err == nil && len(signature.genericParams) == 0 {
+		return signature.params
+	}
+	return nil
 }
 
 func (tc *TypeChecker) lowerExpr(expr ast.Expr, scope map[string]ir.Type) string {
@@ -2410,9 +2453,14 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				}
 			}
 		}
+		params := tc.calleeParams(expr.Callee, scope)
 		args := []string{}
-		for _, arg := range expr.Args {
-			args = append(args, tc.lowerExpr(arg, scope))
+		for i, arg := range expr.Args {
+			lowered := tc.lowerExpr(arg, scope)
+			if i < len(params) {
+				lowered = tc.converted(lowered, arg, scope, params[i])
+			}
+			args = append(args, lowered)
 		}
 		return callee + "(" + strings.Join(args, ", ") + ")"
 	case ast.StructLiteralExpr:

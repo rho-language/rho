@@ -14,6 +14,9 @@
 package codegen
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -86,5 +89,48 @@ func TestTheRuntimeLetsThePlatformOwnTheConsoleAndTheStop(t *testing.T) {
 	}
 	if !strings.Contains(panicSource, "RHO_PROGRAM_HALT") {
 		t.Error("expected the runtime's stop to be the platform's to name")
+	}
+}
+
+// Each number written as text is a string of its own: two in one expression
+// are both read after both were made, and a shared buffer made the first read
+// as the second. A negative number's sign goes in front.
+func TestTheRuntimeWritesEachNumberIntoItsOwnString(t *testing.T) {
+	compiler, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("no C compiler on the path")
+	}
+	source := ""
+	for _, fragment := range runtimeFragments {
+		if fragment.Name == "strings" {
+			source = fragment.Source
+		}
+	}
+	if source == "" {
+		t.Fatal("the runtime has no strings fragment")
+	}
+	dir := t.TempDir()
+	program := "#include <stddef.h>\n#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n#include <stdlib.h>\n#include <stdio.h>\n" +
+		source + `
+int main(void) {
+    printf("%s|%s|%s|%s", rho_concat(rho_int_to_str(7), rho_int_to_str(4)), rho_string_from_i32(-5),
+        rho_string_from_i32(-2147483647 - 1), rho_int_to_str(4294967295u));
+    return 0;
+}
+`
+	path := filepath.Join(dir, "numbers.c")
+	if err := os.WriteFile(path, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "numbers")
+	if out, err := exec.Command(compiler, "-o", binary, path).CombinedOutput(); err != nil {
+		t.Fatalf("cc: %v\n%s", err, out)
+	}
+	out, err := exec.Command(binary).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if want := "74|-5|-2147483648|4294967295"; string(out) != want {
+		t.Errorf("output = %q, want %q", out, want)
 	}
 }
