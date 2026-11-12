@@ -150,6 +150,17 @@ func TestGatewayPortHonoursUplinkBind(t *testing.T) {
 	}
 }
 
+// A board that moves to another mesh keeps its history: the telemetry port
+// moves a source's rows between projects in every table that holds them.
+func TestTelemetryPortMovesASource(t *testing.T) {
+	port := readPort(t, "telemetry")
+	for _, part := range []string{"func telemetryMoveSource(", "telemetry_reading", "telemetry_rollup_1h", "telemetry_source"} {
+		if !strings.Contains(port, part) {
+			t.Errorf("telemetry port missing %q", part)
+		}
+	}
+}
+
 // readPort reads a port this plugin ships: a complete Go file in package main,
 // which a project's generator merges into the port file it writes.
 func readPort(t *testing.T, name string) string {

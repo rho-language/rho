@@ -282,6 +282,48 @@ func telemetrySourceBind(project string, source string, gateway string, area uin
 	return telemetryJSON(map[string]any{"ok": true, "source": source, "adopted": adopted})
 }
 
+// telemetryMoveSource moves one source's history — its readings, faults,
+// latest values, rollups and its place — from one project to another, in one
+// transaction: how a board that moves to another mesh keeps its history. A row
+// the target already has for the same key is kept as the target's.
+func telemetryMoveSource(from string, to string, source string) string {
+	if !telemetryOpen("") {
+		return telemetryError("the telemetry database could not be opened")
+	}
+	if strings.TrimSpace(source) == "" || from == "" || to == "" || from == to {
+		return telemetryError("a move needs a source and two projects")
+	}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return telemetryError("the telemetry database is not open")
+	}
+	transaction, err := handle.Begin()
+	if err != nil {
+		return telemetryError("the source could not be moved")
+	}
+	moved := int64(0)
+	for _, table := range []string{"telemetry_reading", "telemetry_fault", "telemetry_latest",
+		"telemetry_rollup_1m", "telemetry_rollup_1h", "telemetry_source"} {
+		result, err := transaction.Exec("UPDATE OR IGNORE "+table+" SET project = ? WHERE project = ? AND source = ?",
+			to, from, source)
+		if err != nil {
+			_ = transaction.Rollback()
+			return telemetryError("the source could not be moved")
+		}
+		if table == "telemetry_reading" {
+			moved, _ = result.RowsAffected()
+		}
+		if _, err := transaction.Exec("DELETE FROM "+table+" WHERE project = ? AND source = ?", from, source); err != nil {
+			_ = transaction.Rollback()
+			return telemetryError("the source could not be moved")
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return telemetryError("the source could not be moved")
+	}
+	return telemetryJSON(map[string]any{"ok": true, "source": source, "readings": moved})
+}
+
 // telemetrySources are a project's sources as tab-separated lines: source,
 // area, node, label, module id and when it last reported. An unplaced source
 // has area and node -1.

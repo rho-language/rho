@@ -11,7 +11,9 @@ against that version.
 The gateway port dials a parent: `gateway_parent_start`, `gateway_parent_send`,
 `gateway_parent_next` and `gateway_parent_connected` let a gateway in relay mode
 reach its parent's uplink, redial when it drops, and carry COBS frames both ways,
-with a generation per connection so a session is opened again on a new one.
+with a generation per connection so a session is opened again on a new one. The
+telemetry port moves a source's history between projects
+(`telemetry_move_source`), so a board that moves to another mesh keeps it.
 
 ## [0.4.1] - 2026-11-12
 
