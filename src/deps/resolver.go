@@ -251,6 +251,7 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 	}
 
 	// 8. Add to lockfile
+	rev, hash := r.pin(dep, path, version)
 	lock.Packages = append(lock.Packages, LockedPackage{
 		Name:      dep.Name,
 		Type:      dependencyType,
@@ -259,11 +260,41 @@ func (r *Resolver) resolveDep(graph *DependencyGraph, lock *Lockfile, dep DepSpe
 		GitTag:    dep.GitTag,
 		GitBranch: dep.GitBranch,
 		Path:      path,
-		Hash:      hashPath(path),
-		Rev:       revision(path, version),
+		Hash:      hash,
+		Rev:       rev,
 	})
 
 	return nil
+}
+
+// pin is what a lock entry holds a dependency to, which depends on where it came
+// from. A module fetched from git is held to the commit it was checked out at,
+// and to its contents. A published version installed in the Rho home is held to
+// its version, and to its contents, which a version never changes. A module in a
+// working tree — the same repository, a checkout beside it in the workspace, a
+// path — is held to the version its manifest declares: the tree around it moves
+// with every commit and every edit, and neither is a change of the module. Its
+// contents are not hashed, because a working tree is not immutable; the version
+// is the promise.
+func (r *Resolver) pin(dep DepSpec, path, version string) (rev, hash string) {
+	if dep.GitURL != "" && !r.workingTree(path) {
+		return revision(path, version), hashPath(path)
+	}
+	if home := RhoHome(); home != "" && within(path, filepath.Join(home, "modules", "installed")) {
+		return version, hashPath(path)
+	}
+	return version, ""
+}
+
+// workingTree reports whether a dependency was found in a checkout someone
+// works in, rather than fetched into a cache for this build.
+func (r *Resolver) workingTree(path string) bool {
+	if loc, ok := r.Locator.(*DefaultLocator); ok {
+		if within(path, loc.GlobalCache) || within(path, loc.LocalCache) {
+			return false
+		}
+	}
+	return true
 }
 
 func revision(path, fallback string) string {

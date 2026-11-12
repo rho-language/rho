@@ -2,6 +2,7 @@ package deps
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -80,5 +81,59 @@ func TestAGroupNamesTheRepositoryItsMembersComeFrom(t *testing.T) {
 	t.Setenv("ACME_WORKSPACE", moved)
 	if got := WorkspaceGroupModuleRoot(app, "acme", "forms"); got != "" {
 		t.Errorf("ACME_WORKSPACE was not honoured: %q", got)
+	}
+}
+
+// A module in a working tree is pinned to the version its manifest declares,
+// not to the commit of the repository around it: a commit that does not change
+// the module, or one that edits it without a new version, leaves the lock alone.
+func TestAWorkingTreeModuleIsPinnedByVersion(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on the path")
+	}
+	workspace := t.TempDir()
+	repo := filepath.Join(workspace, "acme")
+	forms := filepath.Join(repo, "modules", "forms")
+	os.MkdirAll(forms, 0o755)
+	os.WriteFile(filepath.Join(forms, "module.yml"), []byte("module:\n  name: forms\n  type: module\n  version: 0.2.0\nmain: src/main.rho\n"), 0o644)
+	git := func(args ...string) {
+		command := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=t@example.org", "-c", "user.name=t"}, args...)...)
+		if out, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("add", ".")
+	git("commit", "-q", "-m", "one")
+	app := filepath.Join(workspace, "app")
+	os.MkdirAll(app, 0o755)
+	t.Setenv("RHO_WORKSPACE", workspace)
+	t.Setenv("ACME_WORKSPACE", "")
+
+	resolve := func() LockedPackage {
+		manifest := &Manifest{Deps: []DepSpec{{Name: "forms", Group: "acme", Version: VersionRange{Raw: ">=0.1.0"}}}}
+		resolver := &Resolver{Locator: &DefaultLocator{ProjectRoot: app, GlobalCache: t.TempDir(), LocalCache: filepath.Join(app, ".rho-deps")}}
+		_, lock, err := resolver.Resolve(manifest, app)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		for _, pkg := range lock.Packages {
+			if pkg.Name == "forms" {
+				return pkg
+			}
+		}
+		t.Fatal("forms is not in the lock")
+		return LockedPackage{}
+	}
+	first := resolve()
+	if first.Rev != "0.2.0" || first.Version != "0.2.0" || first.Hash != "" {
+		t.Fatalf("pin = rev %q version %q hash %q, want the version and no hash", first.Rev, first.Version, first.Hash)
+	}
+	// Another commit in the repository, and an edit to the module, are not a new version.
+	os.WriteFile(filepath.Join(forms, "README.md"), []byte("docs"), 0o644)
+	git("add", ".")
+	git("commit", "-q", "-m", "two")
+	if second := resolve(); second != first {
+		t.Errorf("the lock moved without a new version: %+v then %+v", first, second)
 	}
 }
