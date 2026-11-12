@@ -28,3 +28,9 @@ and copied into the built site beside the page that shows them. A source that
 names an image the tree does not carry is reported, so a broken screenshot is a
 build diagnostic rather than a dead link. A page's images are scaled to the text
 column.
+
+## [0.1.3] - 2026-11-12
+
+Built against the manifest reader that knows providers (`type: provider`),
+interfaces and bindings. The 0.1.2 binary refused those manifests as unreadable,
+so a tree's provider modules were left out of its documentation.
