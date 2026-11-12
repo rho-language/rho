@@ -366,6 +366,109 @@ func gatewayUplinkReply(connection uint32, frame string) bool {
 	return err == nil
 }
 
+// The parent: a relay dials its parent gateway's uplink, the way a board on
+// Wi-Fi does, and keeps dialling while the parent is away. The frames are the
+// same COBS frames an uplink carries. Each connection gets a new generation, so
+// the Rho side knows a session has to be opened again on a new connection.
+var (
+	gatewayParentOnce  sync.Once
+	gatewayParentMu    sync.Mutex
+	gatewayParentConn  net.Conn
+	gatewayParentGen   uint32
+	gatewayParentQueue []string
+)
+
+// gateway_parent_start dials the parent at host:port in the background, once,
+// and redials whenever the connection ends.
+func gatewayParentStart(address string) bool {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return false
+	}
+	gatewayParentOnce.Do(func() { go gatewayParentLoop(address) })
+	return true
+}
+
+func gatewayParentLoop(address string) {
+	for {
+		connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+		if err != nil {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		gatewayParentMu.Lock()
+		gatewayParentConn = connection
+		gatewayParentGen++
+		gatewayParentMu.Unlock()
+		pending := make([]byte, 0, 1024)
+		chunk := make([]byte, 512)
+		for {
+			count, readErr := connection.Read(chunk)
+			if count > 0 {
+				pending = append(pending, chunk[:count]...)
+				for {
+					at := bytes.IndexByte(pending, 0)
+					if at < 0 {
+						break
+					}
+					frame := string(pending[:at])
+					pending = pending[at+1:]
+					if len(frame) > 0 {
+						gatewayParentMu.Lock()
+						gatewayParentQueue = append(gatewayParentQueue, frame)
+						gatewayParentMu.Unlock()
+					}
+				}
+			}
+			if readErr != nil {
+				break
+			}
+		}
+		gatewayParentMu.Lock()
+		if gatewayParentConn == connection {
+			gatewayParentConn = nil
+		}
+		gatewayParentMu.Unlock()
+		connection.Close()
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// gateway_parent_connected is the generation of the connection to the parent,
+// or 0 while there is none.
+func gatewayParentConnected() uint32 {
+	gatewayParentMu.Lock()
+	defer gatewayParentMu.Unlock()
+	if gatewayParentConn == nil {
+		return 0
+	}
+	return gatewayParentGen
+}
+
+// gateway_parent_send writes one COBS frame to the parent, closed with a zero.
+func gatewayParentSend(frame string) bool {
+	gatewayParentMu.Lock()
+	connection := gatewayParentConn
+	gatewayParentMu.Unlock()
+	if connection == nil {
+		return false
+	}
+	_, err := connection.Write(append([]byte(frame), 0))
+	return err == nil
+}
+
+// gateway_parent_next is the next frame the parent sent, or "".
+func gatewayParentNext() string {
+	gatewayParentMu.Lock()
+	defer gatewayParentMu.Unlock()
+	if len(gatewayParentQueue) == 0 {
+		return ""
+	}
+	frame := gatewayParentQueue[0]
+	gatewayParentQueue = gatewayParentQueue[1:]
+	return frame
+}
+
 // childKey packs a child's gateway id the way the Rho side does, so both name a
 // child the same.
 func childKey(area uint32, link uint32) uint32 {

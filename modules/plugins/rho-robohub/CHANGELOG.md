@@ -6,6 +6,13 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.4.2] - 2026-11-13
+
+The gateway port dials a parent: `gateway_parent_start`, `gateway_parent_send`,
+`gateway_parent_next` and `gateway_parent_connected` let a gateway in relay mode
+reach its parent's uplink, redial when it drops, and carry COBS frames both ways,
+with a generation per connection so a session is opened again on a new one.
+
 ## [0.4.1] - 2026-11-12
 
 `gateway_uplink_reply` writes a frame back down the uplink connection a frame
@@ -81,3 +88,4 @@ is the first type this makes possible: it is a `device`, not a `driver`.
 ## [0.1.0] - 2026-10-12
 
 Initial release.
+
