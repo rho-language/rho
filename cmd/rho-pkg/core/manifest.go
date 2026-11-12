@@ -139,7 +139,13 @@ func isTrueWord(value string) bool {
 // Layout returns the package layout for this manifest, with the defaults for
 // the module type and any `package:` overrides applied.
 func (m ModuleYAML) Layout() PackageLayout {
-	layout := LayoutFor(m.Module.Type).WithOverrides(
+	moduleType := m.Module.Type
+	// A Rho module whose entry is Rho source is an application: what it ships is
+	// a program, not a command written in Go.
+	if moduleType == "rho" && strings.HasSuffix(m.Main, ".rho") {
+		moduleType = "application"
+	}
+	layout := LayoutFor(moduleType).WithOverrides(
 		m.Package.Kind, m.Package.Binary, m.Package.HasBinary,
 		m.Package.ArtifactDir, m.Package.Include, m.Package.Require)
 	layout.KeepSources = m.Package.KeepSources

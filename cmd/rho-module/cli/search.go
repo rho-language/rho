@@ -46,8 +46,34 @@ import (
 // need different conditions: this one is a statement about this machine and
 // always works, and `search` reaches a registry and so may not.
 func List(args []string) error {
+	// `--format tsv` is the listing for a program rather than a person: one
+	// installed version per line, kind, name, version, path and whether it is
+	// the version the index selects, so a reader never learns the tree's layout.
+	if len(args) >= 2 && args[0] == "--format" {
+		if args[1] != "tsv" {
+			return fmt.Errorf("rho module list: unknown format %q (known: tsv)", args[1])
+		}
+		query := ""
+		if len(args) == 3 {
+			query = args[2]
+		} else if len(args) > 3 {
+			return fmt.Errorf("usage: rho module list [--format tsv] [query]")
+		}
+		results, err := core.SearchRegistry(query)
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			selected := "no"
+			if r.Active {
+				selected = "selected"
+			}
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\n", r.Type, r.Name, r.Version, r.Path, selected)
+		}
+		return nil
+	}
 	if len(args) > 1 {
-		return fmt.Errorf("usage: rho module list [query]")
+		return fmt.Errorf("usage: rho module list [--format tsv] [query]")
 	}
 	query := ""
 	if len(args) == 1 {

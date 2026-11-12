@@ -389,10 +389,24 @@ An **application** is the other thing a manifest can describe. It is a Rho
 program: it has a `main`, it generates a program with `rho build`, and it is what
 you build and ship.
 
-It is not a module. The toolchain does not install, enable or dispatch an
-application, so it publishes no command and is not something a registry hands to
-a machine — `rho module` never sees it. `applications/registry` and the projects
-under `examples/` are applications.
+It is not a component: the toolchain does not dispatch to it, and it publishes
+no command. It can be published, though, which is how a machine that runs
+applications gets one without its source tree. `rho module publish` builds it
+with `rho build` and packs the program it made beside the sources, and the
+registry installs it as a module. `applications/registry` and the projects under
+`examples/` are applications.
+
+A program that runs applications — a supervisor, a dashboard — finds the
+published ones by asking the toolchain rather than reading the registry's
+directories:
+
+```sh
+$ rho module list --format tsv
+module	energy	0.1.0	~/.rho/modules/installed/module/energy@0.1.0	selected
+```
+
+One installed version per line: kind, name, version, where it is, and whether it
+is the version the index selects.
 
 ```yaml
 module:

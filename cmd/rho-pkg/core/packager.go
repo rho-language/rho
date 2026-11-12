@@ -156,9 +156,10 @@ var layouts = map[string]PackageLayout{
 		Require: []string{"module.yml", "README.md", "src"},
 	},
 	"application": {
-		// An application is a Rho program, so it carries no command binary;
-		// the rho toolchain builds it.
+		// An application is a Rho program: the toolchain builds it and the
+		// package carries the program it made, beside the sources it came from.
 		Kind:    "application",
+		Binary:  true,
 		Include: []string{"module.yml", "README.md", "CHANGELOG.md", "docs", "src", "config", "project.yml", "contracts"},
 		Require: []string{"module.yml", "src"},
 	},
@@ -245,6 +246,12 @@ func BuildBinary(dir string, manifest ModuleYAML) (string, error) {
 	}
 	binaryPath := filepath.Join(artifacts, binaryName)
 
+	// A module whose entry is Rho source is an application the toolchain builds:
+	// its program is what `rho build` makes, not a Go package in the tree.
+	if strings.HasSuffix(manifest.Main, ".rho") {
+		return buildRhoProgram(dir, manifest, binaryPath)
+	}
+
 	// Determine the Go package to build
 	// First, read the module path from go.mod
 	modPath := filepath.Join(dir, "go.mod")
@@ -294,6 +301,47 @@ func BuildBinary(dir string, manifest ModuleYAML) (string, error) {
 	}
 
 	return binaryPath, nil
+}
+
+// buildRhoProgram builds a Rho application with the toolchain and returns the
+// program it made, at binaryPath. The toolchain is the one running, when this is
+// it, so a publish never builds with a different compiler from the one asked.
+func buildRhoProgram(dir string, manifest ModuleYAML, binaryPath string) (string, error) {
+	rho := "rho"
+	if self, err := os.Executable(); err == nil && strings.TrimSuffix(filepath.Base(self), ".exe") == "rho" {
+		rho = self
+	}
+	cmd := exec.Command(rho, "build", ".")
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("rho build failed: %w", err)
+	}
+	for _, name := range []string{manifest.Module.Command, manifest.Module.Name} {
+		if name == "" {
+			continue
+		}
+		built := filepath.Join(dir, "build", name)
+		if runtime.GOOS == "windows" {
+			built += ".exe"
+		}
+		if _, err := os.Stat(built); err != nil {
+			continue
+		}
+		if abs, err := filepath.Abs(built); err == nil && abs == binaryPath {
+			return binaryPath, nil
+		}
+		data, err := os.ReadFile(built)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(binaryPath, data, 0o755); err != nil {
+			return "", err
+		}
+		return binaryPath, nil
+	}
+	return "", fmt.Errorf("rho build made no program named %q", manifest.Module.Name)
 }
 
 // hasGoSources reports whether a directory holds any Go file. The entry point

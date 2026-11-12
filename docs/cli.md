@@ -55,6 +55,7 @@ rho module install <name>       # copy an installed module into this project's s
 rho module enable <name>        # a component or plugin's command becomes runnable
 rho module disable <name>
 rho module list                 # what is in the local registry
+rho module list --format tsv    # the same, one line per version, for a program
 rho module search <query>       # ask the configured remote registries
 ```
 

@@ -49,6 +49,7 @@ func SearchRegistry(query string) ([]RegistryEntry, error) {
 			Type:    entry.Kind,
 			Active:  entry.IsSelected(),
 			Origin:  entry.Origin,
+			Path:    entry.Path,
 		})
 	}
 	return results, nil
@@ -59,6 +60,8 @@ type RegistryEntry struct {
 	Name    string
 	Version string
 	Type    string
+	// Path is where the module is installed.
+	Path string
 	// Active is true for the version the toolchain will resolve to.
 	Active bool
 	// Origin is "local" for a module published from a directory and "remote"

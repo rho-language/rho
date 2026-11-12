@@ -178,3 +178,16 @@ func TestLoadRejectsUnknownBuildLanguage(t *testing.T) {
 		t.Fatal("expected schema error for unsupported build language")
 	}
 }
+
+// A Rho module whose entry is Rho source is an application: it is packed with
+// the program the toolchain builds, and a module that is not keeps its layout.
+func TestARhoApplicationIsPackedAsAnApplication(t *testing.T) {
+	application := ModuleYAML{Module: ModuleSection{Name: "app", Type: "rho"}, Main: "src/main.rho"}
+	if layout := application.Layout(); layout.Kind != "application" || !layout.Binary {
+		t.Fatalf("application layout = %+v", layout)
+	}
+	component := ModuleYAML{Module: ModuleSection{Name: "tool", Type: "component"}, Main: "tool"}
+	if layout := component.Layout(); layout.Kind != "component" {
+		t.Fatalf("component layout = %+v", layout)
+	}
+}
