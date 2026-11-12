@@ -305,6 +305,22 @@ func gatewayUplinkNext() string {
 	return frame.data
 }
 
+// gateway_uplink_take returns the next frame an uplink sent together with the
+// connection it arrived on, as `<connection>:<frame>`, or "" when there is none.
+// One call answers both, so two callers draining at once cannot each be told
+// the other's connection.
+func gatewayUplinkTake() string {
+	gatewayUplinkMu.Lock()
+	defer gatewayUplinkMu.Unlock()
+	if len(gatewayUplinkQueue) == 0 {
+		return ""
+	}
+	frame := gatewayUplinkQueue[0]
+	gatewayUplinkQueue = gatewayUplinkQueue[1:]
+	gatewayUplinkLastConn = frame.connection
+	return strconv.FormatUint(uint64(frame.connection), 10) + ":" + frame.data
+}
+
 // gateway_uplink_connection is the connection the frame gateway_uplink_next just
 // returned arrived on, so the Rho side can bind a child to it when it announces
 // itself, or answer the same link.
@@ -333,6 +349,20 @@ func gatewayUplinkSend(childArea uint32, childLink uint32, frame string) bool {
 		return false
 	}
 	_, err := connection.Write(append([]byte(frame), 0))
+	return err == nil
+}
+
+// gateway_uplink_reply writes one COBS frame back down the connection a frame
+// arrived on, by the id gateway_uplink_connection gave it: how a session is
+// answered to whoever dialled in, before it has announced anything.
+func gatewayUplinkReply(connection uint32, frame string) bool {
+	gatewayUplinkMu.Lock()
+	conn := gatewayUplinkByID[connection]
+	gatewayUplinkMu.Unlock()
+	if conn == nil {
+		return false
+	}
+	_, err := conn.Write(append([]byte(frame), 0))
 	return err == nil
 }
 

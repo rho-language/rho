@@ -6,6 +6,13 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.4.1] - 2026-11-12
+
+`gateway_uplink_reply` writes a frame back down the uplink connection a frame
+arrived on, so a gateway can answer a session to whoever dialled in — a board on
+Wi-Fi or a relay — before it has announced itself. `gateway_uplink_take` hands back a queued frame
+and its connection in one call, so concurrent drains cannot cross them.
+
 ## [0.4.0] - 2026-11-12
 
 A series is one field of one source, and a source is a device by the identity it
