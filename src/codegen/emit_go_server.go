@@ -500,18 +500,24 @@ func writeEventStream(ctx context.Context, w http.ResponseWriter, token string) 
 
 	started := time.Now()
 	var file *os.File
+	waited := false
 	for {
 		opened, err := os.Open(path)
 		if err == nil {
 			file = opened
-			// Start at the end of the file: only events appended after this
-			// connection count, so a page that opens does not replay the whole
-			// history as a flood of toasts.
-			if info, statErr := file.Stat(); statErr == nil {
+			// A file that was already there starts at its end: only events
+			// appended after this connection count, so a page that opens does
+			// not replay the whole history as a flood of toasts. A file that
+			// appeared while this connection waited for it is the one the
+			// connection was opened for — an action's progress — and is read
+			// from the top, or a fast action's lines, its end among them, would
+			// be written before they were looked for.
+			if info, statErr := file.Stat(); statErr == nil && !waited {
 				_, _ = file.Seek(info.Size(), io.SeekStart)
 			}
 			break
 		}
+		waited = true
 		if time.Since(started) > time.Minute {
 			fmt.Fprint(w, "event: error\ndata: the progress file did not appear\n\n")
 			flusher.Flush()
