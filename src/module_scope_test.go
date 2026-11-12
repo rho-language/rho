@@ -332,6 +332,23 @@ build:
 		t.Errorf("with the override: output = %q", out)
 	}
 
+	// An interface imported twice — by the application and by a file it
+	// includes — is one interface with one binding.
+	write("app/src/extra.rho", "module extra\nimport acme.alert\nfn warn_once() u32 { return alert.raise(\"WARN\", \"low\") }\n")
+	write("app/src/main.rho", "module main\ninclude \"extra.rho\"\nimport acme.alert\nfn main() void {\n    print(int_to_str(alert.raise(\"ERROR\", \"pump stopped\") + warn_once()))\n}\n")
+	twice, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("an interface imported twice: %v", err)
+	}
+	build = exec.Command("go", "build", "-buildvcs=false", "-o", binary, ".")
+	build.Dir = twice[0]
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build, imported twice: %v\n%s", err, out)
+	}
+	if out, _ := exec.Command(binary).Output(); string(out) != "LOG ERROR:pump stopped;LOG WARN:low;2" {
+		t.Errorf("imported twice: output = %q", out)
+	}
+
 	// A provider whose function does not match the interface is refused.
 	write("acme/providers/chat/src/provider.rho", "module chat\nfn send(level: string) u32 { return 1 }\n")
 	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "acme-chat does not implement acme.alert.send as declared") {

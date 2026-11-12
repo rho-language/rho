@@ -1223,6 +1223,10 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 				return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
 			}
 		}
+		// A module imported a second time — by the application and by a module
+		// it includes — is already part of the program, and so is its binding.
+		absolute, _ := filepath.Abs(importPath)
+		alreadyLoaded := visited[absolute]
 		imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			return nil, err
@@ -1232,7 +1236,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		}
 		// An interface is completed by the application's binding: the calls to
 		// its providers, generated from `bind:`, become part of the interface.
-		if provided && providerManifest.Interface != nil {
+		if provided && providerManifest.Interface != nil && !alreadyLoaded {
 			binding, bindErr := loadBinding(imp.Name, providerManifest.Interface, projectRoot, dependencyRoots, components, visited)
 			if bindErr != nil {
 				return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, bindErr)
