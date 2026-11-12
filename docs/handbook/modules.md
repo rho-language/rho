@@ -697,3 +697,33 @@ deps:
     acme-forms: ">=0.1.0"
     acme-provider-mail: ">=0.1.0"
 ```
+
+### What a version promises
+
+A module's exports are what other modules build against, so its version says
+how they changed. Publishing records each version's exported signatures — every
+function's parameter and return types, every struct's fields in order, every
+constant's type, and an interface's functions — beside the version in the local
+registry. A release that removes an export or changes one needs a new major
+version, or a new minor one before 1.0.0; publishing refuses it otherwise. An
+added export, a renamed parameter or a constant's new value promises nothing new
+to break.
+
+`rho module check` says where a working tree stands before that:
+
+```text
+$ rho module check providers/log
+robohub-provider-log 0.2.0, compared with robohub-provider-log 0.1.1 in git (588ddee6ad04^)
+  removed  fn provider_log_append(config: string, line: string) u32
+  added    fn send(level: string, message: string, metadata: string) u32
+keeper (robohub/applications/keeper) depends on it and uses none of what changed
+mesh (robohub-mesh) depends on it and uses none of what changed
+0.2.0 may break what 0.1.1 promised, which its version says.
+```
+
+The previous release is the version recorded when it was published or, for a
+module used from its repository, the module as it was before its manifest moved
+to the current version, in git. The modules listed are the ones in the
+workspace that depend on it or implement its interface, with the lines that
+name what a breaking change touches. It exits 1 when the version the manifest
+declares cannot carry the change.

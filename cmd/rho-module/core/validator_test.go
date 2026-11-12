@@ -321,6 +321,16 @@ func TestValidateRejectsWhatANonComponentOffers(t *testing.T) {
 	}
 }
 
+// What any module provides is the name it is imported by and what it exports,
+// which is not a hook.
+func TestValidateAcceptsAModulesImportAndExports(t *testing.T) {
+	tmp := t.TempDir()
+	writeModule(t, tmp, "module:\n  name: acme-forms\n  type: module\n  version: 0.1.0\n\nmain: src/main.rho\n\nprovides:\n  import: acme.forms\n  exports:\n    - open\n")
+	if err := ValidateModule(tmp); err != nil {
+		t.Fatalf("a module's import and exports were refused: %v", err)
+	}
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Contracts                                                                  */
 /* -------------------------------------------------------------------------- */

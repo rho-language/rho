@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"rho/src/exportsig"
 	"strings"
 
 	"rho/internal/paths"
@@ -51,6 +52,20 @@ func PublishModule(dir string) error {
 	meta, err := ReadModuleInfo(dir)
 	if err != nil {
 		return fmt.Errorf("cannot read module info: %w", err)
+	}
+
+	// A release that removes or changes an export breaks what the release
+	// before it promised, and only a new major version may. The previous
+	// release is the version recorded when it was published, or the version
+	// the manifest declared before in git.
+	exports, exportsErr := exportsig.Read(dir)
+	if exportsErr == nil {
+		if baseline, found, _ := exportsig.FindBaseline(dir, exports); found && baseline.Set.Version != exports.Version {
+			diff := exportsig.Compare(baseline.Set, exports)
+			if err := exportsig.CheckVersion(baseline.Set.Version, exports.Version, diff); err != nil {
+				return fmt.Errorf("%w; 'rho module check %s' says what changed and which modules use it", err, dir)
+			}
+		}
 	}
 
 	// The manifest is loaded rather than rebuilt from metadata, so every
@@ -111,6 +126,15 @@ func PublishModule(dir string) error {
 	// Step 7: Install locally
 	if err := installLocally(pkgManifest, pkgPath, sourceArchive); err != nil {
 		return fmt.Errorf("local install failed: %w", err)
+	}
+	// The version's exports are recorded beside it, so the next release is
+	// compared with what this one actually promised.
+	if exportsErr == nil {
+		if installed, err := installedModuleDir(pkgManifest); err == nil {
+			if err := exportsig.Write(installed, exports); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: the exports of %s@%s were not recorded: %v\n", exports.Module, exports.Version, err)
+			}
+		}
 	}
 
 	// Step 8: Clean up generated files (pkg, binary, source archive)
@@ -288,6 +312,20 @@ func uploadModule(meta ModuleInfo, dir, pkgPath, sourceArchive string) error {
 /* -------------------------------------------------------------------------- */
 /*  Local Install (same as build)                                              */
 /* -------------------------------------------------------------------------- */
+
+// installedModuleDir is where a published version is installed in the local
+// registry.
+func installedModuleDir(meta pkgcore.ModuleYAML) (string, error) {
+	kind, err := installKindFor(meta.Module.Type)
+	if err != nil {
+		return "", err
+	}
+	modulesDir, err := paths.GetModulesInstalledPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(modulesDir, kind, fmt.Sprintf("%s@%s", meta.Module.Name, meta.Module.Version)), nil
+}
 
 func installLocally(meta pkgcore.ModuleYAML, pkgPath, sourceArchive string) error {
 	// Install to ~/.rho/modules/installed/<kind>/, where the kind is the index

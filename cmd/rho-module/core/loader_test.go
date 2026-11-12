@@ -33,8 +33,8 @@ main: rho-lsp
 `
 	os.WriteFile(filepath.Join(modDir, "module.yml"), []byte(manifest), 0644)
 
-	// Override HOME
-	os.Setenv("HOME", tmp)
+	// The home this test made is the Rho home.
+	t.Setenv("RHO_HOME", filepath.Join(tmp, ".rho"))
 
 	mod, err := LoadInstalledModule("rho-lsp")
 	if err != nil {

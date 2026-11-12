@@ -292,6 +292,12 @@ func validateProvides(manifest *deps.Manifest) error {
 	}
 	// Only a component runs a tool a plugin can attach to, so a module of any
 	// other type offering hooks is offering a place that nothing will ask for.
+	// What any module may provide is the import it is used by, its exports and
+	// a provider's settings.
+	offersHooks := len(manifest.Provides.Hooks) > 0 || len(manifest.Provides.Contracts) > 0
+	if !offersHooks && manifest.ModuleType != "component" {
+		return nil
+	}
 	if manifest.ModuleType != "component" {
 		return fmt.Errorf("a %s module cannot offer hooks; only a component runs a tool a plugin can extend", manifest.ModuleType)
 	}

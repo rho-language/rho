@@ -50,6 +50,8 @@ func Main(args []string) int {
 		err = Ids(args[1:])
 	case "info":
 		err = Info(args[1:])
+	case "check":
+		err = Check(args[1:])
 	case "publish":
 		err = Publish(args[1:])
 	case "unpublish":
@@ -141,10 +143,12 @@ About a module on disk:
   init <name> <type>         create a module
   validate [dir]             check a manifest
   info [dir]                 read a manifest
+  check [dir]                compare its exports with its previous release, and
+                             list the modules a breaking change would reach
   build [dir]                build a component's command
   download <name>[@version]  fetch a package into the cache without installing
 
-Commands: init, validate, info, build, publish, unpublish, install, uninstall,
+Commands: init, validate, info, check, build, publish, unpublish, install, uninstall,
           activate, deactivate, visibility, mine, keygen, trust, download,
           remove, update, search, list`
 }
@@ -152,7 +156,7 @@ Commands: init, validate, info, build, publish, unpublish, install, uninstall,
 // Commands is the one-line list the usage ends with, for a message that has to
 // be short.
 func Commands() string {
-	return "Commands: init, validate, info, build, publish, unpublish, install, " +
+	return "Commands: init, validate, info, check, build, publish, unpublish, install, " +
 		"uninstall, activate, deactivate, visibility, mine, keygen, trust, download, " +
 		"remove, update, search, list"
 }
