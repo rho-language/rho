@@ -40,6 +40,10 @@ jobs:
     # `scripts/check.sh` publishes every module the tree carries at the version its own
     # manifest declares, which is also what stops that list going stale — and what
     # lets a module added to the tree be tested without this file being edited.
+    # A path under someone's home is true for one machine and published to all.
+    - name: No local paths
+      run: ./scripts/check-local-paths.sh .
+
     - name: Check
       run: ./scripts/check.sh
 
