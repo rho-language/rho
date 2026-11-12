@@ -641,7 +641,11 @@ func gatewayF32FromStr(value string) float32 {
 // by name. The gateway normalizes a PowerReading into one record per valid
 // field, so the same record shape carries a temperature, a power and a state.
 type gatewayOutboxRecord struct {
-	Seq        uint32  `json:"seq"`
+	Seq uint32 `json:"seq"`
+	// Source is the board that sent the reading, by the id its session was
+	// opened with: the identity a series is kept under. A reading that arrived
+	// unauthenticated has none, and the store places it by area and node.
+	Source     string  `json:"source,omitempty"`
 	AreaID     uint32  `json:"area_id"`
 	NodeID     uint32  `json:"node_id"`
 	Field      string  `json:"field"`
@@ -822,6 +826,11 @@ func gatewayOutboxCompact() {
 }
 
 func gatewayOutboxAppend(areaID uint32, nodeID uint32, field string, value float32, status uint32, receivedMS string) uint32 {
+	return gatewayOutboxAppendFrom("", areaID, nodeID, field, value, status, receivedMS)
+}
+
+// gatewayOutboxAppendFrom records a reading with the board that sent it.
+func gatewayOutboxAppendFrom(source string, areaID uint32, nodeID uint32, field string, value float32, status uint32, receivedMS string) uint32 {
 	if !gatewayOutboxOpen("") {
 		return 0
 	}
@@ -834,6 +843,7 @@ func gatewayOutboxAppend(areaID uint32, nodeID uint32, field string, value float
 	gatewayOutbox.nextSeq++
 	record := gatewayOutboxRecord{
 		Seq:        gatewayOutbox.nextSeq,
+		Source:     source,
 		AreaID:     areaID,
 		NodeID:     nodeID,
 		Field:      field,
@@ -878,6 +888,11 @@ func gatewayOutboxAppend(areaID uint32, nodeID uint32, field string, value float
 
 func gatewayOutboxAppendU32(areaID uint32, nodeID uint32, field string, value uint32, status uint32, receivedMS string) uint32 {
 	return gatewayOutboxAppend(areaID, nodeID, field, float32(value), status, receivedMS)
+}
+
+// gatewayOutboxAppendFromU32 is gatewayOutboxAppendFrom for a whole number.
+func gatewayOutboxAppendFromU32(source string, areaID uint32, nodeID uint32, field string, value uint32, status uint32, receivedMS string) uint32 {
+	return gatewayOutboxAppendFrom(source, areaID, nodeID, field, float32(value), status, receivedMS)
 }
 
 func gatewayOutboxFetch(after uint32, limit uint32) string {

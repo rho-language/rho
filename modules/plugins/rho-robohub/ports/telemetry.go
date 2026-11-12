@@ -29,6 +29,14 @@ import (
 // readings, telemetry_latest the newest value per signal, and telemetry_gateway
 // the cursor each gateway's feed has reached. The schema that creates them is
 // the project's own, applied by the sql port before the first poll.
+//
+// A series is one signal of one source. A source is a device by the identity it
+// keeps for its life — the id a board opens its session with, the id a plan gave
+// an HTTP device — and never by where it sits: an area and a node are facts
+// about a source, recorded in telemetry_source, that may change without a
+// series changing. A reading that arrives without an identity is placed by its
+// area and node through that table, and under `legacy:<area>.<node>` when no
+// source is bound there yet; binding one adopts those readings.
 
 var (
 	telemetryMu         sync.Mutex
@@ -70,9 +78,238 @@ func telemetryOpen(path string) bool {
 	}
 	telemetryDBPath = path
 	telemetryDB = opened.ok
+	// A store written before series had a source is brought forward before the
+	// schema is applied, because the schema's indexes name the source column.
+	if err := telemetryMigrate(); err != nil {
+		rhoSqlLastErrMsg = err.Error()
+		return false
+	}
 	stdSqlSqlApply(telemetryDB, "")
 	telemetryReady = true
 	return true
+}
+
+// telemetryLegacySource is where a reading with no identity and no bound source
+// is kept, so it is never merged into a source it may not belong to.
+func telemetryLegacySource(area uint32, node uint32) string {
+	return fmt.Sprintf("legacy:%d.%d", area, node)
+}
+
+// telemetryMigrate rewrites a store keyed by area and node into one keyed by
+// source, in one transaction. Every existing series becomes its legacy source;
+// binding a source to that area and node later adopts it. A store that already
+// has sources, or has no tables yet, is left as it is.
+func telemetryMigrate() error {
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return fmt.Errorf("the telemetry database is not open")
+	}
+	hasColumn := func(table string, column string) (bool, bool) {
+		rows, err := handle.Query("SELECT name FROM pragma_table_info(?)", table)
+		if err != nil {
+			return false, false
+		}
+		defer rows.Close()
+		exists := false
+		for rows.Next() {
+			exists = true
+			var name string
+			if rows.Scan(&name) == nil && name == column {
+				return true, true
+			}
+		}
+		return exists, false
+	}
+	exists, migrated := hasColumn("telemetry_reading", "source")
+	if !exists || migrated {
+		return nil
+	}
+	legacy := "'legacy:' || area_id || '.' || node_id"
+	statements := []string{
+		"ALTER TABLE telemetry_reading ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+		"UPDATE telemetry_reading SET source = " + legacy,
+		"DROP INDEX IF EXISTS telemetry_reading_series",
+		"ALTER TABLE telemetry_fault ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+		"UPDATE telemetry_fault SET source = " + legacy + " WHERE area_id != 0 OR node_id != 0",
+		"CREATE TABLE telemetry_latest_v2 (project TEXT NOT NULL, source TEXT NOT NULL, field TEXT NOT NULL, " +
+			"value REAL NOT NULL, status INTEGER NOT NULL DEFAULT 0, received_ms INTEGER NOT NULL, " +
+			"PRIMARY KEY (project, source, field))",
+		"INSERT OR REPLACE INTO telemetry_latest_v2 SELECT project, " + legacy +
+			", field, value, status, received_ms FROM telemetry_latest",
+		"DROP TABLE telemetry_latest",
+		"ALTER TABLE telemetry_latest_v2 RENAME TO telemetry_latest",
+	}
+	for _, table := range []string{"telemetry_rollup_1m", "telemetry_rollup_1h"} {
+		statements = append(statements,
+			"CREATE TABLE "+table+"_v2 (project TEXT NOT NULL, source TEXT NOT NULL, field TEXT NOT NULL, "+
+				"bucket_ms INTEGER NOT NULL, value_min REAL NOT NULL, value_max REAL NOT NULL, "+
+				"value_avg REAL NOT NULL, samples INTEGER NOT NULL, PRIMARY KEY (project, source, field, bucket_ms))",
+			"INSERT OR REPLACE INTO "+table+"_v2 SELECT project, "+legacy+
+				", field, bucket_ms, value_min, value_max, value_avg, samples FROM "+table,
+			"DROP TABLE "+table,
+			"ALTER TABLE "+table+"_v2 RENAME TO "+table,
+		)
+	}
+	transaction, err := handle.Begin()
+	if err != nil {
+		return err
+	}
+	for _, statement := range statements {
+		if _, err := transaction.Exec(statement); err != nil {
+			_ = transaction.Rollback()
+			return fmt.Errorf("the telemetry store could not be given sources: %w", err)
+		}
+	}
+	return transaction.Commit()
+}
+
+// telemetryBinding is where a project's sources are placed: area and node to
+// source, and the facts a reading is checked against.
+type telemetryBinding struct {
+	byPlace map[string]string
+	known   map[string]bool
+}
+
+func telemetryPlace(area uint32, node uint32) string {
+	return strconv.FormatUint(uint64(area), 10) + "." + strconv.FormatUint(uint64(node), 10)
+}
+
+func telemetryBindings(project string) telemetryBinding {
+	binding := telemetryBinding{byPlace: map[string]string{}, known: map[string]bool{}}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return binding
+	}
+	rows, err := handle.Query("SELECT source, area_id, node_id FROM telemetry_source WHERE project = ?", project)
+	if err != nil {
+		return binding
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var source string
+		var area, node int64
+		if rows.Scan(&source, &area, &node) != nil {
+			continue
+		}
+		binding.known[source] = true
+		if area >= 0 && node >= 0 {
+			binding.byPlace[telemetryPlace(uint32(area), uint32(node))] = source
+		}
+	}
+	return binding
+}
+
+// telemetryCollisions remembers when a clash was last reported, so a board that
+// keeps claiming another's place is one fault every ten minutes, not one a poll.
+var (
+	telemetryCollisionMu sync.Mutex
+	telemetryCollisions  = map[string]int64{}
+)
+
+// telemetryCollisionDue reports whether a clash by this source is due to be
+// reported again, and notes that it is being reported now.
+func telemetryCollisionDue(source string, now int64) bool {
+	telemetryCollisionMu.Lock()
+	defer telemetryCollisionMu.Unlock()
+	if now-telemetryCollisions[source] <= 10*60*1000 {
+		return false
+	}
+	telemetryCollisions[source] = now
+	return true
+}
+
+// telemetrySourceBind is the plan saying which source sits at an area and node:
+// it records the source's facts, frees that place from any other source, and
+// adopts the readings kept there under its legacy source. Binding again with the
+// same facts changes nothing.
+func telemetrySourceBind(project string, source string, gateway string, area uint32, node uint32, label string, moduleID string) string {
+	if !telemetryOpen("") {
+		return telemetryError("the telemetry database could not be opened")
+	}
+	if strings.TrimSpace(source) == "" || strings.HasPrefix(source, "legacy:") {
+		return telemetryError("a source needs an identity")
+	}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return telemetryError("the telemetry database is not open")
+	}
+	now := time.Now().UnixMilli()
+	legacy := telemetryLegacySource(area, node)
+	statements := []struct {
+		sql  string
+		args []any
+	}{
+		{"UPDATE telemetry_source SET area_id = -1, node_id = -1 " +
+			"WHERE project = ? AND area_id = ? AND node_id = ? AND source != ?",
+			[]any{project, int64(area), int64(node), source}},
+		{"INSERT INTO telemetry_source (project, source, gateway_id, area_id, node_id, label, module_id, first_ms, last_ms) " +
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(project, source) DO UPDATE SET " +
+			"gateway_id = excluded.gateway_id, area_id = excluded.area_id, node_id = excluded.node_id, " +
+			"label = excluded.label, module_id = excluded.module_id",
+			[]any{project, source, gateway, int64(area), int64(node), label, moduleID, now}},
+		{"UPDATE telemetry_reading SET source = ? WHERE project = ? AND source = ?", []any{source, project, legacy}},
+		{"UPDATE telemetry_fault SET source = ? WHERE project = ? AND source = ?", []any{source, project, legacy}},
+	}
+	for _, table := range []string{"telemetry_latest", "telemetry_rollup_1m", "telemetry_rollup_1h"} {
+		statements = append(statements,
+			struct {
+				sql  string
+				args []any
+			}{"UPDATE OR IGNORE " + table + " SET source = ? WHERE project = ? AND source = ?", []any{source, project, legacy}},
+			struct {
+				sql  string
+				args []any
+			}{"DELETE FROM " + table + " WHERE project = ? AND source = ?", []any{project, legacy}})
+	}
+	transaction, err := handle.Begin()
+	if err != nil {
+		return telemetryError("the source could not be bound")
+	}
+	adopted := int64(0)
+	for index, statement := range statements {
+		result, err := transaction.Exec(statement.sql, statement.args...)
+		if err != nil {
+			_ = transaction.Rollback()
+			return telemetryError("the source could not be bound")
+		}
+		if index == 2 {
+			adopted, _ = result.RowsAffected()
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return telemetryError("the source could not be bound")
+	}
+	return telemetryJSON(map[string]any{"ok": true, "source": source, "adopted": adopted})
+}
+
+// telemetrySources are a project's sources as tab-separated lines: source,
+// area, node, label, module id and when it last reported. An unplaced source
+// has area and node -1.
+func telemetrySources(project string) string {
+	if !telemetryOpen("") {
+		return ""
+	}
+	handle, ok := rhoSqlHandle(telemetryDB.raw)
+	if !ok {
+		return ""
+	}
+	rows, err := handle.Query("SELECT source, area_id, node_id, label, module_id, last_ms "+
+		"FROM telemetry_source WHERE project = ? ORDER BY source", project)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	var out strings.Builder
+	for rows.Next() {
+		var source, label, moduleID string
+		var area, node, last int64
+		if rows.Scan(&source, &area, &node, &label, &moduleID, &last) != nil {
+			continue
+		}
+		fmt.Fprintf(&out, "%s\t%d\t%d\t%s\t%s\t%d\n", source, area, node,
+			strings.ReplaceAll(label, "\t", " "), moduleID, last)
+	}
+	return out.String()
 }
 
 func telemetryNumber(value any) float64 {
@@ -195,6 +432,8 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 	events := make([]string, 0, len(records))
 	latest := make([][]any, 0, len(records))
 	faults := make([][]any, 0, 4)
+	seen := map[string][]any{}
+	binding := telemetryBindings(project)
 	maxSequence := cursor
 	for _, record := range records {
 		sequence := telemetryUint(record["seq"])
@@ -207,15 +446,36 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 		value := telemetryNumber(record["value"])
 		status := telemetryInt(record["status"])
 		received := telemetryInt(record["received_ms"])
+		// The board's own identity when it has one. A reading without one is
+		// placed by the source bound at its area and node, or kept apart.
+		bound := binding.byPlace[telemetryPlace(area, node)]
+		source := telemetryText(record["source"])
+		if source == "" {
+			source = bound
+			if source == "" {
+				source = telemetryLegacySource(area, node)
+			}
+		} else {
+			seen[source] = []any{project, source, gatewayID, received}
+			if bound != "" && bound != source && telemetryCollisionDue(source, received) {
+				// Two boards at one place are two series and a fault, never one
+				// series: merging them would make both histories wrong.
+				faults = append(faults, []any{
+					project, gatewayID, source, int64(area), int64(node), field, int64(3), "ERROR",
+					fmt.Sprintf("board %s reports as area %d node %d, which is %s's place in the plan", source, area, node, bound),
+					received,
+				})
+			}
+		}
 		readings = append(readings, []any{
-			project, gatewayID, int64(sequence), int64(area), int64(node),
+			project, gatewayID, int64(sequence), source, int64(area), int64(node),
 			field, value, status, received,
 		})
-		events = append(events, telemetryEventLine(project, area, node, field,
+		events = append(events, telemetryEventLine(project, source, area, node, field,
 			strconv.FormatFloat(value, 'f', -1, 64), status, received))
 		if status == 0 {
 			latest = append(latest, []any{
-				project, int64(area), int64(node), field, value, status, received,
+				project, source, field, value, status, received,
 			})
 		} else {
 			severity := "WARNING"
@@ -223,7 +483,7 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 				severity = "ERROR"
 			}
 			faults = append(faults, []any{
-				project, gatewayID, int64(area), int64(node), field,
+				project, gatewayID, source, int64(area), int64(node), field,
 				status, severity, "gateway reading reported status " + strconv.FormatInt(status, 10), received,
 			})
 		}
@@ -237,20 +497,32 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 	gateways := [][]any{{
 		gatewayID, project, base, int64(maxSequence), time.Now().UnixMilli(),
 	}}
+	// Every board that spoke is a known source from now on; one the plan has not
+	// placed is recorded unplaced, so it is visible rather than silently merged.
+	sources := make([][]any, 0, len(seen))
+	for _, row := range seen {
+		sources = append(sources, row)
+	}
 	batches := []rhoSqlStatementBatch{
 		{
 			SQL: "INSERT OR IGNORE INTO telemetry_reading " +
-				"(project, gateway_id, seq, area_id, node_id, field, value, status, received_ms) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				"(project, gateway_id, seq, source, area_id, node_id, field, value, status, received_ms) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			Rows: readings,
 		},
 		{
 			SQL: "INSERT INTO telemetry_latest " +
-				"(project, area_id, node_id, field, value, status, received_ms) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?) " +
-				"ON CONFLICT(project, area_id, node_id, field) DO UPDATE SET " +
+				"(project, source, field, value, status, received_ms) " +
+				"VALUES (?, ?, ?, ?, ?, ?) " +
+				"ON CONFLICT(project, source, field) DO UPDATE SET " +
 				"value = excluded.value, status = excluded.status, received_ms = excluded.received_ms",
 			Rows: latest,
+		},
+		{
+			SQL: "INSERT INTO telemetry_source (project, source, gateway_id, area_id, node_id, label, module_id, first_ms, last_ms) " +
+				"VALUES (?1, ?2, ?3, -1, -1, '', '', ?4, ?4) " +
+				"ON CONFLICT(project, source) DO UPDATE SET gateway_id = excluded.gateway_id, last_ms = excluded.last_ms",
+			Rows: sources,
 		},
 		{
 			SQL: "INSERT INTO telemetry_gateway (id, project, url, last_seq, updated_ms) " +
@@ -263,8 +535,8 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 	if len(faults) > 0 {
 		batches = append(batches, rhoSqlStatementBatch{
 			SQL: "INSERT INTO telemetry_fault " +
-				"(project, gateway_id, area_id, node_id, field, status, severity, message, created_ms) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				"(project, gateway_id, source, area_id, node_id, field, status, severity, message, created_ms) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			Rows: faults,
 		})
 	}
@@ -310,7 +582,7 @@ func telemetryStatus(project string) string {
 }
 
 // telemetryLatest answers the newest value of one signal.
-func telemetryLatest(project string, area uint32, node uint32, field string) string {
+func telemetryLatest(project string, source string, field string) string {
 	if !telemetryOpen("") {
 		return telemetryError("the telemetry database could not be opened")
 	}
@@ -323,8 +595,8 @@ func telemetryLatest(project string, area uint32, node uint32, field string) str
 	var received int64
 	if err := handle.QueryRow(
 		"SELECT value, status, received_ms FROM telemetry_latest "+
-			"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ?",
-		project, int64(area), int64(node), field).Scan(&value, &status, &received); err != nil {
+			"WHERE project = ? AND source = ? AND field = ?",
+		project, source, field).Scan(&value, &status, &received); err != nil {
 		return telemetryJSON(map[string]any{"ok": false})
 	}
 	return telemetryJSON(map[string]any{
@@ -335,7 +607,7 @@ func telemetryLatest(project string, area uint32, node uint32, field string) str
 // telemetryLatestText answers the newest value as text, for the live value a
 // source page shows. An empty string means the store has no reading yet, and
 // the caller falls back to the gateway's live state.
-func telemetryLatestText(project string, area uint32, node uint32, field string) string {
+func telemetryLatestText(project string, source string, field string) string {
 	if !telemetryOpen("") {
 		return ""
 	}
@@ -346,8 +618,8 @@ func telemetryLatestText(project string, area uint32, node uint32, field string)
 	var value float64
 	if err := handle.QueryRow(
 		"SELECT value FROM telemetry_latest "+
-			"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? AND status = 0",
-		project, int64(area), int64(node), field).Scan(&value); err != nil {
+			"WHERE project = ? AND source = ? AND field = ? AND status = 0",
+		project, source, field).Scan(&value); err != nil {
 		return ""
 	}
 	return strconv.FormatFloat(value, 'f', -1, 64)
@@ -420,9 +692,10 @@ func telemetryJsonBool(document string, path string) string {
 }
 
 // telemetryRecord writes one reading a service read itself, rather than one a
-// gateway delivered. The synthetic feed is per field so the reading's unique
-// key stays meaningful, and the sequence is the receive time.
-func telemetryRecord(project string, area uint32, node uint32, field string, valueText string, status uint32) uint32 {
+// gateway delivered, under the source the service read it from. The synthetic
+// feed is per field so the reading's unique key stays meaningful, and the
+// sequence is the receive time.
+func telemetryRecord(project string, source string, field string, valueText string, status uint32) uint32 {
 	if !telemetryOpen("") {
 		return 0
 	}
@@ -430,29 +703,37 @@ func telemetryRecord(project string, area uint32, node uint32, field string, val
 	if err != nil {
 		return 0
 	}
+	if strings.TrimSpace(source) == "" {
+		return 0
+	}
 	received := time.Now().UnixMilli()
-	feed := fmt.Sprintf("mesh:%s:%d:%d:%s", project, area, node, field)
+	feed := fmt.Sprintf("mesh:%s:%s:%s", project, source, field)
 	reading := [][]any{{
-		project, feed, received, int64(area), int64(node), field, value,
-		int64(status), received,
+		project, feed, received, source, field, value, int64(status), received,
 	}}
 	latest := [][]any{{
-		project, int64(area), int64(node), field, value, int64(status), received,
+		project, source, field, value, int64(status), received,
 	}}
 	batches := []rhoSqlStatementBatch{
 		{
+			// The area and node are the source's, as the plan placed it.
 			SQL: "INSERT OR IGNORE INTO telemetry_reading " +
-				"(project, gateway_id, seq, area_id, node_id, field, value, status, received_ms) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				"(project, gateway_id, seq, source, area_id, node_id, field, value, status, received_ms) " +
+				"SELECT ?1, ?2, ?3, ?4, COALESCE(MAX(area_id), 0), COALESCE(MAX(node_id), 0), ?5, ?6, ?7, ?8 " +
+				"FROM telemetry_source WHERE project = ?1 AND source = ?4",
 			Rows: reading,
 		},
 		{
 			SQL: "INSERT INTO telemetry_latest " +
-				"(project, area_id, node_id, field, value, status, received_ms) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?) " +
-				"ON CONFLICT(project, area_id, node_id, field) DO UPDATE SET " +
+				"(project, source, field, value, status, received_ms) " +
+				"VALUES (?, ?, ?, ?, ?, ?) " +
+				"ON CONFLICT(project, source, field) DO UPDATE SET " +
 				"value = excluded.value, status = excluded.status, received_ms = excluded.received_ms",
 			Rows: latest,
+		},
+		{
+			SQL:  "UPDATE telemetry_source SET last_ms = ?3 WHERE project = ?1 AND source = ?2",
+			Rows: [][]any{{project, source, received}},
 		},
 	}
 	if status != 0 {
@@ -462,10 +743,10 @@ func telemetryRecord(project string, area uint32, node uint32, field string, val
 		}
 		batches = append(batches, rhoSqlStatementBatch{
 			SQL: "INSERT INTO telemetry_fault " +
-				"(project, gateway_id, area_id, node_id, field, status, severity, message, created_ms) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				"(project, gateway_id, source, field, status, severity, message, created_ms) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 			Rows: [][]any{{
-				project, feed, int64(area), int64(node), field, int64(status),
+				project, feed, source, field, int64(status),
 				severity, "telemetry report status " + strconv.FormatUint(uint64(status), 10), received,
 			}},
 		})
@@ -476,7 +757,7 @@ func telemetryRecord(project string, area uint32, node uint32, field string, val
 // telemetrySeries answers a time range, raw when step is zero and averaged into
 // buckets when it is not. The bucket arithmetic is done by the database so a
 // long range is not walked one row at a time in this process.
-func telemetrySeries(project string, area uint32, node uint32, field string, fromText string, toText string, stepText string) string {
+func telemetrySeries(project string, source string, field string, fromText string, toText string, stepText string) string {
 	if !telemetryOpen("") {
 		return telemetryError("the telemetry database could not be opened")
 	}
@@ -530,27 +811,27 @@ func telemetrySeries(project string, area uint32, node uint32, field string, fro
 	case useRollups && step >= 3600000:
 		rows, err = handle.Query(
 			"SELECT (bucket_ms / ?) * ? AS bucket, AVG(value_avg) FROM telemetry_rollup_1h "+
-				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
+				"WHERE project = ? AND source = ? AND field = ? "+
 				"AND bucket_ms >= ? AND bucket_ms <= ? GROUP BY bucket ORDER BY bucket LIMIT 5000",
-			step, step, project, int64(area), int64(node), field, from, to)
+			step, step, project, source, field, from, to)
 	case useRollups:
 		rows, err = handle.Query(
 			"SELECT (bucket_ms / ?) * ? AS bucket, AVG(value_avg) FROM telemetry_rollup_1m "+
-				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
+				"WHERE project = ? AND source = ? AND field = ? "+
 				"AND bucket_ms >= ? AND bucket_ms <= ? GROUP BY bucket ORDER BY bucket LIMIT 5000",
-			step, step, project, int64(area), int64(node), field, from, to)
+			step, step, project, source, field, from, to)
 	case step == 0:
 		rows, err = handle.Query(
 			"SELECT received_ms, value FROM telemetry_reading "+
-				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
+				"WHERE project = ? AND source = ? AND field = ? "+
 				"AND received_ms >= ? AND received_ms <= ? AND status = 0 ORDER BY received_ms LIMIT 5000",
-			project, int64(area), int64(node), field, from, to)
+			project, source, field, from, to)
 	default:
 		rows, err = handle.Query(
 			"SELECT (received_ms / ?) * ? AS bucket, AVG(value) FROM telemetry_reading "+
-				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
+				"WHERE project = ? AND source = ? AND field = ? "+
 				"AND received_ms >= ? AND received_ms <= ? AND status = 0 GROUP BY bucket ORDER BY bucket LIMIT 5000",
-			step, step, project, int64(area), int64(node), field, from, to)
+			step, step, project, source, field, from, to)
 	}
 	if err != nil {
 		return telemetryError("the series could not be read")
@@ -585,9 +866,9 @@ func telemetrySeries(project string, area uint32, node uint32, field string, fro
 		var fallbackErr error
 		fallback, fallbackErr = handle.Query(
 			"SELECT (received_ms / ?) * ? AS bucket, AVG(value) FROM telemetry_reading "+
-				"WHERE project = ? AND area_id = ? AND node_id = ? AND field = ? "+
+				"WHERE project = ? AND source = ? AND field = ? "+
 				"AND received_ms >= ? AND received_ms <= ? AND status = 0 GROUP BY bucket ORDER BY bucket LIMIT 5000",
-			step, step, project, int64(area), int64(node), field, from, to)
+			step, step, project, source, field, from, to)
 		if fallbackErr == nil {
 			if fallbackRows, ok := fallback.(rowSet); ok {
 				defer fallbackRows.Close()
@@ -629,11 +910,11 @@ func telemetryRollup(project string) string {
 	if lastMinute < minuteBoundary-60000 {
 		if _, err := handle.Exec(
 			"INSERT OR REPLACE INTO telemetry_rollup_1m "+
-				"(project, area_id, node_id, field, bucket_ms, value_min, value_max, value_avg, samples) "+
-				"SELECT project, area_id, node_id, field, (received_ms / 60000) * 60000, "+
+				"(project, source, field, bucket_ms, value_min, value_max, value_avg, samples) "+
+				"SELECT project, source, field, (received_ms / 60000) * 60000, "+
 				"MIN(value), MAX(value), AVG(value), COUNT(*) FROM telemetry_reading "+
 				"WHERE project = ? AND received_ms >= ? AND received_ms < ? AND status = 0 "+
-				"GROUP BY project, area_id, node_id, field, (received_ms / 60000) * 60000",
+				"GROUP BY project, source, field, (received_ms / 60000) * 60000",
 			project, lastMinute, minuteCutoff); err != nil {
 			return telemetryError("the minute rollup failed")
 		}
@@ -646,11 +927,11 @@ func telemetryRollup(project string) string {
 	if lastHour < hourCutoff-3600000 {
 		if _, err := handle.Exec(
 			"INSERT OR REPLACE INTO telemetry_rollup_1h "+
-				"(project, area_id, node_id, field, bucket_ms, value_min, value_max, value_avg, samples) "+
-				"SELECT project, area_id, node_id, field, (bucket_ms / 3600000) * 3600000, "+
+				"(project, source, field, bucket_ms, value_min, value_max, value_avg, samples) "+
+				"SELECT project, source, field, (bucket_ms / 3600000) * 3600000, "+
 				"MIN(value_min), MAX(value_max), AVG(value_avg), SUM(samples) FROM telemetry_rollup_1m "+
 				"WHERE project = ? AND bucket_ms >= ? AND bucket_ms < ? "+
-				"GROUP BY project, area_id, node_id, field, (bucket_ms / 3600000) * 3600000",
+				"GROUP BY project, source, field, (bucket_ms / 3600000) * 3600000",
 			project, lastHour, hourCutoff); err != nil {
 			return telemetryError("the hourly rollup failed")
 		}
@@ -870,7 +1151,7 @@ func telemetryFaultList(project string, sinceText string, limit uint32) string {
 		limit = 100
 	}
 	rows, err := handle.Query(
-		"SELECT id, gateway_id, area_id, node_id, field, status, severity, message, created_ms "+
+		"SELECT id, gateway_id, source, area_id, node_id, field, status, severity, message, created_ms "+
 			"FROM telemetry_fault WHERE project = ? AND created_ms >= ? ORDER BY created_ms DESC LIMIT ?",
 		project, since, int64(limit))
 	if err != nil {
@@ -890,12 +1171,12 @@ func telemetryFaultList(project string, sinceText string, limit uint32) string {
 	out := make([]map[string]any, 0, 32)
 	for typed.Next() {
 		var id, area, node, status, created int64
-		var gateway, field, severity, message string
-		if err := typed.Scan(&id, &gateway, &area, &node, &field, &status, &severity, &message, &created); err != nil {
+		var gateway, source, field, severity, message string
+		if err := typed.Scan(&id, &gateway, &source, &area, &node, &field, &status, &severity, &message, &created); err != nil {
 			continue
 		}
 		out = append(out, map[string]any{
-			"id": id, "gateway_id": gateway, "area_id": area, "node_id": node,
+			"id": id, "gateway_id": gateway, "source": source, "area_id": area, "node_id": node,
 			"field": field, "status": status, "severity": severity,
 			"message": message, "created_ms": created,
 		})
@@ -1068,9 +1349,9 @@ const telemetryEventLimit = 256 << 10
 
 // telemetryEventLine is one reading as a named Server-Sent Event line: the data
 // is the reading as JSON, the shape every reader of the feed parses.
-func telemetryEventLine(project string, area uint32, node uint32, field string, value string, status int64, receivedMs int64) string {
+func telemetryEventLine(project string, source string, area uint32, node uint32, field string, value string, status int64, receivedMs int64) string {
 	data, _ := json.Marshal(map[string]any{
-		"project": project, "area": area, "node": node, "field": field,
+		"project": project, "source": source, "area": area, "node": node, "field": field,
 		"value": value, "status": status, "received_ms": receivedMs,
 	})
 	line, _ := json.Marshal(map[string]string{"event": "telemetry", "data": string(data)})
@@ -1098,8 +1379,8 @@ func telemetryEventAppend(path string, lines string) bool {
 
 // telemetryFeedRecord is the live-feed half of recording a reading Mesh read
 // itself (an HTTP device): the same line the gateway path writes.
-func telemetryFeedRecord(path string, project string, area uint32, node uint32, field string, value string, status uint32) bool {
-	return telemetryEventAppend(path, telemetryEventLine(project, area, node, field, value, int64(status), time.Now().UnixMilli()))
+func telemetryFeedRecord(path string, project string, source string, field string, value string, status uint32) bool {
+	return telemetryEventAppend(path, telemetryEventLine(project, source, 0, 0, field, value, int64(status), time.Now().UnixMilli()))
 }
 
 // telemetryLatestEvents is a project's current values as feed lines, the
@@ -1113,22 +1394,27 @@ func telemetryLatestEvents(project string) string {
 	if !ok {
 		return ""
 	}
-	rows, err := handle.Query("SELECT area_id, node_id, field, value, status, received_ms "+
-		"FROM telemetry_latest WHERE project = ? ORDER BY area_id, node_id, field", project)
+	rows, err := handle.Query("SELECT l.source, COALESCE(s.area_id, 0), COALESCE(s.node_id, 0), "+
+		"l.field, l.value, l.status, l.received_ms FROM telemetry_latest l "+
+		"LEFT JOIN telemetry_source s ON s.project = l.project AND s.source = l.source "+
+		"WHERE l.project = ? ORDER BY l.source, l.field", project)
 	if err != nil {
 		return ""
 	}
 	defer rows.Close()
 	var b strings.Builder
 	for rows.Next() {
-		var area, node uint32
-		var field string
+		var source, field string
+		var area, node int64
 		var value float64
 		var status, received int64
-		if rows.Scan(&area, &node, &field, &value, &status, &received) != nil {
+		if rows.Scan(&source, &area, &node, &field, &value, &status, &received) != nil {
 			continue
 		}
-		b.WriteString(telemetryEventLine(project, area, node, field,
+		if area < 0 || node < 0 {
+			area, node = 0, 0
+		}
+		b.WriteString(telemetryEventLine(project, source, uint32(area), uint32(node), field,
 			strconv.FormatFloat(value, 'f', -1, 64), status, received))
 	}
 	return b.String()

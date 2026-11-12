@@ -6,6 +6,19 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.4.0] - 2026-11-12
+
+A series is one field of one source, and a source is a device by the identity it
+keeps for its life, not by its area and node. The telemetry port keys readings,
+latest values and rollups by source, records each source's placement in
+`telemetry_source`, and migrates a store keyed by area and node in place, keeping
+every series under `legacy:<area>.<node>` until `telemetry_source_bind` places a
+source there and adopts it. A reading without an identity is placed by area and
+node; a board reporting from another source's place is a fault, never a merge.
+The gateway outbox carries the board a reading came from (`source`), through
+`gateway_outbox_append_from`. The telemetry functions take a source where they
+took an area and a node.
+
 ## [0.3.0] - 2026-11-12
 
 An integration plugin by the toolchain's contract. Its `integration:` section
