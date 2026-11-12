@@ -308,6 +308,8 @@ func moduleSchema(types []string) Schema {
 					// declaration in the module is its own.
 					{Name: "import", Required: false, Kind: KindString},
 					{Name: "exports", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
+					// settings are the configuration keys a provider reads.
+					{Name: "settings", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					{Name: "hooks", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					// contracts say what a plugin has to be for this component,
 					// which the hooks alone do not: two plugins may answer the
@@ -493,6 +495,24 @@ func moduleSchema(types []string) Schema {
 				// meets the toolchain (src/integration). Its contents are checked
 				// by the integration contract when the plugin is validated.
 				Name:     "integration",
+				Required: false,
+				Kind:     KindMap,
+			},
+			{
+				// What a module's providers implement: functions by name, each
+				// with its signature as Rho writes it. A module with this section
+				// is an interface; an application binds it to providers.
+				Name:     "interface",
+				Required: false,
+				Kind:     KindMap,
+				Fields: []FieldSchema{
+					{Name: "functions", Required: true, Kind: KindMap},
+				},
+			},
+			{
+				// An application's choice per interface it uses: the providers
+				// compiled in and their configuration.
+				Name:     "bind",
 				Required: false,
 				Kind:     KindMap,
 			},

@@ -140,6 +140,30 @@ type Provides struct {
 	// (`provides.import`), and Exports the names that import may use.
 	Import  string
 	Exports []string
+	// Settings are the configuration keys a provider reads
+	// (`provides.settings`), so a binding that names a key the provider does
+	// not have is refused when it is built.
+	Settings []string
+}
+
+// InterfaceFunction is one function an interface declares: its name and its
+// signature as Rho writes it, `(level: string, message: string) u32`.
+type InterfaceFunction struct {
+	Name      string
+	Signature string
+}
+
+// InterfaceSpec is what an interface declares its providers implement.
+type InterfaceSpec struct {
+	Functions []InterfaceFunction
+}
+
+// BindSpec is an application's choice for one interface: the providers, by
+// module name, in the order the application gives them, and each one's
+// configuration.
+type BindSpec struct {
+	Providers []string
+	Config    map[string]map[string]string
 }
 
 // DebugMapping is what a project says about debugging the chip it is built for.
@@ -539,6 +563,15 @@ type Manifest struct {
 	// Integration is what an integration plugin bridges, when this manifest is
 	// one (see IntegrationManifest).
 	Integration *IntegrationManifest
+	// Interface is set on a module that declares what its providers implement:
+	// the functions, by name, and their signatures as written in Rho.
+	Interface *InterfaceSpec
+	// Implements are the import names of the interfaces a provider implements,
+	// from the same `implements:` list a plugin names its contracts in.
+	Implements []string
+	// Bind chooses, per interface an application uses, the providers compiled in
+	// and their configuration.
+	Bind map[string]BindSpec
 	// Assets are files and directories, relative to the module, that it reads at
 	// run time by name (rho_asset): templates, schemas, static files. A project
 	// that includes the module carries them, embedded, so the module never reads
@@ -964,6 +997,9 @@ func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 	m.Provides = parseProvides(doc.Map["provides"])
 	m.Extends = parseExtends(doc)
 	m.Integration = parseIntegration(doc.Map["integration"])
+	m.Interface = parseInterface(doc.Map["interface"])
+	m.Implements = yamlStrings(doc.Map["implements"])
+	m.Bind = parseBind(doc.Map["bind"])
 	m.Assets = yamlStrings(doc.Map["assets"])
 	for _, entry := range doc.Map["locales"].List {
 		if entry.Kind == yaml.KindMap {
@@ -1764,6 +1800,7 @@ func parseProvides(node yaml.Value) *Provides {
 		Contracts: parseContracts(node.Map["contracts"]),
 		Import:    yamlString(node, "import"),
 		Exports:   yamlStrings(node.Map["exports"]),
+		Settings:  yamlStrings(node.Map["settings"]),
 	}
 	if len(provides.Hooks) == 0 && len(provides.Contracts) == 0 && provides.Import == "" {
 		// A section with neither says nothing, which is how a module says it
@@ -1771,6 +1808,59 @@ func parseProvides(node yaml.Value) *Provides {
 		return nil
 	}
 	return provides
+}
+
+// parseInterface reads an interface's functions, in the order they are written.
+func parseInterface(node yaml.Value) *InterfaceSpec {
+	if node.Kind != yaml.KindMap {
+		return nil
+	}
+	functions := node.Map["functions"]
+	if functions.Kind != yaml.KindMap {
+		return nil
+	}
+	spec := &InterfaceSpec{}
+	names := make([]string, 0, len(functions.Map))
+	for name := range functions.Map {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		spec.Functions = append(spec.Functions, InterfaceFunction{Name: name, Signature: strings.TrimSpace(functions.Map[name].Str)})
+	}
+	if len(spec.Functions) == 0 {
+		return nil
+	}
+	return spec
+}
+
+// parseBind reads an application's bindings: per interface, its providers and
+// their configuration.
+func parseBind(node yaml.Value) map[string]BindSpec {
+	if node.Kind != yaml.KindMap {
+		return nil
+	}
+	out := map[string]BindSpec{}
+	for name, entry := range node.Map {
+		if entry.Kind != yaml.KindMap {
+			continue
+		}
+		spec := BindSpec{Providers: yamlStrings(entry.Map["providers"]), Config: map[string]map[string]string{}}
+		if config := entry.Map["config"]; config.Kind == yaml.KindMap {
+			for provider, values := range config.Map {
+				if values.Kind != yaml.KindMap {
+					continue
+				}
+				keys := map[string]string{}
+				for key, value := range values.Map {
+					keys[key] = value.Str
+				}
+				spec.Config[provider] = keys
+			}
+		}
+		out[name] = spec
+	}
+	return out
 }
 
 // parseContracts reads what a component needs a plugin to be.

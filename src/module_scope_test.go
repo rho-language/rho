@@ -130,3 +130,132 @@ func TestAnImportIsTheInterfaceADeclaredDependencyExports(t *testing.T) {
 		t.Error("an undeclared module was imported")
 	}
 }
+
+// An interface declares what its providers implement; an application binds it to
+// providers and configures them. The calls to the bound providers are generated
+// into the interface, so its own code decides how to use them (here, every
+// enabled provider receives an alert). A provider that does not implement the
+// interface as declared, or that the application does not declare, is refused.
+func TestAnInterfaceIsBoundToProviders(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	workspace := t.TempDir()
+	write := func(path, text string) {
+		full := filepath.Join(workspace, filepath.FromSlash(path))
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("acme/.git/HEAD", "ref: refs/heads/main\n")
+	write("acme/modules/alert/module.yml", `module:
+  name: acme-alert
+  type: module
+  version: 1.0.0
+main: src/alert.rho
+provides:
+  import: acme.alert
+  exports: [raise]
+interface:
+  functions:
+    send: "(level: string, message: string) u32"
+`)
+	write("acme/modules/alert/src/alert.rho", `module alert
+fn raise(level: string, message: string) u32 {
+    var sent: u32 = 0
+    var rest: string = bound_providers()
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        let provider: string = str_slice(rest, 0, u32(at))
+        rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        if bind_config(provider, "enabled") != "false" {
+            sent = sent + send_to(provider, level, message)
+        }
+    }
+    return sent
+}
+`)
+	provider := func(name, importName, body string) {
+		write("acme/providers/"+name+"/module.yml", "module:\n  name: acme-"+name+"\n  type: provider\n  version: 0.1.0\nmain: src/provider.rho\nimplements: [acme.alert]\nprovides:\n  import: "+importName+"\n  exports: [send]\n  settings: [prefix]\n")
+		write("acme/providers/"+name+"/src/provider.rho", "module "+name+"\nextern fn rho_bind_config(provider: string, key: string) string\n"+body)
+	}
+	provider("log", "acme.alert_log", `fn send(level: string, message: string) u32 {
+    print(rho_bind_config("acme-log", "prefix") + level + ":" + message + ";")
+    return 1
+}
+`)
+	provider("chat", "acme.alert_chat", `fn send(level: string, message: string) u32 {
+    print("chat " + message + ";")
+    return 1
+}
+`)
+	write("app/.git/HEAD", "ref: refs/heads/main\n")
+	manifest := `module:
+  name: app
+  type: rho
+  version: 0.1.0
+main: src/main.rho
+deps:
+  acme:
+    acme-alert: ">=1.0.0"
+    acme-log: ">=0.1.0"
+    acme-chat: ">=0.1.0"
+bind:
+  acme.alert:
+    providers: [acme-log, acme-chat]
+    config:
+      acme-log:
+        prefix: "LOG "
+      acme-chat:
+        enabled: "false"
+build:
+  language: go
+  targets:
+    - go
+`
+	write("app/module.yml", manifest)
+	write("app/src/main.rho", "module main\nimport acme.alert\nfn main() void {\n    print(int_to_str(alert.raise(\"ERROR\", \"pump stopped\")))\n}\n")
+	t.Setenv("RHO_WORKSPACE", workspace)
+	t.Setenv("RHO_APP_WORKSPACE", "")
+
+	entry := filepath.Join(workspace, "app", "src", "main.rho")
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	binary := filepath.Join(t.TempDir(), "app")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, ".")
+	build.Dir = dirs[0]
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	out, err := exec.Command(binary).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if string(out) != "LOG ERROR:pump stopped;1" {
+		t.Errorf("output = %q", out)
+	}
+
+	// The application's workspace overrides a setting without a rebuild.
+	appWorkspace := t.TempDir()
+	os.WriteFile(filepath.Join(appWorkspace, "bind.conf"), []byte("acme-chat.enabled=true\n"), 0o600)
+	run := exec.Command(binary)
+	run.Env = append(os.Environ(), "RHO_APP_WORKSPACE="+appWorkspace)
+	if out, _ := run.Output(); string(out) != "LOG ERROR:pump stopped;chat pump stopped;2" {
+		t.Errorf("with the override: output = %q", out)
+	}
+
+	// A provider whose function does not match the interface is refused.
+	write("acme/providers/chat/src/provider.rho", "module chat\nfn send(level: string) u32 { return 1 }\n")
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "acme-chat does not implement acme.alert.send as declared") {
+		t.Errorf("mismatched provider: error = %v", err)
+	}
+
+	// A provider the application binds but does not declare is refused.
+	write("app/module.yml", strings.Replace(manifest, "    acme-chat: \">=0.1.0\"\n", "", 1))
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "acme.alert binds acme-chat, which app does not declare") {
+		t.Errorf("undeclared provider: error = %v", err)
+	}
+}

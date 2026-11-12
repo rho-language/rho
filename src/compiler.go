@@ -1205,7 +1205,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 	for _, imp := range mod.Imports {
 		// A module a declared dependency provides under this name comes first:
 		// its manifest says what it is imported as and what it exports.
-		entry, exports, provided, err := providedImport(imp.Name, abs, dependencyRoots)
+		entry, providerManifest, exports, provided, err := providedModule(imp.Name, abs, dependencyRoots)
 		if err != nil {
 			return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
 		}
@@ -1226,6 +1226,21 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		if owner == "" {
 			owner = imported.Name
 		}
+		// An interface is completed by the application's binding: the calls to
+		// its providers, generated from `bind:`, become part of the interface.
+		if provided && providerManifest.Interface != nil {
+			binding, bindErr := loadBinding(imp.Name, providerManifest.Interface, projectRoot, dependencyRoots, components, visited)
+			if bindErr != nil {
+				return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, bindErr)
+			}
+			imported.Decls = append(imported.Decls, binding.Decls...)
+			for name, names := range binding.Exports {
+				if imported.Exports == nil {
+					imported.Exports = map[string][]string{}
+				}
+				imported.Exports[name] = names
+			}
+		}
 		markModuleOwnership(imported, owner)
 		merged.Decls = append(merged.Decls, imported.Decls...)
 		merged.Features = append(merged.Features, imported.Features...)
@@ -1243,6 +1258,220 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		return nil, err
 	}
 	return merged, nil
+}
+
+// loadBinding generates and loads the half of an interface the application
+// decides: for each function the interface declares, `<name>_to(provider, ...)`
+// calling that provider's function, `bound_providers()` naming the providers
+// the application binds, and `bind_config(provider, key)` reading their
+// configuration. Each bound provider must be a dependency the application
+// declares, must say it implements the interface, may only be configured with
+// keys it declares, and must export every function with the interface's
+// signature.
+func loadBinding(iface string, spec *deps.InterfaceSpec, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) (*ast.Module, error) {
+	app, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
+	if err != nil || app == nil {
+		return nil, fmt.Errorf("%s is an interface, and the application's module.yml binding it could not be read", iface)
+	}
+	bind, bound := app.Bind[iface]
+	if !bound || len(bind.Providers) == 0 {
+		return nil, fmt.Errorf("%s is an interface; bind it to providers in module.yml (bind: %s: providers: [...])", iface, iface)
+	}
+	declared := map[string]deps.DepSpec{}
+	for _, dep := range app.Deps {
+		declared[dep.Name] = dep
+	}
+	type boundProvider struct {
+		name, importName, alias string
+	}
+	providers := []boundProvider{}
+	for _, name := range bind.Providers {
+		dep, ok := declared[name]
+		if !ok {
+			return nil, fmt.Errorf("%s binds %s, which %s does not declare; add it to deps", iface, name, app.ModuleName)
+		}
+		root := declaredDependencyRoot(projectRoot, dep, dependencyRoots)
+		manifest, loadErr := deps.LoadManifest(deps.ManifestPath(root))
+		if root == "" || loadErr != nil || manifest == nil {
+			return nil, fmt.Errorf("%s binds %s, which could not be found", iface, name)
+		}
+		implements := false
+		for _, implemented := range manifest.Implements {
+			implements = implements || implemented == iface
+		}
+		if !implements {
+			return nil, fmt.Errorf("%s binds %s, which does not say it implements it (implements: [%s])", iface, name, iface)
+		}
+		if manifest.Provides == nil || manifest.Provides.Import == "" {
+			return nil, fmt.Errorf("%s binds %s, which publishes no import name (provides: import)", iface, name)
+		}
+		allowed := map[string]bool{"enabled": true}
+		for _, key := range manifest.Provides.Settings {
+			allowed[key] = true
+		}
+		for key := range bind.Config[name] {
+			if !allowed[key] {
+				return nil, fmt.Errorf("%s configures %s with %q, which it does not read (its settings: %s)",
+					app.ModuleName, name, key, strings.Join(manifest.Provides.Settings, ", "))
+			}
+		}
+		importName := manifest.Provides.Import
+		alias := importName[strings.LastIndex(importName, ".")+1:]
+		providers = append(providers, boundProvider{name: name, importName: importName, alias: alias})
+	}
+
+	var source strings.Builder
+	fmt.Fprintf(&source, "module %s\n\n", iface)
+	for _, provider := range providers {
+		fmt.Fprintf(&source, "import %s\n", provider.importName)
+	}
+	source.WriteString("\nextern fn rho_bind_config(provider: string, key: string) string\n\n")
+	source.WriteString("fn bound_providers() string {\n    return \"")
+	for _, provider := range providers {
+		source.WriteString(provider.name + "\\n")
+	}
+	source.WriteString("\"\n}\n\n")
+	source.WriteString("fn bind_config(provider: string, key: string) string {\n    return rho_bind_config(provider, key)\n}\n")
+	for _, function := range spec.Functions {
+		params, result, parseErr := parseInterfaceSignature(function.Signature)
+		if parseErr != nil {
+			return nil, fmt.Errorf("%s declares %s with %q: %w", iface, function.Name, function.Signature, parseErr)
+		}
+		names := make([]string, 0, len(params))
+		written := make([]string, 0, len(params))
+		for _, param := range params {
+			names = append(names, param[0])
+			written = append(written, param[0]+": "+param[1])
+		}
+		fmt.Fprintf(&source, "\nfn %s_to(provider: string", function.Name)
+		for _, param := range written {
+			source.WriteString(", " + param)
+		}
+		fmt.Fprintf(&source, ") %s {\n", result)
+		for _, provider := range providers {
+			call := fmt.Sprintf("%s.%s(%s)", provider.alias, function.Name, strings.Join(names, ", "))
+			if result == "void" {
+				fmt.Fprintf(&source, "    if provider == %q {\n        %s\n        return\n    }\n", provider.name, call)
+			} else {
+				fmt.Fprintf(&source, "    if provider == %q {\n        return %s\n    }\n", provider.name, call)
+			}
+		}
+		zero, zeroErr := interfaceZero(result)
+		if zeroErr != nil {
+			return nil, fmt.Errorf("%s declares %s returning %s: %w", iface, function.Name, result, zeroErr)
+		}
+		if result != "void" {
+			fmt.Fprintf(&source, "    return %s\n", zero)
+		}
+		source.WriteString("}\n")
+	}
+
+	path := filepath.Join(projectRoot, "build", "bindings", iface+".rho")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, []byte(source.String()), 0o644); err != nil {
+		return nil, err
+	}
+	delete(visited, path)
+	binding, err := loadModuleFile(path, projectRoot, dependencyRoots, components, visited)
+	if err != nil {
+		return nil, err
+	}
+
+	// Each provider exports every function with the interface's signature.
+	for _, function := range spec.Functions {
+		want, _ := signatureTypes(function.Signature)
+		for _, provider := range providers {
+			found := false
+			for _, decl := range binding.Decls {
+				fn, ok := decl.(ast.FuncDecl)
+				if !ok || fn.Owner != provider.importName || fn.Name != function.Name {
+					continue
+				}
+				found = true
+				if got := funcDeclTypes(fn); got != want {
+					return nil, fmt.Errorf("%s does not implement %s.%s as declared: the interface says %s, it has %s",
+						provider.name, iface, function.Name, want, got)
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("%s does not implement %s.%s", provider.name, iface, function.Name)
+			}
+		}
+	}
+	return binding, nil
+}
+
+// parseInterfaceSignature reads `(level: string, message: string) u32` into its
+// parameters, as name and type, and its result.
+func parseInterfaceSignature(signature string) ([][2]string, string, error) {
+	signature = strings.TrimSpace(signature)
+	open := strings.Index(signature, "(")
+	closing := strings.LastIndex(signature, ")")
+	if open != 0 || closing < 0 {
+		return nil, "", fmt.Errorf("a signature is written (name: type, ...) result")
+	}
+	result := strings.TrimSpace(signature[closing+1:])
+	if result == "" {
+		result = "void"
+	}
+	params := [][2]string{}
+	inner := strings.TrimSpace(signature[1:closing])
+	if inner != "" {
+		for _, part := range strings.Split(inner, ",") {
+			name, typ, ok := strings.Cut(part, ":")
+			if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(typ) == "" {
+				return nil, "", fmt.Errorf("parameter %q is not written name: type", strings.TrimSpace(part))
+			}
+			params = append(params, [2]string{strings.TrimSpace(name), strings.TrimSpace(typ)})
+		}
+	}
+	return params, result, nil
+}
+
+// signatureTypes is a signature reduced to what a call depends on: the types,
+// `(string,string)u32`.
+func signatureTypes(signature string) (string, error) {
+	params, result, err := parseInterfaceSignature(signature)
+	if err != nil {
+		return "", err
+	}
+	types := make([]string, 0, len(params))
+	for _, param := range params {
+		types = append(types, strings.ReplaceAll(param[1], " ", ""))
+	}
+	return "(" + strings.Join(types, ",") + ")" + strings.ReplaceAll(result, " ", ""), nil
+}
+
+// funcDeclTypes is a declared function's signature in the same reduced form.
+func funcDeclTypes(fn ast.FuncDecl) string {
+	types := make([]string, 0, len(fn.Params))
+	for _, param := range fn.Params {
+		types = append(types, strings.ReplaceAll(param.Type, " ", ""))
+	}
+	result := strings.ReplaceAll(fn.ReturnType, " ", "")
+	if result == "" {
+		result = "void"
+	}
+	return "(" + strings.Join(types, ",") + ")" + result
+}
+
+// interfaceZero is what a binding answers for a provider it does not bind.
+func interfaceZero(result string) (string, error) {
+	switch result {
+	case "void":
+		return "", nil
+	case "string":
+		return "\"\"", nil
+	case "bool":
+		return "false", nil
+	case "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64":
+		return "0", nil
+	case "f32", "f64":
+		return "0.0", nil
+	}
+	return "", fmt.Errorf("an interface function returns a string, a number, a bool or nothing")
 }
 
 // warnedIncludes keeps the warning about including another module to once per
@@ -1279,8 +1508,14 @@ func warnIncludedModule(name, entry string) {
 // with the dependency to declare in the message: a module uses what it says it
 // uses.
 func providedImport(name, sourceFile string, dependencyRoots []string) (entry string, exports []string, provided bool, err error) {
+	entry, _, exports, provided, err = providedModule(name, sourceFile, dependencyRoots)
+	return entry, exports, provided, err
+}
+
+// providedModule is providedImport with the providing module's manifest.
+func providedModule(name, sourceFile string, dependencyRoots []string) (entry string, provider *deps.Manifest, exports []string, provided bool, err error) {
 	if strings.HasPrefix(name, "std.") {
-		return "", nil, false, nil
+		return "", nil, nil, false, nil
 	}
 	moduleDir, importer, declared := declaredDependencies(sourceFile)
 	for _, dep := range declared {
@@ -1294,20 +1529,20 @@ func providedImport(name, sourceFile string, dependencyRoots []string) (entry st
 		}
 		file, ok := moduleEntry(root)
 		if !ok {
-			return "", nil, false, fmt.Errorf("%s provides %s but has no Rho entry file", manifest.ModuleName, name)
+			return "", nil, nil, false, fmt.Errorf("%s provides %s but has no Rho entry file", manifest.ModuleName, name)
 		}
-		return file, manifest.Provides.Exports, true, nil
+		return file, manifest, manifest.Provides.Exports, true, nil
 	}
 	// Nothing declared provides it. A dependency root that does is named, so the
 	// fix is in the message.
 	for _, root := range dependencyRoots {
 		manifest, loadErr := deps.LoadManifest(deps.ManifestPath(root))
 		if loadErr == nil && manifest != nil && manifest.Provides != nil && manifest.Provides.Import == name {
-			return "", nil, false, fmt.Errorf("%s is provided by %s, which %s does not declare; add %s to deps in its module.yml",
+			return "", nil, nil, false, fmt.Errorf("%s is provided by %s, which %s does not declare; add %s to deps in its module.yml",
 				name, manifest.ModuleName, importer, manifest.ModuleName)
 		}
 	}
-	return "", nil, false, nil
+	return "", nil, nil, false, nil
 }
 
 // declaredDependencyRoot is where a declared dependency is: among the roots the

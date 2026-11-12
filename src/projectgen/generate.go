@@ -654,6 +654,9 @@ func Generate(ctx Context, target Target) (string, error) {
 		if err := generateAssets(ctx); err != nil {
 			return "", err
 		}
+		if err := generateBindings(ctx); err != nil {
+			return "", err
+		}
 	}
 	if err := generatePorts(ctx, target); err != nil {
 		return "", err
@@ -794,4 +797,22 @@ func generateAssets(ctx Context) error {
 	}
 	rendered := codegen.EmitGoAssets(assets)
 	return os.WriteFile(filepath.Join(ctx.OutputDir, codegen.AssetFileName), []byte(rendered), 0644)
+}
+
+// generateBindings writes the configuration the application's `bind:` gives
+// each provider, which rho_bind_config answers from. Every Go program gets the
+// lookup, so a provider's call to it always compiles.
+func generateBindings(ctx Context) error {
+	config := map[string]string{}
+	if manifest, err := deps.LoadManifest(deps.ManifestPath(ctx.ProjectRoot)); err == nil && manifest != nil {
+		for _, spec := range manifest.Bind {
+			for provider, keys := range spec.Config {
+				for key, value := range keys {
+					config[provider+"."+key] = value
+				}
+			}
+		}
+	}
+	rendered := codegen.EmitGoBindings(config)
+	return os.WriteFile(filepath.Join(ctx.OutputDir, codegen.BindingsFileName), []byte(rendered), 0644)
 }

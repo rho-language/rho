@@ -265,6 +265,67 @@ The toolchain holds both sides to it:
 A module with no `exports` list lets every name through, which is how modules
 written before export lists keep working.
 
+## Interfaces, providers and bindings
+
+An interface says what a family of providers can do, and an application chooses
+which providers it uses. An interface is a module with an `interface` section:
+
+```yaml
+module:
+  name: acme-alert
+  type: module
+  version: 1.0.0
+main: src/alert.rho
+provides:
+  import: acme.alert
+  exports: [raise]
+interface:
+  functions:
+    send: "(level: string, message: string) u32"
+```
+
+A provider says it implements it, exports each function with exactly that
+signature, and declares the settings it reads:
+
+```yaml
+module:
+  name: acme-telegram
+  type: provider
+  version: 0.1.0
+main: src/provider.rho
+implements: [acme.alert]
+provides:
+  import: acme.alert_telegram
+  exports: [send]
+  settings: [bot_token, chat_id]
+```
+
+The application declares the interface and its providers as dependencies and
+binds them:
+
+```yaml
+bind:
+  acme.alert:
+    providers: [acme-log, acme-telegram]
+    config:
+      acme-telegram:
+        chat_id: "-1001"
+        enabled: "false"
+```
+
+Only the bound providers are compiled in. The toolchain generates, inside the
+interface, `send_to(provider, ...)` for each declared function,
+`bound_providers()` and `bind_config(provider, key)`, so the interface's own code
+decides how its providers are used: every one of them, as an alert does, or the
+first, as a gateway would. A provider reads its settings with
+`rho_bind_config(provider, key)`: the value in the application workspace's
+`bind.conf` (`acme-telegram.chat_id=...`) when there is one, so a running
+installation changes a setting without a rebuild, otherwise the value in `bind:`.
+
+A bound provider that is not a declared dependency, does not list the interface
+under `implements`, is configured with a key it does not declare, or exports a
+function with another signature is refused when the application is built.
+
 ## A module's own files
 
 A module that reads a template, a schema or a page of its own does not look for
