@@ -221,6 +221,7 @@ func emitHTTPRoutePort(ctx PortContext) ([]string, string) {
 		{Path: `"encoding/base64"`},
 		{Path: `"encoding/pem"`},
 		{Path: `"errors"`},
+		{Path: `"io"`},
 		{Alias: "jsonenc", Path: `"encoding/json"`},
 		{Path: `"math/big"`},
 		{Path: `"encoding/hex"`},

@@ -341,6 +341,14 @@ the module name), the public key is `~/.rho/auth/public.pem`, where `rho auth
 keygen` puts it, and the login route is `/auth/login?audience=<audience>`. A
 descriptor writes who issues the session and which paths are public.
 
+Where the issuer is, is told to the application when it starts rather than
+written into it. `RHO_AUTH_URL` names the issuer: a person without a session is
+sent to its login, and an application that has no key file fetches the issuer's
+published key from `<RHO_AUTH_URL>/auth/public-key` and keeps a copy, so an
+issuer that is briefly down does not lock anyone out. `RHO_AUTH_STANDALONE=1`
+runs an application without an issuer: it answers requests from its own machine
+only, and refuses any that a proxy forwarded.
+
 ```yaml
 # module.yml
 build:

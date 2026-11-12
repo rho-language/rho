@@ -34,6 +34,7 @@ import (
 	jsonenc "encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -77,6 +78,11 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	harness := `package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +140,72 @@ func TestAnUnknownOrExpiredSessionIsRefused(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("session %q: status %d, want 401", sid, w.Code)
 		}
+	}
+}
+
+func TestStandaloneAnswersThisMachineOnly(t *testing.T) {
+	t.Setenv("RHO_APP_WORKSPACE", t.TempDir())
+	t.Setenv("RHO_AUTH_STANDALONE", "1")
+	request := func(remote, forwarded string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/x", nil)
+		r.RemoteAddr = remote
+		if forwarded != "" {
+			r.Header.Set("X-Forwarded-For", forwarded)
+		}
+		w := httptest.NewRecorder()
+		withAuth(echo()).ServeHTTP(w, r)
+		return w
+	}
+	if w := request("127.0.0.1:5555", ""); w.Code != http.StatusOK || w.Body.String() != "aud=mesh;scopes=*;sub=local" {
+		t.Errorf("this machine: %d %q", w.Code, w.Body.String())
+	}
+	if w := request("192.0.2.7:5555", ""); w.Code != http.StatusForbidden {
+		t.Errorf("another machine: %d", w.Code)
+	}
+	if w := request("127.0.0.1:5555", "192.0.2.7"); w.Code != http.StatusForbidden {
+		t.Errorf("a forwarded request: %d", w.Code)
+	}
+}
+
+func TestTheIssuersKeyIsFetchedAndKept(t *testing.T) {
+	t.Setenv("RHO_APP_WORKSPACE", t.TempDir())
+	t.Setenv("RHO_AUTH_PUBLIC_KEY", filepath.Join(t.TempDir(), "absent.pem"))
+	private, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.MarshalPKIXPublicKey(&private.PublicKey)
+	published := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/public-key" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(published)
+	}))
+	t.Setenv("RHO_AUTH_URL", issuer.URL)
+	authSsoKey, authSsoKeyTried = nil, time.Time{}
+	key, err := authSsoLoadKey()
+	if err != nil || key == nil || !key.Equal(&private.PublicKey) {
+		t.Fatalf("the published key was not used: %v", err)
+	}
+	if kept, err := os.ReadFile(filepath.Join(authSsoStateDir(), "issuer.pem")); err != nil || string(kept) != string(published) {
+		t.Fatalf("no copy of the key was kept: %v", err)
+	}
+	// An issuer that is down does not lock anyone out: the copy is used.
+	issuer.Close()
+	authSsoKey, authSsoKeyTried = nil, time.Time{}
+	if key, err := authSsoLoadKey(); err != nil || !key.Equal(&private.PublicKey) {
+		t.Fatalf("the kept key was not used while the issuer was down: %v", err)
+	}
+}
+
+func TestLoginGoesToTheIssuer(t *testing.T) {
+	t.Setenv("RHO_APP_WORKSPACE", t.TempDir())
+	t.Setenv("RHO_AUTH_STANDALONE", "")
+	t.Setenv("RHO_AUTH_URL", "https://keeper.example/")
+	r := httptest.NewRequest("GET", "http://mesh.example/x", nil)
+	w := httptest.NewRecorder()
+	withAuth(echo()).ServeHTTP(w, r)
+	if location := w.Header().Get("Location"); !strings.HasPrefix(location, "https://keeper.example/auth/login") {
+		t.Errorf("login goes to %q", location)
 	}
 }
 

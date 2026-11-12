@@ -530,9 +530,10 @@ var authSsoSkipPaths = authSsoSplitPaths(%q)
 var authSsoRequireScopes = authSsoSplitPaths(%q)
 
 var (
-	authSsoKeyOnce sync.Once
-	authSsoKey     *ecdsa.PublicKey
-	authSsoKeyErr  error
+	authSsoKeyMu    sync.Mutex
+	authSsoKeyTried time.Time
+	authSsoKey      *ecdsa.PublicKey
+	authSsoKeyErr   error
 )
 
 type authSsoSessionClaims struct {
@@ -548,52 +549,99 @@ type authSsoSessionClaims struct {
 
 type authSsoSessionKey struct{}
 
+// authSsoLoadKey is the issuer's public key. It is read from the key file when
+// the machine has one; otherwise, when the application was told where its
+// issuer is (RHO_AUTH_URL), it is fetched from the issuer's published key and a
+// copy is kept, which is what lets an issuer that is briefly down not lock
+// everyone out. A key that could not be had is asked for again after a while
+// rather than never, so an application started before its issuer recovers.
 func authSsoLoadKey() (*ecdsa.PublicKey, error) {
-	authSsoKeyOnce.Do(func() {
-		path := os.Getenv("RHO_AUTH_PUBLIC_KEY")
+	authSsoKeyMu.Lock()
+	defer authSsoKeyMu.Unlock()
+	if authSsoKey != nil {
+		return authSsoKey, nil
+	}
+	if !authSsoKeyTried.IsZero() && time.Since(authSsoKeyTried) < 30*time.Second {
+		return nil, authSsoKeyErr
+	}
+	authSsoKeyTried = time.Now()
+	raw, err := authSsoKeyBytes()
+	if err != nil {
+		authSsoKeyErr = err
+		return nil, err
+	}
+	key, err := authSsoParseKey(raw)
+	if err != nil {
+		authSsoKeyErr = err
+		return nil, err
+	}
+	authSsoKey = key
+	authSsoKeyErr = nil
+	return key, nil
+}
+
+func authSsoKeyBytes() ([]byte, error) {
+	path := os.Getenv("RHO_AUTH_PUBLIC_KEY")
+	if path == "" {
+		path = authSsoPublicKeyPath
+	}
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(os.Getenv("HOME"), path[2:])
+	}
+	if path != "" {
+		if raw, err := os.ReadFile(path); err == nil {
+			return raw, nil
+		}
+	}
+	issuer := strings.TrimRight(os.Getenv("RHO_AUTH_URL"), "/")
+	if issuer == "" {
 		if path == "" {
-			path = authSsoPublicKeyPath
+			return nil, errors.New("no auth public key configured")
 		}
-		if path == "" {
-			authSsoKeyErr = errors.New("no auth public key configured")
-			return
+		return os.ReadFile(path)
+	}
+	cached := filepath.Join(authSsoStateDir(), "issuer.pem")
+	client := &http.Client{Timeout: 5 * time.Second}
+	if response, err := client.Get(issuer + "/auth/public-key"); err == nil {
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+		response.Body.Close()
+		if readErr == nil && response.StatusCode == http.StatusOK {
+			if block, _ := pem.Decode(body); block != nil {
+				_ = os.WriteFile(cached, body, 0o600)
+				return body, nil
+			}
 		}
-		if strings.HasPrefix(path, "~/") {
-			path = filepath.Join(os.Getenv("HOME"), path[2:])
-		}
-		raw, err := os.ReadFile(path)
+	}
+	if raw, err := os.ReadFile(cached); err == nil {
+		return raw, nil
+	}
+	return nil, errors.New("the auth issuer's public key could not be had from " + issuer + "/auth/public-key")
+}
+
+func authSsoParseKey(raw []byte) (*ecdsa.PublicKey, error) {
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return nil, errors.New("auth public key is not PEM")
+	}
+	var parsed any
+	if block.Type == "CERTIFICATE" {
+		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			authSsoKeyErr = err
-			return
+			return nil, err
 		}
-		block, _ := pem.Decode(raw)
-		if block == nil {
-			authSsoKeyErr = errors.New("auth public key is not PEM")
-			return
+		parsed = cert.PublicKey
+	} else {
+		var err error
+		parsed, err = x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			return nil, err
 		}
-		var parsed any
-		if block.Type == "CERTIFICATE" {
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				authSsoKeyErr = err
-				return
-			}
-			parsed = cert.PublicKey
-		} else {
-			parsed, err = x509.ParsePKIXPublicKey(block.Bytes)
-			if err != nil {
-				authSsoKeyErr = err
-				return
-			}
-		}
-		key, ok := parsed.(*ecdsa.PublicKey)
-		if !ok {
-			authSsoKeyErr = errors.New("auth public key is not ECDSA")
-			return
-		}
-		authSsoKey = key
-	})
-	return authSsoKey, authSsoKeyErr
+	}
+	key, ok := parsed.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("auth public key is not ECDSA")
+	}
+	return key, nil
 }
 
 func authDecodeSegment(segment string) ([]byte, error) {
@@ -957,6 +1005,21 @@ func withAuth(next http.Handler) http.Handler {
 				return
 			}
 		}
+		// An application started standalone (RHO_AUTH_STANDALONE) has no issuer
+		// to send a person to: it answers this machine, and only this machine.
+		if authSsoStandalone() {
+			if !authSsoFromThisMachine(r) {
+				http.Error(w, "this application runs standalone (RHO_AUTH_STANDALONE): it answers requests from this machine only", http.StatusForbidden)
+				return
+			}
+			local := authSsoSessionClaims{Subject: "local", Audience: authSsoAudience, Scopes: []string{"*"}}
+			r.Header.Set("X-Rho-Subject", local.Subject)
+			r.Header.Set("X-Rho-Scopes", "*")
+			r.Header.Set("X-Rho-Aud", local.Audience)
+			ctx := context.WithValue(r.Context(), authSsoSessionKey{}, local)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if authSsoWantsJSON(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 			return
@@ -976,6 +1039,27 @@ func withAuth(next http.Handler) http.Handler {
 	})
 }
 
+// authSsoStandalone is whether the application runs without an issuer.
+func authSsoStandalone() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("RHO_AUTH_STANDALONE")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+// authSsoFromThisMachine is whether a request came from this machine itself. A
+// request a proxy forwarded is not, whatever address it arrives from: behind a
+// proxy every request comes from the loopback.
+func authSsoFromThisMachine(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Real-Ip") != "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func authSsoCallbackURL(r *http.Request) string {
 	base := authSsoReturnTo(r)
 	if at := strings.Index(base, "://"); at >= 0 {
@@ -987,6 +1071,11 @@ func authSsoCallbackURL(r *http.Request) string {
 }
 
 func authSsoAbsolute(r *http.Request, path string) string {
+	// An application told where its issuer is sends a person there; otherwise
+	// the issuer is on the application's own host, at the keeper port.
+	if issuer := strings.TrimRight(os.Getenv("RHO_AUTH_URL"), "/"); issuer != "" {
+		return issuer + path
+	}
 	base := authSsoReturnTo(r)
 	parsed, err := url.Parse(base)
 	if err != nil || parsed.Host == "" {
