@@ -194,6 +194,23 @@ func rhoSqlDriverName() string {
 	return "sqlite"
 }
 
+// rhoSqlSource is the connection string a path is opened with. SQLite answers
+// "database is locked" at once when another connection is writing, unless it
+// is told to wait; a service has several connections to one file — a request,
+// a background tick, another module's store — so a read that met a write
+// failed, and a page showed an empty list. Every connection waits up to five
+// seconds for the lock instead.
+func rhoSqlSource(driver, path string) string {
+	if driver != "sqlite" || strings.Contains(path, "busy_timeout") {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "_pragma=busy_timeout(5000)"
+}
+
 // rhoSqlDatabaseName is the database this process opens.
 func rhoSqlDatabaseName() string {
 	if name := strings.TrimSpace(os.Getenv("` + sqlPortDatabaseEnv + `")); name != "" {
@@ -250,7 +267,7 @@ func stdSqlSqlOpen(path string) ResultSqlDbString {
 	}
 	rhoSqlMu.Lock()
 	defer rhoSqlMu.Unlock()
-	handle, err := sql.Open(rhoSqlDriverName(), path)
+	handle, err := sql.Open(rhoSqlDriverName(), rhoSqlSource(rhoSqlDriverName(), path))
 	if err != nil {
 		rhoSqlWarnDriver(rhoSqlDriverName())
 		return opened(err)

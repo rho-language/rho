@@ -1164,6 +1164,26 @@ func EmitGoRuntime(implementation string) string {
 			imports: []string{"strconv"},
 		},
 		{
+			// The address a handle carries, for a variable a program built the
+			// handle from: `Ptr[T](&values[0])`.
+			//
+			// A handle carries the address as a number, and Go moves a
+			// goroutine's stack when it grows, without updating numbers. A
+			// variable whose address only left as a number stayed on the stack,
+			// so a callee that grew the stack — a database read does — wrote
+			// through the handle to where the variable used to be, and the
+			// caller read it empty. Storing the pointer where the compiler
+			// cannot see it stay local puts the variable on the heap, which Go
+			// does not move; it stays alive for as long as its function uses it.
+			call: "rhoAddress(",
+			define: "var rhoAddressSink unsafe.Pointer\n\n" +
+				"func rhoAddress(pointer unsafe.Pointer) uint64 {\n" +
+				"\tatomic.StorePointer(&rhoAddressSink, pointer)\n" +
+				"\treturn uint64(uintptr(pointer))\n" +
+				"}\n",
+			imports: []string{"sync/atomic", "unsafe"},
+		},
+		{
 			// What a value is, from the line it is on and the block below it.
 			//
 			// A value on its own line is a scalar, and which scalar it is is

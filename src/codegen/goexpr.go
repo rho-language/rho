@@ -265,7 +265,8 @@ func ToGoExpr(expr string) string {
 }
 
 // rewritePtrLiterals turns a handle built from a reference into the address its
-// Go struct carries. `Ptr[T](&x)` lowers to `PtrT{ &x }`, but the field is a
+// Go struct carries, through rhoAddress, which keeps the variable where Go does
+// not move it. `Ptr[T](&x)` lowers to `PtrT{ &x }`, but the field is a
 // uint64, so the pointer has to cross into Go's unsafe world once here rather
 // than at every use of a slice built from an array.
 func rewritePtrLiterals(expr string) string {
@@ -287,8 +288,8 @@ func rewritePtrLiterals(expr string) string {
 					content := string(src[end+1 : close])
 					trimmed := strings.TrimSpace(content)
 					if strings.HasPrefix(trimmed, "&") {
-						out.WriteString(word + "{uint64(uintptr(unsafe.Pointer(" +
-							trimmed + ")))}")
+						out.WriteString(word + "{rhoAddress(unsafe.Pointer(" +
+							trimmed + "))}")
 						i = close + 1
 						continue
 					}

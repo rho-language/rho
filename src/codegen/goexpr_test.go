@@ -436,7 +436,7 @@ func TestGoTypeForArrayParameterKeepsOneDimension(t *testing.T) {
 
 func TestGoPtrLiteralFromReferenceCarriesAnAddress(t *testing.T) {
 	got := ToGoExpr("PtrCategories{ &categories[0] }")
-	want := "PtrCategories{uint64(uintptr(unsafe.Pointer(&categories[0])))}"
+	want := "PtrCategories{rhoAddress(unsafe.Pointer(&categories[0]))}"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -450,7 +450,7 @@ func TestGoPtrLiteralFromReferenceCarriesAnAddress(t *testing.T) {
 func TestGoPtrLiteralOverABuiltinUsesThePortsName(t *testing.T) {
 	src := "(Ptr_u32){ &more }"
 	got := ToGoExpr(src)
-	want := "PtrU32{uint64(uintptr(unsafe.Pointer(&more)))}"
+	want := "PtrU32{rhoAddress(unsafe.Pointer(&more))}"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
