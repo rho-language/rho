@@ -2300,7 +2300,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			// A qualified call is emitted under the name the module's function
 			// is emitted under; an extern under the name its header gave it.
 			callee = qualified.cName
-			if qualified.extern || callee == "" {
+			if runtimeForeign(qualified, expr.Callee.(ast.MemberExpr).Name) || callee == "" {
 				callee = expr.Callee.(ast.MemberExpr).Name
 			}
 		} else {
@@ -2404,6 +2404,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 					// the name. A function Rho emits is still emitted under the
 					// qualified name, and must be called the same way.
 					callee = signature.cName
+					if runtimeForeign(signature, identifier.Name) {
+						callee = identifier.Name
+					}
 				}
 			}
 		}
@@ -2888,6 +2891,15 @@ func (tc *TypeChecker) lookupFunc(name string) (functionType, bool) {
 	}
 	entry, found := tc.funcs[name]
 	return entry, found
+}
+
+// runtimeForeign says a foreign function is the runtime's: named in its
+// namespace (`rho_*`) and declared outside the standard library. The runtime
+// defines it under its own name, whichever module declared it, so it is called
+// by that name. Any other foreign function is a port's, and a port defines it
+// under the name qualified by the module that declared it.
+func runtimeForeign(entry functionType, name string) bool {
+	return entry.extern && strings.HasPrefix(name, "rho_") && !strings.HasPrefix(entry.owner, "std.")
 }
 
 // notExported says why a function cannot be called from the module being

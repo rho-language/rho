@@ -85,8 +85,12 @@ func TestAnImportIsTheInterfaceADeclaredDependencyExports(t *testing.T) {
 		}
 	}
 	write("acme/.git/HEAD", "ref: refs/heads/main\n")
-	write("acme/modules/greet/module.yml", "module:\n  name: acme-greet\n  type: module\n  version: 0.1.0\nmain: src/greet.rho\nprovides:\n  import: acme.greet\n  exports:\n    - hello\n")
-	write("acme/modules/greet/src/greet.rho", "module greet\nfn helper() string { return \"hello from greet\" }\nfn hello() string { return helper() }\n")
+	write("acme/modules/greet/module.yml", "module:\n  name: acme-greet\n  type: module\n  version: 0.1.0\nmain: src/greet.rho\nassets:\n  - greeting.txt\nprovides:\n  import: acme.greet\n  exports:\n    - hello\n")
+	// The module reads its own asset through a runtime function it declares:
+	// a foreign function in the runtime's namespace is the runtime's, whichever
+	// module declared it.
+	write("acme/modules/greet/greeting.txt", "hello from greet")
+	write("acme/modules/greet/src/greet.rho", "module greet\nextern fn rho_asset(module: string, path: string) string\nfn helper() string { return rho_asset(\"acme-greet\", \"greeting.txt\") }\nfn hello() string { return helper() }\n")
 	write("app/.git/HEAD", "ref: refs/heads/main\n")
 	manifest := "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndeps:\n  acme:\n    acme-greet: \">=0.1.0\"\nbuild:\n  language: go\n  targets:\n    - go\n"
 	write("app/module.yml", manifest)
