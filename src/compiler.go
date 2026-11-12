@@ -859,6 +859,9 @@ func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*a
 		root.LoadedFiles = append(root.LoadedFiles, file)
 	}
 	sort.Strings(root.LoadedFiles)
+	if err := ownModuleNames(root); err != nil {
+		return nil, err
+	}
 	return root, nil
 }
 
@@ -1674,6 +1677,21 @@ func markModuleOwnership(module *ast.Module, owner string) {
 				module.Decls[index] = declaration
 			}
 		case ast.StructDecl:
+			if declaration.Owner == "" {
+				declaration.Owner = owner
+				module.Decls[index] = declaration
+			}
+		case ast.EnumDecl:
+			if declaration.Owner == "" {
+				declaration.Owner = owner
+				module.Decls[index] = declaration
+			}
+		case ast.TypeDecl:
+			if declaration.Owner == "" {
+				declaration.Owner = owner
+				module.Decls[index] = declaration
+			}
+		case ast.ConstDecl:
 			if declaration.Owner == "" {
 				declaration.Owner = owner
 				module.Decls[index] = declaration

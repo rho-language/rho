@@ -144,8 +144,9 @@ type Decl interface {
 
 type TypeDecl struct {
 	Node
-	Name string
-	Type TypeExpr
+	Name  string
+	Owner string
+	Type  TypeExpr
 }
 
 func (TypeDecl) declNode() {}
@@ -161,7 +162,9 @@ func (n TypeDecl) Position() Position { return n.Pos }
 // order to assign one in. Its value is inlined at every use.
 type ConstDecl struct {
 	Node
-	Name  string
+	Name string
+	// Owner is the imported module that declared it, as for a function.
+	Owner string
 	Type  TypeExpr
 	Value Expr
 }
@@ -250,6 +253,7 @@ type Field struct {
 type EnumDecl struct {
 	Node
 	Name     string
+	Owner    string
 	Variants []EnumVariant
 }
 

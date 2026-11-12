@@ -131,6 +131,91 @@ func TestAnImportIsTheInterfaceADeclaredDependencyExports(t *testing.T) {
 	}
 }
 
+// A module's types and constants are its own, as its functions are: two
+// imported modules that each declare a Config and a LIMIT have two of each, an
+// application's own Config is its own, and `a.Config` names module a's.
+func TestImportedModulesKeepTheirOwnTypesAndConstants(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	root := t.TempDir()
+	write := func(path, text string) {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("module.yml", "module:\n  name: scope\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\nbuild:\n  language: go\n  targets:\n    - go\n")
+	write("src/app/a.rho", "module app.a\nstruct Config { x: u32 }\nconst LIMIT: u32 = 1\nfn make() Config { return Config{ LIMIT } }\nfn show(c: Config) u32 { return c.x }\n")
+	write("src/app/b.rho", "module app.b\nstruct Config { y: string }\nconst LIMIT: u32 = 2\nfn make() Config { return Config{ \"b\" } }\nfn limit() u32 { return LIMIT }\n")
+	write("src/main.rho", "module main\nimport app.a\nimport app.b\nstruct Config { name: string }\n"+
+		"fn main() void {\n    let mine: Config = Config{ \"m\" }\n    let c: a.Config = a.Config{ a.LIMIT + 4 }\n"+
+		"    print(mine.name + int_to_str(a.show(c)) + int_to_str(a.show(a.make())) + b.make().y + int_to_str(b.limit() + b.LIMIT))\n}\n")
+
+	entry := filepath.Join(root, "src", "main.rho")
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	binary := filepath.Join(t.TempDir(), "scope")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = dirs[0]
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	out, err := exec.Command(binary).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if string(out) != "m51b4" {
+		t.Errorf("output = %q, want %q", out, "m51b4")
+	}
+
+	// A name two imported modules declare, and the importer does not, has to say
+	// which one it means.
+	write("src/main.rho", "module main\nimport app.a\nimport app.b\nfn main() void {\n    let c: Config = a.make()\n    print(int_to_str(LIMIT))\n}\n")
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "write a.Config or b.Config") {
+		t.Errorf("ambiguous type: error = %v", err)
+	}
+	write("src/main.rho", "module main\nimport app.a\nimport app.b\nfn main() void {\n    print(int_to_str(LIMIT))\n}\n")
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "write a.LIMIT or b.LIMIT") {
+		t.Errorf("ambiguous constant: error = %v", err)
+	}
+}
+
+// A module that publishes exports lets another module name only the types and
+// constants it lists.
+func TestAModuleExportsItsTypesAndConstants(t *testing.T) {
+	workspace := t.TempDir()
+	write := func(path, text string) {
+		full := filepath.Join(workspace, filepath.FromSlash(path))
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("acme/.git/HEAD", "ref: refs/heads/main\n")
+	write("acme/modules/shape/module.yml", "module:\n  name: acme-shape\n  type: module\n  version: 0.1.0\nmain: src/shape.rho\nprovides:\n  import: acme.shape\n  exports:\n    - Point\n    - ORIGIN_X\n    - origin\n")
+	write("acme/modules/shape/src/shape.rho", "module shape\nconst ORIGIN_X: u32 = 0\nconst SECRET: u32 = 7\nstruct Point { x: u32 }\nstruct Hidden { y: u32 }\nfn origin() Point { return Point{ ORIGIN_X + SECRET - SECRET } }\n")
+	write("app/.git/HEAD", "ref: refs/heads/main\n")
+	write("app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndeps:\n  acme:\n    acme-shape: \">=0.1.0\"\nbuild:\n  language: go\n  targets:\n    - go\n")
+	t.Setenv("RHO_WORKSPACE", workspace)
+	entry := filepath.Join(workspace, "app", "src", "main.rho")
+
+	write("app/src/main.rho", "module main\nimport acme.shape\nfn main() void {\n    let p: shape.Point = shape.Point{ shape.ORIGIN_X }\n    let q: Point = shape.origin()\n    print(int_to_str(p.x + q.x))\n}\n")
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err != nil {
+		t.Fatalf("exported names: %v", err)
+	}
+	for _, private := range []string{"let h: shape.Hidden = shape.Hidden{ 1 }", "let s: u32 = shape.SECRET", "let s: u32 = SECRET"} {
+		write("app/src/main.rho", "module main\nimport acme.shape\nfn main() void {\n    "+private+"\n}\n")
+		_, err := GenerateAllTargets(entry, "", nil, nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "is not exported by acme.shape (it exports Point, ORIGIN_X, origin)") {
+			t.Errorf("%s: error = %v", private, err)
+		}
+	}
+}
+
 // An interface declares what its providers implement; an application binds it to
 // providers and configures them. The calls to the bound providers are generated
 // into the interface, so its own code decides how to use them (here, every

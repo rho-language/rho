@@ -258,7 +258,10 @@ The toolchain holds both sides to it:
 - Only exported names can be used from outside the module; anything else is
   the module's own. `forms.trim()` from an application is refused with the
   names the module does export, and a private helper never collides with an
-  application function of the same name.
+  application function of the same name. The list covers types and constants
+  too: an application that writes `forms.Field` needs `Field` under `exports`.
+  A value of a type the module keeps can still be passed around, as what an
+  exported function returns; it just cannot be named or built outside.
 - Including another module by name, which pastes its whole source into the
   includer, is reported with the import that replaces it.
 

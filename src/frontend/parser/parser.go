@@ -501,7 +501,14 @@ func (p *Parser) parseType() ast.TypeExpr {
 			Name: "[" + inner.Name + "]",
 		}
 	}
-	typeExpr := ast.TypeExpr{Name: p.name()}
+	// A type another module declares is written with that module's name in
+	// front of it: `alert.AlertRule`.
+	name := p.name()
+	for p.current.Kind == lexer.TokenDot {
+		p.readToken()
+		name += "." + p.name()
+	}
+	typeExpr := ast.TypeExpr{Name: name}
 	closing := lexer.TokenRBracket
 	if p.current.Kind == lexer.TokenLess {
 		closing = lexer.TokenGreater
@@ -1143,7 +1150,15 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 				return expression
 			}
 			identifier, isIdentifier := expression.(ast.IdentifierExpr)
-			if !isIdentifier || !p.isTypeName(identifier.Name) {
+			isType := isIdentifier && p.isTypeName(identifier.Name)
+			// `alert.AlertRule { ... }` is a literal of a type another module
+			// declares.
+			if member, isMember := expression.(ast.MemberExpr); isMember {
+				if module, named := member.Object.(ast.IdentifierExpr); named && p.isTypeName(member.Name) {
+					identifier, isType = ast.IdentifierExpr{Node: member.Node, Name: module.Name + "." + member.Name}, true
+				}
+			}
+			if !isType {
 				return expression
 			}
 			p.readToken()

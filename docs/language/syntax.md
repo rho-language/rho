@@ -80,6 +80,27 @@ declares it, which is how programs written before qualified calls keep
 building. A qualified call to a module that was not imported, or to a function
 the module does not declare, is refused with what is wrong.
 
+A module's structs, enums, type aliases and constants are its own in the same
+way. Two imported modules may each declare a `Config` and a `LIMIT`, and an
+application may declare its own `Config` beside them; inside each module the
+name is that module's. Another module's type or constant is written with the
+module's name in front of it, in a type, a literal or an expression:
+
+```rho
+module app
+import app.storage
+
+fn main() void {
+    let options: storage.Options = storage.Options{ storage.DEFAULT_SIZE }
+    storage.open("data", options)
+}
+```
+
+The bare name works when the importing code does not declare it and only one
+imported module does; when two do, the compiler says so and names both
+qualified spellings. The standard library's types — `Request`, `Option` — are
+the language's own and are written bare.
+
 ## Functions
 
 A function names its parameters and what it returns. A function that returns
