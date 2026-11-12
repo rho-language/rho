@@ -36,6 +36,11 @@ type DepSpec struct {
 	Path      string
 	Include   string
 	Src       string
+	// Group is the named group the dependency was declared in (`deps: {acme:
+	// {forms: ...}}`), or "" for one declared directly. A group is how a project
+	// keeps one ecosystem's modules together; it changes nothing about how the
+	// dependency is resolved.
+	Group string
 }
 
 // CMakeExports is what a module exports to CMake, declared by the module itself.
@@ -530,6 +535,14 @@ type Manifest struct {
 	// Integration is what an integration plugin bridges, when this manifest is
 	// one (see IntegrationManifest).
 	Integration *IntegrationManifest
+	// Assets are files and directories, relative to the module, that it reads at
+	// run time by name (rho_asset): templates, schemas, static files. A project
+	// that includes the module carries them, embedded, so the module never reads
+	// its source tree.
+	Assets []string
+	// ModuleLocales are the translation catalogs the module ships, merged into the
+	// catalogs of every project that includes it.
+	ModuleLocales []LocaleFile
 	// PackageInclude is `package.include`, or nil when the manifest names none and
 	// the default layout for its type decides what is packaged.
 	PackageInclude []string
@@ -905,11 +918,15 @@ func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 	// The name is kept whole and the constraint becomes the version range, so
 	// the dependency system and the import resolution see the same thing.
 	for name, constraint := range doc.Map["deps"].Map {
-		// A subsection groups an ecosystem's module and plugin dependencies
-		// apart from the Rho components: `deps.<ecosystem>`. Those are local
-		// modules resolved by `include`, not by rho-deps, so they are recorded
-		// for the dependency check but not handed to the resolver.
+		// A map is a named group of dependencies (`deps: {acme: {forms: ...}}`),
+		// and each entry in it is a dependency like any other: resolved by the
+		// same rules, wherever the project lives.
 		if constraint.Kind == yaml.KindMap {
+			for member, version := range constraint.Map {
+				spec := DepSpec{Name: member, Group: name}
+				spec.Version.Raw = version.Str
+				m.Deps = append(m.Deps, spec)
+			}
 			continue
 		}
 		spec := DepSpec{Name: name}
@@ -943,12 +960,25 @@ func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 	m.Provides = parseProvides(doc.Map["provides"])
 	m.Extends = parseExtends(doc)
 	m.Integration = parseIntegration(doc.Map["integration"])
+	m.Assets = yamlStrings(doc.Map["assets"])
+	for _, entry := range doc.Map["locales"].List {
+		if entry.Kind == yaml.KindMap {
+			m.ModuleLocales = append(m.ModuleLocales, LocaleFile{
+				Code: yamlString(entry, "locale"), File: yamlString(entry, "file")})
+		}
+	}
 	if pkg := doc.Map["package"]; pkg.Kind == yaml.KindMap {
 		if include, ok := pkg.Map["include"]; ok && include.Kind == yaml.KindList {
 			m.PackageInclude = yamlStrings(include)
 		}
 	}
 	return m, nil
+}
+
+// LocaleFile is one translation catalog a module ships.
+type LocaleFile struct {
+	Code string
+	File string
 }
 
 // IntegrationManifest is an integration plugin's `integration:` section: the one

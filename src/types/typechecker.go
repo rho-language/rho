@@ -1387,16 +1387,35 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 		}
 	}
 
+	// An extern names a foreign function, and two modules that each use it each
+	// declare it: a module that is to build on its own says what it calls. The
+	// same declaration twice is one function; a second with another signature
+	// stays, and the backend refuses the pair.
+	externs := map[string]string{}
 	for _, decl := range m.Decls {
 		if fn, ok := decl.(ast.FuncDecl); ok {
 			if len(fn.TypeParams) > 0 {
 				tc.genericFuncs[fn.Name] = fn
 				continue
 			}
+			lowered := tc.funcToIR(fn)
 			if fn.Extern {
 				tc.externNames[fn.Name] = true
+				name := lowered.CName
+				if name == "" {
+					name = lowered.Name
+				}
+				// The types, not the parameters' names, are what a C caller sees.
+				signature := fmt.Sprintf("%v", lowered.ReturnType)
+				for _, param := range lowered.Params {
+					signature += fmt.Sprintf("|%v", param.Type)
+				}
+				if previous, seen := externs[name]; seen && previous == signature {
+					continue
+				}
+				externs[name] = signature
 			}
-			out.Funcs = append(out.Funcs, tc.funcToIR(fn))
+			out.Funcs = append(out.Funcs, lowered)
 		}
 	}
 

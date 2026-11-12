@@ -47,6 +47,18 @@ fn greet(n: u32) u32 {
 }
 ```
 
+An include that is a bare name, with no `/` and no `.rho`, names a module rather
+than a file: `include "forms"` is the entry of the module called `forms`. That is
+a dependency the manifest declares, matched by its module name or its folder,
+or else a module in the same repository under `modules/`, `plugins/`,
+`providers/` or `contracts/`. The entry is the `main:` the module's manifest
+declares, so a module never names a path into another one.
+
+An `extern` declares a foreign function. Two included files may each declare the
+same one, because a module that is to build on its own says what it calls; the
+program has one function. Two declarations of one name with different types are
+refused.
+
 `import` keeps the names apart, so two modules may declare the same name without
 colliding:
 

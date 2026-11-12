@@ -286,6 +286,10 @@ func (s *SQL) schemaText() string {
 type Context struct {
 	// ModuleName is the Rho module name, used for banners and build files.
 	ModuleName string
+	// ModuleRoots are the project and every module the program was loaded from.
+	// What a module declares it ships (its assets and locales) is carried into
+	// every project that includes it, so no project names another module's files.
+	ModuleRoots []string
 	// ProjectRoot is the Rho project directory.
 	ProjectRoot string
 	// OutputDir is the directory the generated project is written to.
@@ -449,12 +453,18 @@ func generateTemplates(ctx Context, target Target) error {
 // read here rather than by the generated program, so a server never parses a
 // catalog and a device needs nothing beyond the compiled binary.
 func generateLocales(ctx Context, target Target) error {
-	if len(target.Templates) == 0 && len(target.Locales) == 0 {
+	// The modules' catalogs first, the project's own last, so a project can say a
+	// module's word its own way.
+	entries := moduleLocales(ctx)
+	for _, entry := range target.Locales {
+		entries = append(entries, moduleLocale{Code: entry.Code, Path: filepath.Join(ctx.ProjectRoot, filepath.FromSlash(entry.File)), File: entry.File})
+	}
+	if len(target.Templates) == 0 && len(entries) == 0 {
 		return nil
 	}
 	catalogs := map[string]map[string]string{}
-	for _, entry := range target.Locales {
-		path := filepath.Join(ctx.ProjectRoot, filepath.FromSlash(entry.File))
+	for _, entry := range entries {
+		path := entry.Path
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read locale %s: %w", entry.File, err)
@@ -640,6 +650,11 @@ func Generate(ctx Context, target Target) (string, error) {
 	if err := generateLocales(ctx, target); err != nil {
 		return "", err
 	}
+	if target.Emitter == "go" {
+		if err := generateAssets(ctx); err != nil {
+			return "", err
+		}
+	}
 	if err := generatePorts(ctx, target); err != nil {
 		return "", err
 	}
@@ -697,4 +712,86 @@ func sortedEmitters() []string {
 		}
 	}
 	return out
+}
+
+// moduleLocale is one catalog to merge: its language, where it is, and how to
+// name it in a message.
+type moduleLocale struct {
+	Code string
+	Path string
+	File string
+}
+
+// moduleLocales are the catalogs the modules a program was loaded from ship, in
+// the order the modules were found.
+func moduleLocales(ctx Context) []moduleLocale {
+	var out []moduleLocale
+	project, _ := filepath.Abs(ctx.ProjectRoot)
+	for _, root := range ctx.ModuleRoots {
+		if root == project {
+			continue
+		}
+		manifest, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || manifest == nil {
+			continue
+		}
+		for _, locale := range manifest.ModuleLocales {
+			if locale.Code == "" || locale.File == "" {
+				continue
+			}
+			out = append(out, moduleLocale{Code: locale.Code,
+				Path: filepath.Join(root, filepath.FromSlash(locale.File)),
+				File: manifest.ModuleName + "/" + locale.File})
+		}
+	}
+	return out
+}
+
+// generateAssets embeds the assets every module of the program declares (the
+// project included), keyed by module name and path, so rho_asset answers from
+// the binary and a module never reads its source tree. A program with none still
+// gets the lookup, so a call to rho_asset always compiles.
+func generateAssets(ctx Context) error {
+	assets := map[string]string{}
+	for _, root := range ctx.ModuleRoots {
+		manifest, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || manifest == nil || len(manifest.Assets) == 0 {
+			continue
+		}
+		for _, declared := range manifest.Assets {
+			base := filepath.Join(root, filepath.FromSlash(declared))
+			info, statErr := os.Stat(base)
+			if statErr != nil {
+				return fmt.Errorf("module %s declares asset %s, which is not there", manifest.ModuleName, declared)
+			}
+			if !info.IsDir() {
+				data, readErr := os.ReadFile(base)
+				if readErr != nil {
+					return readErr
+				}
+				assets[manifest.ModuleName+"/"+filepath.ToSlash(filepath.Clean(declared))] = string(data)
+				continue
+			}
+			walkErr := filepath.WalkDir(base, func(path string, entry os.DirEntry, err error) error {
+				if err != nil || entry.IsDir() {
+					return err
+				}
+				relative, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					return relErr
+				}
+				data, readErr := os.ReadFile(path)
+				if readErr != nil {
+					return readErr
+				}
+				assets[manifest.ModuleName+"/"+filepath.ToSlash(relative)] = string(data)
+				return nil
+			})
+			if walkErr != nil {
+				return walkErr
+			}
+		}
+	}
+	rendered := codegen.EmitGoAssets(assets)
+	return os.WriteFile(filepath.Join(ctx.OutputDir, codegen.AssetFileName), []byte(rendered), 0644)
 }

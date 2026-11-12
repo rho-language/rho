@@ -42,12 +42,14 @@ func TestCheckModuleDependencyUnderEcosystemGroup(t *testing.T) {
 	}
 }
 
-func TestCheckModuleDependencyRejectsFlatEcosystemDependency(t *testing.T) {
+func TestCheckModuleDependencyAcceptsADirectDependency(t *testing.T) {
 	root := t.TempDir()
 	source := writeDependencyManifest(t, root, "deps:\n  notifications: \">=0.1.0\"\n")
-	err := checkModuleDependency(source, "notifications")
-	if err == nil || !strings.Contains(err.Error(), "ecosystem") {
-		t.Fatalf("flat Acme dependency was accepted: %v", err)
+	if err := checkModuleDependency(source, "notifications"); err != nil {
+		t.Fatalf("a dependency declared directly was refused: %v", err)
+	}
+	if err := checkModuleDependency(source, "forms"); err == nil || !strings.Contains(err.Error(), "under deps") {
+		t.Fatalf("an undeclared dependency was accepted: %v", err)
 	}
 }
 
@@ -106,5 +108,30 @@ func TestResolveBareIncludeFromDependencyRoot(t *testing.T) {
 	got, ok := resolveInclude(source, "forms", dependency)
 	if !ok || got != main {
 		t.Fatalf("dependency include = %q, %v; want %q", got, ok, main)
+	}
+}
+
+func TestResolveBareIncludeReadsTheManifestMain(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "contracts", "notify", "manager.rho")
+	provider := filepath.Join(root, "providers", "mail")
+	entry := filepath.Join(provider, "src", "provider.rho")
+	for path, text := range map[string]string{
+		source:                                "module notify\n",
+		entry:                                 "module mail\n",
+		filepath.Join(provider, "module.yml"): "module:\n  name: acme-provider-mail\n  type: provider\n  version: 0.1.0\nmain: src/provider.rho\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"mail", "acme-provider-mail"} {
+		got, ok := resolveInclude(source, name)
+		if !ok || got != entry {
+			t.Errorf("resolveInclude(%q) = %q, %v; want %q", name, got, ok, entry)
+		}
 	}
 }

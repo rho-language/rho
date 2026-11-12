@@ -492,6 +492,23 @@ func moduleSchema(types []string) Schema {
 				Kind:     KindMap,
 			},
 			{
+				// The files a module reads at run time by name (rho_asset), carried
+				// embedded into every project that includes it.
+				Name:     "assets",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindString,
+				},
+			},
+			{
+				// The translation catalogs a module ships, merged into every
+				// project that includes it: `- locale: en` and `file: locales/en.json`.
+				Name:     "locales",
+				Required: false,
+				Kind:     KindList,
+			},
+			{
 				// The contracts of the component this plugin fills, so a plugin
 				// says what it is rather than leaving it to be read off the
 				// hooks it happens to answer. A contract is checked against the

@@ -213,6 +213,38 @@ inside the project or the workspace; any other absolute path is not written to.
 `scripts/check-local-paths.sh` fails when a tracked file names a path under
 `/home/<user>` or `/Users/<user>`, and is what a CI job runs.
 
+## A module's own files
+
+A module that reads a template, a schema or a page of its own does not look for
+its folder at run time: wherever a program runs, that folder is not beside it.
+It declares the files instead, and every program that includes the module
+carries them, embedded when it is built:
+
+```yaml
+assets:
+  - templates            # a directory: every file under it
+  - db/schema.sql
+locales:
+  - locale: en
+    file: locales/en.json
+```
+
+```rho
+extern fn rho_asset(module: string, path: string) string
+extern fn rho_asset_dir(module: string) string
+
+fn card() string {
+    return rho_asset("forms", "templates/card.html")
+}
+```
+
+`rho_asset` is one file's content, or `""` when the module declares none by that
+path. `rho_asset_dir` is a directory holding all of them as files, for a reader
+that takes a path — a YAML document read where it lies, a directory of steps;
+it is written once per content under the user's cache. A module's locales are
+merged into the program's catalogs before the program's own, so a program can
+override any string. Both are the Go backends'; generated C carries no assets.
+
 ## What is installed and what is used
 
 Installing a component or a plugin makes it available. Using it is a separate
@@ -514,3 +546,16 @@ The constraint is a range, as it is for a library: a project that needs the
 logger and a project that needs a newer logger can both be satisfied by one
 toolchain. The `>=` prefix and the `^` prefix mean the same thing; the
 `>=`-style is what the ecosystem uses.
+
+Dependencies may be grouped under a name, which is only for the reader: a group
+is resolved exactly as the entries in it would be at the top level, and a
+module in the same repository answers for one of its names before a registry is
+asked.
+
+```yaml
+deps:
+  rho-log: ">=0.1.0"
+  acme:
+    acme-forms: ">=0.1.0"
+    acme-provider-mail: ">=0.1.0"
+```

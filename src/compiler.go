@@ -126,6 +126,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 		EnabledConfigs: enabledConfigs,
 		GuardedSources: guardedSources,
 		SQL:            sqlBridge(ProjectRoot(path)),
+		ModuleRoots:    moduleRootsOf(compiled, ProjectRoot(path)),
 	}
 	for _, target := range targets {
 		if _, err := projectgen.Generate(ctx, target); err != nil {
@@ -272,6 +273,7 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 			Connection:     connection,
 			Variant:        variants[target.ID],
 			LayoutDir:      layoutDir,
+			ModuleRoots:    moduleRootsOf(compiled, projectRoot),
 		}
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err
@@ -853,7 +855,46 @@ func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*a
 	if err := loadFeatureModules(root, entry, projectRoot, dependencyRoots, components, visited); err != nil {
 		return nil, err
 	}
+	for file := range visited {
+		root.LoadedFiles = append(root.LoadedFiles, file)
+	}
+	sort.Strings(root.LoadedFiles)
 	return root, nil
+}
+
+// moduleRootsOf is the project and every module a program was loaded from: the
+// nearest directory holding a module.yml above each source file. A module a
+// program includes is one of them, wherever it was found, so what it ships (its
+// assets, its locales) goes with the program.
+func moduleRootsOf(compiled *ast.Module, projectRoot string) []string {
+	roots := []string{}
+	seen := map[string]bool{}
+	add := func(dir string) {
+		if dir != "" && !seen[dir] {
+			seen[dir] = true
+			roots = append(roots, dir)
+		}
+	}
+	if abs, err := filepath.Abs(projectRoot); err == nil {
+		add(abs)
+	}
+	if compiled == nil {
+		return roots
+	}
+	for _, file := range compiled.LoadedFiles {
+		for dir := filepath.Dir(file); ; {
+			if _, err := os.Stat(filepath.Join(dir, "module.yml")); err == nil {
+				add(dir)
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return roots
 }
 
 // loadDatabaseSurface brings the database surface into a project that declared
@@ -932,6 +973,38 @@ func regularSourceFile(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// moduleNamed reports whether a module root is the module a bare include names:
+// by the name its manifest declares, or by its folder without a version.
+func moduleNamed(root, name string) bool {
+	base := filepath.Base(root)
+	if at := strings.Index(base, "@"); at > 0 {
+		base = base[:at]
+	}
+	if base == name {
+		return true
+	}
+	manifest, err := deps.LoadManifest(deps.ManifestPath(root))
+	return err == nil && manifest != nil && manifest.ModuleName == name
+}
+
+// moduleEntry is the Rho source a module is included by: the `main:` its
+// manifest declares when that is Rho source, otherwise the first of the
+// conventional entries that is there.
+func moduleEntry(root string) (string, bool) {
+	if manifest, err := deps.LoadManifest(deps.ManifestPath(root)); err == nil && manifest != nil &&
+		strings.HasSuffix(manifest.Main, ".rho") {
+		if entry := filepath.Join(root, filepath.FromSlash(manifest.Main)); regularSourceFile(entry) {
+			return entry, true
+		}
+	}
+	for _, candidate := range []string{"src/main.rho", "main.rho", "manager.rho"} {
+		if entry := filepath.Join(root, candidate); regularSourceFile(entry) {
+			return entry, true
+		}
+	}
+	return "", false
+}
+
 func resolveInclude(sourceFile, include string, dependencyRoots ...string) (string, bool) {
 	if filepath.IsAbs(include) {
 		if regularSourceFile(include) {
@@ -965,18 +1038,29 @@ func resolveInclude(sourceFile, include string, dependencyRoots ...string) (stri
 	// not the number of directories between the two. A dependency root is the
 	// same idea for an entity checked out on its own.
 	if !strings.ContainsRune(include, filepath.Separator) {
-		current = filepath.Dir(sourceFile)
-		for {
-			candidates := []string{
-				filepath.Join(current, "modules", include, "src", "main.rho"),
-				filepath.Join(current, "plugins", include, "src", "main.rho"),
-				filepath.Join(current, "providers", include, "src", "main.rho"),
-				filepath.Join(current, "contracts", include, "manager.rho"),
-				filepath.Join(current, "contracts", include, "src", "main.rho"),
+		// A dependency the project declared answers first, and only the one the
+		// include names: by its module name, or by its folder (an installed
+		// module's folder carries its version, `name@1.2.0`).
+		for _, root := range dependencyRoots {
+			if moduleNamed(root, include) {
+				if entry, ok := moduleEntry(root); ok {
+					return entry, true
+				}
 			}
-			for _, candidate := range candidates {
-				if regularSourceFile(candidate) {
-					return candidate, true
+		}
+		// Then a module in the repository the including file is in, which is how
+		// a repository that develops several modules together builds them.
+		if root := deps.RepositoryModuleRoot(filepath.Dir(sourceFile), include); root != "" {
+			if entry, ok := moduleEntry(root); ok {
+				return entry, true
+			}
+		}
+		// A module folder that carries no manifest yet is still found where the
+		// repository layout puts it.
+		for current := filepath.Dir(sourceFile); ; {
+			for _, kind := range []string{"modules", "plugins", "providers", "contracts"} {
+				if entry, ok := moduleEntry(filepath.Join(current, kind, include)); ok {
+					return entry, true
 				}
 			}
 			parent := filepath.Dir(current)
@@ -984,18 +1068,6 @@ func resolveInclude(sourceFile, include string, dependencyRoots ...string) (stri
 				break
 			}
 			current = parent
-		}
-		for _, root := range dependencyRoots {
-			candidates := []string{
-				filepath.Join(root, "src", "main.rho"),
-				filepath.Join(root, "main.rho"),
-				filepath.Join(root, "manager.rho"),
-			}
-			for _, candidate := range candidates {
-				if regularSourceFile(candidate) {
-					return candidate, true
-				}
-			}
 		}
 	}
 	return "", false
@@ -1038,11 +1110,13 @@ func checkModuleDependency(sourceFile, dep string) error {
 				return nil
 			}
 			deps := document.Map["deps"]
-			// A module of an ecosystem is declared in that ecosystem's group
-			// (`deps.<ecosystem>`), not beside the Rho components. The include
-			// says where the code lives; the group says the module is allowed
-			// to bring it in. Any map under `deps` is such a group, so the
-			// toolchain names no ecosystem.
+			// The include says where the code lives; `deps` says the module is
+			// allowed to bring it in. It is declared directly (`deps: {forms:
+			// ">=0.1"}`) or in a named group (`deps: {acme: {forms: ...}}`), which
+			// is how a project keeps one ecosystem's modules together.
+			if _, ok := deps.Map[dep]; ok {
+				return nil
+			}
 			for _, group := range deps.Map {
 				if group.Kind != yaml.KindMap {
 					continue
@@ -1051,10 +1125,7 @@ func checkModuleDependency(sourceFile, dep string) error {
 					return nil
 				}
 			}
-			if _, ok := deps.Map[dep]; ok {
-				return fmt.Errorf("dependency %q is declared beside the Rho components; declare it in its ecosystem's group, deps.<ecosystem>, in module.yml", dep)
-			}
-			return fmt.Errorf("module does not declare %q in an ecosystem group (deps.<ecosystem>) in module.yml", dep)
+			return fmt.Errorf("module does not declare %q under deps in module.yml", dep)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

@@ -323,6 +323,9 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 		if root := VendoredComponentRoot(l.ProjectRoot, dep.Name); root != "" {
 			return root, nil
 		}
+		if root := RepositoryModuleRoot(l.ProjectRoot, dep.Name); root != "" {
+			return root, nil
+		}
 	}
 
 	// 4. Global cache
@@ -396,4 +399,54 @@ func within(path, dir string) bool {
 	}
 	rel, err := filepath.Rel(dir, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// repositoryModuleDirs are where a repository that carries several modules keeps
+// them, by kind.
+var repositoryModuleDirs = []string{"modules", "plugins", "providers", "contracts"}
+
+// RepositoryModuleRoot finds a module by name in the repository a project lives
+// in: `modules/<name>`, `plugins/<name>`, `providers/<name>` or `contracts/<name>`
+// at any level from the project up to the repository's root, holding a
+// module.yml. It is how a repository that develops several modules together
+// builds them without installing each first; a project on its own resolves the
+// same dependency from an installation, a path or git, and nothing in it names
+// the repository it came from.
+func RepositoryModuleRoot(projectRoot, name string) string {
+	if projectRoot == "" || name == "" || filepath.Base(filepath.Clean(name)) != name || name == "." {
+		return ""
+	}
+	for current := projectRoot; ; {
+		for _, kind := range repositoryModuleDirs {
+			root := filepath.Join(current, kind, name)
+			if isComponentDir(root) {
+				return root
+			}
+		}
+		// A module's folder need not carry its name: `providers/mail` may hold
+		// the module named `acme-provider-mail`.
+		for _, kind := range repositoryModuleDirs {
+			entries, err := os.ReadDir(filepath.Join(current, kind))
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				root := filepath.Join(current, kind, entry.Name())
+				if !entry.IsDir() || !isComponentDir(root) {
+					continue
+				}
+				if manifest, err := LoadManifest(filepath.Join(root, "module.yml")); err == nil && manifest != nil && manifest.ModuleName == name {
+					return root
+				}
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return ""
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		current = parent
+	}
 }

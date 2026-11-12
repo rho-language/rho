@@ -112,3 +112,35 @@ func TestAPointerToNothingIsAHandle(t *testing.T) {
 		t.Errorf("Ptr[Unit] is a handle and is named rather than raw, got %q", got)
 	}
 }
+
+// Two modules that each use a foreign function each declare it, so a program
+// that includes both carries the declaration twice. That is one function, and
+// the program has one; a declaration with another signature is not collapsed.
+func TestTheSameExternDeclaredTwiceIsOneFunction(t *testing.T) {
+	source := `module main
+
+extern fn read_file(path: string) string
+extern fn read_file(name: string) string
+extern fn write_file(path: string) i32
+extern fn write_file(path: string, text: string) i32
+
+fn main() void {
+    let text: string = read_file("a")
+}
+`
+	module := *parseSource(t, source)
+	checker := New()
+	if err := checker.CheckModule(module); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	counts := map[string]int{}
+	for _, fn := range checker.ToIR(module).Funcs {
+		counts[fn.Name]++
+	}
+	if counts["read_file"] != 1 {
+		t.Errorf("read_file lowered %d times, want 1", counts["read_file"])
+	}
+	if counts["write_file"] != 2 {
+		t.Errorf("write_file lowered %d times, want 2 so the backend refuses the pair", counts["write_file"])
+	}
+}

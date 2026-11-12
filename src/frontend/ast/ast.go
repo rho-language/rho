@@ -72,6 +72,10 @@ type Module struct {
 	Includes  []Include
 	Features  []string
 	Decls     []Decl
+	// LoadedFiles are every source file the graph was loaded from, set on the
+	// root module only: what the program is made of, so the modules it draws on
+	// (and their assets) are known without loading it twice.
+	LoadedFiles []string
 }
 
 // TypeExpr represents a named type with optional generic arguments and array
