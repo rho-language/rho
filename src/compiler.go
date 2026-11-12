@@ -1325,13 +1325,15 @@ func loadBinding(iface string, spec *deps.InterfaceSpec, projectRoot string, dep
 	for _, provider := range providers {
 		fmt.Fprintf(&source, "import %s\n", provider.importName)
 	}
-	source.WriteString("\nextern fn rho_bind_config(provider: string, key: string) string\n\n")
+	source.WriteString("\nextern fn rho_bind_config(provider: string, key: string) string\n")
+	source.WriteString("extern fn rho_bind_config_set(provider: string, key: string, value: string) bool\n\n")
 	source.WriteString("fn bound_providers() string {\n    return \"")
 	for _, provider := range providers {
 		source.WriteString(provider.name + "\\n")
 	}
 	source.WriteString("\"\n}\n\n")
-	source.WriteString("fn bind_config(provider: string, key: string) string {\n    return rho_bind_config(provider, key)\n}\n")
+	source.WriteString("fn bind_config(provider: string, key: string) string {\n    return rho_bind_config(provider, key)\n}\n\n")
+	source.WriteString("fn bind_config_set(provider: string, key: string, value: string) bool {\n    return rho_bind_config_set(provider, key, value)\n}\n")
 	for _, function := range spec.Functions {
 		params, result, parseErr := parseInterfaceSignature(function.Signature)
 		if parseErr != nil {

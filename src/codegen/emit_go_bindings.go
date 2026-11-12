@@ -49,4 +49,30 @@ func rhoBindConfig(provider string, key string) string {
 	}
 	return rhoBindDefaults[name]
 }
+
+// rhoBindConfigSet records one provider's setting in the application
+// workspace's bind.conf, replacing the line it had, so the next
+// rhoBindConfig answers it. It reports false when there is no workspace or the
+// file cannot be written. The file is the owner's only: settings may be secrets.
+func rhoBindConfigSet(provider string, key string, value string) bool {
+	workspace := os.Getenv("RHO_APP_WORKSPACE")
+	if workspace == "" || strings.ContainsAny(provider+key+value, "\n\r") {
+		return false
+	}
+	path := filepath.Join(workspace, "bind.conf")
+	name := provider + "." + key + "="
+	lines := []string{}
+	if data, err := os.ReadFile(path); err == nil {
+		for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+			if line != "" && !strings.HasPrefix(strings.TrimSpace(line), name) {
+				lines = append(lines, line)
+			}
+		}
+	}
+	lines = append(lines, name+value)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		return false
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600) == nil
+}
 `

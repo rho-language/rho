@@ -320,7 +320,10 @@ decides how its providers are used: every one of them, as an alert does, or the
 first, as a gateway would. A provider reads its settings with
 `rho_bind_config(provider, key)`: the value in the application workspace's
 `bind.conf` (`acme-telegram.chat_id=...`) when there is one, so a running
-installation changes a setting without a rebuild, otherwise the value in `bind:`.
+installation changes a setting without a rebuild, otherwise the value in `bind:`. The
+interface can also write one, through the generated
+`bind_config_set(provider, key, value)`, which is how a settings page changes a
+provider's configuration on a running installation.
 
 A bound provider that is not a declared dependency, does not list the interface
 under `implements`, is configured with a key it does not declare, or exports a
