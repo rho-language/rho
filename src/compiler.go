@@ -443,11 +443,12 @@ func ResolveDescriptor(projectRoot string) (*projectgen.Descriptor, error) {
 	return descriptor.WithTargets(defined), nil
 }
 
-// baseDescriptor is a project.yml when present, and the built-in otherwise.
+// baseDescriptor is the built-in descriptor, with a project.yml over it when
+// the project has one.
 func baseDescriptor(projectRoot string) (*projectgen.Descriptor, error) {
 	candidate := filepath.Join(projectRoot, projectgen.DescriptorFileName)
 	if _, err := os.Stat(candidate); err == nil {
-		return projectgen.ParseDescriptorFile(candidate)
+		return projectgen.ParseDescriptorFileOverDefault(candidate)
 	}
 	return projectgen.DefaultDescriptor()
 }

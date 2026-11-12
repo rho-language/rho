@@ -1164,6 +1164,31 @@ func EmitGoRuntime(implementation string) string {
 			imports: []string{"strconv"},
 		},
 		{
+			// A named lock, held between rho_lock and rho_unlock. A service runs
+			// its requests and its background work on several goroutines at
+			// once, so reading a counter and writing the next value back is two
+			// steps another goroutine can come between; the lock makes them
+			// one. Locks are by name, so two unrelated counters do not wait for
+			// each other.
+			call: "rhoLock(",
+			define: "var rhoLocks sync.Map\n\n" +
+				"func rhoLockFor(name string) *sync.Mutex {\n" +
+				"\tlock, _ := rhoLocks.LoadOrStore(name, &sync.Mutex{})\n" +
+				"\treturn lock.(*sync.Mutex)\n" +
+				"}\n\n" +
+				"func rhoLock(name string) {\n" +
+				"\trhoLockFor(name).Lock()\n" +
+				"}\n",
+			imports: []string{"sync"},
+		},
+		{
+			call:  "rhoUnlock(",
+			needs: []string{"rhoLock("},
+			define: "func rhoUnlock(name string) {\n" +
+				"\trhoLockFor(name).Unlock()\n" +
+				"}\n",
+		},
+		{
 			// The address a handle carries, for a variable a program built the
 			// handle from: `Ptr[T](&values[0])`.
 			//

@@ -22,6 +22,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"rho/src/codegen"
@@ -426,13 +429,22 @@ func generateAuth(ctx Context, target Target) error {
 
 // generateTemplates embeds the page templates a target carries, so a handler
 // renders markup that lives in template files rather than in Rho string
-// literals.
+// literals. Every template the program asks for by a literal name has to be
+// one of them: a name nothing carries answered "" at run time, which drew an
+// empty page rather than a build that said so.
 func generateTemplates(ctx Context, target Target) error {
-	if len(target.Templates) == 0 {
+	templates, err := expandTemplates(ctx.ProjectRoot, target.Templates)
+	if err != nil {
+		return fmt.Errorf("target %q: %w", target.ID, err)
+	}
+	if err := checkTemplateNames(ctx.IR, templates); err != nil {
+		return fmt.Errorf("target %q: %w", target.ID, err)
+	}
+	if len(templates) == 0 {
 		return nil
 	}
 	contents := map[string]string{}
-	for _, template := range target.Templates {
+	for _, template := range templates {
 		data, err := os.ReadFile(filepath.Join(ctx.ProjectRoot, filepath.FromSlash(template.File)))
 		if err != nil {
 			return fmt.Errorf("read template %s: %w", template.File, err)
@@ -447,6 +459,111 @@ func generateTemplates(ctx Context, target Target) error {
 		return fmt.Errorf("write %s: %w", codegen.TemplateFileName, err)
 	}
 	return nil
+}
+
+// expandTemplates is a target's templates with each dir entry replaced by the
+// files under it, named by their file names without the extension. Two files
+// with one name are refused, since a name picks one; a template written out by
+// name and file is the exception that wins over a folder's file of that name.
+func expandTemplates(root string, declared []Template) ([]Template, error) {
+	explicit := map[string]bool{}
+	for _, template := range declared {
+		if template.Dir == "" {
+			explicit[template.Name] = true
+		}
+	}
+	out := []Template{}
+	found := map[string]string{}
+	for _, template := range declared {
+		if template.Dir == "" {
+			out = append(out, template)
+			continue
+		}
+		dir := filepath.Join(root, filepath.FromSlash(template.Dir))
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("templates dir %s is not a folder in the project", template.Dir)
+		}
+		files := []string{}
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
+				files = append(files, path)
+			}
+			return nil
+		})
+		sort.Strings(files)
+		for _, path := range files {
+			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			relative, _ := filepath.Rel(root, path)
+			relative = filepath.ToSlash(relative)
+			if explicit[name] {
+				continue
+			}
+			if previous, taken := found[name]; taken {
+				return nil, fmt.Errorf("two templates are named %q: %s and %s; rename one, or name the one meant under templates", name, previous, relative)
+			}
+			found[name] = relative
+			out = append(out, Template{Name: name, File: relative})
+		}
+	}
+	return out, nil
+}
+
+var templateRequest = regexp.MustCompile(`\btemplate_get\("((?:[^"\\]|\\.)*)"\)`)
+
+// checkTemplateNames refuses a program that asks for a template, by a literal
+// name, that the target does not carry.
+func checkTemplateNames(program ir.ModuleIR, templates []Template) error {
+	carried := map[string]bool{}
+	for _, template := range templates {
+		carried[template.Name] = true
+	}
+	missing := map[string][]string{}
+	var walk func(fn string, list []ir.Instr)
+	walk = func(fn string, list []ir.Instr) {
+		for _, instr := range list {
+			texts := append([]string{instr.Condition, instr.Dest}, instr.Args...)
+			for _, text := range texts {
+				for _, match := range templateRequest.FindAllStringSubmatch(text, -1) {
+					name, err := strconv.Unquote(`"` + match[1] + `"`)
+					if err != nil || carried[name] {
+						continue
+					}
+					missing[name] = append(missing[name], fn)
+				}
+			}
+			walk(fn, instr.Then)
+			walk(fn, instr.Else)
+		}
+	}
+	for _, fn := range program.Funcs {
+		walk(fn.Name, fn.Body)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(missing))
+	for name := range missing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		lines = append(lines, fmt.Sprintf("template %q, asked for in %s", name, strings.Join(uniqueStrings(missing[name]), ", ")))
+	}
+	return fmt.Errorf("the program asks for templates the target does not carry:\n  %s\nadd them under templates in project.yml, or a templates dir that holds them", strings.Join(lines, "\n  "))
+}
+
+func uniqueStrings(list []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, item := range list {
+		if !seen[item] {
+			seen[item] = true
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // generateLocales embeds the flat JSON catalogs a target carries. The JSON is

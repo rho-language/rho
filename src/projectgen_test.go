@@ -244,8 +244,10 @@ targets:
 	if _, ok := descriptor.Target("custom"); !ok {
 		t.Fatal("expected the custom target")
 	}
-	if _, ok := descriptor.Target("c"); ok {
-		t.Fatal("a project descriptor replaces the default target set")
+	// The project's descriptor is read over the built-in one, so the built-in
+	// targets it does not write are still there.
+	if _, ok := descriptor.Target("c"); !ok {
+		t.Fatal("a project descriptor keeps the built-in targets it does not write")
 	}
 }
 
@@ -262,11 +264,11 @@ func TestResolveDescriptorFallsBackToDefault(t *testing.T) {
 // A malformed project.yml must stop the build rather than be ignored.
 func TestResolveDescriptorRejectsBadProjectFile(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "project.yml"), []byte("version: 1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "project.yml"), []byte("targets:\n  - emitter: go\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ResolveDescriptor(root); err == nil {
-		t.Fatal("expected an error for a descriptor without targets")
+		t.Fatal("expected an error for a target without an id")
 	}
 }
 

@@ -42,6 +42,10 @@ type Template struct {
 	Name string
 	// File is the path relative to the Rho project root.
 	File string
+	// Dir, instead of a name and a file, carries every file under a folder,
+	// each named by its file name without the extension:
+	// templates/pages/mesh.html is "mesh".
+	Dir string
 }
 
 // Locale is one flat JSON catalog for a language. Several files may name the
@@ -96,8 +100,6 @@ type Target struct {
 	OutputDir string
 	// Requires lists extra Go module requirements for go.mod.
 	Requires []string
-	// BuildFlags lists extra flags to record for the build role.
-	BuildFlags []string
 	// Ports names built-in port implementations the backend generates, so a
 	// module's extern declarations are supplied without shipping host code.
 	Ports []string
@@ -204,7 +206,11 @@ func ParseDescriptor(content []byte) (*Descriptor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid YAML in project descriptor: %w", err)
 	}
+	return parseDescriptorValue(root)
+}
 
+// parseDescriptorValue validates and reads a loaded descriptor.
+func parseDescriptorValue(root yaml.Value) (*Descriptor, error) {
 	result := schema.ValidateProjectDescriptor(root)
 	if result.HasErrors() {
 		return nil, fmt.Errorf("project descriptor schema validation failed:\n%s", result.ErrorString())
@@ -265,7 +271,6 @@ func ParseTarget(targetNode yaml.Value) (Target, error) {
 		ModulePath:    targetNode.Map["module_path"].Str,
 		OutputDir:     targetNode.Map["output_dir"].Str,
 		Requires:      []string{},
-		BuildFlags:    []string{},
 		Ports:         []string{},
 		Router:        targetNode.Map["router"].Str,
 		Middleware:    []Middleware{},
@@ -298,11 +303,6 @@ func ParseTarget(targetNode yaml.Value) (Target, error) {
 			target.Requires = append(target.Requires, item.Str)
 		}
 	}
-	for _, item := range targetNode.Map["build_flags"].List {
-		if item.Str != "" {
-			target.BuildFlags = append(target.BuildFlags, item.Str)
-		}
-	}
 
 	// Page templates placed in the generated project.
 	for _, entry := range targetNode.Map["templates"].List {
@@ -312,9 +312,20 @@ func ParseTarget(targetNode yaml.Value) (Target, error) {
 		item := Template{
 			Name: entry.Map["name"].Str,
 			File: entry.Map["file"].Str,
+			Dir:  entry.Map["dir"].Str,
+		}
+		if item.Dir != "" {
+			if item.Name != "" || item.File != "" {
+				return Target{}, fmt.Errorf("target %q has a template entry with both a dir and a name or file", target.ID)
+			}
+			if !isSafeRelativeDir(item.Dir) {
+				return Target{}, fmt.Errorf("target %q template dir must stay inside the project: %q", target.ID, item.Dir)
+			}
+			target.Templates = append(target.Templates, item)
+			continue
 		}
 		if item.Name == "" || item.File == "" {
-			return Target{}, fmt.Errorf("target %q has a template entry without a name and file", target.ID)
+			return Target{}, fmt.Errorf("target %q has a template entry without a name and file, or a dir", target.ID)
 		}
 		if filepath.IsAbs(item.File) || strings.Contains(item.File, "..") {
 			return Target{}, fmt.Errorf("target %q template file must stay inside the project: %q",
@@ -397,10 +408,10 @@ func ParseTarget(targetNode yaml.Value) (Target, error) {
 		target.Middleware = append(target.Middleware, item)
 	}
 
-	// A pipeline is a property of the router it wraps, so it only means
-	// something on a target that routes at all.
-	if len(target.Middleware) > 0 && target.Router == "" {
-		return Target{}, fmt.Errorf("target %q composes middleware but names no router", target.ID)
+	// A pipeline wraps a router; a target that composes one and names none
+	// routes through the default router, so only a different one is named.
+	if len(target.Middleware) > 0 && target.TargetKind() != "server" {
+		return Target{}, fmt.Errorf("target %q composes middleware but its kind is %q", target.ID, target.TargetKind())
 	}
 	if target.Router != "" && target.TargetKind() != "server" {
 		return Target{}, fmt.Errorf("target %q names a router but its kind is %q", target.ID, target.TargetKind())

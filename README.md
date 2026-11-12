@@ -316,7 +316,24 @@ held in `src/projectgen/descriptor.default.yml`. A project writes its targets
 out in `module.yml`, under `build.targets`: an entry is a name that selects a
 descriptor target, or a map that defines one (which replaces a target of the
 same id in the default). A project that keeps its descriptor apart can still
-put one in `project.yml`.
+put one in `project.yml`, which is read over the built-in descriptor: it writes
+only what differs, and a target with a built-in id keeps every setting it does
+not write.
+
+```yaml
+# project.yml
+targets:
+  - id: go-server
+    templates:
+      - dir: templates          # every file, named by its file name
+    default_locale: en
+    locales:                    # listed, so an unfinished translation stays out
+      - {locale: en, file: locales/en.json}
+      - {locale: ro, file: locales/ro.json}
+```
+
+Every template a program asks for by a literal name, `template_get("page")`,
+has to be carried by the target, or the build stops and names it.
 
 ```yaml
 # module.yml

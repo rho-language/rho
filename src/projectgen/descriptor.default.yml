@@ -17,7 +17,6 @@
 #   module_path  - overrides the derived Go module path
 #   output_dir   - overrides output_dir for this target
 #   requires     - extra Go module requirements
-#   build_flags  - extra flags recorded for the build role
 #
 # A project writes its targets out in module.yml, under build.targets: an entry
 # that is a map defines a target, replacing one of the same id here. A project

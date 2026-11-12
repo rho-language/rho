@@ -251,17 +251,17 @@ func TestDescriptorRefusesWhatItCannotHonour(t *testing.T) {
 			wants: "kind",
 		},
 		{
-			name: "a pipeline with no router to wrap",
-			target: `  - id: go-server
+			name: "a pipeline on a target that serves nothing",
+			target: `  - id: go
     emitter: go
-    kind: server
+    kind: cli
     middleware:
       - name: cors
     files:
       - path: app.go
         role: implementation
 `,
-			wants: "names no router",
+			wants: "composes middleware but its kind is",
 		},
 		{
 			name: "a wrapper that does not exist",

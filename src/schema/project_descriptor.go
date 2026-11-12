@@ -178,7 +178,6 @@ func ProjectDescriptorSchema() Schema {
 						{Name: "output_dir", Required: false, Kind: KindString},
 						// requires lists extra Go module requirements.
 						{Name: "requires", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
-						{Name: "build_flags", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 						// ports names built-in port implementations the backend
 						// generates, so a Rho project stays pure Rho while its
 						// extern declarations are supplied by the compiler.
@@ -215,13 +214,14 @@ func ProjectDescriptorSchema() Schema {
 							},
 						}},
 						// templates names template files carried into the
-						// generated project, each resolved from
-						// <project root>/templates/<name>.<ext>.
+						// generated project: a name and a file, or a dir whose
+						// every file is carried under its own name.
 						{Name: "templates", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{
 							Kind: KindMap,
 							Fields: []FieldSchema{
-								{Name: "name", Required: true, RejectNull: true, Kind: KindString},
-								{Name: "file", Required: true, RejectNull: true, Kind: KindString},
+								{Name: "name", Required: false, Kind: KindString},
+								{Name: "file", Required: false, Kind: KindString},
+								{Name: "dir", Required: false, Kind: KindString},
 							},
 						}},
 						// default_locale is the language a request gets when

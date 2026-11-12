@@ -49,6 +49,9 @@ var printSource string
 //go:embed csrc/strings.c
 var stringsSource string
 
+//go:embed csrc/lock.c
+var lockSource string
+
 //go:embed csrc/panic.c
 var panicSource string
 
@@ -182,6 +185,12 @@ var runtimeFragments = []RuntimeFragment{
 			"uint64_t rho_f64_to_bits(double value);",
 			"double rho_f64_from_bits(uint64_t bits);",
 		},
+	},
+	{
+		Name:     "lock",
+		Source:   lockSource,
+		Provides: []string{"rho_lock", "rho_unlock"},
+		Decls:    []string{"void rho_lock(const char* name);", "void rho_unlock(const char* name);"},
 	},
 	{
 		Name:     "env",
