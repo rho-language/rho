@@ -335,6 +335,12 @@ targets:
 Every template a program asks for by a literal name, `template_get("page")`,
 has to be carried by the target, or the build stops and names it.
 
+An `auth` wrapper takes what follows from the application where the descriptor
+leaves it out: the audience is the service it deploys as (`deploy.service`, or
+the module name), the public key is `~/.rho/auth/public.pem`, where `rho auth
+keygen` puts it, and the login route is `/auth/login?audience=<audience>`. A
+descriptor writes who issues the session and which paths are public.
+
 ```yaml
 # module.yml
 build:

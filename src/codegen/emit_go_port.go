@@ -180,6 +180,26 @@ var portGenerators = map[string]portGenerator{
 	"sql":         emitSQLPort,
 }
 
+// portImplements names, for a built-in port, the module whose foreign functions
+// it implements: a program that has the module gets the port, as a provider of
+// an interface is what an application that binds the interface gets.
+var portImplements = map[string]string{
+	"logemit": "rho.log",
+}
+
+// PortsImplementing are the built-in ports that implement a module's foreign
+// functions, by the name the module is imported by.
+func PortsImplementing(importName string) []string {
+	out := []string{}
+	for port, module := range portImplements {
+		if module == importName {
+			out = append(out, port)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // RegisteredPorts lists the available port names.
 func RegisteredPorts() []string {
 	out := make([]string, 0, len(portGenerators))

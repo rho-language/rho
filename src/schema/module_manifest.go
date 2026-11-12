@@ -517,6 +517,17 @@ func moduleSchema(types []string) Schema {
 				Kind:     KindMap,
 			},
 			{
+				// The host ports that supply this module's foreign functions,
+				// generated into every project the module is part of: an
+				// application that declares `docs_render` asks for docstore.
+				Name:     "ports",
+				Required: false,
+				Kind:     KindList,
+				ItemSchema: &ListItemSchema{
+					Kind: KindString,
+				},
+			},
+			{
 				// The files a module reads at run time by name (rho_asset), carried
 				// embedded into every project that includes it.
 				Name:     "assets",

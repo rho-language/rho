@@ -569,6 +569,9 @@ type Manifest struct {
 	// Implements are the import names of the interfaces a provider implements,
 	// from the same `implements:` list a plugin names its contracts in.
 	Implements []string
+	// Ports are the host ports that supply this module's foreign functions
+	// (`ports:`), generated into every project the module is part of.
+	Ports []string
 	// Bind chooses, per interface an application uses, the providers compiled in
 	// and their configuration.
 	Bind map[string]BindSpec
@@ -999,6 +1002,7 @@ func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 	m.Integration = parseIntegration(doc.Map["integration"])
 	m.Interface = parseInterface(doc.Map["interface"])
 	m.Implements = yamlStrings(doc.Map["implements"])
+	m.Ports = yamlStrings(doc.Map["ports"])
 	m.Bind = parseBind(doc.Map["bind"])
 	m.Assets = yamlStrings(doc.Map["assets"])
 	for _, entry := range doc.Map["locales"].List {

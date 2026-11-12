@@ -36,6 +36,23 @@ The backend generates the implementation into the project, and the generated
 file is ordinary code in the project: readable, and removable if a person wants
 to see what it does.
 
+A port is usually not asked for by the application at all. A module whose
+foreign functions a port supplies says so, and every Go program the module is
+part of gets the port:
+
+- a built-in port names the module it implements — `logemit` implements
+  `rho.log`, so a program that imports `rho.log` has its logger;
+- a module, an application included, lists the ports its own foreign functions
+  need under `ports:` in its `module.yml`:
+
+```yaml
+# module.yml of an application that declares docs_render
+ports:
+  - docstore
+```
+
+A target's own `ports:` still adds one, for a port no module names.
+
 ## The ports today
 
 | Port | What it supplies | Used by |

@@ -631,6 +631,15 @@ func generateLocales(ctx Context, target Target) error {
 // supplied by the backend, so a Rho project needs no hand-written host code.
 func generatePorts(ctx Context, target Target) error {
 	ports := target.EffectivePorts()
+	// The ports a module asks for are host code, which only a Go target has; a
+	// C program's foreign functions come from its platform.
+	if target.Emitter == "go" {
+		for _, port := range modulePorts(ctx) {
+			if !containsString(ports, port) {
+				ports = append(ports, port)
+			}
+		}
+	}
 	// A project that declared a database gets the sql port without asking for
 	// it, because the code generated from its statements calls into it. Asking
 	// for the port as well would be a second statement of the same fact, and a
@@ -707,6 +716,8 @@ func Generate(ctx Context, target Target) (string, error) {
 		return "", fmt.Errorf("target %q uses unknown emitter %q (registered: %s)",
 			target.ID, target.Emitter, strings.Join(sortedEmitters(), ", "))
 	}
+
+	target = withAuthDefaults(target, ctx.ProjectRoot)
 
 	// Let the backend read the descriptor entry it is rendering.
 	ctx.Target = target
@@ -844,6 +855,47 @@ type moduleLocale struct {
 
 // moduleLocales are the catalogs the modules a program was loaded from ship, in
 // the order the modules were found.
+// modulePorts are the ports the program's modules ask for: what a module lists
+// under ports, and the built-in port that implements a module's foreign
+// functions (logemit for rho.log). The project's own manifest is one of them.
+func modulePorts(ctx Context) []string {
+	out := []string{}
+	add := func(port string) {
+		if port != "" && !containsString(out, port) {
+			out = append(out, port)
+		}
+	}
+	roots := append([]string{ctx.ProjectRoot}, ctx.ModuleRoots...)
+	seen := map[string]bool{}
+	for _, root := range roots {
+		abs, _ := filepath.Abs(root)
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
+		manifest, err := deps.LoadManifest(deps.ManifestPath(abs))
+		if err != nil || manifest == nil {
+			continue
+		}
+		for _, port := range manifest.Ports {
+			add(port)
+		}
+		names := []string{manifest.ImportPath}
+		if manifest.Provides != nil {
+			names = append(names, manifest.Provides.Import)
+		}
+		for _, name := range names {
+			if name == "" {
+				continue
+			}
+			for _, port := range codegen.PortsImplementing(name) {
+				add(port)
+			}
+		}
+	}
+	return out
+}
+
 func moduleLocales(ctx Context) []moduleLocale {
 	var out []moduleLocale
 	project, _ := filepath.Abs(ctx.ProjectRoot)
