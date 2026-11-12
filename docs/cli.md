@@ -17,6 +17,7 @@ These are inside the binary and are the same everywhere.
 |---|---|
 | `rho run <file.rho\|dir>` | Run a Rho program |
 | `rho build [dir]` | Generate and build every target the project declares |
+| `rho new <file.rho>` | Start a Rho source file with its header: module name, description, author, date, licence |
 | `rho install [--update] [--force]` | Install the toolchain and create the local registry |
 | `rho pkg <command>` | Package management: `init`, `pack`, `unpack`, `inspect` |
 | `rho module <command>` | Modules in the local registry: publish, install, enable, list |
@@ -46,6 +47,37 @@ rho build -clean                     # remove the build directory and stop
 The build type is `Release` unless it is asked for otherwise: a build is
 optimised by default and a `Debug` build is something a person chooses while
 chasing something. An unknown type is refused before any work is done.
+
+## rho new
+
+`rho new src/storage/cache.rho --description "What the cache keeps, and for how long."`
+writes a source file that starts with what its module already knows:
+
+```rho
+//
+// @file cache.rho
+// @brief What the cache keeps, and for how long.
+//
+// @module acme.storage.cache
+// @project acme-storage
+// @author Ada Lovelace
+// @date 2026-11-12
+//
+// SPDX-License-Identifier: MIT
+//
+
+module acme.storage.cache
+```
+
+The module name is the module's import name (`provides.import`, otherwise its
+`import_path` or its name) followed by the file's folders and name under `src/`
+or `tests/`; a folder that repeats the name's last part is not repeated, and
+`main.rho` is the module itself. The author is the manifest's maintainer (or
+author, or the git user), the date is today, and the licence is the manifest's
+`license`, or `NOASSERTION` when it states none. A file named `*_test.rho`
+starts as a test suite — a `check`, one `test fn` and a `main` — and is listed
+in the module's `tests/tests.yml`. `--author`, `--date` and `--force` change
+what they say.
 
 ## rho module
 

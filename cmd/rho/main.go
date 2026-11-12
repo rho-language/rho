@@ -82,7 +82,7 @@ func main() {
 	// Commands that DO NOT require installation. `init` writes a new project
 	// and reads nothing from the registry, so a person with an empty directory
 	// and no installation is exactly who it is for.
-	if cmd == "help" || cmd == "--help" || cmd == "-h" || cmd == "install" || cmd == "init" {
+	if cmd == "help" || cmd == "--help" || cmd == "-h" || cmd == "install" || cmd == "init" || cmd == "new" {
 		// skip installation check
 		if cmd == "--help" || cmd == "-h" {
 			cmd = "help"
@@ -134,6 +134,10 @@ func main() {
 	// command they could not reach yet.
 	case "init":
 		os.Exit(initCLI(os.Args[2:]))
+
+	// A new source file reads only its module's manifest.
+	case "new":
+		os.Exit(newCLI(os.Args[2:]))
 
 	case "pkg":
 		os.Exit(pkgcli.Main(os.Args[2:]))
