@@ -816,7 +816,7 @@ func cmakePath(path string) string {
 
 // dependencyDirVariable is the CMake variable a module's directory is published
 // under: its name, upper-cased, with dashes for underscores and `_DIR` appended.
-// `robohub-common` becomes `ROBOHUB_COMMON_DIR`, which is the name a module's
+// `acme-common` becomes `ACME_COMMON_DIR`, which is the name a module's
 // build file looks for and the name an environment variable could carry.
 func dependencyDirVariable(module string) string {
 	name := strings.ToUpper(module)

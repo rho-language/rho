@@ -2,7 +2,7 @@
 // @file deploy.go
 // @brief Rho Deploy — put a built program on a host, and start it.
 //
-// A board is flashed; a host is deployed to. The RoboHub UNO Q is both: its
+// A board is flashed; a host is deployed to. The Arduino UNO Q is both: its
 // Linux side is a Debian machine a program is copied to over SSH and run, and
 // its MCU is written by a probe. This is the first of those. What a host needs
 // to be reached is not a property of this program either — a login, a directory

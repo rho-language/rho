@@ -29,7 +29,7 @@ A `docker` block in the same place deploys a container image instead:
 "deploy": {
   "host": "uno-q.local", "user": "arduino", "path": "/home/arduino/apps",
   "docker": {
-    "file": "Dockerfile", "image": "robohub-gateway", "tag": "v1",
+    "file": "Dockerfile", "image": "my-service", "tag": "v1",
     "run": ["--net", "host", "-p", "8080:8080", "{image}"]
   }
 }

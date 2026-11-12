@@ -38,18 +38,18 @@ func TestPlatformWorkspaceFallsBackToTheWorkspace(t *testing.T) {
 	sub := filepath.Join(repo, "examples", "a")
 	os.MkdirAll(sub, 0o755)
 	t.Setenv("RHO_WORKSPACE", "")
-	t.Setenv("ROBOHUB_WORKSPACE", "")
-	got, err := Expand("${ROBOHUB_WORKSPACE}/robohub-common", sub)
-	want := filepath.Join(root, "robohub-common")
+	t.Setenv("ACME_WORKSPACE", "")
+	got, err := Expand("${ACME_WORKSPACE}/acme-common", sub)
+	want := filepath.Join(root, "acme-common")
 	if err != nil || got != want {
 		t.Fatalf("got %q, %v; want %q", got, err, want)
 	}
 	t.Setenv("RHO_WORKSPACE", "/ws")
-	if got, _ := Expand("${ROBOHUB_WORKSPACE}/x", sub); got != "/ws/x" {
+	if got, _ := Expand("${ACME_WORKSPACE}/x", sub); got != "/ws/x" {
 		t.Errorf("RHO_WORKSPACE not honoured: %q", got)
 	}
-	t.Setenv("ROBOHUB_WORKSPACE", "/rh")
-	if got, _ := Expand("${ROBOHUB_WORKSPACE}/x", sub); got != "/rh/x" {
+	t.Setenv("ACME_WORKSPACE", "/rh")
+	if got, _ := Expand("${ACME_WORKSPACE}/x", sub); got != "/rh/x" {
 		t.Errorf("platform variable must win: %q", got)
 	}
 }

@@ -155,10 +155,10 @@ and kept: two or more lowercase dotted segments, a namespace and a name.
 
 ```yaml
 module:
-  name: robohub-driver-ds18b20
-  id: robohub.driver.ds18b20
+  name: acme-driver-ds18b20
+  id: acme.driver.ds18b20
   previous_ids:
-    - robohub-drivers.drivers.temperature.ds18b20
+    - acme-drivers.drivers.temperature.ds18b20
 ```
 
 It is not the repository and folder the module lives in. Those are renamed for
@@ -179,13 +179,13 @@ machine it was written on. It says where the sibling is relative to the
 
 ```yaml
 depends:
-  - name: robohub-common
+  - name: acme-common
     type: c
-    path: ${ROBOHUB_WORKSPACE}/robohub-common
-    git: https://github.com/RoboHubPlatform/robohub-common
+    path: ${ACME_WORKSPACE}/acme-common
+    git: https://example.org/acme/acme-common
 c_connection:
   include_dirs:
-    - ${ROBOHUB_WORKSPACE}/robohub-common/include
+    - ${ACME_WORKSPACE}/acme-common/include
 ```
 
 `${NAME}` and `${NAME:-default}` are expanded in the fields that are paths:
@@ -439,8 +439,8 @@ about:
 ```yaml
 application:
   kind: keeper-hosted
-  title: RoboHub Mesh
-  description: Plans and runs RoboHub gateway deployments.
+  title: Acme Mesh
+  description: Plans and runs Acme gateway deployments.
   route: /mesh
   port: "8478"
   command: mesh

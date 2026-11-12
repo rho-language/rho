@@ -8,12 +8,12 @@ import (
 )
 
 func TestCheckModuleID(t *testing.T) {
-	for _, good := range []string{"robohub.driver.ds18b20", "acme.relay-board", "a.b_c.d9"} {
+	for _, good := range []string{"acme.driver.ds18b20", "acme.relay-board", "a.b_c.d9"} {
 		if err := CheckModuleID(good); err != nil {
 			t.Errorf("%q refused: %v", good, err)
 		}
 	}
-	for _, bad := range []string{"", "robohub", "Robohub.driver", "a..b", "a.b-", "a.-b", "a.b--c", "a b.c", "a/b.c", ".a.b"} {
+	for _, bad := range []string{"", "acme", "Acme.driver", "a..b", "a.b-", "a.-b", "a.b--c", "a b.c", "a/b.c", ".a.b"} {
 		if CheckModuleID(bad) == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -41,7 +41,7 @@ func TestPreviousIDsAreChecked(t *testing.T) {
 		t.Fatal("a previous id with whitespace was accepted")
 	}
 	// What a module used to be called was valid under the rule of its day.
-	legacy := load("module:\n  name: x\n  id: acme.relay\n  previous_ids:\n    - robohub-pico\n")
+	legacy := load("module:\n  name: x\n  id: acme.relay\n  previous_ids:\n    - acme-pico\n")
 	if err := requireModuleID(legacy, "module"); err != nil {
 		t.Fatalf("a one-segment previous id was refused: %v", err.Message)
 	}

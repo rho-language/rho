@@ -22,7 +22,7 @@ declaration ends the preamble.
 | Form | What it does |
 |---|---|
 | `module a.b.c` | names the module; required, first |
-| `namespace robohub.telemetry.v1` | names a protocol schema's wire namespace (schema files) |
+| `namespace acme.telemetry.v1` | names a protocol schema's wire namespace (schema files) |
 | `feature "math"` | turns on a manifest feature; may repeat |
 | `include "path.rho"` | splices another file's declarations into this module |
 | `import std.core.ptr` | brings in a module, keeping its names separate |
@@ -433,7 +433,7 @@ contain them.
 ```rho
 module telemetry
 
-namespace robohub.telemetry.v1
+namespace acme.telemetry.v1
 
 enum NodeStatus {
     OK = 0

@@ -70,11 +70,15 @@ tool that has one runs it wherever that tool offers the hook.
 | {ref}`rho-sql-sqlite <rho-sql-sqlite/index>` | `rho-sql` | Runs a service's SQL against a sqlite database |
 | {ref}`rho-test-gtest <rho-test-gtest/index>` | `rho-test` | Runs a project's GoogleTest suites |
 | {ref}`rho-test-junit <rho-test-junit/index>` | `rho-test` | Writes a JUnit report, which is what a CI system reads |
-| {ref}`rho-robohub <rho-robohub/index>` | four components | Maps the RoboHub platform's target, configuration, C and flashing conventions onto the toolchain's contracts |
+| {ref}`rho-robohub <rho-robohub/index>` | five components | The integration plugin for the RoboHub ecosystem |
 
-`rho-robohub` is the one to read if you are adding a platform: it implements one
-contract across `rho-target`, `rho-kconfig`, `rho-cimport` and `rho-flash` at
-once, and it runs only for a project whose module graph names the platform.
+`rho-robohub` is an **integration plugin**: the one bridge between an ecosystem
+and the toolchain. It fills the `platform` contract across `rho-target`,
+`rho-kconfig`, `rho-cimport` and `rho-flash` and the `module-manifest` contract
+of `rho-module`, declares the bindings and ports it provides in its
+`integration:` section, and runs only for a project whose platform is RoboHub. It
+is the one to read if you are bridging another ecosystem; the handbook's
+{ref}`handbook/integrations` page is the contract.
 
 ## Applications
 

@@ -32,7 +32,7 @@ func writeDependencyManifest(t *testing.T, root, deps string) string {
 
 func TestCheckModuleDependencyUnderEcosystemGroup(t *testing.T) {
 	root := t.TempDir()
-	source := writeDependencyManifest(t, root, "deps:\n  robohub:\n    notifications: \">=0.1.0\"\n")
+	source := writeDependencyManifest(t, root, "deps:\n  acme:\n    notifications: \">=0.1.0\"\n")
 	if err := checkModuleDependency(source, "notifications"); err != nil {
 		t.Fatalf("declared dependency was refused: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestCheckModuleDependencyRejectsFlatEcosystemDependency(t *testing.T) {
 	source := writeDependencyManifest(t, root, "deps:\n  notifications: \">=0.1.0\"\n")
 	err := checkModuleDependency(source, "notifications")
 	if err == nil || !strings.Contains(err.Error(), "ecosystem") {
-		t.Fatalf("flat RoboHub dependency was accepted: %v", err)
+		t.Fatalf("flat Acme dependency was accepted: %v", err)
 	}
 }
 

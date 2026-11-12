@@ -527,6 +527,12 @@ type Manifest struct {
 	Provides *Provides
 	// Extends is what this module plugs into. Only a plugin extends something.
 	Extends *Extends
+	// Integration is what an integration plugin bridges, when this manifest is
+	// one (see IntegrationManifest).
+	Integration *IntegrationManifest
+	// PackageInclude is `package.include`, or nil when the manifest names none and
+	// the default layout for its type decides what is packaged.
+	PackageInclude []string
 }
 
 // DefaultBuildDir is where a project keeps generated files when its manifest does
@@ -936,7 +942,54 @@ func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 	m.Docs = parseDocManifest(doc.Map["docs"])
 	m.Provides = parseProvides(doc.Map["provides"])
 	m.Extends = parseExtends(doc)
+	m.Integration = parseIntegration(doc.Map["integration"])
+	if pkg := doc.Map["package"]; pkg.Kind == yaml.KindMap {
+		if include, ok := pkg.Map["include"]; ok && include.Kind == yaml.KindList {
+			m.PackageInclude = yamlStrings(include)
+		}
+	}
 	return m, nil
+}
+
+// IntegrationManifest is an integration plugin's `integration:` section: the one
+// place an ecosystem meets the toolchain. The toolchain names no ecosystem; an
+// integration plugin names one and says, in this section, everything the
+// toolchain may ask it for.
+//
+//	integration:
+//	  ecosystem: acme                 # the platform identity it serves
+//	  workspace_env: ACME_WORKSPACE   # the variable its manifests name the workspace by
+//	  provides:
+//	    bindings:                     # named files, by the binding kinds the toolchain reads
+//	      protocol-bus-c: bindings/c-bus.yml
+//	      protocol-transport-rho: bindings/rho-transport.rho
+//	    ports: ports/                 # Go ports a project of the ecosystem may ask for
+type IntegrationManifest struct {
+	Ecosystem    string
+	WorkspaceEnv string
+	// Bindings are named files, relative to the plugin, by binding kind.
+	Bindings map[string]string
+	// Ports is the directory of Go ports, relative to the plugin, or "".
+	Ports string
+}
+
+func parseIntegration(node yaml.Value) *IntegrationManifest {
+	if node.Kind != yaml.KindMap {
+		return nil
+	}
+	integration := &IntegrationManifest{
+		Ecosystem:    yamlString(node, "ecosystem"),
+		WorkspaceEnv: yamlString(node, "workspace_env"),
+		Bindings:     map[string]string{},
+	}
+	provides := node.Map["provides"]
+	if provides.Kind == yaml.KindMap {
+		for name, value := range provides.Map["bindings"].Map {
+			integration.Bindings[name] = yamlUnquote(value.Str)
+		}
+		integration.Ports = yamlString(provides, "ports")
+	}
+	return integration
 }
 
 // escape reports whether a declared path reaches outside the module that

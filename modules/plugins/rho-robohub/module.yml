@@ -21,7 +21,7 @@
 module:
   name: rho-robohub
   type: plugin
-  version: 0.2.5
+  version: 0.3.0
   author: Aurel Miron
   description: Maps the RoboHub platform's target, configuration, C and flashing conventions onto this toolchain's contracts
 
@@ -41,6 +41,25 @@ features:
 # not recognized runs only the platform-agnostic plugins.
 serves:
   - robohub
+
+# This is an integration plugin: the one bridge between the RoboHub ecosystem and
+# the toolchain, which names no ecosystem itself. What it provides as data is
+# declared here, by the kinds the toolchain reads (src/integration in the
+# toolchain), and checked against the integration contract when it is validated;
+# what it answers as a program is declared under `extends:` below.
+integration:
+  ecosystem: robohub
+  # RoboHub's manifests name the workspace that holds its repositories by this
+  # variable; unset, it means the toolchain's own workspace.
+  workspace_env: ROBOHUB_WORKSPACE
+  provides:
+    bindings:
+      # The event bus generated C reaches: robohub-core's.
+      protocol-bus-c: bindings/c-bus.yml
+      # The framing generated Rho carries: robohub-transport's.
+      protocol-transport-rho: bindings/rho-transport.rho
+    # The Go ports a RoboHub project may ask for by name (gateway, telemetry).
+    ports: ports/
 
 # The components this plugin plugs into, one entry per component, and the
 # `platform` contract it fills in each.

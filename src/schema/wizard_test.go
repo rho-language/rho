@@ -147,12 +147,12 @@ fields:
 // A repository that does not carry the keeper skips this; a change to a step
 // that would make the engine read a missing key fails here instead.
 func TestKeeperWizardDocuments(t *testing.T) {
-	root := os.Getenv("ROBOHUB_MESH_WIZARD_DIR")
+	root := os.Getenv("ACME_MESH_WIZARD_DIR")
 	if root == "" {
-		root = os.Getenv("ROBOHUB_KEEPER_WIZARD_DIR")
+		root = os.Getenv("ACME_KEEPER_WIZARD_DIR")
 	}
 	if root == "" {
-		t.Skip("ROBOHUB_MESH_WIZARD_DIR is not set")
+		t.Skip("ACME_MESH_WIZARD_DIR is not set")
 	}
 	result := ValidateWizardFiles(root)
 	if result.HasErrors() {

@@ -40,7 +40,7 @@ says, instead of a Rho application, because that is what the directory is for.
 ```yaml
 # module.yml at the repository root
 module:
-  name: robohub-drivers
+  name: acme-drivers
   type: collection
   version: 0.1.0
 

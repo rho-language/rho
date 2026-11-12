@@ -5,7 +5,7 @@ identity key, stores them with owner-only permissions, and optionally enrolls
 the instance with Keeper.
 
 ```sh
-rho bootstrap init -config /etc/robohub/provisioning.json
+rho bootstrap init -config /etc/rho/provisioning.json
 rho bootstrap status
 ```
 

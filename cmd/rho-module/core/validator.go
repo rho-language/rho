@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"rho/src/integration"
 	"sort"
 	"strings"
 
@@ -128,6 +129,12 @@ func validatePlugin(dir string, manifest *deps.Manifest) error {
 		if !answersAny(targets, command.Component, stage) {
 			return fmt.Errorf("command %q answers hook %q, which the plugin does not declare", command.Name, stage)
 		}
+	}
+
+	// An integration plugin, the one bridge between an ecosystem and the
+	// toolchain, is held to the integration contract (src/integration).
+	if problems := integration.Validate(dir, manifest); len(problems) > 0 {
+		return fmt.Errorf("integration plugin does not meet the contract:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 	return nil
 }
@@ -238,8 +245,8 @@ func validateContracts(target deps.ExtendsTarget, component *deps.Manifest) erro
 // coreComponents are the toolchain's own commands, which are part of the
 // installed toolchain rather than components installed under the module tree.
 //
-// A plugin may extend one of them — the RoboHub plugin answers `rho-module`'s
-// manifest contract — so validation has to know what the command offers without
+// A plugin may extend one of them (an integration plugin answers `rho-module`'s
+// manifest contract with its ecosystem's module types), so validation has to know what the command offers without
 // a module manifest on disk. The contracts here are the same ones the command
 // documents; the data an ecosystem's answer carries is its own and is not
 // declared here.

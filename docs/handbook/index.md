@@ -6,8 +6,8 @@ How the Rho toolchain is put together, and how a project uses it.
 
 - {ref}`getting-started <documentation/getting-started>` — install, write a
   program, build it and run it.
-- {ref}`handbook/architecture` — the whole RoboHub stack: the modules, and how a
-  reading travels from a sensor to a gateway.
+- {ref}`handbook/integrations` — how an ecosystem meets the toolchain: one
+  integration plugin, and the contract it is held to.
 - {ref}`handbook/installing` — what is needed, and how the toolchain is installed.
 - {ref}`handbook/modules` — components and plugins, and what an application is.
 - {ref}`handbook/registries` — the local and remote registries, and who may
@@ -17,8 +17,6 @@ How the Rho toolchain is put together, and how a project uses it.
   and the stop a program on a part is given, and the library it links.
 - {ref}`handbook/generating` — starting a project: a Rho application, or one a
   module knows how to generate.
-- {ref}`handbook/networking` — the network contract, and how each platform
-  supplies it.
 - {ref}`handbook/documentation` — how a module documents itself, and how this
   site is built.
 - {ref}`handbook/testing` — how a Rho project is tested.

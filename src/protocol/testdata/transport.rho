@@ -1,0 +1,11 @@
+# A made-up framing, so the generator's splicing of one is tested without any
+# ecosystem's. Lines starting with # are notes and are not carried.
+// @P@_frame wraps a payload for the link.
+fn @P@_frame(msg_id: u32, payload: string) string {
+    return @P@_put_u16(u16(msg_id)) + payload
+}
+
+// @P@_unframe is the payload of a frame.
+fn @P@_unframe(encoded: string) string {
+    return str_slice(encoded, 2, strlen(encoded) - 2)
+}

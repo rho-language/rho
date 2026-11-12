@@ -139,7 +139,7 @@ func TestAnUnknownOrExpiredSessionIsRefused(t *testing.T) {
 
 func TestEachServiceKeepsItsOwnSessionsAndCookie(t *testing.T) {
 	t.Setenv("RHO_APP_WORKSPACE", "")
-	t.Setenv("ROBOHUB_APP_WORKSPACE", "")
+	t.Setenv("ACME_APP_WORKSPACE", "")
 	t.Setenv("HOME", t.TempDir())
 	if !strings.HasSuffix(filepath.Dir(authSsoSessionPath()), filepath.Join("auth-app", "mesh")) {
 		t.Errorf("sessions are kept in %s, not this service's own directory", authSsoSessionPath())

@@ -107,17 +107,17 @@ func TestEmitCBus(t *testing.T) {
 	}
 	header, source := schema.EmitCBus(testBus(t))
 	for _, want := range []string{
-		"#include \"robohub/core/event.h\"",
-		"RoboHubError SetMotorSpeed_publish_request(",
-		"RoboHubError SetMotorSpeed_subscribe(",
+		"#include \"acme/bus.h\"",
+		"AcmeStatus SetMotorSpeed_publish_request(",
+		"AcmeStatus SetMotorSpeed_subscribe(",
 	} {
 		if !strings.Contains(header, want) {
 			t.Errorf("C bus header missing %q", want)
 		}
 	}
 	for _, want := range []string{
-		"robohub_core_event_publish(SET_MOTOR_SPEED_REQUEST_EVENT_ID",
-		"robohub_core_event_subscribe(SET_MOTOR_SPEED_REQUEST_EVENT_ID",
+		"acme_bus_publish(SET_MOTOR_SPEED_REQUEST_EVENT_ID",
+		"acme_bus_subscribe(SET_MOTOR_SPEED_REQUEST_EVENT_ID",
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("C bus source missing %q", want)
@@ -187,7 +187,7 @@ func TestEmitRhoWritesTransportAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	framing, err := os.ReadFile("../../modules/plugins/rho-robohub/bindings/rho-transport.rho")
+	framing, err := os.ReadFile("testdata/transport.rho")
 	if err != nil {
 		t.Fatalf("read transport binding: %v", err)
 	}
@@ -195,15 +195,14 @@ func TestEmitRhoWritesTransportAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("emit rho: %v", err)
 	}
+	if strings.Contains(out, "A made-up framing") {
+		t.Error("a framing's # notes were carried into the generated Rho")
+	}
 	for _, want := range []string{
-		// The platform's framing, generated so the gateway's copy cannot drift
-		// from robohub-transport's.
-		"fn telemetry_v1_fletcher16(",
-		"fn telemetry_v1_cobs_encode(",
-		"fn telemetry_v1_cobs_decode(",
+		// The framing the integration supplied, with the schema's prefix spliced
+		// in, so both ends of a link generate one framing.
 		"fn telemetry_v1_frame(",
 		"fn telemetry_v1_unframe(",
-		"struct TransportFrame {",
 		// The payloads, the version byte first, the same as the C and Go ends.
 		"struct MotorTelemetry {",
 		"str_from_byte(u8(1))",
@@ -290,8 +289,8 @@ func messageNames(schema *Schema) []string {
 // a root and gets the whole wire.
 func TestLoadFileFollowsIncludes(t *testing.T) {
 	dir := t.TempDir()
-	writeSchema(t, dir, "common.rho", "module common\nnamespace robohub.v1\n\nmessage DeviceId {\n    area_id: u16\n    node_id: u16\n}\n")
-	root := writeSchema(t, dir, "link.rho", "module link\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage Hello {\n    device: DeviceId\n}\n")
+	writeSchema(t, dir, "common.rho", "module common\nnamespace acme.v1\n\nmessage DeviceId {\n    area_id: u16\n    node_id: u16\n}\n")
+	root := writeSchema(t, dir, "link.rho", "module link\nnamespace acme.v1\n\ninclude \"common.rho\"\n\nmessage Hello {\n    device: DeviceId\n}\n")
 
 	schema, err := LoadFile(root)
 	if err != nil {
@@ -300,8 +299,8 @@ func TestLoadFileFollowsIncludes(t *testing.T) {
 	if !hasMessage(schema, "DeviceId") || !hasMessage(schema, "Hello") {
 		t.Fatalf("expected both declarations, got %v", messageNames(schema))
 	}
-	if schema.Namespace != "robohub.v1" {
-		t.Errorf("namespace = %q, want robohub.v1", schema.Namespace)
+	if schema.Namespace != "acme.v1" {
+		t.Errorf("namespace = %q, want acme.v1", schema.Namespace)
 	}
 }
 
@@ -309,10 +308,10 @@ func TestLoadFileFollowsIncludes(t *testing.T) {
 // a conflict.
 func TestLoadFileDedupesADiamond(t *testing.T) {
 	dir := t.TempDir()
-	writeSchema(t, dir, "common.rho", "module common\nnamespace robohub.v1\n\nmessage DeviceId {\n    area_id: u16\n    node_id: u16\n}\n")
-	writeSchema(t, dir, "a.rho", "module a\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage A {\n    device: DeviceId\n}\n")
-	writeSchema(t, dir, "b.rho", "module b\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage B {\n    device: DeviceId\n}\n")
-	root := writeSchema(t, dir, "root.rho", "module root\nnamespace robohub.v1\n\ninclude \"a.rho\"\ninclude \"b.rho\"\n")
+	writeSchema(t, dir, "common.rho", "module common\nnamespace acme.v1\n\nmessage DeviceId {\n    area_id: u16\n    node_id: u16\n}\n")
+	writeSchema(t, dir, "a.rho", "module a\nnamespace acme.v1\n\ninclude \"common.rho\"\n\nmessage A {\n    device: DeviceId\n}\n")
+	writeSchema(t, dir, "b.rho", "module b\nnamespace acme.v1\n\ninclude \"common.rho\"\n\nmessage B {\n    device: DeviceId\n}\n")
+	root := writeSchema(t, dir, "root.rho", "module root\nnamespace acme.v1\n\ninclude \"a.rho\"\ninclude \"b.rho\"\n")
 
 	schema, err := LoadFile(root)
 	if err != nil {
@@ -333,8 +332,8 @@ func TestLoadFileDedupesADiamond(t *testing.T) {
 // in the including file wins over one it includes.
 func TestLoadFileKeepsTheIncludingDeclaration(t *testing.T) {
 	dir := t.TempDir()
-	writeSchema(t, dir, "common.rho", "module common\nnamespace robohub.v1\n\nmessage Shared {\n    a: u16\n}\n")
-	root := writeSchema(t, dir, "root.rho", "module root\nnamespace robohub.v1\n\ninclude \"common.rho\"\n\nmessage Shared {\n    a: u16\n    b: u16\n}\n")
+	writeSchema(t, dir, "common.rho", "module common\nnamespace acme.v1\n\nmessage Shared {\n    a: u16\n}\n")
+	root := writeSchema(t, dir, "root.rho", "module root\nnamespace acme.v1\n\ninclude \"common.rho\"\n\nmessage Shared {\n    a: u16\n    b: u16\n}\n")
 
 	schema, err := LoadFile(root)
 	if err != nil {
@@ -355,8 +354,8 @@ func TestLoadFileKeepsTheIncludingDeclaration(t *testing.T) {
 // than followed until the stack ends.
 func TestLoadFileRejectsACycle(t *testing.T) {
 	dir := t.TempDir()
-	writeSchema(t, dir, "a.rho", "module a\nnamespace robohub.v1\n\ninclude \"b.rho\"\n")
-	writeSchema(t, dir, "b.rho", "module b\nnamespace robohub.v1\n\ninclude \"a.rho\"\n")
+	writeSchema(t, dir, "a.rho", "module a\nnamespace acme.v1\n\ninclude \"b.rho\"\n")
+	writeSchema(t, dir, "b.rho", "module b\nnamespace acme.v1\n\ninclude \"a.rho\"\n")
 	if _, err := LoadFile(filepath.Join(dir, "a.rho")); err == nil {
 		t.Fatal("expected a cycle to be reported")
 	}
@@ -365,18 +364,17 @@ func TestLoadFileRejectsACycle(t *testing.T) {
 // An include that is not there is a schema that cannot be read, and says which.
 func TestLoadFileReportsAMissingInclude(t *testing.T) {
 	dir := t.TempDir()
-	root := writeSchema(t, dir, "root.rho", "module root\nnamespace robohub.v1\n\ninclude \"nope.rho\"\n")
+	root := writeSchema(t, dir, "root.rho", "module root\nnamespace acme.v1\n\ninclude \"nope.rho\"\n")
 	if _, err := LoadFile(root); err == nil {
 		t.Fatal("expected a missing include to be reported")
 	}
 }
 
-// testBus is the binding a platform plugin ships, read from where this
-// repository keeps it, so the generator is tested against a real binding and
-// carries none of its own.
+// testBus is a made-up binding (testdata/bus.yml): the generator is tested
+// against a binding and carries none of its own.
 func testBus(t *testing.T) *Bus {
 	t.Helper()
-	bus, err := LoadBus("../../modules/plugins/rho-robohub/bindings/c-bus.yml")
+	bus, err := LoadBus("testdata/bus.yml")
 	if err != nil {
 		t.Fatalf("load bus binding: %v", err)
 	}

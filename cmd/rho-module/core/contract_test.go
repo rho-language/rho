@@ -27,17 +27,17 @@ const pluginContract = `{"version":1,"types":{"device":{"native":true,"required"
 // command that answers the contract hook with a fixed document.
 func writeInstalledPlugin(t *testing.T, rhoHome string) {
 	t.Helper()
-	root := filepath.Join(rhoHome, "modules", "installed", "plugin", "rho-robohub@0.1.0")
+	root := filepath.Join(rhoHome, "modules", "installed", "plugin", "rho-acme@0.1.0")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	manifest := `module:
-  name: rho-robohub
+  name: rho-acme
   type: plugin
   version: 0.1.0
 main: contract.sh
 serves:
-  - robohub
+  - acme
 extends:
   - component: rho-module
     implements:
@@ -69,10 +69,10 @@ func writeProject(t *testing.T) string {
 		t.Fatal(err)
 	}
 	platformManifest := `module:
-  name: robohub-test-platform
+  name: acme-test-platform
   type: platform
   version: 0.1.0
-platform: robohub
+platform: acme
 `
 	if err := os.WriteFile(filepath.Join(platform, "module.yml"), []byte(platformManifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ device:
   kind: sensor
   transports: [gpio]
 depends:
-  - name: robohub-test-platform
+  - name: acme-test-platform
     type: c
     path: ` + platform + `
 `
@@ -103,7 +103,7 @@ func TestAnEcosystemTypeIsValidatedThroughItsPlugin(t *testing.T) {
 	rhoHome := t.TempDir()
 	t.Setenv("RHO_HOME", rhoHome)
 	writeInstalledPlugin(t, rhoHome)
-	if err := deps.SetVersionEnabled("plugin", "rho-robohub", "0.1.0"); err != nil {
+	if err := deps.SetVersionEnabled("plugin", "rho-acme", "0.1.0"); err != nil {
 		t.Fatal(err)
 	}
 	dir := writeProject(t)

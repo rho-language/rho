@@ -484,6 +484,14 @@ func moduleSchema(types []string) Schema {
 				},
 			},
 			{
+				// What an integration plugin bridges: the one place an ecosystem
+				// meets the toolchain (src/integration). Its contents are checked
+				// by the integration contract when the plugin is validated.
+				Name:     "integration",
+				Required: false,
+				Kind:     KindMap,
+			},
+			{
 				// The contracts of the component this plugin fills, so a plugin
 				// says what it is rather than leaving it to be read off the
 				// hooks it happens to answer. A contract is checked against the

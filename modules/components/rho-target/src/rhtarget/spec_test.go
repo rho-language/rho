@@ -810,7 +810,7 @@ const hostSpec = `{
   "deploy": {
     "method": "rsync", "host": "uno-q.local", "port": 22, "user": "arduino",
     "path": "/home/arduino/apps", "run": "./{artifact}",
-    "docker": {"file": "Dockerfile", "image": "robohub-gateway", "tag": "v1",
+    "docker": {"file": "Dockerfile", "image": "acme-gateway", "tag": "v1",
                "run": ["--net", "host"]}
   },
   "flash": {"tool": "arduino-flasher-cli", "command": "arduino-flasher-cli write -f {binary}"}
@@ -836,7 +836,7 @@ func TestADeployBlockIsReadAndKept(t *testing.T) {
 	if spec.Deploy.Docker == nil {
 		t.Fatal("expected the docker block")
 	}
-	if spec.Deploy.Docker.Image != "robohub-gateway" || spec.Deploy.Docker.Tag != "v1" ||
+	if spec.Deploy.Docker.Image != "acme-gateway" || spec.Deploy.Docker.Tag != "v1" ||
 		spec.Deploy.Docker.File != "Dockerfile" || len(spec.Deploy.Docker.Run) != 2 {
 		t.Fatalf("the docker block was not read: %+v", spec.Deploy.Docker)
 	}
@@ -867,7 +867,7 @@ func TestASpecMarshalsItsDeployBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, want := range []string{`"deploy"`, `"uno-q.local"`, `"robohub-gateway"`, `"docker"`} {
+	for _, want := range []string{`"deploy"`, `"uno-q.local"`, `"acme-gateway"`, `"docker"`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("the marshalled spec is missing %s:\n%s", want, data)
 		}

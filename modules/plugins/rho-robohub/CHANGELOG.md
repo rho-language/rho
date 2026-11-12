@@ -6,6 +6,15 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.3.0] - 2026-11-12
+
+An integration plugin by the toolchain's contract. Its `integration:` section
+declares the ecosystem it bridges (`robohub`), the workspace variable its manifests
+use (`ROBOHUB_WORKSPACE`), and what it provides by kind: the `protocol-bus-c` and
+`protocol-transport-rho` bindings and its Go ports. The toolchain reads them through
+its integration resolver rather than by looking in this plugin's folders, and
+`rho module validate` checks the plugin against the contract.
+
 ## [0.2.5] - 2026-11-12
 
 The gateway outbox keeps a cursor per consumer, by the subject of the token it

@@ -69,7 +69,7 @@ platform for both. A platform that has its own answers them by name, in its
 build:
 
 ```cmake
-target_compile_definitions(robohub-avr PUBLIC
+target_compile_definitions(acme-avr PUBLIC
     RHO_PROGRAM_WRITE=rho_avr_write
     RHO_PROGRAM_HALT=rho_avr_halt)
 ```
@@ -173,9 +173,9 @@ build:
     - uno-r3
 
 depends:
-  - name: robohub-avr
+  - name: acme-avr
     type: c
-    path: ../robohub-avr
+    path: ../acme-avr
 ```
 
 ```sh

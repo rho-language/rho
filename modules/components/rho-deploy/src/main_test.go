@@ -102,7 +102,7 @@ func TestRunInvocationSubstitutesTheArtifact(t *testing.T) {
 // the image named where the spec left a placeholder.
 func TestDockerPlanRendersTheSteps(t *testing.T) {
 	deploy := Deploy{Host: "uno-q", User: "arduino", Path: "/home/arduino/apps",
-		Docker: &Docker{File: "deploy/Dockerfile", Image: "robohub-gateway", Tag: "v1",
+		Docker: &Docker{File: "deploy/Dockerfile", Image: "acme-gateway", Tag: "v1",
 			Run: []string{"--net", "host", "-p", "8080:8080", "{image}"}}}
 
 	steps, err := deploy.dockerPlan("/work/gateway", "build/gateway", dockerMode{})
@@ -120,7 +120,7 @@ func TestDockerPlanRendersTheSteps(t *testing.T) {
 	}
 	// The image reference reaches the run arguments.
 	last := steps[4]
-	if last[len(last)-1] != "docker run -d --net host -p 8080:8080 robohub-gateway:v1" {
+	if last[len(last)-1] != "docker run -d --net host -p 8080:8080 acme-gateway:v1" {
 		t.Errorf("unexpected run command: %q", last[len(last)-1])
 	}
 }
@@ -137,7 +137,7 @@ func TestDockerPlanRefusesWithoutAnImage(t *testing.T) {
 func TestParseDeployReadsTheBlock(t *testing.T) {
 	spec := []byte(`{"name":"uno-q","deploy":{"method":"rsync","host":"uno-q.local",
 		"user":"arduino","path":"/home/arduino/apps",
-		"docker":{"image":"robohub-gateway","tag":"v1","run":["--net","host"]}}}`)
+		"docker":{"image":"acme-gateway","tag":"v1","run":["--net","host"]}}}`)
 
 	deploy, err := parseDeploy(spec)
 	if err != nil {
@@ -149,7 +149,7 @@ func TestParseDeployReadsTheBlock(t *testing.T) {
 	if deploy.Host != "uno-q.local" || deploy.User != "arduino" || deploy.Path != "/home/arduino/apps" {
 		t.Errorf("deploy not read: %+v", deploy)
 	}
-	if deploy.Docker == nil || deploy.Docker.Image != "robohub-gateway" || len(deploy.Docker.Run) != 2 {
+	if deploy.Docker == nil || deploy.Docker.Image != "acme-gateway" || len(deploy.Docker.Run) != 2 {
 		t.Errorf("docker not read: %+v", deploy.Docker)
 	}
 
@@ -198,7 +198,7 @@ func TestDryRunRunsNothing(t *testing.T) {
 // The container facts are the project's, so the environment can supply them and
 // a board spec does not have to carry one project's image name.
 func TestEnvironmentSuppliesTheContainerFacts(t *testing.T) {
-	t.Setenv("RH_DEPLOY_DOCKER_IMAGE", "robohub-gateway")
+	t.Setenv("RH_DEPLOY_DOCKER_IMAGE", "acme-gateway")
 	t.Setenv("RH_DEPLOY_DOCKER_TAG", "v2")
 	t.Setenv("RH_DEPLOY_DOCKER_FILE", "deploy/Dockerfile")
 	t.Setenv("RH_DEPLOY_DOCKER_RUN", "--net host -p 8080:8080 {image}")
@@ -207,7 +207,7 @@ func TestEnvironmentSuppliesTheContainerFacts(t *testing.T) {
 	if deploy.Docker == nil {
 		t.Fatal("expected the environment to supply a docker block")
 	}
-	if deploy.Docker.Image != "robohub-gateway" || deploy.Docker.Tag != "v2" ||
+	if deploy.Docker.Image != "acme-gateway" || deploy.Docker.Tag != "v2" ||
 		deploy.Docker.File != "deploy/Dockerfile" {
 		t.Errorf("container facts not applied: %+v", deploy.Docker)
 	}
@@ -215,7 +215,7 @@ func TestEnvironmentSuppliesTheContainerFacts(t *testing.T) {
 		t.Errorf("run arguments not applied: %+v", deploy.Docker.Run)
 	}
 
-	steps, err := deploy.dockerPlan("/work/gateway", "build/robohub-gateway", dockerMode{})
+	steps, err := deploy.dockerPlan("/work/gateway", "build/acme-gateway", dockerMode{})
 	if err != nil {
 		t.Fatalf("dockerPlan: %v", err)
 	}

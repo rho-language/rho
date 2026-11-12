@@ -545,7 +545,7 @@ plugins:
   - name: email-alert
     enabled: false
     config:
-      from_address: alerts@robohub.internal
+      from_address: alerts@acme.internal
       severity_threshold: ERROR
 `
 	data, err := yaml.Load(src)

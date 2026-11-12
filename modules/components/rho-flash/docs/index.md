@@ -39,8 +39,9 @@ a spec file rather than a release.
 
 The contract exists because a spec can state a command but cannot *choose* one:
 a platform whose probe is whichever one is plugged in computes the command from
-what is installed, and that is a program rather than a value. See
-{ref}`rho-robohub <rho-robohub/index>` for the shape of such a plugin.
+what is installed, and that is a program rather than a value. An
+integration plugin fills it for its ecosystem; {ref}`rho-robohub <rho-robohub/index>`
+is one, and the handbook's integrations page describes the contract.
 
 ## Options
 

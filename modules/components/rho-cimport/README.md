@@ -122,8 +122,8 @@ commands:
 the same platform states its C types here, its targets in rho-target and its
 configuration in rho-kconfig, and each of those relations names the component it
 belongs to. `serves` is what makes the mapping happen for one platform and not
-for any other — see [the platform plugins](../../plugins/rho-robohub/) for a
-plugin that fills four components' `platform` contracts at once.
+for any other. An integration plugin, such as [rho-robohub](../../plugins/rho-robohub/),
+fills several components' `platform` contracts at once for its ecosystem.
 
 A plugin that extends exactly one component may write `extends: rho-cimport` as
 before, with `implements` and `hooks` beside it; both forms are the same thing.

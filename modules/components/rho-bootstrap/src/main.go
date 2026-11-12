@@ -228,7 +228,7 @@ func token(args []string) error {
 func loadContract(path string) (schema.Provisioning, error) {
 	contract := schema.Provisioning{}
 	if path == "" {
-		for _, candidate := range []string{"/etc/robohub/provisioning.json", expandHome("~/.rho/provisioning.json")} {
+		for _, candidate := range []string{"/etc/rho/provisioning.json", expandHome("~/.rho/provisioning.json")} {
 			if _, err := os.Stat(candidate); err == nil {
 				path = candidate
 				break

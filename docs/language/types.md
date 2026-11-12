@@ -28,7 +28,7 @@ A value that may be absent is an `Option[T]`, and it is asked about rather than
 guessed at:
 
 ```rho
-let led: Option[Ptr[RoboHubGPIO]] = robohub_get_gpio("user_led")
+let led: Option[Ptr[BoardGPIO]] = board_get_gpio("user_led")
 if is_some(led) {
     write(value(led), 0, 1)
 }
@@ -128,7 +128,7 @@ A type a C header declares is a Rho type by name, and the pointer to it is a
 `Ptr`:
 
 ```rho
-extern fn get_gpio(name: string) Option[Ptr[RoboHubGPIO]]
+extern fn get_gpio(name: string) Option[Ptr[BoardGPIO]]
 ```
 
 Nothing about the header is written out by hand: {ref}`rho-cimport

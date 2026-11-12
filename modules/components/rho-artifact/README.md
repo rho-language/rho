@@ -1,6 +1,6 @@
 # rho-artifact
 
-Pack and verify signed host and firmware artifacts for RoboHub rollouts.
+Pack and verify signed host and firmware artifacts for rollouts.
 
 ```sh
 rho artifact pack -name aquarium -version 0.4.0 -kind service \

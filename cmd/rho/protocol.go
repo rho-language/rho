@@ -10,25 +10,17 @@ import (
 	"strings"
 
 	"rho/internal/paths"
+	"rho/src/integration"
 	"rho/src/plugins"
 	"rho/src/protocol"
 )
 
-// platformBinding finds a file a platform's plugin ships under bindings/.
-func platformBinding(platform, name string) (string, error) {
+// platformBinding is the file of one binding kind the platform's integration
+// plugin provides (see src/integration).
+func platformBinding(platform, kind string) (string, error) {
 	home, _ := paths.GetRhoHome()
 	cwd, _ := os.Getwd()
-	source := plugins.Source{Tree: cwd, RhoHome: home, Platform: platform}
-	for _, plugin := range source.All() {
-		if !source.Offered(plugin) || len(plugin.Platforms) == 0 {
-			continue
-		}
-		candidate := filepath.Join(plugin.Root, "bindings", name)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("no installed plugin serving platform %q ships bindings/%s", platform, name)
+	return integration.Binding(plugins.Source{Tree: cwd, RhoHome: home, Platform: platform}, kind)
 }
 
 // protocolCLI turns a Rho schema into the C and Go code both ends of a link
@@ -56,7 +48,7 @@ func protocolGenerate(args []string) int {
 	packageName := fs.String("package", "protocol", "the Go package name")
 	busFile := fs.String("bus", "", "a bus binding file: generates the event-bus files for the c target")
 	transportFile := fs.String("transport", "", "a framing file: adds the wire framing to the rho target")
-	platform := fs.String("platform", "", "a platform whose plugin ships the bindings (bindings/c-bus.yml, bindings/rho-transport.rho)")
+	platform := fs.String("platform", "", "a platform whose integration plugin provides the bindings")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -114,7 +106,7 @@ func protocolGenerate(args []string) int {
 		// are framed and nothing is assumed about who carries them.
 		bindingPath := *busFile
 		if bindingPath == "" && *platform != "" {
-			found, findErr := platformBinding(*platform, "c-bus.yml")
+			found, findErr := platformBinding(*platform, integration.BindingProtocolBusC)
 			if findErr != nil {
 				fmt.Fprintln(os.Stderr, "protocol generate:", findErr)
 				return 1
@@ -141,7 +133,7 @@ func protocolGenerate(args []string) int {
 		transport := ""
 		framing := *transportFile
 		if framing == "" && *platform != "" {
-			found, findErr := platformBinding(*platform, "rho-transport.rho")
+			found, findErr := platformBinding(*platform, integration.BindingProtocolTransportRho)
 			if findErr != nil {
 				fmt.Fprintln(os.Stderr, "protocol generate:", findErr)
 				return 1

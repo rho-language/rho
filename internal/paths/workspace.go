@@ -14,8 +14,8 @@ import (
 // machine the manifest was written on.
 const WorkspaceEnvVar = "RHO_WORKSPACE"
 
-// workspaceSuffix marks the workspace variable of an ecosystem. A platform names
-// its own (`ROBOHUB_WORKSPACE`), and when that one is not set it means the same
+// workspaceSuffix marks the workspace variable of an ecosystem. An integration
+// plugin names its own (`ACME_WORKSPACE`), and when that one is not set it means the same
 // directory the toolchain's workspace is, so a manifest can be written in the
 // ecosystem's terms without the toolchain naming any ecosystem.
 const workspaceSuffix = "_WORKSPACE"

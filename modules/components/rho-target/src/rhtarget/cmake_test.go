@@ -211,10 +211,10 @@ func TestATargetsOwnScriptIsResolvedBesideItsSpec(t *testing.T) {
 func TestAnAbsoluteScriptIsTakenAsWritten(t *testing.T) {
 	spec := testSpec()
 	spec.Source = "/home/board/boards/uno-r3/target.json"
-	spec.Linker.Script = "/opt/robohub/avr/linker.ld"
+	spec.Linker.Script = "/opt/acme/avr/linker.ld"
 
 	content := TargetCMake(spec, "cmake/linker.ld")
-	if !strings.Contains(content, "/opt/robohub/avr/linker.ld") {
+	if !strings.Contains(content, "/opt/acme/avr/linker.ld") {
 		t.Errorf("expected the script as written, got:\n%s", content)
 	}
 }

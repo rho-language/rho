@@ -43,7 +43,7 @@ func TestIdsFailsOnADuplicateAndSkipsBuildOutput(t *testing.T) {
 
 func TestIdsFailsOnAMalformedID(t *testing.T) {
 	root := t.TempDir()
-	writeManifest(t, filepath.Join(root, "a"), "robohub", "")
+	writeManifest(t, filepath.Join(root, "a"), "acme", "")
 	if err := Ids([]string{root}); err == nil {
 		t.Fatal("a one-segment id passed")
 	}

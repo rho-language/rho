@@ -1,0 +1,14 @@
+# A made-up event bus, so the generator is tested against a binding and carries
+# none of its own. Any ecosystem's integration plugin supplies its real one.
+headers:
+  - acme/bus.h
+error_type: AcmeStatus
+ok: ACME_OK
+invalid_arg: ACME_EINVAL
+protocol_error: ACME_EPROTO
+no_memory: ACME_ENOMEM
+event_id_type: acme_event
+size_type: acme_size
+publish: acme_bus_publish
+subscribe: acme_bus_subscribe
+unsubscribe: acme_bus_unsubscribe

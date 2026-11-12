@@ -533,7 +533,7 @@ with Keeper using a one-time token.
 
 ```sh
 rho bootstrap token -device garden-01 -project default -area 1 -node 7
-rho bootstrap init -config /etc/robohub/provisioning.json -token <token>
+rho bootstrap init -config /etc/rho/provisioning.json -token <token>
 rho bootstrap status
 ```
 
