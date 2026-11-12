@@ -2183,7 +2183,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 
 		// String comparison: s == t becomes rho_str_eq(s, t) for C.
-		if (expr.Op == "==" || expr.Op == "!=") && tc.isStringExpr(expr, scope) {
+		if (expr.Op == "==" || expr.Op == "!=") && (tc.isStringExpr(expr.Left, scope) || tc.isStringExpr(expr.Right, scope)) {
 			if expr.Op == "==" {
 				return "rho_str_eq(" + left + ", " + right + ")"
 			}

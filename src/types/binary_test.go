@@ -123,6 +123,28 @@ fn main() void {
 	}
 }
 
+// A string compared with == or != is compared by content: C would otherwise
+// compare two pointers, which is never what the program means.
+func TestStringComparisonUsesRhoStrEq(t *testing.T) {
+	fn := lowerFunctionToIR(t, `module app
+
+fn empty(text: string) bool {
+    var rest: string = text
+    if rest == "" {
+        return true
+    }
+    return text != ""
+}
+`, "empty")
+	text := instrText(fn)
+	if !strings.Contains(text, `rho_str_eq(rest, "")`) || !strings.Contains(text, `!rho_str_eq(text, "")`) {
+		t.Fatalf("a string comparison should use the runtime helper, got:\n%s", text)
+	}
+	if strings.Contains(text, `== ""`) || strings.Contains(text, `!= ""`) {
+		t.Fatalf("a string must not be compared as a pointer, got:\n%s", text)
+	}
+}
+
 func TestStringConcatNested(t *testing.T) {
 	fn := lowerFunctionToIR(t, `module app
 

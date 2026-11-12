@@ -725,6 +725,48 @@ func unusedLocalIR() ir.ModuleIR {
 	}
 }
 
+// A binding declared inside a block is out of scope after it, so its discard
+// belongs inside that block, before a closing break, and nowhere else.
+func TestGeneratedGoCompilesWithUnusedLocalInABlock(t *testing.T) {
+	requireGoToolchain(t)
+	m := ir.ModuleIR{
+		Name: "nested",
+		Funcs: []ir.FuncIR{{
+			Name:       "main",
+			CName:      "main",
+			ReturnType: ir.Type{Kind: ir.TypeVoid},
+			Body: []ir.Instr{
+				{Op: ir.OpIf, Condition: "1 > 0", Then: []ir.Instr{
+					{Op: ir.OpLet, Dest: "inner", Type: "double", Args: []string{"1.0"}},
+				}, Else: []ir.Instr{
+					{Op: ir.OpLet, Dest: "other", Type: "double", Args: []string{"2.0"}},
+				}},
+				{Op: ir.OpWhile, Condition: "1 > 0", Then: []ir.Instr{
+					{Op: ir.OpLet, Dest: "looped", Type: "double", Args: []string{"3.0"}},
+					{Op: ir.OpBreak},
+				}},
+				{Op: ir.OpExpr, Args: []string{`printf("hello\n")`}},
+			},
+		}},
+	}
+	out := EmitGo(m)
+	for _, name := range []string{"inner", "other", "looped"} {
+		if strings.Count(out, "_ = "+name) != 1 {
+			t.Errorf("expected one discard of %s, got:\n%s", name, out)
+		}
+	}
+	if discard, brk := strings.Index(out, "_ = looped"), strings.Index(out, "break"); discard > brk {
+		t.Errorf("expected the discard before the break, got:\n%s", out)
+	}
+
+	dir := writeGoProject(t, m, false)
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "app"), ".")
+	build.Dir = dir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("generated project did not compile: %v\n%s", err, out)
+	}
+}
+
 // A Rho `init` function collides with Go's reserved initializer, so it is
 // emitted under an escaped name. This is the same class as `error`: a Rho name
 // that Go cannot accept as written.

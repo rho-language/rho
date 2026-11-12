@@ -318,16 +318,21 @@ interface, `send_to(provider, ...)` for each declared function,
 `bound_providers()` and `bind_config(provider, key)`, so the interface's own code
 decides how its providers are used: every one of them, as an alert does, or the
 first, as a gateway would. A provider reads its settings with
-`rho_bind_config(provider, key)`: the value in the application workspace's
-`bind.conf` (`acme-telegram.chat_id=...`) when there is one, so a running
-installation changes a setting without a rebuild, otherwise the value in `bind:`. The
+`rho_bind_config(provider, key)`: the value in the application's `bind.conf`
+(`acme-telegram.chat_id=...`) when there is one, so a running installation changes
+a setting without a rebuild, otherwise the value in `bind:`. The file is in the
+workspace a supervisor gives the application (`RHO_APP_WORKSPACE`), or in
+`~/.rho/apps/<name>/` for a program started by hand, and only its owner can read
+it, because a setting may be a secret. The
 interface can also write one, through the generated
 `bind_config_set(provider, key, value)`, which is how a settings page changes a
 provider's configuration on a running installation.
 
 A bound provider that is not a declared dependency, does not list the interface
 under `implements`, is configured with a key it does not declare, or exports a
-function with another signature is refused when the application is built.
+function with another signature is refused when the application is built. Every
+provider accepts `enabled`, without declaring it, so an interface can let an
+installation switch a provider off without removing it from the binding.
 
 ## A module's own files
 

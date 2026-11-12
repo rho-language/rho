@@ -804,7 +804,11 @@ func generateAssets(ctx Context) error {
 // lookup, so a provider's call to it always compiles.
 func generateBindings(ctx Context) error {
 	config := map[string]string{}
+	app := filepath.Base(ctx.ProjectRoot)
 	if manifest, err := deps.LoadManifest(deps.ManifestPath(ctx.ProjectRoot)); err == nil && manifest != nil {
+		if manifest.ModuleName != "" {
+			app = manifest.ModuleName
+		}
 		for _, spec := range manifest.Bind {
 			for provider, keys := range spec.Config {
 				for key, value := range keys {
@@ -813,6 +817,6 @@ func generateBindings(ctx Context) error {
 			}
 		}
 	}
-	rendered := codegen.EmitGoBindings(config)
+	rendered := codegen.EmitGoBindings(app, config)
 	return os.WriteFile(filepath.Join(ctx.OutputDir, codegen.BindingsFileName), []byte(rendered), 0644)
 }

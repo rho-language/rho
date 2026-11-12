@@ -496,23 +496,7 @@ func emitGoFunc(b *strings.Builder, fn ir.FuncIR, goName string, sliceParams map
 		fmt.Fprintf(b, "func %s(%s) {\n", goName, goParamList(fn.Params))
 	}
 
-	// Go rejects an unused local, while C only warns. A Rho program may leave a
-	// binding unread, so those names are explicitly discarded. The discards go
-	// before the final return because Go's terminating-statement rule only
-	// accepts a return as the last statement.
-	prefix, suffix := fn.Body, []ir.Instr(nil)
-	if len(fn.Body) > 0 && fn.Body[len(fn.Body)-1].Op == ir.OpReturn {
-		prefix, suffix = fn.Body[:len(fn.Body)-1], fn.Body[len(fn.Body)-1:]
-	}
-	for _, instr := range prefix {
-		emitGoInstr(b, instr, 1, declared, sliceParams)
-	}
-	for _, name := range unusedLocals(prefix, declared) {
-		fmt.Fprintf(b, "\t_ = %s\n", name)
-	}
-	for _, instr := range suffix {
-		emitGoInstr(b, instr, 1, declared, sliceParams)
-	}
+	emitGoBlock(b, fn.Body, 1, declared, sliceParams)
 
 	// Go requires a terminating return on non-void paths.
 	if returnType != "" && !hasTerminatingReturn(fn.Body) {
@@ -526,26 +510,22 @@ func emitGoFunc(b *strings.Builder, fn ir.FuncIR, goName string, sliceParams map
 // Identifier spellings are taken from the translated Go, because the IR text
 // still uses the C names that ToGoExpr rewrites.
 func unusedLocals(instructions []ir.Instr, declared map[string]bool) []string {
+	// Only what this block itself declares: a name declared in a nested block
+	// is out of scope here, and that block discards it itself.
 	declarations := map[string]bool{}
+	for _, instr := range instructions {
+		if (instr.Op == ir.OpLet || instr.Op == ir.OpCall) && instr.Dest != "" {
+			declarations[goFieldName(instr.Dest)] = true
+		}
+	}
 	used := map[string]bool{}
 
 	var walk func([]ir.Instr)
 	walk = func(list []ir.Instr) {
 		for _, instr := range list {
-			switch instr.Op {
-			case ir.OpLet:
-				// The destination is a declaration, not a read.
-				if instr.Dest != "" {
-					declarations[goFieldName(instr.Dest)] = true
-				}
-			case ir.OpCall:
-				if instr.Dest != "" {
-					declarations[goFieldName(instr.Dest)] = true
-				}
-			case ir.OpAssign:
-				if instr.Dest != "" {
-					used[goFieldName(strings.TrimSuffix(instr.Dest, "="))] = true
-				}
+			// A let or call destination is a declaration, not a read.
+			if instr.Op == ir.OpAssign && instr.Dest != "" {
+				used[goFieldName(strings.TrimSuffix(instr.Dest, "="))] = true
 			}
 			for _, arg := range instr.Args {
 				collectWords(ToGoExpr(arg), used)
@@ -707,8 +687,37 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 }
 
 func emitGoNested(b *strings.Builder, instructions []ir.Instr, depth int, declared map[string]bool, sliceParams map[string][]bool) {
-	for _, instruction := range instructions {
-		emitGoInstr(b, instruction, depth, declared, sliceParams)
+	// A block is its own scope: what it declares is not declared after it, so
+	// a later assignment to the same name outside declares it again.
+	inner := make(map[string]bool, len(declared))
+	for name := range declared {
+		inner[name] = true
+	}
+	emitGoBlock(b, instructions, depth, inner, sliceParams)
+}
+
+// emitGoBlock writes one block's statements. Go rejects an unused local, while
+// C only warns, and a Rho program may leave a binding unread, so the names this
+// block declares and never reads are discarded at its end, inside the scope
+// they are declared in. The discards go before a closing return, break or
+// continue, because Go's terminating-statement rule wants that one last.
+func emitGoBlock(b *strings.Builder, instructions []ir.Instr, depth int, declared map[string]bool, sliceParams map[string][]bool) {
+	prefix, suffix := instructions, []ir.Instr(nil)
+	if n := len(instructions); n > 0 {
+		switch instructions[n-1].Op {
+		case ir.OpReturn, ir.OpBreak, ir.OpContinue:
+			prefix, suffix = instructions[:n-1], instructions[n-1:]
+		}
+	}
+	for _, instr := range prefix {
+		emitGoInstr(b, instr, depth, declared, sliceParams)
+	}
+	pad := strings.Repeat("\t", depth)
+	for _, name := range unusedLocals(prefix, declared) {
+		fmt.Fprintf(b, "%s_ = %s\n", pad, name)
+	}
+	for _, instr := range suffix {
+		emitGoInstr(b, instr, depth, declared, sliceParams)
 	}
 }
 

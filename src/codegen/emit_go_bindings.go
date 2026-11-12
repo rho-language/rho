@@ -13,8 +13,10 @@ const BindingsFileName = "rho_bindings.go"
 // EmitGoBindings renders the configuration an application's `bind:` gives its
 // providers, keyed `provider.key`, and rho_bind_config, which a provider reads
 // it through. A value the application's workspace overrides in bind.conf wins,
-// so a setting changed on a running installation does not need a rebuild.
-func EmitGoBindings(config map[string]string) string {
+// so a setting changed on a running installation does not need a rebuild. The
+// application's name is where its settings live when it is started without a
+// workspace, as a standalone program is.
+func EmitGoBindings(app string, config map[string]string) string {
 	keys := make([]string, 0, len(config))
 	for key := range config {
 		keys = append(keys, key)
@@ -29,16 +31,45 @@ func EmitGoBindings(config map[string]string) string {
 		fmt.Fprintf(&b, "\t%q: %s,\n", key, goQuoted(config[key]))
 	}
 	b.WriteString("}\n\n")
+	fmt.Fprintf(&b, "// rhoBindApp names the application's own directory when it has no workspace.\nconst rhoBindApp = %q\n\n", bindAppName(app))
 	b.WriteString(goBindConfigSource)
 	return b.String()
 }
 
-const goBindConfigSource = `// rhoBindConfig is one provider's setting: the value in the application's
-// workspace bind.conf (one ` + "`provider.key=value`" + ` per line) when it has one,
+// bindAppName is an application name as one path segment.
+func bindAppName(app string) string {
+	name := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r < ' ' {
+			return '-'
+		}
+		return r
+	}, strings.TrimSpace(app))
+	if name == "" || name == "." || name == ".." {
+		return "default"
+	}
+	return name
+}
+
+const goBindConfigSource = `// rhoBindWorkspace is the directory the application's bind.conf is in: the
+// workspace a supervisor gives it, otherwise a directory of its own under the
+// user's ~/.rho, so a program started by hand keeps what it is told too.
+func rhoBindWorkspace() string {
+	if workspace := os.Getenv("RHO_APP_WORKSPACE"); workspace != "" {
+		return workspace
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".rho", "apps", rhoBindApp)
+}
+
+// rhoBindConfig is one provider's setting: the value in the application's
+// bind.conf (one ` + "`provider.key=value`" + ` per line) when it has one,
 // otherwise the value the application's bind: gave it, otherwise "".
 func rhoBindConfig(provider string, key string) string {
 	name := provider + "." + key
-	if workspace := os.Getenv("RHO_APP_WORKSPACE"); workspace != "" {
+	if workspace := rhoBindWorkspace(); workspace != "" {
 		if data, err := os.ReadFile(filepath.Join(workspace, "bind.conf")); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				if value, found := strings.CutPrefix(strings.TrimSpace(line), name+"="); found {
@@ -55,7 +86,7 @@ func rhoBindConfig(provider string, key string) string {
 // rhoBindConfig answers it. It reports false when there is no workspace or the
 // file cannot be written. The file is the owner's only: settings may be secrets.
 func rhoBindConfigSet(provider string, key string, value string) bool {
-	workspace := os.Getenv("RHO_APP_WORKSPACE")
+	workspace := rhoBindWorkspace()
 	if workspace == "" || strings.ContainsAny(provider+key+value, "\n\r") {
 		return false
 	}
