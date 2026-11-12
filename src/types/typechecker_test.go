@@ -21,6 +21,7 @@ package types
 /* -------------------------------------------------------------------------- */
 
 import (
+	"strings"
 	"testing"
 
 	"rho/src/frontend/ast"
@@ -534,6 +535,49 @@ func TestModuleConstVisibleInFunction(t *testing.T) {
 	}}
 	if err := tc.CheckModule(m); err != nil {
 		t.Fatalf("a function should see a module constant: %v", err)
+	}
+}
+
+// A module-level binding is inlined, so a write to one has nowhere to go: it is
+// refused here rather than reaching the backend as `0 = value`. A local of the
+// same name is storage of its own, and may be written.
+func TestModuleConstCannotBeAssigned(t *testing.T) {
+	tc := New()
+	m := ast.Module{Decls: []ast.Decl{
+		ast.ConstDecl{Name: "SELECTED", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "0"}},
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.AssignStmt{Target: ast.IdentifierExpr{Name: "SELECTED"}, Value: ast.NumberExpr{Value: "3"}, Op: "="},
+			},
+		},
+	}}
+	err := tc.CheckModule(m)
+	if err == nil || !strings.Contains(err.Error(), "cannot assign to SELECTED") {
+		t.Fatalf("assigning a module-level binding should be refused, got %v", err)
+	}
+
+	shadowed := New()
+	local := ast.Module{Decls: []ast.Decl{
+		ast.ConstDecl{Name: "SELECTED", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "0"}},
+		ast.FuncDecl{
+			Name:       "main",
+			ReturnType: "void",
+			Body: []ast.Stmt{
+				ast.LetStmt{Name: "SELECTED", Type: ast.TypeExpr{Name: "u32"}, Value: ast.NumberExpr{Value: "1"}, Mutable: true},
+				ast.AssignStmt{Target: ast.IdentifierExpr{Name: "SELECTED"}, Value: ast.NumberExpr{Value: "3"}, Op: "="},
+			},
+		},
+	}}
+	if err := shadowed.CheckModule(local); err != nil {
+		t.Fatalf("a local of the same name is its own storage: %v", err)
+	}
+	lowered := shadowed.ToIR(local)
+	for _, instr := range lowered.Funcs[0].Body {
+		if instr.Op == ir.OpAssign && strings.HasPrefix(instr.Dest, "0") {
+			t.Fatalf("the local was replaced by the module constant's value: %+v", instr)
+		}
 	}
 }
 

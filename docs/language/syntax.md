@@ -174,7 +174,9 @@ answer = 42
 ```
 
 A top-level `const`, `let` or `var` is a module binding, visible in every
-function:
+function. It is a constant whichever word introduced it, inlined where it is
+named, since a module has no run-time initialisation order; assigning to one is
+a compile error. A local of the same name is a variable of its own:
 
 ```rho
 const LIMIT: u32 = 10

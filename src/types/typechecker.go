@@ -2178,8 +2178,11 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		// A module-level constant is inlined where it is named. There is no
 		// storage to read, because a module has no initialisation order.
-		if decl, ok := tc.moduleConsts[expr.Name]; ok && decl.Value != nil {
-			return tc.lowerExpr(decl.Value, map[string]ir.Type{})
+		// A local of the same name is its own storage and is read as such.
+		if _, local := scope[expr.Name]; !local {
+			if decl, ok := tc.moduleConsts[expr.Name]; ok && decl.Value != nil {
+				return tc.lowerExpr(decl.Value, map[string]ir.Type{})
+			}
 		}
 		return expr.Name
 	case ast.NumberExpr:
@@ -3212,6 +3215,16 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		scope[stmt.Name] = declared
 	case ast.AssignStmt:
+		// A module-level binding is a constant whichever keyword introduced it,
+		// and is inlined where it is named, so there is nothing to assign to: a
+		// write to one would reach the backend as `0 = value`.
+		if target, ok := stmt.Target.(ast.IdentifierExpr); ok {
+			if _, local := scope[target.Name]; !local {
+				if _, module := tc.moduleConsts[target.Name]; module {
+					return false, fmt.Errorf("cannot assign to %s: a module-level binding is a constant, whether it was declared with const, let or var", target.Name)
+				}
+			}
+		}
 		actual, err := tc.exprType(stmt.Target, scope)
 		if err != nil {
 			return false, err
