@@ -326,6 +326,9 @@ func (l *DefaultLocator) Locate(dep DepSpec) (string, error) {
 		if root := RepositoryModuleRoot(l.ProjectRoot, dep.Name); root != "" {
 			return root, nil
 		}
+		if root := WorkspaceGroupModuleRoot(l.ProjectRoot, dep.Group, dep.Name); root != "" {
+			return root, nil
+		}
 	}
 
 	// 4. Global cache
@@ -417,6 +420,50 @@ func RepositoryModuleRoot(projectRoot, name string) string {
 		return ""
 	}
 	for current := projectRoot; ; {
+		if root := repositoryModuleIn(current, name); root != "" {
+			return root
+		}
+		// The repository's root is as far as a repository's own modules go.
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return ""
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		current = parent
+	}
+}
+
+// WorkspaceGroupModuleRoot finds a grouped dependency in the repository its group
+// names, when that repository is checked out in the workspace: the members of
+// `deps: {acme: {forms: ...}}` are looked for in `<workspace>/acme`, under the
+// same module folders a repository keeps its modules in. The workspace is
+// `$ACME_WORKSPACE` when it is set, otherwise the project's workspace, so a
+// module that left the repository it was developed in still builds beside it.
+func WorkspaceGroupModuleRoot(projectRoot, group, name string) string {
+	if group == "" || filepath.Base(filepath.Clean(group)) != group || group == "." {
+		return ""
+	}
+	workspace := os.Getenv(strings.ToUpper(strings.ReplaceAll(group, "-", "_")) + "_WORKSPACE")
+	if workspace == "" {
+		workspace = workspaceOf(projectRoot)
+	}
+	repository := filepath.Join(workspace, group)
+	if info, err := os.Stat(repository); err != nil || !info.IsDir() {
+		return ""
+	}
+	return repositoryModuleIn(repository, name)
+}
+
+// repositoryModuleIn finds a module by name in one directory's module folders:
+// `<dir>/modules/<name>` and its kin, or a module whose manifest gives that name
+// in a folder called something else.
+func repositoryModuleIn(current, name string) string {
+	if name == "" || filepath.Base(filepath.Clean(name)) != name || name == "." {
+		return ""
+	}
+	{
 		for _, kind := range repositoryModuleDirs {
 			root := filepath.Join(current, kind, name)
 			if isComponentDir(root) {
@@ -440,13 +487,6 @@ func RepositoryModuleRoot(projectRoot, name string) string {
 				}
 			}
 		}
-		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
-			return ""
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return ""
-		}
-		current = parent
 	}
+	return ""
 }
