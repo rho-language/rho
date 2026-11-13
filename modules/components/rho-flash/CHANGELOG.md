@@ -53,3 +53,13 @@ written that way is a configure error rather than a placeholder.
 `-artifact` verifies a signed rollout artifact before flashing anything. The
 payload checksum and Ed25519 manifest are checked first; the extracted entrypoint
 is what the target spec then flashes.
+
+## [0.1.5] - 2026-11-13
+
+A board project that names its platform by the workspace
+(`path: ${ROBOHUB_WORKSPACE}/robohub-pico`, as the projects Mesh writes do) has
+its platform found again, so a flash runs the platform's own entry point
+(`tools/<tool>/flash`) rather than a converter of the same name on PATH. On WSL
+that entry point is what attaches the board, loads it over PICOBOOT or writes
+the UF2 through Windows; without it the ELF was converted and nothing was
+flashed. The fix is the toolchain's (`deps.PlatformRoot` expands the path).

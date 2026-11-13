@@ -96,6 +96,13 @@ func platformModule(projectRoot string) (string, *Manifest) {
 
 // resolveFrom resolves a path a manifest declared relative to itself.
 func resolveFrom(base, path string) string {
+	// A dependency's path may name the workspace (`${ROBOHUB_WORKSPACE}/...`),
+	// as a portable manifest does: it is expanded before it is resolved, or the
+	// platform is not found and a board is flashed without the platform's own
+	// entry point — on WSL, without the step that reaches a board at all.
+	if expanded, err := ExpandPath(path, base); err == nil && expanded != "" {
+		path = expanded
+	}
 	if filepath.IsAbs(path) {
 		return path
 	}

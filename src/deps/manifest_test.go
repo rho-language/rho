@@ -383,6 +383,26 @@ func TestPlatformIsRecognizedFromTheModuleGraph(t *testing.T) {
 	}
 }
 
+// A board project Mesh writes names its platform by the workspace, as a portable
+// manifest does; the platform is found through the expanded path, which is what
+// lets a flash use the platform's own entry point.
+func TestPlatformRootExpandsTheWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	platform := filepath.Join(workspace, "board-lib")
+	board := filepath.Join(t.TempDir(), "node_1")
+	for _, dir := range []string{platform, board} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(platform, "module.yml"), []byte("module:\n  name: board-lib\n  type: platform\n  version: 0.1.0\nplatform: zenith\n"), 0o644)
+	os.WriteFile(filepath.Join(board, "module.yml"), []byte("module:\n  name: node\n  type: c\n  version: 0.1.0\ndepends:\n  - name: board-lib\n    type: c\n    path: ${ROBOHUB_WORKSPACE}/board-lib\n"), 0o644)
+	t.Setenv("ROBOHUB_WORKSPACE", workspace)
+	if got := PlatformRoot(board); got != platform {
+		t.Fatalf("expected the platform through ${ROBOHUB_WORKSPACE}, got %q", got)
+	}
+}
+
 func TestLoadYAMLManifestReadsWhatAComponentOffers(t *testing.T) {
 	path := writeManifest(t, "module:\n  name: rho-doc\n  type: component\n  version: 0.1.0\n  command: doc\n\nmain: rho-doc\n\nprovides:\n  hooks:\n    - index\n    - page\n")
 
