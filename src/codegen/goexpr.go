@@ -522,6 +522,18 @@ func scanPrimaryExpr(src []byte, start int) (int, bool) {
 
 	var end int
 	switch {
+	case src[start] == '-' && start+1 < len(src) && src[start+1] >= '0' && src[start+1] <= '9':
+		// A negative literal: `(int64_t)-50000` casts the whole number, which
+		// is how the C side writes a negative constant compared with a
+		// widened operand.
+		i := start + 1
+		for i < len(src) && (isIdentPart(src[i]) || src[i] == '.') {
+			if src[i] == '.' && (i+1 >= len(src) || src[i+1] < '0' || src[i+1] > '9') {
+				break
+			}
+			i++
+		}
+		return i, true
 	case src[start] == '(':
 		closed := matchParen(src, start)
 		if closed < 0 {

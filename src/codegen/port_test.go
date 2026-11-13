@@ -248,3 +248,22 @@ func AppMain() {
 		t.Errorf("expected rhoGetenv in the runtime")
 	}
 }
+
+// A YAML value is unquoted only when it is quoted as a whole: a rule's action
+// `journal info "lights on"` keeps both its quotes, where trimming every quote
+// at either end took the closing one.
+func TestTheYamlValueIsUnquotedOnlyWhenQuotedWhole(t *testing.T) {
+	program := `package main
+
+func AppMain() {
+	fmt.Print((rhoYamlValue("a.yml", "rules.lights.do")))
+}
+`
+	runtime := EmitGoRuntime(program)
+	if strings.Contains(runtime, `strings.Trim(value, "\"")`) {
+		t.Error("the runtime trims every quote at either end of a value")
+	}
+	if !strings.Contains(runtime, `value[0] == '"' && value[len(value)-1] == '"'`) {
+		t.Error("the runtime does not unquote a wholly quoted value")
+	}
+}

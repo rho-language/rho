@@ -1148,7 +1148,11 @@ func EmitGoRuntime(implementation string) string {
 				"\t\t\t\tcontinue\n" +
 				"\t\t\t}\n" +
 				"\t\t\tvalue = strings.TrimSpace(strings.TrimPrefix(trimmed, part+\":\"))\n" +
-				"\t\t\tvalue = strings.Trim(value, \"\\\"\")\n" +
+				// A value is unquoted only when it is quoted as a whole: `do: journal
+				// info "lights on"` keeps its closing quote.
+				"\t\t\tif len(value) >= 2 && value[0] == '\"' && value[len(value)-1] == '\"' {\n" +
+				"\t\t\t\tvalue = value[1 : len(value)-1]\n" +
+				"\t\t\t}\n" +
 				"\t\t\tindex++\n" +
 				"\t\t\tkind = rhoYamlKindOf(value, lines, index, current)\n" +
 				"\t\t\tindent = current\n" +

@@ -55,6 +55,14 @@ func TestToGoExprNumericCast(t *testing.T) {
 	}
 }
 
+// A negative constant compared with a widened operand is cast whole:
+// `(int64)-50000` is not Go.
+func TestToGoExprNegativeLiteralCast(t *testing.T) {
+	if got := ToGoExpr("((int64_t)site.battery < (int64_t)-50000)"); got != "(int64(site.battery) < int64(-50000))" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestToGoExprDoubleCast(t *testing.T) {
 	if got := ToGoExpr("(double)total"); got != "float64(total)" {
 		t.Fatalf("got %q, want %q", got, "float64(total)")
