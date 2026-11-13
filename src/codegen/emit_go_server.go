@@ -819,6 +819,11 @@ func requestPath(req Request) string {
 	return req.Path
 }
 
+// request_method returns the request's method.
+func requestMethod(req Request) string {
+	return req.Method
+}
+
 // json_string renders a string as a JSON string literal, quotes and escapes
 // included, so a value that contains a quote or a newline cannot break the
 // document it is written into.
@@ -954,6 +959,11 @@ func requestAuth(req Request) string {
 // request_path returns the address the request was made to.
 func requestPath(req Request) string {
 	return req.Path
+}
+
+// request_method returns the request's method.
+func requestMethod(req Request) string {
+	return req.Method
 }
 
 // json_string renders a string as a JSON string literal, quotes and escapes

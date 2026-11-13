@@ -173,7 +173,7 @@ func (d Declaration) Resolve(project string) (SQLPaths, error) {
 	if err != nil {
 		return SQLPaths{}, err
 	}
-	out := SQLPaths{}
+	out := SQLPaths{Root: root}
 
 	if d.SQL.Declared() {
 		out.Schema = within(root, d.SQL.Schema)
@@ -221,6 +221,9 @@ func (d Declaration) Resolve(project string) (SQLPaths, error) {
 
 // SQLPaths are the files this component reads and writes, resolved.
 type SQLPaths struct {
+	// Root is the project's directory, where its lock names the dependencies
+	// whose tables and statements come before its own.
+	Root string
 	// Schema and Queries are the SQL a project declared.
 	Schema  string
 	Queries string

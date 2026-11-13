@@ -51,6 +51,9 @@ type Options struct {
 	// modules installed and not enabled — installed is not a decision to run — and
 	// their requirements are not the machine's problem today.
 	EnabledOnly bool
+	// Path is a module's folder to check instead of the installed modules: an
+	// application in a checkout, which no registry lists, asks about itself.
+	Path string
 	// LookPath is how a program is found. A function rather than a setting, so that
 	// the whole checker is testable without a machine that has these programs on it.
 	LookPath func(string) (string, error)
@@ -91,7 +94,11 @@ func Check(options Options) sysdep.Report {
 		Scanned:   []string{},
 	}
 
-	for _, module := range installedModules(options) {
+	modules := installedModules(options)
+	if options.Path != "" {
+		modules = []deps.InstalledModule{{Root: options.Path}}
+	}
+	for _, module := range modules {
 		manifest, err := deps.LoadManifest(filepath.Join(module.Root, "module.yml"))
 		if err != nil || manifest == nil || !manifest.SystemDeps.Declared() {
 			continue

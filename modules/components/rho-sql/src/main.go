@@ -436,6 +436,9 @@ var SQLDirs = []string{"", "sql", "db", "database"}
 func readDeclared(paths SQLPaths) (rhosql.Schema, string, []rhosql.Diagnostic) {
 	empty := rhosql.Schema{Tables: []rhosql.Table{}, Queries: []rhosql.Query{}}
 	if paths.Schema == "" {
+		if paths.Root != "" {
+			return mergeContributions(empty, "", Contributions(paths.Root), warnStderr)
+		}
 		return empty, "", nil
 	}
 	declared := readIfPresent(paths.Schema)
@@ -461,6 +464,13 @@ func readDeclared(paths SQLPaths) (rhosql.Schema, string, []rhosql.Diagnostic) {
 		queries, queryDiagnostics := rhosql.ParseQueries(filepath.Base(paths.Queries), statements)
 		diagnostics = append(diagnostics, queryDiagnostics...)
 		schema.Queries = append(schema.Queries, queries.Queries...)
+	}
+	// The modules the project depends on bring their own tables and
+	// statements, which come first and are the ones used.
+	if paths.Root != "" {
+		merged, mergedDDL, found := mergeContributions(schema, ddl, Contributions(paths.Root), warnStderr)
+		schema, ddl = merged, mergedDDL
+		diagnostics = append(diagnostics, found...)
 	}
 	return schema, ddl, diagnostics
 }

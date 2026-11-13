@@ -501,6 +501,34 @@ func isIntegerKind(kind ir.TypeKind) bool {
 /*  Function Validation                                                        */
 /* -------------------------------------------------------------------------- */
 
+// backendReservedNames are the C type words the backends spell types with. A
+// local or a parameter of one of these names would be read as the type where
+// it is used — `signed` becomes `int32` — so it is refused here, where the
+// reason can be said, rather than compiled into something else.
+var backendReservedNames = map[string]bool{
+	"void": true, "char": true, "signed": true, "unsigned": true, "int": true, "long": true,
+	"short": true, "float": true, "double": true, "_Bool": true, "size_t": true,
+	"int8_t": true, "int16_t": true, "int32_t": true, "int64_t": true,
+	"uint8_t": true, "uint16_t": true, "uint32_t": true, "uint64_t": true,
+	// Go's own keywords that are not Rho's: the Go backend writes a name as it
+	// is, and one of these is not a name in Go.
+	"chan": true, "defer": true, "fallthrough": true, "func": true, "go": true, "goto": true,
+	"interface": true, "package": true, "range": true, "select": true, "switch": true,
+	"case": true, "default": true,
+}
+
+func backendReservedName(name string) bool {
+	return backendReservedNames[name]
+}
+
+func backendReservedReason(name string) string {
+	switch name {
+	case "chan", "defer", "fallthrough", "func", "go", "goto", "interface", "package", "range", "select", "switch", "case", "default":
+		return name + " is a keyword of Go, which the Go backend writes; choose another name"
+	}
+	return name + " is a C type name the backends spell types with; choose another name"
+}
+
 func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	// Names in the body resolve as the declaring module sees them.
 	previousOwner := tc.owner
@@ -514,6 +542,9 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	}
 	// Check parameters
 	for _, p := range fn.Params {
+		if !fn.Extern && backendReservedName(p.Name) {
+			return fmt.Errorf("parameter %q of function %q: %s", p.Name, fn.Name, backendReservedReason(p.Name))
+		}
 		if _, ok := tc.resolveType(p.Type); !ok {
 			return fmt.Errorf("unknown type %q in parameter %q of function %q",
 				p.Type, p.Name, fn.Name)
@@ -3188,6 +3219,9 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 	case ast.LetStmt:
 		if _, exists := scope[stmt.Name]; exists {
 			return false, fmt.Errorf("duplicate local %q", stmt.Name)
+		}
+		if backendReservedName(stmt.Name) {
+			return false, fmt.Errorf("local %q: %s", stmt.Name, backendReservedReason(stmt.Name))
 		}
 		if stmt.Type.Name == "" && stmt.Type.String() == "" {
 			// A type-less binding takes its type from the value.

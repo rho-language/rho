@@ -53,11 +53,21 @@ const doctorCommand = "doctor"
 // dashboard says is still true, and a report that says "install rho-doctor to see
 // this" is more useful than one that says nothing.
 func ReadReport() (sysdep.Report, string) {
+	return ReadReportAt("")
+}
+
+// ReadReportAt is the report for the module in a folder, or for every installed
+// module when the folder is "".
+func ReadReportAt(path string) (sysdep.Report, string) {
 	command, found := ToolchainCommand()
 	if !found {
 		return sysdep.Report{}, "the Rho toolchain was not found, so nothing could be checked"
 	}
-	collected, err := exec.Command(command, doctorCommand, "--json").Output()
+	args := []string{doctorCommand, "--json"}
+	if path != "" {
+		args = append(args, "--path", path)
+	}
+	collected, err := exec.Command(command, args...).Output()
 	if err != nil && len(collected) == 0 {
 		// A non-zero exit with output on standard output is a report that found work
 		// to do, which is what this is for. Only a command that produced nothing at

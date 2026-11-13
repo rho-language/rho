@@ -369,3 +369,43 @@ func TestTheGeneratedCSaysTheSameAsTheGeneratedGo(t *testing.T) {
 		}
 	}
 }
+
+// A generated wrapper is an Err exactly when the statement failed, with the
+// engine's own message, and an Ok(0) when a read found nothing or a write changed
+// nothing: zero rows is not a failure, and a failure is not zero rows.
+func TestAWrapperIsAnErrOnlyWhenTheStatementFailed(t *testing.T) {
+	source := generated(t, nil).QueriesRho(RhoOptions{Package: "shop"})
+	for _, name := range []string{"FindCustomer", "ForgetCustomer"} {
+		at := strings.Index(source, "fn "+name+"(")
+		if at < 0 {
+			t.Fatalf("no wrapper for %s:\n%s", name, source)
+		}
+		body := source[at:]
+		body = body[:strings.Index(body, "\n}\n")]
+		if !strings.Contains(body, "let failure: string = sql_failed(db)") ||
+			!strings.Contains(body, "return Err[u32, SqlError](SqlError{ failure, -1 })") {
+			t.Errorf("%s does not report a failure as an Err:\n%s", name, body)
+		}
+		if strings.Contains(body, "== 0") && !strings.Contains(body, "capacity == 0") {
+			t.Errorf("%s reads a zero as a failure:\n%s", name, body)
+		}
+	}
+}
+
+// A column named like a keyword of the language is written with a suffix in the
+// generated Rho, as a field and as a parameter, so the file parses.
+func TestAColumnNamedLikeAKeywordIsRenamed(t *testing.T) {
+	schema, _ := ParseSchema("schema.sql", "CREATE TABLE derived (id TEXT PRIMARY KEY, fn TEXT NOT NULL, type TEXT);\n")
+	queries, _ := ParseQueries("queries.sql", "-- name: put\nINSERT INTO derived (id, fn, type) VALUES (:id, :fn, :type);\n\n-- name: all\nSELECT id, fn, type FROM derived;\n")
+	schema.Queries = queries.Queries
+	result := NewGenerator(schema, "queries", nil).Generate()
+	source := result.QueriesRho(RhoOptions{Package: "app"}) + result.ModelsRho(RhoOptions{Package: "app"})
+	for _, want := range []string{"fnValue: string", "typeValue: string"} {
+		if !strings.Contains(source, want) {
+			t.Errorf("no %q in:\n%s", want, source)
+		}
+	}
+	if strings.Contains(source, "(id: string, fn: string") || strings.Contains(source, "    fn: string") {
+		t.Errorf("a keyword is used as a name:\n%s", source)
+	}
+}

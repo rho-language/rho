@@ -59,6 +59,14 @@ func TestThePortImplementsEveryDeclaredStatement(t *testing.T) {
 	if !strings.Contains(port, "out SliceInvoicesOverRow") {
 		t.Error("the statement's slice parameter is not the one the extern declared")
 	}
+	// A statement forgets its handle's last failure, records its own, and the
+	// generated wrapper reads it back: zero rows and a failure are told apart.
+	body := portLines(port, "sqlInvoicesOver")
+	for _, want := range []string{"rhoSqlStatementBegin(db)", "return rhoSqlStatementFail(db, err)", "rows.Err()"} {
+		if !strings.Contains(port, want) {
+			t.Errorf("the statement does not %s:\n%s", want, body)
+		}
+	}
 }
 
 // A write has no rows to place, so its function takes no slice: a signature with
@@ -77,7 +85,7 @@ func TestAWriteTakesNoSlice(t *testing.T) {
 		}},
 	}, []string{"sql"})
 
-	if !strings.Contains(port, "func sqlAddInvoice(id int64, total int64, db SqlDb) uint32") {
+	if !strings.Contains(port, "func sqlAddInvoice(argId int64, argTotal int64, db SqlDb) uint32") {
 		t.Errorf("a write is not the shape a write has:\n%s", portLines(port, "sqlAdd"))
 	}
 	if strings.Contains(portLine(port, "sqlAdd"), "Slice") {
@@ -102,10 +110,10 @@ func TestAValueIsBoundWithItsOwnType(t *testing.T) {
 		}},
 	}, []string{"sql"})
 
-	if !strings.Contains(port, "rhoSqlBind(1, low)") {
+	if !strings.Contains(port, "rhoSqlBind(1, argLow)") {
 		t.Error("a whole number was not bound as one")
 	}
-	if !strings.Contains(port, "rhoSqlBind(4, high)") {
+	if !strings.Contains(port, "rhoSqlBind(4, argHigh)") {
 		t.Error("a text was not bound as text")
 	}
 }
@@ -116,7 +124,7 @@ func TestAValueIsBoundWithItsOwnType(t *testing.T) {
 func TestThePortImplementsTheWholeStandardSurface(t *testing.T) {
 	port := EmitGoPorts(PortContext{ModuleName: "billing"}, []string{"sql"})
 	for _, declared := range []string{
-		"func stdSqlSqlOpen(", "func stdSqlSqlClose(", "func stdSqlSqlLastMessage(",
+		"func stdSqlSqlOpen(", "func stdSqlSqlClose(", "func stdSqlSqlLastMessage(", "func stdSqlSqlFailed(",
 		"func stdSqlSqlApply(", "func stdSqlSqlExec(", "func stdSqlSqlExecMany(",
 		"func stdSqlSqlPrepare(", "func stdSqlSqlRun(", "func stdSqlSqlReset(", "func stdSqlSqlFinalize(",
 		"func stdSqlSqlColumnCount(", "func stdSqlSqlColumnName(", "func stdSqlSqlColumnType(",
@@ -225,7 +233,9 @@ func TestTheGeneratedProgramWithThePortCompiles(t *testing.T) {
 			Name:       "sql_invoices_over",
 			SQL:        "SELECT id, total FROM invoices WHERE total > ?",
 			Result:     "InvoicesOverRow",
-			Parameters: []SQLParameter{{Name: "low", GoType: "int64", IsInteger: true}},
+			// A parameter named like one of the generated function's own
+			// locals: the port's names must not collide with a column's.
+			Parameters: []SQLParameter{{Name: "handle", GoType: "int64", IsInteger: true}},
 			Fields: []SQLField{
 				{Name: "id", Column: "id", GoType: "int64", IsInteger: true},
 				{Name: "total", Column: "total", GoType: "int64", IsInteger: true},

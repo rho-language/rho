@@ -81,7 +81,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -140,6 +142,126 @@ func TestAnUnknownOrExpiredSessionIsRefused(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("session %q: status %d, want 401", sid, w.Code)
 		}
+	}
+}
+
+func TestASessionEndsWithTheIssuersSession(t *testing.T) {
+	t.Setenv("RHO_APP_WORKSPACE", t.TempDir())
+	asked := 0
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		if r.URL.Path == "/auth/session/k-live" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer issuer.Close()
+	t.Setenv("RHO_AUTH_URL", issuer.URL)
+	exp := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	os.WriteFile(authSsoSessionPath(), []byte("a|"+exp+"|ana|*|k-live\nb|"+exp+"|bob|*|k-ended\nc|"+exp+"|cy|*|\n"), 0o600)
+	status := func(sid string) int {
+		r := httptest.NewRequest("GET", "/x", nil)
+		r.Header.Set("Accept", "application/json")
+		r.AddCookie(&http.Cookie{Name: authSsoCookie, Value: sid})
+		w := httptest.NewRecorder()
+		withAuth(echo()).ServeHTTP(w, r)
+		return w.Code
+	}
+	if got := status("a"); got != http.StatusOK {
+		t.Errorf("a session whose issuer session stands: %d", got)
+	}
+	if got := status("b"); got != http.StatusUnauthorized {
+		t.Errorf("a session whose issuer session ended: %d", got)
+	}
+	if got := status("c"); got != http.StatusOK {
+		t.Errorf("a session opened before sessions were tied: %d", got)
+	}
+	before := asked
+	status("a")
+	if asked != before {
+		t.Errorf("the issuer was asked again within the minute")
+	}
+	// An issuer that is down does not sign anyone out.
+	issuer.Close()
+	authSsoLiveMu.Lock()
+	authSsoLiveSeen["k-live"] = authSsoLiveAnswer{live: true, at: time.Now().Add(-2 * time.Minute)}
+	authSsoLiveMu.Unlock()
+	if got := status("a"); got != http.StatusOK {
+		t.Errorf("an issuer that is down signed a session out: %d", got)
+	}
+}
+
+func TestReadOnlyScopesMayLookAndNotChange(t *testing.T) {
+	t.Setenv("RHO_APP_WORKSPACE", t.TempDir())
+	exp := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	os.WriteFile(authSsoSessionPath(), []byte("r|"+exp+"|vi|mesh:read,aquarium:read\nw|"+exp+"|op|mesh:greenhouse,mesh:read\n"), 0o600)
+	status := func(method, sid string) int {
+		req := httptest.NewRequest(method, "/x", nil)
+		req.Header.Set("Accept", "application/json")
+		req.AddCookie(&http.Cookie{Name: authSsoCookie, Value: sid})
+		w := httptest.NewRecorder()
+		withAuth(echo()).ServeHTTP(w, req)
+		return w.Code
+	}
+	if got := status("GET", "r"); got != http.StatusOK {
+		t.Errorf("a reader reading: %d", got)
+	}
+	if got := status("POST", "r"); got != http.StatusForbidden {
+		t.Errorf("a reader changing something: %d", got)
+	}
+	if got := status("POST", "w"); got != http.StatusOK {
+		t.Errorf("a writer changing something: %d", got)
+	}
+}
+
+func es256(t *testing.T, key *ecdsa.PrivateKey, claims string) string {
+	der, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	sum := sha256.Sum256(der)
+	head := base64.RawURLEncoding.EncodeToString([]byte(` + "`" + `{"alg":"ES256","typ":"JWT","kid":"` + "`" + ` + base64.RawURLEncoding.EncodeToString(sum[:12]) + ` + "`" + `"}` + "`" + `))
+	body := base64.RawURLEncoding.EncodeToString([]byte(claims))
+	digest := sha256.Sum256([]byte(head + "." + body))
+	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := make([]byte, 64)
+	r.FillBytes(sig[:32])
+	s.FillBytes(sig[32:])
+	return head + "." + body + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+func TestARotatedKeyIsFetchedWhenATokenNamesIt(t *testing.T) {
+	t.Setenv("RHO_APP_WORKSPACE", t.TempDir())
+	t.Setenv("RHO_AUTH_PUBLIC_KEY", filepath.Join(t.TempDir(), "absent.pem"))
+	first, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	second, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	current := first
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		der, _ := x509.MarshalPKIXPublicKey(&current.PublicKey)
+		w.Write(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	}))
+	defer issuer.Close()
+	t.Setenv("RHO_AUTH_URL", issuer.URL)
+	authSsoKey, authSsoKeyTried, authSsoKeyReloaded = nil, time.Time{}, time.Time{}
+	exp := strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10)
+	claims := ` + "`" + `{"sub":"ana","iss":"keeper","aud":"mesh","scp":["mesh:*"],"exp":` + "`" + ` + exp + ` + "`" + `}` + "`" + `
+	status := func(token string) int {
+		r := httptest.NewRequest("GET", "/x", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		withAuth(echo()).ServeHTTP(w, r)
+		return w.Code
+	}
+	if got := status(es256(t, first, claims)); got != http.StatusOK {
+		t.Fatalf("a token of the first key: %d", got)
+	}
+	current = second
+	if got := status(es256(t, second, claims)); got != http.StatusOK {
+		t.Fatalf("a token of the rotated key was refused: %d", got)
+	}
+	if got := status(es256(t, first, claims)); got == http.StatusOK {
+		t.Fatalf("a token of the retired key is still accepted")
 	}
 }
 

@@ -206,7 +206,12 @@ func moduleSchema(types []string) Schema {
 					// not installed is a build that cannot run its own
 					// statements, so a missing one is reported as a build error
 					// rather than as an absent page.
-					{Name: "driver", Required: true, RejectNull: true, Kind: KindString},
+					//
+					// A module that keeps records names none: it generates
+					// nothing by itself, and its tables and statements are
+					// generated into each application that depends on it, with
+					// that application's driver (rho-sql 0.2).
+					{Name: "driver", Required: false, RejectNull: true, Kind: KindString},
 					// schema is the file a project's tables are declared in,
 					// relative to the project. It is required, because a
 					// database whose tables nothing states is a database whose

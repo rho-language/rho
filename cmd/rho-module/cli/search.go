@@ -83,8 +83,51 @@ func List(args []string) error {
 }
 
 func Search(args []string) error {
+	// `--format tsv` is the same answer for a program: what is installed here,
+	// then what the remote registry has, one module version per line:
+	//
+	//	local   type  name  version  path  selected|no
+	//	remote  type  name  version
+	if len(args) >= 2 && args[0] == "--format" {
+		if args[1] != "tsv" {
+			return fmt.Errorf("rho module search: unknown format %q (known: tsv)", args[1])
+		}
+		query := ""
+		if len(args) == 3 {
+			query = args[2]
+		} else if len(args) > 3 {
+			return fmt.Errorf("usage: rho module search [--format tsv] [query]")
+		}
+		results, err := core.SearchRegistry(query)
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			selected := "no"
+			if r.Active {
+				selected = "selected"
+			}
+			fmt.Printf("local\t%s\t%s\t%s\t%s\t%s\n", r.Type, r.Name, r.Version, r.Path, selected)
+		}
+		cfg, err := remote.LoadConfig()
+		if err != nil {
+			return nil
+		}
+		client := remote.NewClient(cfg)
+		if cfg.Remote.URL == "" || !client.HasCredential() {
+			return nil
+		}
+		remoteResults, err := remote.SearchRemote(client, query)
+		if err != nil {
+			return nil
+		}
+		for _, r := range remoteResults {
+			fmt.Printf("remote\t%s\t%s\t%s\n", r.Type, r.Name, r.Version)
+		}
+		return nil
+	}
 	if len(args) > 1 {
-		return fmt.Errorf("usage: rho module search [query]")
+		return fmt.Errorf("usage: rho module search [--format tsv] [query]")
 	}
 
 	query := ""

@@ -137,6 +137,82 @@ func %[5]s(next http.Handler) http.Handler {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Same origin                                                                 */
+/* -------------------------------------------------------------------------- */
+
+// emitSameOriginMiddleware renders the wrapper that refuses a cross-origin
+// write.
+//
+// A cookie marked SameSite=Lax is still sent on a POST from another port of the
+// same host, because a site is a host and not an origin. So a page served by any
+// other program on the machine could make a signed-in browser post to this one.
+// The browser says where a request came from: Sec-Fetch-Site when it is recent,
+// Origin otherwise. A request that says it came from elsewhere is refused before
+// a handler sees it; a request that says nothing came from a program rather
+// than a page, and a program has no cookie of the browser's to borrow.
+//
+// skip_paths names the paths that take a cross-origin write on purpose.
+func emitSameOriginMiddleware(name string, spec MiddlewareSpec) string {
+	skip := option(spec, "skip_paths", "")
+	var b strings.Builder
+	fmt.Fprintf(&b, `// sameOriginSkip lists the paths that take a write from another origin.
+const sameOriginSkip = %q
+
+func %[2]s(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if sameOriginExempt(r.URL.Path) || sameOriginRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "refused: this request came from another origin", http.StatusForbidden)
+	})
+}
+
+// sameOriginRequest reports whether the browser said the request came from this
+// origin, or said nothing because no browser sent it.
+func sameOriginRequest(r *http.Request) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site == "same-origin" || site == "none"
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	if origin == "null" {
+		return false
+	}
+	host := origin
+	if at := strings.Index(host, "://"); at >= 0 {
+		host = host[at+3:]
+	}
+	if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" && strings.EqualFold(host, forwarded) {
+		return true
+	}
+	return strings.EqualFold(host, r.Host)
+}
+
+func sameOriginExempt(path string) bool {
+	for _, p := range strings.Split(sameOriginSkip, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if path == p || (strings.HasSuffix(p, "/") && strings.HasPrefix(path, p)) {
+			return true
+		}
+	}
+	return false
+}
+`, skip, name)
+	return b.String()
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Rate limiting                                                               */
 /* -------------------------------------------------------------------------- */
 
@@ -541,6 +617,7 @@ type authSsoSessionClaims struct {
 	Issuer    string   `+"`json:\"iss\"`"+`
 	Audience  string   `+"`json:\"aud\"`"+`
 	TokenID   string   `+"`json:\"jti\"`"+`
+	SessionID string   `+"`json:\"sid,omitempty\"`"+`
 	Scopes    []string `+"`json:\"scp,omitempty\"`"+`
 	IssuedAt  int64    `+"`json:\"iat\"`"+`
 	NotBefore int64    `+"`json:\"nbf,omitempty\"`"+`
@@ -555,6 +632,63 @@ type authSsoSessionKey struct{}
 // copy is kept, which is what lets an issuer that is briefly down not lock
 // everyone out. A key that could not be had is asked for again after a while
 // rather than never, so an application started before its issuer recovers.
+// authSsoKeyID is a key's id as the issuer names it in a token's header: the
+// first twelve bytes of the SHA-256 of its public key, base64url.
+func authSsoKeyID(key *ecdsa.PublicKey) string {
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(der)
+	return base64.RawURLEncoding.EncodeToString(sum[:12])
+}
+
+var authSsoKeyReloaded time.Time
+
+// authSsoReloadKey fetches the issuer's key again when a token names another
+// one, at most every thirty seconds.
+func authSsoReloadKey() (*ecdsa.PublicKey, bool) {
+	authSsoKeyMu.Lock()
+	if !authSsoKeyReloaded.IsZero() && time.Since(authSsoKeyReloaded) < 30*time.Second {
+		authSsoKeyMu.Unlock()
+		return nil, false
+	}
+	authSsoKeyReloaded = time.Now()
+	authSsoKeyMu.Unlock()
+	raw, err := authSsoFreshKeyBytes()
+	if err != nil {
+		return nil, false
+	}
+	key, err := authSsoParseKey(raw)
+	if err != nil {
+		return nil, false
+	}
+	authSsoKeyMu.Lock()
+	authSsoKey = key
+	authSsoKeyErr = nil
+	authSsoKeyMu.Unlock()
+	return key, true
+}
+
+// authSsoFreshKeyBytes is the issuer's key as it is now: the configured file,
+// read again, or the issuer's published key, fetched again.
+func authSsoFreshKeyBytes() ([]byte, error) {
+	if issuer := authSsoIssuerURL(); issuer != "" {
+		client := &http.Client{Timeout: 5 * time.Second}
+		if response, err := client.Get(issuer + "/auth/public-key"); err == nil {
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+			response.Body.Close()
+			if readErr == nil && response.StatusCode == http.StatusOK {
+				if block, _ := pem.Decode(body); block != nil {
+					_ = os.WriteFile(filepath.Join(authSsoStateDir(), "issuer.pem"), body, 0o600)
+					return body, nil
+				}
+			}
+		}
+	}
+	return authSsoKeyBytes()
+}
+
 func authSsoLoadKey() (*ecdsa.PublicKey, error) {
 	authSsoKeyMu.Lock()
 	defer authSsoKeyMu.Unlock()
@@ -674,6 +808,14 @@ func authSsoVerifySession(token string) (authSsoSessionClaims, bool) {
 	if err != nil || key == nil {
 		return claims, false
 	}
+	// A key id this service has not seen is a key the issuer rotated to: the
+	// key is fetched again, at most every thirty seconds, so a made-up id cannot
+	// make the service ask the issuer on every request.
+	if header.KeyID != "" && header.KeyID != authSsoKeyID(key) {
+		if fresh, ok := authSsoReloadKey(); ok {
+			key = fresh
+		}
+	}
 	signature, err := authDecodeSegment(parts[2])
 	if err != nil || len(signature) != 64 {
 		return claims, false
@@ -713,19 +855,32 @@ func authSsoRevokedPath() string {
 	return filepath.Join(authSsoStateDir(), "revoked.txt")
 }
 
-// authSsoRevoked reports whether a token id was revoked. A missing list is an
-// empty list, so a service that has never revoked anything stays open.
+// authSsoSharedRevokedPath is the machine's revocation list, the one
+// rho auth revoke --jti writes under the Rho home by default. A credential
+// revoked there is revoked for every service on the machine.
+func authSsoSharedRevokedPath() string {
+	if home := os.Getenv("RHO_HOME"); home != "" {
+		return filepath.Join(home, "auth", "revoked.txt")
+	}
+	return filepath.Join(os.Getenv("HOME"), ".rho", "auth", "revoked.txt")
+}
+
+// authSsoRevoked reports whether a token id was revoked, in the service's own
+// list or the machine's. A missing list is an empty list, so a service that has
+// never revoked anything stays open.
 func authSsoRevoked(jti string) bool {
 	if jti == "" {
 		return false
 	}
-	raw, err := os.ReadFile(authSsoRevokedPath())
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.TrimSpace(line) == jti {
-			return true
+	for _, path := range []string{authSsoRevokedPath(), authSsoSharedRevokedPath()} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.TrimSpace(line) == jti {
+				return true
+			}
 		}
 	}
 	return false
@@ -854,12 +1009,74 @@ func authSsoLookup(sid string) (authSsoSessionClaims, bool) {
 		if len(parts) > 3 && parts[3] != "" {
 			identity.Scopes = strings.Split(parts[3], ",")
 		}
+		// A session opened from an issuer's session ends with it: the issuer is
+		// asked whether that session still stands.
+		if len(parts) > 4 && parts[4] != "" && !authSsoIssuerSessionLive(parts[4]) {
+			return identity, false
+		}
 		identity.Audience = authSsoAudience
 		identity.Issuer = authSsoIssuer
 		identity.ExpiresAt = exp
 		return identity, true
 	}
 	return identity, false
+}
+
+// authSsoIssuerURL is where the issuer is: RHO_AUTH_URL, or the keeper's port on
+// this machine.
+func authSsoIssuerURL() string {
+	issuer := strings.TrimRight(os.Getenv("RHO_AUTH_URL"), "/")
+	if issuer == "" && os.Getenv("RHO_KEEPER_PORT") != "" {
+		issuer = "http://127.0.0.1:" + os.Getenv("RHO_KEEPER_PORT")
+	}
+	return issuer
+}
+
+// The issuer's answers about its sessions, kept for a minute so a page does not
+// ask on every request.
+var (
+	authSsoLiveMu   sync.Mutex
+	authSsoLiveSeen = map[string]authSsoLiveAnswer{}
+)
+
+type authSsoLiveAnswer struct {
+	live bool
+	at   time.Time
+}
+
+// authSsoIssuerSessionLive is whether the issuer's session a local session was
+// opened from still stands. The issuer says 200 for one that does and 404 for one
+// that ended; when it cannot be reached the last answer stands, and a session
+// never asked about stands, so an issuer that is down does not sign everyone out.
+func authSsoIssuerSessionLive(issuerSid string) bool {
+	authSsoLiveMu.Lock()
+	seen, known := authSsoLiveSeen[issuerSid]
+	authSsoLiveMu.Unlock()
+	if known && time.Since(seen.at) < time.Minute {
+		return seen.live
+	}
+	issuer := authSsoIssuerURL()
+	if issuer == "" {
+		return true
+	}
+	live := true
+	if known {
+		live = seen.live
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	if response, err := client.Get(issuer + "/auth/session/" + url.PathEscape(issuerSid)); err == nil {
+		response.Body.Close()
+		switch response.StatusCode {
+		case http.StatusOK:
+			live = true
+		case http.StatusNotFound, http.StatusGone:
+			live = false
+		}
+	}
+	authSsoLiveMu.Lock()
+	authSsoLiveSeen[issuerSid] = authSsoLiveAnswer{live: live, at: time.Now()}
+	authSsoLiveMu.Unlock()
+	return live
 }
 
 func authSsoCallback(w http.ResponseWriter, r *http.Request) bool {
@@ -900,7 +1117,8 @@ func authSsoCallback(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	_, _ = f.WriteString(sid + "|" + strconv.FormatInt(expires, 10) + "|" +
-		authSsoField(claims.Subject) + "|" + authSsoField(strings.Join(claims.Scopes, ",")) + "\n")
+		authSsoField(claims.Subject) + "|" + authSsoField(strings.Join(claims.Scopes, ",")) + "|" +
+		authSsoField(claims.SessionID) + "\n")
 	_ = f.Close()
 	cookiePath := authSsoBasePath
 	if cookiePath == "" {
@@ -944,6 +1162,40 @@ func authSsoHoldsScopes(held []string) bool {
 // authSsoDenyScope answers a request whose verified token did not carry the
 // scopes the service requires. An API caller gets JSON; a browser gets a plain
 // forbidden page, which is not the login a missing session would cause.
+// authSsoReadOnly reports whether every scope a principal holds only reads: a
+// scope that ends in ":read" grants reading and nothing else, so a principal
+// holding only those may look and may not change anything.
+func authSsoReadOnly(held []string) bool {
+	if len(held) == 0 {
+		return false
+	}
+	for _, scope := range held {
+		if scope == "*" || !strings.HasSuffix(scope, ":read") {
+			return false
+		}
+	}
+	return true
+}
+
+// authSsoAdmit is whether a principal may make this request: it holds the
+// scopes the service requires, and a request that changes something is not made
+// with read-only scopes. It answers the refusal itself.
+func authSsoAdmit(w http.ResponseWriter, r *http.Request, held []string) bool {
+	if !authSsoHoldsScopes(held) {
+		authSsoDenyScope(w, r)
+		return false
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	if authSsoReadOnly(held) {
+		authSsoDenyScope(w, r)
+		return false
+	}
+	return true
+}
+
 func authSsoDenyScope(w http.ResponseWriter, r *http.Request) {
 	if authSsoWantsJSON(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient scope"})
@@ -982,8 +1234,7 @@ func withAuth(next http.Handler) http.Handler {
 				r.Header.Set("X-Rho-Subject", claims.Subject)
 				r.Header.Set("X-Rho-Scopes", strings.Join(claims.Scopes, ","))
 				r.Header.Set("X-Rho-Aud", claims.Audience)
-				if !authSsoHoldsScopes(claims.Scopes) {
-					authSsoDenyScope(w, r)
+				if !authSsoAdmit(w, r, claims.Scopes) {
 					return
 				}
 				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, claims)
@@ -997,6 +1248,9 @@ func withAuth(next http.Handler) http.Handler {
 				r.Header.Set("X-Rho-Subject", claims.Subject)
 				r.Header.Set("X-Rho-Scopes", strings.Join(claims.Scopes, ","))
 				r.Header.Set("X-Rho-Aud", claims.Audience)
+				if !authSsoAdmit(w, r, claims.Scopes) {
+					return
+				}
 				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, claims)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -1005,6 +1259,9 @@ func withAuth(next http.Handler) http.Handler {
 				r.Header.Set("X-Rho-Subject", identity.Subject)
 				r.Header.Set("X-Rho-Scopes", strings.Join(identity.Scopes, ","))
 				r.Header.Set("X-Rho-Aud", identity.Audience)
+				if !authSsoAdmit(w, r, identity.Scopes) {
+					return
+				}
 				ctx := context.WithValue(r.Context(), authSsoSessionKey{}, identity)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

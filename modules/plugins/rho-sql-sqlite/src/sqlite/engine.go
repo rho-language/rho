@@ -305,6 +305,16 @@ func render(query rhosql.Query, values []rhosql.Value) (string, []any, []string)
 	}
 
 	positional := 0
+	// A named parameter is one value however often it is written: `:level`
+	// twice is one argument. It is rendered as `?N`, its ordinal, which sqlite
+	// binds by number, so the second mention takes the same value as the first.
+	ordinals := map[string]int{}
+	for _, parameter := range query.Parameters {
+		if parameter.Marker == rhosql.MarkerNamed {
+			ordinals[parameter.Name] = parameter.Ordinal
+		}
+	}
+	highest := 0
 	out := &strings.Builder{}
 	runes := []rune(query.SQL)
 	for i := 0; i < len(runes); i++ {
@@ -357,6 +367,15 @@ func render(query rhosql.Query, values []rhosql.Value) (string, []any, []string)
 				i++
 			}
 			i--
+			if ordinal, known := ordinals[name.String()]; known {
+				fmt.Fprintf(out, "?%d", ordinal)
+				if ordinal > highest {
+					highest = ordinal
+				}
+				warnings = append(warnings, fmt.Sprintf(
+					"the named parameter %s was written as ?%d, which is how sqlite numbers it", name.String(), ordinal))
+				continue
+			}
 			out.WriteRune('?')
 			warnings = append(warnings,
 				"the named parameter "+name.String()+" was written positionally")
@@ -364,6 +383,9 @@ func render(query rhosql.Query, values []rhosql.Value) (string, []any, []string)
 			continue
 		}
 		out.WriteRune(runes[i])
+	}
+	if highest > positional {
+		positional = highest
 	}
 	return out.String(), orderedValues(byOrdinal, positional), warnings
 }

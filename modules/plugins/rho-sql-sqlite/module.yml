@@ -1,7 +1,7 @@
 module:
   name: rho-sql-sqlite
   type: plugin
-  version: 0.1.0
+  version: 0.1.1
   description: Runs a Rho service's SQL against a sqlite database
   author: Aurel Miron
   maintainer: Aurel Miron

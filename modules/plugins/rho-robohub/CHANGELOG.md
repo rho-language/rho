@@ -6,6 +6,17 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.5.0] - 2026-11-13
+
+The mqtt port: `mqtt_publish` (QoS 0 or 1, the connection kept for the next
+message), `mqtt_follow` (a filter followed in the background, reconnecting, the
+newest message of every topic kept and optionally appended to a file as JSON
+lines), `mqtt_latest` and `mqtt_topics`. MQTT 3.1.1 with the standard library; a
+broker user's password is read from a file.
+`mqtt_relay` publishes every line appended to a file to one topic and
+`mqtt_follow_lines` appends every payload heard on a filter to a file as it came,
+so a file of lines crosses the broker unchanged (Mesh's live feed).
+
 ## [0.4.2] - 2026-11-13
 
 The gateway port dials a parent: `gateway_parent_start`, `gateway_parent_send`,

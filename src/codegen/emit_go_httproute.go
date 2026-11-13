@@ -94,6 +94,10 @@ const (
 	// MiddlewareAuth verifies an ES256 session cookie and sends a browser to
 	// the authorization server when there is none.
 	MiddlewareAuth = "auth"
+	// MiddlewareSameOrigin refuses a state-changing request a browser sent
+	// from another origin, which a SameSite cookie does not stop when the
+	// other origin is a different port on the same host.
+	MiddlewareSameOrigin = "same_origin"
 )
 
 // registeredRouters lists the routers a target may name.
@@ -649,21 +653,23 @@ func pathWildcardNames(pattern string) []string {
 // middlewareFuncs gives it, so the pipeline and the implementation cannot
 // disagree about what a middleware is called.
 var middlewareEmitters = map[string]func(name string, spec MiddlewareSpec) string{
-	MiddlewareRequestID: emitRequestIDMiddleware,
-	MiddlewareCORS:      emitCORSMiddleware,
-	MiddlewareRateLimit: emitRateLimitMiddleware,
-	MiddlewareJWT:       emitJWTMiddleware,
-	MiddlewareAuth:      emitAuthMiddleware,
+	MiddlewareRequestID:  emitRequestIDMiddleware,
+	MiddlewareCORS:       emitCORSMiddleware,
+	MiddlewareRateLimit:  emitRateLimitMiddleware,
+	MiddlewareJWT:        emitJWTMiddleware,
+	MiddlewareAuth:       emitAuthMiddleware,
+	MiddlewareSameOrigin: emitSameOriginMiddleware,
 }
 
 // middlewareFuncs are the Go names of the wrappers. The spellings follow the
 // usual Go convention, where an initialism keeps its capitals.
 var middlewareFuncs = map[string]string{
-	MiddlewareRequestID: "withRequestID",
-	MiddlewareCORS:      "withCORS",
-	MiddlewareRateLimit: "withRateLimit",
-	MiddlewareJWT:       "withJWT",
-	MiddlewareAuth:      "withAuth",
+	MiddlewareRequestID:  "withRequestID",
+	MiddlewareCORS:       "withCORS",
+	MiddlewareRateLimit:  "withRateLimit",
+	MiddlewareJWT:        "withJWT",
+	MiddlewareAuth:       "withAuth",
+	MiddlewareSameOrigin: "withSameOrigin",
 }
 
 // RegisteredMiddlewares lists the wrappers a target may compose.

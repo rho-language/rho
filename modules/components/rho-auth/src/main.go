@@ -70,6 +70,8 @@ func run(args []string) int {
 		return verify(args[1:])
 	case "client":
 		return client(args[1:])
+	case "user":
+		return user(args[1:])
 	case "service-token":
 		return serviceToken(args[1:], os.Stdin)
 	case "help", "-h", "--help":
@@ -83,7 +85,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Println("Usage: rho auth <login|status|list|inspect|revoke|keygen|ticket|verify|client|service-token> [flags]")
+	fmt.Println("Usage: rho auth <login|status|list|inspect|revoke|keygen|ticket|verify|client|user|service-token> [flags]")
 }
 
 // openStore opens the credential store in the user's Rho home.
@@ -326,7 +328,7 @@ func revoke(args []string) int {
 		jti := options["jti"]
 		file := options["file"]
 		if file == "" {
-			home, err := os.UserHomeDir()
+			home, err := auth.RhoHome()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "rho auth revoke:", err)
 				return 1
@@ -453,6 +455,7 @@ func ticket(args []string) int {
 		TokenID:     hex.EncodeToString(raw),
 		RedirectURI: options["redirect-uri"],
 		Nonce:       options["nonce"],
+		SessionID:   options["sid"],
 		Scopes:      scopes,
 		IssuedAt:    now.Unix(),
 		NotBefore:   now.Unix(),

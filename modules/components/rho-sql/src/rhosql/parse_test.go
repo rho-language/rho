@@ -377,3 +377,15 @@ func TestAnEmptyQueryFileSaysSo(t *testing.T) {
 		t.Errorf("an empty file is an error rather than a note: %+v", diagnostics)
 	}
 }
+
+// An insert with a conflict clause names its table after it, as SQLite writes it.
+func TestAnInsertWithAConflictClauseNamesItsTable(t *testing.T) {
+	schema, diagnostics := ParseQueries("q.sql", "-- name: seed\nINSERT OR IGNORE INTO categories (name) VALUES (:name);\n\n"+
+		"-- name: bind\nINSERT OR REPLACE INTO item_bindings (item_id, source) VALUES (:item_id, :source);\n")
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics: %v", diagnostics)
+	}
+	if got := schema.Queries[0].Table + "," + schema.Queries[1].Table; got != "categories,item_bindings" {
+		t.Errorf("tables %q", got)
+	}
+}

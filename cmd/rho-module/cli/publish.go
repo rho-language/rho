@@ -34,14 +34,26 @@ import (
 
 func Publish(args []string) error {
 	dir := "."
-	if len(args) == 1 {
-		dir = args[0]
+	localOnly := false
+	for _, arg := range args {
+		switch arg {
+		case "--local", "-local":
+			// Installed here and nowhere else: a release tried on this machine
+			// before it goes to the remote registry.
+			localOnly = true
+		default:
+			dir = arg
+		}
 	}
 
-	if err := core.PublishModule(dir); err != nil {
+	if err := core.PublishModuleTo(dir, localOnly); err != nil {
 		return fmt.Errorf("rho module publish: %w", err)
 	}
 
+	if localOnly {
+		fmt.Println("Module installed in the local registry only:", dir)
+		return nil
+	}
 	fmt.Println("Module published:", dir)
 	return nil
 }

@@ -186,6 +186,11 @@ func tableOf(verb Verb, rest string) string {
 		}
 		return ""
 	case VerbInsert:
+		// `INSERT OR IGNORE INTO t` and its kin (REPLACE, ABORT, FAIL,
+		// ROLLBACK) name the table after the conflict clause.
+		if len(fields) > 2 && strings.EqualFold(fields[0], "or") {
+			fields = fields[2:]
+		}
 		if len(fields) > 1 && strings.EqualFold(fields[0], "into") {
 			return unquote(fields[1])
 		}

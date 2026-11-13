@@ -361,3 +361,71 @@ build:
 		t.Errorf("undeclared provider: error = %v", err)
 	}
 }
+
+// A module the application depends on may use an interface the application
+// does not bind: the calls answer nothing, and the module can tell. An unbound
+// import in the application's own sources is still refused.
+func TestADependencyMayUseAnInterfaceTheApplicationDoesNotBind(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	workspace := t.TempDir()
+	write := func(path, text string) {
+		full := filepath.Join(workspace, filepath.FromSlash(path))
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("acme/.git/HEAD", "ref: refs/heads/main\n")
+	write("acme/modules/gate/module.yml", "module:\n  name: acme-gate\n  type: module\n  version: 1.0.0\nmain: src/gate.rho\nprovides:\n  import: acme.gate\n  exports: [switch_on, provider]\ninterface:\n  functions:\n    act: \"(source: string) bool\"\n")
+	write("acme/modules/gate/src/gate.rho", `module gate
+fn provider() string {
+    return bound_providers()
+}
+fn switch_on(source: string) bool {
+    if provider() == "" {
+        return false
+    }
+    return act_to(provider(), source)
+}
+`)
+	write("acme/modules/stock/module.yml", "module:\n  name: acme-stock\n  type: module\n  version: 1.0.0\nmain: src/stock.rho\nprovides:\n  import: acme.stock\n  exports: [heat]\ndeps:\n  acme:\n    acme-gate: \">=1.0.0\"\n")
+	write("acme/modules/stock/src/stock.rho", `module stock
+import acme.gate
+fn heat() string {
+    if gate.provider() == "" {
+        return "no gateway"
+    }
+    if gate.switch_on("heater.switch") {
+        return "on"
+    }
+    return "refused"
+}
+`)
+	write("app/.git/HEAD", "ref: refs/heads/main\n")
+	write("app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndeps:\n  acme:\n    acme-stock: \">=1.0.0\"\n    acme-gate: \">=1.0.0\"\nbuild:\n  language: go\n  targets:\n    - go\n")
+	write("app/src/main.rho", "module main\nimport acme.stock\nfn main() void {\n    print(stock.heat())\n}\n")
+	t.Setenv("RHO_WORKSPACE", workspace)
+	t.Setenv("RHO_APP_WORKSPACE", "")
+
+	entry := filepath.Join(workspace, "app", "src", "main.rho")
+	dirs, err := GenerateAllTargets(entry, "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	binary := filepath.Join(t.TempDir(), "app")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, ".")
+	build.Dir = dirs[0]
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	if out, _ := exec.Command(binary).Output(); string(out) != "no gateway" {
+		t.Errorf("output = %q", out)
+	}
+
+	write("app/src/main.rho", "module main\nimport acme.gate\nfn main() void {\n    print(gate.provider())\n}\n")
+	if _, err := GenerateAllTargets(entry, "", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "acme.gate is an interface; bind it") {
+		t.Errorf("an unbound import in the application: error = %v", err)
+	}
+}

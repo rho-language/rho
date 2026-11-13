@@ -392,3 +392,32 @@ func TestAMarkerSqliteDoesNotTakeIsRenderedAndReported(t *testing.T) {
 		t.Error("the rewrite was not reported; a caller cannot see what was changed")
 	}
 }
+
+// A named parameter written twice is one value: the statement takes it once and
+// both mentions see it.
+func TestANamedParameterWrittenTwiceIsOneValue(t *testing.T) {
+	e := openTest(t)
+	schema := parse(t,
+		"CREATE TABLE entries (id integer PRIMARY KEY, level text NOT NULL);\n",
+		"-- name: by_level\nSELECT id FROM entries WHERE (:level = '' OR level = :level);\n")
+	if _, err := e.Migrate(rhosql.MigrateRequest{Schema: schema}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec("INSERT INTO entries (level) VALUES ('info'), ('error')"); err != nil {
+		t.Fatal(err)
+	}
+	query, _ := schema.Query("by_level")
+	if len(query.Parameters) != 1 {
+		t.Fatalf("the statement takes %d values, want one", len(query.Parameters))
+	}
+	for value, want := range map[string]int{"": 2, "error": 1} {
+		response, err := e.Query(rhosql.QueryRequest{Name: query.Name, Query: query,
+			Values: []rhosql.Value{{Ordinal: 1, Kind: rhosql.ValueText, Text: value}}})
+		if err != nil {
+			t.Fatalf("level %q: %v", value, err)
+		}
+		if len(response.Rows) != want {
+			t.Errorf("level %q: %d rows, want %d (%s)", value, len(response.Rows), want, response.SQL)
+		}
+	}
+}

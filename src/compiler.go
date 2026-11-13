@@ -746,6 +746,11 @@ func sqlBridge(projectRoot string) *projectgen.SQL {
 	if err != nil || manifest == nil || !manifest.SQL.Declared() {
 		return nil
 	}
+	// A module that names no driver contributes its tables to the projects
+	// that depend on it and has no port of its own.
+	if manifest.SQL.Driver == "" {
+		return nil
+	}
 	declared := manifest.SQL
 	bridge := &projectgen.SQL{
 		Driver:  declared.Driver,
@@ -1237,7 +1242,13 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		// An interface is completed by the application's binding: the calls to
 		// its providers, generated from `bind:`, become part of the interface.
 		if provided && providerManifest.Interface != nil && !alreadyLoaded {
-			binding, bindErr := loadBinding(imp.Name, providerManifest.Interface, projectRoot, dependencyRoots, components, visited)
+			// A module the application depends on may use an interface the
+			// application does not bind — inventory can switch a device when
+			// there is a gateway, and is an inventory when there is none. The
+			// application's own sources may not: an unbound import there is a
+			// binding someone forgot.
+			optional := !withinDir(abs, projectRoot)
+			binding, bindErr := loadBinding(imp.Name, providerManifest.Interface, projectRoot, dependencyRoots, components, visited, optional)
 			if bindErr != nil {
 				return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, bindErr)
 			}
@@ -1276,14 +1287,20 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 // declares, must say it implements the interface, may only be configured with
 // keys it declares, and must export every function with the interface's
 // signature.
-func loadBinding(iface string, spec *deps.InterfaceSpec, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool) (*ast.Module, error) {
+func loadBinding(iface string, spec *deps.InterfaceSpec, projectRoot string, dependencyRoots []string, components []installedComponent, visited map[string]bool, optional bool) (*ast.Module, error) {
 	app, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
 	if err != nil || app == nil {
 		return nil, fmt.Errorf("%s is an interface, and the application's module.yml binding it could not be read", iface)
 	}
 	bind, bound := app.Bind[iface]
 	if !bound || len(bind.Providers) == 0 {
-		return nil, fmt.Errorf("%s is an interface; bind it to providers in module.yml (bind: %s: providers: [...])", iface, iface)
+		if !optional {
+			return nil, fmt.Errorf("%s is an interface; bind it to providers in module.yml (bind: %s: providers: [...])", iface, iface)
+		}
+		// Bound to nothing: every call answers its zero value, and the module
+		// that asked can tell by provider() being empty.
+		fmt.Fprintf(os.Stderr, "warning: %s does not bind %s, which a module it depends on imports; those calls answer nothing\n", app.ModuleName, iface)
+		bind = deps.BindSpec{}
 	}
 	declared := map[string]deps.DepSpec{}
 	for _, dep := range app.Deps {
@@ -2399,4 +2416,10 @@ func resolutionOf(entryPath string, dependencyRoots []string) (map[string]bool, 
 		return configured, nil
 	}
 	return configured, guarded
+}
+
+// withinDir reports whether path is dir or inside it.
+func withinDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

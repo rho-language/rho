@@ -38,6 +38,7 @@ func main() {
 func run(args []string) int {
 	options := rhodoctor.Options{}
 	asJSON := false
+	asTSV := false
 	quiet := false
 
 	for index := 0; index < len(args); index++ {
@@ -57,6 +58,8 @@ func run(args []string) int {
 		switch name {
 		case "json":
 			asJSON = true
+		case "tsv":
+			asTSV = true
 		case "quiet", "q":
 			// The one line, for a status bar or a prompt.
 			quiet = true
@@ -65,6 +68,13 @@ func run(args []string) int {
 				options.Module = given
 			} else {
 				fmt.Fprintln(os.Stderr, "rho doctor: --component needs a module name")
+				return 2
+			}
+		case "path":
+			if given, ok := take(); ok {
+				options.Path = given
+			} else {
+				fmt.Fprintln(os.Stderr, "rho doctor: --path needs a folder")
 				return 2
 			}
 		case "enabled", "active":
@@ -88,6 +98,8 @@ func run(args []string) int {
 	switch {
 	case quiet:
 		fmt.Println(rhodoctor.Summary(report))
+	case asTSV:
+		fmt.Print(rhodoctor.TSV(report))
 	case asJSON:
 		encoded, err := rhodoctor.JSON(report)
 		if err != nil {
@@ -116,7 +128,9 @@ func usage(out *os.File) {
 
 flags:
   --json              the report as JSON, for rho keeper and for an editor
+  --tsv               one requirement per line, tab-separated
   --component NAME    check one module rather than all of them
+  --path DIR          check the module in a folder, installed or not
   --enabled           check only the modules that are enabled
   --quiet, -q         one line, for a status bar
 

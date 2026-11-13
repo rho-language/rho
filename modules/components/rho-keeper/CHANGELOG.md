@@ -6,6 +6,12 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.1.7] - 2026-11-13
+
+`sync`, `fix` and `install` take `--path DIR`, for a module in a folder that no
+registry lists — an application in its checkout. A switch such as `--yes` is no
+longer taken for the flag value of the name after it.
+
 ## [0.1.0] - 2026-10-01
 
 Initial release: a local dashboard for the installation — every module, the

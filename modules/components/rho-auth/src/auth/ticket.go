@@ -41,16 +41,20 @@ type KeyPair struct {
 // resource server must check before it trusts the ticket: who, for which app,
 // issued by whom, for how long, and the one-use identifier.
 type TicketClaims struct {
-	Subject     string   `json:"sub"`
-	Issuer      string   `json:"iss"`
-	Audience    string   `json:"aud"`
-	TokenID     string   `json:"jti"`
-	RedirectURI string   `json:"redirect_uri,omitempty"`
-	Nonce       string   `json:"nonce,omitempty"`
-	Scopes      []string `json:"scp,omitempty"`
-	IssuedAt    int64    `json:"iat"`
-	NotBefore   int64    `json:"nbf,omitempty"`
-	ExpiresAt   int64    `json:"exp"`
+	Subject     string `json:"sub"`
+	Issuer      string `json:"iss"`
+	Audience    string `json:"aud"`
+	TokenID     string `json:"jti"`
+	RedirectURI string `json:"redirect_uri,omitempty"`
+	Nonce       string `json:"nonce,omitempty"`
+	// SessionID is the issuer's session the ticket was minted from. An
+	// application keeps it with its own session and asks the issuer whether it
+	// still stands, so signing out at the issuer signs out everywhere.
+	SessionID string   `json:"sid,omitempty"`
+	Scopes    []string `json:"scp,omitempty"`
+	IssuedAt  int64    `json:"iat"`
+	NotBefore int64    `json:"nbf,omitempty"`
+	ExpiresAt int64    `json:"exp"`
 }
 
 // GenerateKeyPair creates a P-256 key. The curve is named rather than

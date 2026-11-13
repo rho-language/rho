@@ -157,7 +157,42 @@ var (
 var (
 	rhoSqlMuMessage  sync.Mutex
 	rhoSqlLastErrMsg string
+	// rhoSqlFailures is, per handle, why its last generated statement failed;
+	// a handle whose last statement succeeded has no entry. A handle is opened
+	// per request, so the answer is the request's own, not another one's.
+	rhoSqlFailures = map[uint64]string{}
 )
+
+// rhoSqlStatementBegin forgets a handle's last failure: a statement that
+// succeeds must not be reported as the one before it that did not.
+func rhoSqlStatementBegin(db SqlDb) {
+	rhoSqlMuMessage.Lock()
+	delete(rhoSqlFailures, db.raw)
+	rhoSqlMuMessage.Unlock()
+}
+
+// rhoSqlStatementFail records why a generated statement failed, against its
+// handle, and answers the zero it then returns.
+func rhoSqlStatementFail(db SqlDb, err error) uint32 {
+	message := "the statement failed"
+	if err != nil {
+		message = err.Error()
+	}
+	rhoSqlMuMessage.Lock()
+	rhoSqlFailures[db.raw] = message
+	rhoSqlLastErrMsg = message
+	rhoSqlMuMessage.Unlock()
+	return 0
+}
+
+// stdSqlSqlFailed is why the handle's last generated statement failed, or ""
+// when it succeeded — which is how a zero that means "no rows" is told apart
+// from a zero that means "it did not run".
+func stdSqlSqlFailed(db SqlDb) string {
+	rhoSqlMuMessage.Lock()
+	defer rhoSqlMuMessage.Unlock()
+	return rhoSqlFailures[db.raw]
+}
 
 func rhoSqlFail(err error) int32 {
 	if err == nil {
@@ -291,6 +326,9 @@ func stdSqlSqlClose(db SqlDb) {
 		handle.Close()
 		delete(rhoSqlHandles, db.raw)
 	}
+	rhoSqlMuMessage.Lock()
+	delete(rhoSqlFailures, db.raw)
+	rhoSqlMuMessage.Unlock()
 }
 
 func stdSqlSqlLastMessage(db SqlDb) string {
@@ -316,8 +354,11 @@ func stdSqlSqlApply(db SqlDb, schema string) uint32 {
 		if _, err := handle.Exec(statement); err != nil {
 			// A table that already exists is what a restart looks like, not a
 			// failure: the second application finds the tables and changes
-			// nothing. Anything else is reported.
-			if strings.Contains(err.Error(), "already exists") {
+			// nothing. So is a column a schema adds to an older table with
+			// ALTER TABLE ... ADD COLUMN when the table, created from the
+			// current CREATE, already has it. Anything else is reported.
+			if strings.Contains(err.Error(), "already exists") ||
+				strings.Contains(err.Error(), "duplicate column name") {
 				continue
 			}
 			rhoSqlFail(err)
@@ -941,6 +982,14 @@ func sqlPortQueries(ctx PortContext) string {
 	return b.String()
 }
 
+// sqlParamName is a statement's parameter as the generated function names it:
+// prefixed, so a column called `handle`, `rows` or `err` cannot be the same
+// name as one of the function's own locals. The Rho that calls it passes its
+// values by position, so the Go name is nobody else's business.
+func sqlParamName(name string) string {
+	return "arg" + strings.ToUpper(goFuncName(name)[:1]) + goFuncName(name)[1:]
+}
+
 // writeSQLStatement is one generated function.
 func writeSQLStatement(b *strings.Builder, statement SQLStatement) {
 	// The parameter order is the extern's: the values the statement takes, then
@@ -950,7 +999,7 @@ func writeSQLStatement(b *strings.Builder, statement SQLStatement) {
 	parameters := []string{}
 	for _, parameter := range statement.Parameters {
 		parameters = append(parameters,
-			fmt.Sprintf("%s %s", goFuncName(parameter.Name), parameter.GoType))
+			fmt.Sprintf("%s %s", sqlParamName(parameter.Name), parameter.GoType))
 	}
 	parameters = append(parameters, "db SqlDb")
 	returnsRows := statement.Result != ""
@@ -974,10 +1023,11 @@ func writeSQLStatement(b *strings.Builder, statement SQLStatement) {
 	// A handle is a pointer to nothing, which a backend lowers to a raw
 	// address. It is read as a number here rather than dereferenced, because
 	// there is nothing on the other side that this side owns or may look at.
+	b.WriteString("\trhoSqlStatementBegin(db)\n")
 	b.WriteString("\thandle, ok := rhoSqlHandle(db.raw)\n")
-	b.WriteString("\tif !ok {\n\t\treturn 0\n\t}\n")
+	b.WriteString("\tif !ok {\n\t\treturn rhoSqlStatementFail(db, fmt.Errorf(\"the database is not open\"))\n\t}\n")
 	fmt.Fprintf(b, "\tprepared, err := handle.Prepare(%s)\n", goQuoted(statement.SQL))
-	b.WriteString("\tif err != nil {\n\t\treturn 0\n\t}\n")
+	b.WriteString("\tif err != nil {\n\t\treturn rhoSqlStatementFail(db, err)\n\t}\n")
 	b.WriteString("\tdefer prepared.Close()\n")
 
 	// Each value is turned into the tagged form the driver is handed, so a
@@ -987,7 +1037,7 @@ func writeSQLStatement(b *strings.Builder, statement SQLStatement) {
 	arguments := make([]string, 0, len(statement.Parameters))
 	for _, parameter := range statement.Parameters {
 		arguments = append(arguments,
-			fmt.Sprintf("rhoSqlBind(%d, %s)", sqlValueKind(parameter), goFuncName(parameter.Name)))
+			fmt.Sprintf("rhoSqlBind(%d, %s)", sqlValueKind(parameter), sqlParamName(parameter.Name)))
 	}
 
 	if returnsRows {
@@ -1001,14 +1051,15 @@ func writeSQLStatement(b *strings.Builder, statement SQLStatement) {
 // writeSQLExec is a statement that changes rows rather than returning them.
 func writeSQLExec(b *strings.Builder, statement SQLStatement, arguments []string) {
 	if !statement.Affected {
-		fmt.Fprintf(b, "\tif _, err := prepared.Exec(%s); err == nil {\n\t\treturn 1\n\t}\n",
+		fmt.Fprintf(b, "\tif _, err := prepared.Exec(%s); err != nil {\n\t\treturn rhoSqlStatementFail(db, err)\n\t}\n",
 			strings.Join(arguments, ", "))
+		b.WriteString("\treturn 1\n")
 		return
 	}
 	// A write reports how many rows it changed, which is the only thing a caller
 	// can judge it by: a write that returns nothing else succeeded or did not.
 	fmt.Fprintf(b, "\tresult, err := prepared.Exec(%s)\n", strings.Join(arguments, ", "))
-	b.WriteString("\tif err != nil {\n\t\treturn 0\n\t}\n")
+	b.WriteString("\tif err != nil {\n\t\treturn rhoSqlStatementFail(db, err)\n\t}\n")
 	b.WriteString("\tif rows, err := result.RowsAffected(); err == nil && rows > 0 {\n")
 	b.WriteString("\t\treturn uint32(rows)\n\t}\n")
 }
@@ -1016,7 +1067,7 @@ func writeSQLExec(b *strings.Builder, statement SQLStatement, arguments []string
 // writeSQLSelect is a statement that returns rows.
 func writeSQLSelect(b *strings.Builder, statement SQLStatement, arguments []string) {
 	fmt.Fprintf(b, "\trows, err := prepared.Query(%s)\n", strings.Join(arguments, ", "))
-	b.WriteString("\tif err != nil {\n\t\treturn 0\n\t}\n")
+	b.WriteString("\tif err != nil {\n\t\treturn rhoSqlStatementFail(db, err)\n\t}\n")
 	b.WriteString("\tdefer rows.Close()\n")
 	b.WriteString("\tvar wrote uint32\n")
 	b.WriteString("\tfor wrote < capacity && rows.Next() {\n")
@@ -1037,6 +1088,9 @@ func writeSQLSelect(b *strings.Builder, statement SQLStatement, arguments []stri
 	b.WriteString("\t\t}\n")
 	b.WriteString("\t\twrote++\n")
 	b.WriteString("\t}\n")
+	// A read that stopped because the engine failed part-way is a failure,
+	// not a short answer.
+	b.WriteString("\tif err := rows.Err(); err != nil {\n\t\treturn rhoSqlStatementFail(db, err)\n\t}\n")
 	b.WriteString("\treturn wrote\n")
 }
 

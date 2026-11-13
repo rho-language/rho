@@ -16,7 +16,7 @@
 module:
   name: rho-doctor
   type: component
-  version: 0.1.0
+  version: 0.1.1
   author: Aurel Miron
   description: Reports what the installed modules need from this machine, and what it has
   command: doctor

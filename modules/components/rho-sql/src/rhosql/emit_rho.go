@@ -142,11 +142,12 @@ func externSignature(query GeneratedQuery, keyword bool) string {
 // writeRhoQuery is one generated function.
 //
 // It is a wrapper rather than the query itself, and it is a wrapper that has
-// something to do: a read refuses when there is no room for a row, because a
-// read that silently answers nothing is a read that looks like a table that is
-// empty. A write has no such ambiguity — it answered a count — so what it
-// reports is the change, and a zero is a change of nothing rather than a
-// failure to try.
+// something to do. The statement answers how many rows it read or changed, and
+// zero is both "none" and "it did not run"; the port records which, against the
+// handle, and the wrapper asks (sql_failed) — so a failure is an Err carrying
+// the engine's own message, and a read that found nothing or a write that
+// changed nothing is an Ok(0). A read also refuses when there is no room for a
+// row, which is the caller's mistake rather than the table's state.
 func writeRhoQuery(b *strings.Builder, query GeneratedQuery) {
 	fmt.Fprintf(b, "fn %s(", query.Name)
 	for index, parameter := range query.Parameters {
@@ -167,6 +168,8 @@ func writeRhoQuery(b *strings.Builder, query GeneratedQuery) {
 			fmt.Fprintf(b, "%s, ", name)
 		}
 		b.WriteString("db)\n")
+		b.WriteString("    let failure: string = sql_failed(db)\n")
+		b.WriteString("    if failure != \"\" {\n        return Err[u32, SqlError](SqlError{ failure, -1 })\n    }\n")
 		b.WriteString("    return Ok[u32, SqlError](changed)\n}\n\n")
 		return
 	}
@@ -177,8 +180,8 @@ func writeRhoQuery(b *strings.Builder, query GeneratedQuery) {
 		fmt.Fprintf(b, "%s, ", name)
 	}
 	b.WriteString("db, out, capacity)\n")
-	b.WriteString("    if wrote == 0 {\n")
-	b.WriteString("        return Err[u32, SqlError](SqlError{ \"the statement failed\", -1 })\n    }\n")
+	b.WriteString("    let failure: string = sql_failed(db)\n")
+	b.WriteString("    if failure != \"\" {\n        return Err[u32, SqlError](SqlError{ failure, -1 })\n    }\n")
 	b.WriteString("    return Ok[u32, SqlError](wrote)\n}\n\n")
 }
 
@@ -260,5 +263,20 @@ func rhoFieldName(name string) string {
 	if d := b.String(); d[0] >= '0' && d[0] <= '9' {
 		return "n" + d
 	}
+	// A column called `fn` or `type` is a fine column and no name at all in
+	// Rho, where it is a keyword: it is written with a suffix, so the generated
+	// file parses and the column keeps a recognisable name.
+	if rhoKeywords[b.String()] {
+		return b.String() + "Value"
+	}
 	return b.String()
+}
+
+// rhoKeywords are the words the language reserves (src/frontend/lexer).
+var rhoKeywords = map[string]bool{
+	"module": true, "import": true, "include": true, "struct": true, "enum": true,
+	"fn": true, "extern": true, "if": true, "for": true, "match": true, "return": true,
+	"reverse": true, "step": true, "let": true, "const": true, "var": true,
+	"while": true, "else": true, "break": true, "continue": true, "true": true,
+	"false": true, "type": true, "route": true,
 }

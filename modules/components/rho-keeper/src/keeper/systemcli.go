@@ -81,6 +81,8 @@ type SyncOptions struct {
 	Yes bool
 	// Module narrows the fix to one module's requirements.
 	Module string
+	// Path is a module's folder, for a module no registry lists.
+	Path string
 	// Reader is where the questions are asked, so that a wizard can answer them
 	// without a terminal.
 	Reader io.Reader
@@ -102,7 +104,7 @@ func Sync(options SyncOptions) error {
 		options.Reader = os.Stdin
 	}
 
-	report, problem := ReadReport()
+	report, problem := ReadReportAt(options.Path)
 	if problem != "" {
 		return fmt.Errorf("cannot check what this machine has: %s", problem)
 	}
@@ -167,7 +169,7 @@ func Fix(options SyncOptions) error {
 		options.Reader = os.Stdin
 	}
 
-	report, problem := ReadReport()
+	report, problem := ReadReportAt(options.Path)
 	if problem != "" {
 		return fmt.Errorf("cannot check what this machine has: %s", problem)
 	}
@@ -232,7 +234,7 @@ func Install(module string, dependency string, options SyncOptions) error {
 	if options.Writer == nil {
 		options.Writer = os.Stdout
 	}
-	report, problem := ReadReport()
+	report, problem := ReadReportAt(options.Path)
 	if problem != "" {
 		return fmt.Errorf("cannot check what this machine has: %s", problem)
 	}

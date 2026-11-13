@@ -417,3 +417,28 @@ func TestAnEmptyReportSaysNothingIsDeclared(t *testing.T) {
 		t.Error("expected a one-line summary even with nothing to say")
 	}
 }
+
+// An application in a checkout is in no registry, and still asks what it needs:
+// --path checks the module in that folder and nothing else.
+func TestAModuleInAFolderIsCheckedByItsPath(t *testing.T) {
+	dir := t.TempDir()
+	manifest := "module:\n  name: demo\n  type: rho\n  version: 0.1.0\ndescription: A demo application.\nmain: src/main.rho\nsystem_deps:\n  executables:\n    - name: flock\n    - name: nothere\n"
+	if err := os.WriteFile(dir+"/module.yml", []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newMachine()
+	m.programs["flock"] = "/usr/bin/flock"
+	options := m.options()
+	options.Path = dir
+	report := Check(options)
+	if len(report.Scanned) != 1 || report.Scanned[0] != "demo" {
+		t.Fatalf("scanned %v, want only demo", report.Scanned)
+	}
+	statuses := map[string]sysdep.Status{}
+	for _, result := range report.Results {
+		statuses[result.Dep] = result.Status
+	}
+	if statuses["flock"] != sysdep.StatusOK || statuses["nothere"] != sysdep.StatusMissing {
+		t.Fatalf("statuses %v", statuses)
+	}
+}

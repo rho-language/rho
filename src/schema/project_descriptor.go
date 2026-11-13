@@ -122,6 +122,9 @@ const (
 	// MiddlewareAuth verifies an ES256 session cookie and redirects a browser
 	// to the authorization server when there is none.
 	MiddlewareAuth = "auth"
+	// MiddlewareSameOrigin refuses a state-changing request a browser sent
+	// from another origin.
+	MiddlewareSameOrigin = "same_origin"
 )
 
 // Security schemes a service may declare. The list is deliberately short: a
@@ -144,6 +147,7 @@ var ValidMiddlewares = []string{
 	MiddlewareRateLimit,
 	MiddlewareJWT,
 	MiddlewareAuth,
+	MiddlewareSameOrigin,
 }
 
 // ProjectDescriptorSchema returns the schema for project.yml.

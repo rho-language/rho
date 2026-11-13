@@ -35,6 +35,37 @@ func JSON(report sysdep.Report) ([]byte, error) {
 	return append(encoded, '\n'), nil
 }
 
+// TSV is the report as a line per requirement, for a program that reads lines
+// rather than JSON:
+//
+//	module  dep  kind  required(yes|no)  status  found-version  message  how-to-install
+//
+// A tab or a line break inside a field is written as a space, so a field is
+// always one field.
+func TSV(report sysdep.Report) string {
+	clean := func(value string) string {
+		return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(value)
+	}
+	out := &strings.Builder{}
+	for _, result := range report.Results {
+		required := "no"
+		if result.Required {
+			required = "yes"
+		}
+		how := strings.Join(recipes(result), "; ")
+		if result.Fetch != nil {
+			how = "fetch from " + result.Fetch.URL
+		}
+		fields := []string{result.Module, result.Dep, result.Kind, required, string(result.Status),
+			result.FoundVersion, result.Message, how}
+		for i, field := range fields {
+			fields[i] = clean(field)
+		}
+		out.WriteString(strings.Join(fields, "\t") + "\n")
+	}
+	return out.String()
+}
+
 // Text is the report as a person reads it.
 //
 // Grouped by module, because a missing program is one module's problem and a person

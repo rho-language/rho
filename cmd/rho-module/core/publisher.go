@@ -43,6 +43,13 @@ import (
 /* -------------------------------------------------------------------------- */
 
 func PublishModule(dir string) error {
+	return PublishModuleTo(dir, false)
+}
+
+// PublishModuleTo publishes a module; localOnly packs it and installs it in the
+// local registry without uploading it, for a release that is tried on this
+// machine before it is published for everybody.
+func PublishModuleTo(dir string, localOnly bool) error {
 	// Step 1: Validate module
 	if err := ValidateModule(dir); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
@@ -119,8 +126,10 @@ func PublishModule(dir string) error {
 	}
 
 	// Step 6: Upload to remote registry (both binary pkg and source archive)
-	if err := uploadModule(meta, dir, pkgPath, sourceArchive); err != nil {
-		return err
+	if !localOnly {
+		if err := uploadModule(meta, dir, pkgPath, sourceArchive); err != nil {
+			return err
+		}
 	}
 
 	// Step 7: Install locally

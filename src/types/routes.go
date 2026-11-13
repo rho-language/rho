@@ -210,6 +210,12 @@ var protocolFuncs = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// request_method returns the request's method, GET or POST: a handler that
+	// answers both reads it to tell a look from a change.
+	"request_method": {
+		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
 	// Authentication, supplied by a server target's generated auth.go.
 	"auth_bearer": {
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},

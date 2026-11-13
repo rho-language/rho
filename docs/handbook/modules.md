@@ -337,6 +337,34 @@ function with another signature is refused when the application is built. Every
 provider accepts `enabled`, without declaring it, so an interface can let an
 installation switch a provider off without removing it from the binding.
 
+A module the application depends on may import an interface the application
+does not bind. Its calls then answer their zero value and `provider()` is empty,
+so the module can tell and do without: an inventory can switch a device when the
+application binds a gateway, and is an inventory when it binds none. The build
+says so once. An unbound import in the application's own sources is refused, as
+a binding someone forgot.
+
+## A module's own tables
+
+A module that keeps records owns its tables and the statements over them, and
+declares them in its own `sql:` block, with no driver:
+
+```yaml
+sql:
+  schema: db/schema.sql
+  queries: db/queries.sql
+```
+
+It generates nothing by itself. When an application that depends on it is
+built, rho-sql puts every such module's tables and statements before the
+application's own and generates them with the application's driver. The module's
+definition is the one used: an application that still repeats a module's table or
+statement is told which copies it can remove, and two modules declaring one
+statement is an error. A column a later version adds is in its table's `CREATE`
+and in an `ALTER TABLE ... ADD COLUMN` after it; applying the schema passes over
+an `ALTER` whose column is already there, so a new database and an older one end
+with the same table.
+
 ## A module's own files
 
 A module that reads a template, a schema or a page of its own does not look for
@@ -716,7 +744,7 @@ $ rho module check providers/log
 robohub-provider-log 0.2.0, compared with robohub-provider-log 0.1.1 in git (588ddee6ad04^)
   removed  fn provider_log_append(config: string, line: string) u32
   added    fn send(level: string, message: string, metadata: string) u32
-keeper (robohub/applications/keeper) depends on it and uses none of what changed
+keeper (robohub-keeper) depends on it and uses none of what changed
 mesh (robohub-mesh) depends on it and uses none of what changed
 0.2.0 may break what 0.1.1 promised, which its version says.
 ```

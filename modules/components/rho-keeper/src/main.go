@@ -75,10 +75,17 @@ func run(args []string) error {
 					index++
 					options.Module = args[index]
 				}
+			case "path":
+				// A module in a folder, which no registry lists: an application in
+				// its checkout asks about itself.
+				if index+1 < len(args) {
+					index++
+					options.Path = args[index]
+				}
 			}
 		}
-		if len(args) > 1 {
-			options.Module = args[len(args)-1]
+		if last := args[len(args)-1]; len(args) > 1 && !strings.HasPrefix(last, "-") && !isFlagValue(args, last) && command != "install" {
+			options.Module = last
 		}
 		switch command {
 		case "sync":
@@ -118,6 +125,11 @@ func run(args []string) error {
 func isFlagValue(args []string, argument string) bool {
 	for index, one := range args {
 		if one == argument && index > 0 && strings.HasPrefix(args[index-1], "-") {
+			// A switch takes no value, so what follows it is a name.
+			switch strings.TrimLeft(args[index-1], "-") {
+			case "yes", "y", "dry-run", "n", "dry":
+				return false
+			}
 			return true
 		}
 	}
@@ -133,6 +145,7 @@ func usage(out *os.File) {
   sync       install what the doctor found missing, after showing what it would run
   fix        the same, one thing at a time, asking about each
   install    install one dependency of one module
+             (sync, fix and install take --path DIR for a module in a folder)
 
 flags:
   -addr      the address to listen on; a bare number is a port

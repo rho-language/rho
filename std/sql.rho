@@ -137,6 +137,12 @@ extern fn sql_close(db: SqlDb) void
 // call returns non-zero and nothing better was said.
 extern fn sql_last_message(db: SqlDb) string
 
+// sql_failed is why the handle's last generated statement failed, or "" when it
+// succeeded. A generated statement answers how many rows it read or changed, and
+// zero is both "there were none" and "it did not run"; this is what tells them
+// apart, and what a generated wrapper turns into an Err.
+extern fn sql_failed(db: SqlDb) string
+
 /* -------------------------------------------------------------------------- */
 /*  Statements                                                                  */
 /* -------------------------------------------------------------------------- */

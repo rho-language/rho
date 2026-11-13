@@ -6,6 +6,25 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.5.0] - 2026-11-13
+
+People. `rho auth user add|verify|passwd|set|remove|list` keeps a store of the
+people who sign in — a name, a display name, a role (admin, operator, viewer),
+grants per application (`mesh:*`, `aquarium:read`) and a password hash
+(PBKDF2-HMAC-SHA256, 600 000 iterations, a salt of its own). A password is handed
+over in a file (`--password-file`), never on the command line; a wrong name costs
+as long as a wrong password and is answered the same; the first person is an
+admin and the last admin stays one.
+
+A ticket can carry the issuer's session (`--sid`, the `sid` claim), so an
+application can end its session when the issuer's ends.
+
+## [0.4.1] - 2026-11-13
+
+`rho auth revoke --jti` writes the revocation list under the Rho home
+(`$RHO_HOME/auth/revoked.txt`, `~/.rho/auth/revoked.txt` by default), where every
+service reads it, instead of under the user's own home.
+
 ## [0.4.0] - 2026-11-11
 
 Client credentials for service-to-service calls. `rho auth client add|remove|list`

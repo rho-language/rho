@@ -123,10 +123,12 @@ In the local registry:
   activate <name>@<version>  select the version a project resolves against
   deactivate <name>@<version> clear the selection
   list [query]               what is installed here
-  search [query]             what is installed here, and what the remote has
+  search [--format tsv] [query]
+                             what is installed here, and what the remote has
 
 In the remote registry:
-  publish <dir>              pack a module, install it here, and upload it
+  publish <dir> [--local]    pack a module, install it here, and upload it;
+                             --local installs it here only
   unpublish <name>@<version> withdraw a version; only the module's owner may
   visibility <name> [public|private]
                              show or change whether anybody may install it
