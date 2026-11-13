@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,73 @@ fn main() void {
 `)
 	for name, o := range map[string]outcome{"c": c, "go": g} {
 		if o.failed != "" || o.stdout != "slept" {
+			t.Errorf("%s: %q %s", name, o.stdout, o.failed)
+		}
+	}
+}
+
+// A program's output comes back as a value, verbatim and from one argument per
+// line, and the clock answers from the process: the same on both backends.
+func TestCaptureAndClockOnBothBackends(t *testing.T) {
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("gcc is not on the path")
+	}
+	c, g := runBothBackends(t, `module app
+
+extern fn rho_exec_capture(program: string, arguments: string) string
+extern fn rho_now_s() u32
+extern fn rho_local_date() string
+extern fn rho_local_clock() string
+extern fn rho_utc_offset_at(epoch: i64) i64
+
+fn main() void {
+    print(rho_exec_capture("printf", "%s|%s\na \"quoted\" value\n$(not run)\n"))
+    print("|")
+    print(rho_exec_capture("false", ""))
+    print("|")
+    if rho_now_s() > 1700000000 {
+        print("now")
+    }
+    print("|")
+    print(int_to_str(u32(strlen(rho_local_date()))))
+    print("|")
+    print(int_to_str(u32(strlen(rho_local_clock()))))
+    print("|")
+    let offset: i64 = rho_utc_offset_at(1700000000)
+    if offset > -50400 && offset < 50400 {
+        print("offset")
+    }
+}
+`)
+	want := "a \"quoted\" value|$(not run)||now|10|5|offset"
+	for name, o := range map[string]outcome{"c": c, "go": g} {
+		if o.failed != "" || strings.ReplaceAll(o.stdout, "\n", "") != want {
+			t.Errorf("%s: %q %s", name, o.stdout, o.failed)
+		}
+	}
+}
+
+// A past time is shown with the offset it had: winter and summer differ.
+func TestUtcOffsetFollowsSummerTimeOnBothBackends(t *testing.T) {
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("gcc is not on the path")
+	}
+	if _, err := os.Stat("/usr/share/zoneinfo/Europe/Bucharest"); err != nil {
+		t.Skip("no zoneinfo for Europe/Bucharest")
+	}
+	t.Setenv("TZ", "Europe/Bucharest")
+	c, g := runBothBackends(t, `module app
+
+extern fn rho_utc_offset_at(epoch: i64) i64
+
+fn main() void {
+    print(int_to_str(u32(rho_utc_offset_at(1700000000))))
+    print(" ")
+    print(int_to_str(u32(rho_utc_offset_at(1690000000))))
+}
+`)
+	for name, o := range map[string]outcome{"c": c, "go": g} {
+		if o.failed != "" || strings.TrimSpace(o.stdout) != "7200 10800" {
 			t.Errorf("%s: %q %s", name, o.stdout, o.failed)
 		}
 	}

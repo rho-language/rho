@@ -263,6 +263,10 @@ func lowerFirst(name string) string {
 	case "?":
 		return "value"
 	}
+	// `?1`, `?2`: the place of a positional marker among the statement's.
+	if len(name) > 1 && name[0] == '?' && allDigits(name[1:]) {
+		return "value" + name[1:]
+	}
 	// `$1` and friends are a position rather than a name.
 	if len(name) > 1 && name[0] == '$' && allDigits(name[1:]) {
 		return "value" + name[1:]

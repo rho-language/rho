@@ -2230,7 +2230,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return "false"
 	case ast.UnaryExpr:
-		return expr.Op + tc.lowerExpr(expr.Value, scope)
+		// The operand is parenthesised: `-(-b)` written as `--b` is C's
+		// pre-decrement, which compiles and changes b.
+		return expr.Op + "(" + tc.lowerExpr(expr.Value, scope) + ")"
 	case ast.BinaryExpr:
 		// `+` means different things per operand type. Strings need the
 		// runtime helper because C has no string concatenation operator, while
@@ -2255,8 +2257,10 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			!isNumericLiteral(expr.Left) && !isNumericLiteral(expr.Right)
 		if promote {
 			target := promotedKind(leftType.Kind, rightType.Kind)
-			left = "(" + cTypeForKind(target) + ")" + left
-			right = "(" + cTypeForKind(target) + ")" + right
+			// The operand is parenthesised: `(int64_t)-b` is a cast of a
+			// unary expression to C, and not an expression at all to Go.
+			left = "(" + cTypeForKind(target) + ")(" + left + ")"
+			right = "(" + cTypeForKind(target) + ")(" + right + ")"
 		}
 
 		// String comparison: s == t becomes rho_str_eq(s, t) for C.
@@ -2582,7 +2586,19 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return "{ " + strings.Join(values, ", ") + " }"
 	case ast.IfExpr:
-		return "(" + tc.lowerExpr(expr.Condition, scope) + " ? " + tc.lowerExpr(expr.Then, scope) + " : " + tc.lowerExpr(expr.Else, scope) + ")"
+		condition := tc.lowerExpr(expr.Condition, scope)
+		thenPart := tc.lowerExpr(expr.Then, scope)
+		elsePart := tc.lowerExpr(expr.Else, scope)
+		// A number, a bool or a string: both arms are cast to the expression's
+		// type. Arms of different widths then agree, and the Go backend reads
+		// the type off the cast to evaluate only the branch taken, as C does —
+		// `if n > 0 { t / n } else { 0 }` must not divide by zero.
+		if typ, err := tc.exprType(expr, scope); err == nil && ifExprCastable(typ) {
+			cType := tc.cTypeFor(typ)
+			thenPart = "(" + cType + ")(" + thenPart + ")"
+			elsePart = "(" + cType + ")(" + elsePart + ")"
+		}
+		return "(" + condition + " ? " + thenPart + " : " + elsePart + ")"
 	case ast.CastExpr:
 		// A C cast. The Go backend recognises the same spelling and emits a
 		// real conversion, so both backends read one expression.
@@ -2591,7 +2607,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		// a cast to a pointer or to an alias is not a type with that name: `Ptr[T]`
 		// cast to by name is a C expression naming a function, not a cast.
 		castTo := tc.typeFor(expr.Type.String())
-		return "(" + tc.cTypeFor(castTo) + ")" + tc.lowerExpr(expr.Value, scope)
+		return "(" + tc.cTypeFor(castTo) + ")(" + tc.lowerExpr(expr.Value, scope) + ")"
 	default:
 		return "0"
 	}
@@ -2610,6 +2626,17 @@ func (tc *TypeChecker) isStringExpr(expr ast.Expr, scope map[string]ir.Type) boo
 		return false
 	}
 	return typ.Kind == ir.TypeString
+}
+
+// ifExprCastable reports whether an if expression of this type has its arms
+// cast to it: the scalar types, whose casts both backends read.
+func ifExprCastable(typ ir.Type) bool {
+	switch typ.Kind {
+	case ir.TypeBool, ir.TypeString, ir.TypeI8, ir.TypeI16, ir.TypeI32, ir.TypeI64,
+		ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeF32, ir.TypeF64:
+		return true
+	}
+	return false
 }
 
 // isNumericLiteral reports whether an expression is a bare numeric literal,

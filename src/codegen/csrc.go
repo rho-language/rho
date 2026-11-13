@@ -77,6 +77,9 @@ var execSource string
 //go:embed csrc/crypto.c
 var cryptoSource string
 
+//go:embed csrc/clock.c
+var clockSource string
+
 //go:embed csrc/bits.c
 var bitsSource string
 
@@ -216,13 +219,31 @@ var runtimeFragments = []RuntimeFragment{
 		Provides: []string{
 			"rho_exec",
 			"rho_exec_args",
+			"rho_exec_capture",
 			"rho_sleep_ms",
 		},
 		Needs: []string{"rho_strlen"},
 		Decls: []string{
 			"unsigned int rho_exec(const char* program, const char* arguments, const char* output_path);",
 			"unsigned int rho_exec_args(const char* program, const char* arguments, const char* output_path);",
+			"char* rho_exec_capture(const char* program, const char* arguments);",
 			"void rho_sleep_ms(unsigned int milliseconds);",
+		},
+	},
+	{
+		Name:   "clock",
+		Source: clockSource,
+		Provides: []string{
+			"rho_now_s",
+			"rho_local_date",
+			"rho_local_clock",
+			"rho_utc_offset_at",
+		},
+		Decls: []string{
+			"unsigned int rho_now_s(void);",
+			"char* rho_local_date(void);",
+			"char* rho_local_clock(void);",
+			"long long rho_utc_offset_at(long long epoch);",
 		},
 	},
 	{

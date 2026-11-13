@@ -258,3 +258,84 @@ Security fix for archive extraction.
   project or the destination. Added tests for escaping generate, template and
   output paths.
 - Added tests for escaping tar, zip and payload members.
+
+## [0.6.0] - 2026-11-13
+
+Modules become units with their own scope, exports and interfaces; services get
+an identity; the C and Go backends agree on three more programs; and the runtime
+answers the clock and a program's output as values.
+
+**Modules and interfaces**
+
+- A module owns its types, constants and tables: `a.Type` names another
+  module's, and a module that declares `sql:` has its tables and statements
+  generated into the applications that use it, the module's version winning.
+- A module says what it exports and is imported through its declared
+  dependencies only. Each published version records its exports, and
+  `rho module check` (and publishing) refuses a breaking change without a new
+  major version.
+- Interfaces are bound to providers in the manifest (`bind:`), with settings a
+  running installation can change; a dependency may use an interface its
+  application does not bind (its calls answer nothing, and the build says so);
+  an interface imported twice is bound once.
+- Modules carry files and are included by name; `module.id` is a declared
+  identity, with `previous_ids` for a module that was renamed.
+
+**Dependencies**
+
+- The lock pins a module by its version, dependency groups name a repository,
+  and lockfiles are workspace-relative and portable (`${RHO_WORKSPACE}`,
+  `${RHO_HOME}`).
+
+**Runtime**
+
+- `rho_now_s`, `rho_local_date`, `rho_local_clock` and `rho_utc_offset_at` read
+  the clock from the process, on both backends. A time is shown with the offset
+  it had, across a change to summer time.
+- `rho_exec_capture` returns a program's output as a value — one argument per
+  line, no shell, no file another caller could be reading — and
+  `rho_http_body` (Go) returns a response's body the same way. Together they
+  replace the `date`-into-a-file and report-file pattern whose concurrent
+  callers could read each other's answers.
+- HMAC-SHA256 and random bytes, `rho_sleep_ms`, `rho_exec_args`,
+  `rho_write_secret`, a service identity with an HTTP client and a stream
+  follower, and flat YAML read and write.
+
+**Auth**
+
+- Client credentials and service tokens, issuer discovery and key fetch, the
+  keeper-provided key, and a fix to whom a relying party trusts.
+
+**Code generation**
+
+- A nested negation is two negations: `-(-b)` was emitted as C's `--b`, which
+  compiled and decremented `b`. Every cast and unary operand is parenthesised,
+  so a widened operand keeps its sign on Go (`(int64)-b` was not Go).
+- An if expression evaluates only the branch taken on Go, as in C:
+  `if n > 0 { t / n } else { 0 }` divided by zero there. Arms of two widths are
+  cast to the expression's type.
+- `~` is Go's `^`. A negative literal after a cast is cast whole. The Go
+  runtime's YAML reader unquotes a value only when it is quoted as a whole.
+- The SQL read port writes no more rows than the caller's slice holds, reports
+  a row it cannot scan as a failure rather than a row of zeros, and narrows a
+  number from whichever storage class SQLite returns.
+- A conditional written inside a string literal is left as text; unused locals
+  no longer break the Go build; a module-level binding cannot be assigned.
+- All of the above are in the parity suite, which runs each program on both
+  backends and compares what they print.
+
+**Projects, CLI and architecture**
+
+- `project.yml` says only what differs from the built-in descriptor;
+  templates have a folder of their own; ports are declared by modules.
+- `rho new` writes the file header; an application can be published;
+  `rho deploy` builds and pushes images; `rho test` runs C host tests;
+  `rho module publish --local` installs without uploading.
+- The ecosystem's names are out of the core: platform ports are a plugin module
+  and transport framing is out of the generator.
+
+**Security**
+
+- Manifest and scaffold paths are confined with `os.Root`.
+- The `same_origin` middleware refuses a write a browser says came from another
+  origin.

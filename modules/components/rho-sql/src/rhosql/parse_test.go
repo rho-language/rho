@@ -330,8 +330,25 @@ func TestAMarkerInsideAStringIsNotAParameter(t *testing.T) {
 	if len(query.Parameters) != 1 {
 		t.Fatalf("read %d parameters, want 1: %+v", len(query.Parameters), query.Parameters)
 	}
-	if query.Parameters[0].Name != "?" {
-		t.Errorf("the parameter is %q, want the positional one", query.Parameters[0].Name)
+	if query.Parameters[0].Name != "?1" || query.Parameters[0].Marker != MarkerPositional {
+		t.Errorf("the parameter is %q, want the first positional one", query.Parameters[0].Name)
+	}
+}
+
+func TestEachPositionalMarkerIsAValueOfItsOwn(t *testing.T) {
+	// `SET qty = ? WHERE id = ?` takes two values; read as one, the generated
+	// function took a single argument and bound it twice.
+	schema, diagnostics := ParseQueries("queries.sql",
+		"-- name: set_qty\nUPDATE items SET qty = ? WHERE id = ? -- or ? in a comment\n;\n")
+	if HasErrors(diagnostics) {
+		t.Fatalf("did not read: %+v", diagnostics)
+	}
+	query, _ := schema.Query("set_qty")
+	if len(query.Parameters) != 2 {
+		t.Fatalf("read %d parameters, want 2: %+v", len(query.Parameters), query.Parameters)
+	}
+	if query.Parameters[0].Name != "?1" || query.Parameters[1].Name != "?2" {
+		t.Errorf("the parameters are %q and %q", query.Parameters[0].Name, query.Parameters[1].Name)
 	}
 }
 

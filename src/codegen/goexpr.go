@@ -257,6 +257,13 @@ func ToGoExpr(expr string) string {
 			continue
 		}
 
+		// C's bitwise not is Go's unary ^.
+		if c == '~' {
+			out.WriteByte('^')
+			i++
+			continue
+		}
+
 		out.WriteByte(c)
 		i++
 	}
@@ -1013,6 +1020,22 @@ func rewriteTernaries(expr string) string {
 		if src[i] == '(' {
 			if close := matchParen(src, i); close > i {
 				if cond, thenPart, elsePart, ok := splitTernary(string(src[i+1 : close])); ok {
+					// Arms cast to one scalar type name it: the branch not
+					// taken is not evaluated, as in C. `if n > 0 { t / n }
+					// else { 0 }` must not divide by zero, and a call in the
+					// other arm must not run.
+					if goType := ternaryArmType(strings.TrimSpace(thenPart)); goType != "" &&
+						ternaryArmType(strings.TrimSpace(elsePart)) == goType {
+						out.WriteString("func() " + goType + " { if ")
+						out.WriteString(rewriteTernaries(strings.TrimSpace(cond)))
+						out.WriteString(" { return ")
+						out.WriteString(rewriteTernaries(strings.TrimSpace(thenPart)))
+						out.WriteString(" }; return ")
+						out.WriteString(rewriteTernaries(strings.TrimSpace(elsePart)))
+						out.WriteString(" }()")
+						i = close + 1
+						continue
+					}
 					out.WriteString("rhoSelect(")
 					out.WriteString(rewriteTernaries(strings.TrimSpace(cond)))
 					out.WriteString(", ")
@@ -1029,6 +1052,26 @@ func rewriteTernaries(expr string) string {
 		i++
 	}
 	return out.String()
+}
+
+// ternaryArmType is the Go type an arm is cast to when the whole arm is one
+// cast of a parenthesised group, `(int64_t)(...)`, or "" when it is not.
+func ternaryArmType(arm string) string {
+	if !strings.HasPrefix(arm, "(") {
+		return ""
+	}
+	end := strings.Index(arm, ")")
+	if end < 0 || end+1 >= len(arm) || arm[end+1] != '(' {
+		return ""
+	}
+	if close := matchParen([]byte(arm), end+1); close != len(arm)-1 {
+		return ""
+	}
+	goType, ok := goCasts[strings.TrimSpace(arm[1:end])]
+	if !ok || goType == "" {
+		return ""
+	}
+	return goType
 }
 
 // splitTernary splits `cond ? then : else` at its top-level `?` and `:`, which

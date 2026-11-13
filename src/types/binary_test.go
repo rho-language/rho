@@ -221,7 +221,7 @@ fn main() void {
 }
 `, "mean")
 	text := instrText(fn)
-	if !strings.Contains(text, "(double)p.count") {
+	if !strings.Contains(text, "(double)(p.count)") {
 		t.Fatalf("expected the u32 operand to be widened to double, got:\n%s", text)
 	}
 }
@@ -300,7 +300,7 @@ struct Pair {
 fn main() void {
 }
 `, "is_small")
-	if !strings.Contains(instrText(fn), "(double)p.count") {
+	if !strings.Contains(instrText(fn), "(double)(p.count)") {
 		t.Fatalf("expected the u32 operand to be widened, got:\n%s", instrText(fn))
 	}
 }

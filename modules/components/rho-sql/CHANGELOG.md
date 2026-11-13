@@ -30,3 +30,10 @@ longer "the statement failed", and a write that fails is no longer `Ok(0)`.
 A column or parameter named like a keyword of the language (`fn`, `type`, `route`,
 `match` ...) is written with a `Value` suffix in the generated Rho (`fnValue`), so
 the file parses.
+
+## [0.2.1] - 2026-11-13
+
+Each positional `?` is a value of its own: `UPDATE items SET qty = ? WHERE id = ?`
+takes two, each typed by the column beside it, where before every `?` was one
+parameter, the generated function took a single argument, and every marker was
+given the first one's type. A `?` inside a `--` or `/* */` comment is text.

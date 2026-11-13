@@ -1069,6 +1069,9 @@ func writeSQLSelect(b *strings.Builder, statement SQLStatement, arguments []stri
 	fmt.Fprintf(b, "\trows, err := prepared.Query(%s)\n", strings.Join(arguments, ", "))
 	b.WriteString("\tif err != nil {\n\t\treturn rhoSqlStatementFail(db, err)\n\t}\n")
 	b.WriteString("\tdefer rows.Close()\n")
+	// No more rows than the caller's slice holds, whatever capacity it
+	// claimed: writing past the slice would be memory the caller does not own.
+	b.WriteString("\tif out.len < capacity {\n\t\tcapacity = out.len\n\t}\n")
 	b.WriteString("\tvar wrote uint32\n")
 	b.WriteString("\tfor wrote < capacity && rows.Next() {\n")
 	b.WriteString("\t\tvar row " + statement.Result + "\n")
@@ -1077,8 +1080,11 @@ func writeSQLSelect(b *strings.Builder, statement SQLStatement, arguments []stri
 	// per column below, so a column holding text where a number was declared
 	// comes back as text instead of being reported as a zero.
 	fmt.Fprintf(b, "\t\tvar scanned [%d]any\n", len(statement.Fields))
-	fmt.Fprintf(b, "\t\tif err := rows.Scan(%s); err == nil {\n",
+	// A row that cannot be scanned is a failure, not a row of zeros that is
+	// counted as read.
+	fmt.Fprintf(b, "\t\tif err := rows.Scan(%s); err != nil {\n\t\t\treturn rhoSqlStatementFail(db, err)\n\t\t}\n",
 		strings.Join(scanDestinations(statement.Fields), ", "))
+	b.WriteString("\t\t{\n")
 	for index, field := range statement.Fields {
 		writeSQLNarrow(b, field, index)
 	}
@@ -1099,12 +1105,15 @@ func writeSQLNarrow(b *strings.Builder, field SQLField, index int) {
 	source := fmt.Sprintf("scanned[%d]", index)
 	target := fmt.Sprintf("row.%s", goFieldName(field.Name))
 	switch {
+	// SQLite stores a value in whatever class it was given: an integer in a
+	// REAL column, a 0/1 in a BOOLEAN one. Each is narrowed from the classes
+	// that mean the same number rather than left at zero.
 	case field.IsBoolean:
-		fmt.Fprintf(b, "\t\t\tif value, ok := %s.(bool); ok {\n\t\t\t\t%s = value\n\t\t\t}\n", source, target)
+		fmt.Fprintf(b, "\t\t\tswitch value := %s.(type) {\n\t\t\tcase bool:\n\t\t\t\t%s = value\n\t\t\tcase int64:\n\t\t\t\t%s = value != 0\n\t\t\t}\n", source, target, target)
 	case field.IsInteger:
-		fmt.Fprintf(b, "\t\t\tif value, ok := %s.(int64); ok {\n\t\t\t\t%s = value\n\t\t\t}\n", source, target)
+		fmt.Fprintf(b, "\t\t\tswitch value := %s.(type) {\n\t\t\tcase int64:\n\t\t\t\t%s = value\n\t\t\tcase float64:\n\t\t\t\t%s = int64(value)\n\t\t\tcase bool:\n\t\t\t\tif value {\n\t\t\t\t\t%s = 1\n\t\t\t\t}\n\t\t\t}\n", source, target, target, target)
 	case field.IsFloat:
-		fmt.Fprintf(b, "\t\t\tif value, ok := %s.(float64); ok {\n\t\t\t\t%s = value\n\t\t\t}\n", source, target)
+		fmt.Fprintf(b, "\t\t\tswitch value := %s.(type) {\n\t\t\tcase float64:\n\t\t\t\t%s = value\n\t\t\tcase int64:\n\t\t\t\t%s = float64(value)\n\t\t\t}\n", source, target, target)
 	case field.IsBlob:
 		fmt.Fprintf(b, "\t\t\tif value, ok := %s.([]byte); ok {\n\t\t\t\t%s = string(value)\n\t\t\t}\n", source, target)
 	default:

@@ -183,4 +183,66 @@ fn main() void {
 }
 `,
 	},
+	{
+		name: "a nested negation is two negations, not a decrement",
+		source: `module app
+
+fn main() void {
+    let b: i32 = 5
+    let c: i32 = -(-b)
+    print(int_to_str(u32(c)))
+    print(int_to_str(u32(b)))
+}
+`,
+	},
+	{
+		name: "a widened operand keeps its sign",
+		source: `module app
+
+fn main() void {
+    let a: i64 = 3
+    let b: i32 = 5
+    if a > -b {
+        print("greater")
+    } else {
+        print("not greater")
+    }
+    let c: i64 = i64(-b)
+    if c == -5 {
+        print("cast whole")
+    }
+}
+`,
+	},
+	{
+		name: "an if expression evaluates only the branch taken",
+		source: `module app
+
+fn main() void {
+    let n: i64 = 0
+    let t: i64 = 10
+    let r: i64 = if n > 0 { t / n } else { 7 }
+    print(int_to_str(u32(r)))
+    let a: i64 = -3
+    let b: i32 = 4
+    let m: i64 = if a > 0 { a } else { -b }
+    if m == -4 {
+        print("arms of two widths agree")
+    }
+    let s: string = if n > 0 { "positive" } else { "zero" }
+    print(s)
+}
+`,
+	},
+	{
+		name: "a bitwise not is the same on both backends",
+		source: `module app
+
+fn main() void {
+    let a: u32 = 5
+    let b: u32 = 3
+    print(int_to_str(a & ~b))
+}
+`,
+	},
 }

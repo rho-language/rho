@@ -53,6 +53,7 @@ func TestServicePrimitivesCarryAnIdentity(t *testing.T) {
 
 extern fn rho_http_request(method: string, url: string, body: string, content_type: string, audience: string, scopes: string, output_path: string) u32
 extern fn rho_sse_follow(url: string, audience: string, scopes: string, path: string) bool
+extern fn rho_http_body(method: string, url: string, body: string, content_type: string, audience: string, scopes: string) string
 extern fn rho_read_text(path: string) string
 extern fn rho_exec(program: string, arguments: string, output_path: string) u32
 
@@ -62,6 +63,8 @@ fn main() void {
     print(rho_read_text("out.txt"))
     let denied: u32 = rho_http_request("GET", "%[1]s/data", "", "", "", "", "denied.txt")
     print(int_to_str(denied))
+    print("<" + rho_http_body("GET", "%[1]s/data", "", "", "mesh", "mesh:home") + ">")
+    print("<" + rho_http_body("GET", "%[1]s/data", "", "", "", "") + ">")
     let started: bool = rho_sse_follow("%[1]s/stream", "mesh", "mesh:home", "feed.jsonl")
     var waited: u32 = 0
     while rho_read_text("feed.jsonl") == "" && waited < 50 {
@@ -96,6 +99,8 @@ fn main() void {
 	for _, want := range []string{
 		`200{"value":42}`, // the token was fetched and carried
 		"401",             // without an audience, no token is sent
+		`<{"value":42}>`,  // the body comes back as a value
+		"<>",              // and a refusal is no body
 		`{"data":"{\"node\":1}","event":"telemetry"}`, // a named event, as sse_events reads it
 		`{"data":"plain","event":"message"}`,          // an unnamed one is a message
 	} {

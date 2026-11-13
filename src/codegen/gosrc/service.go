@@ -103,13 +103,37 @@ func rhoServiceToken(audience string, scopes string) string {
 // be had).
 func rhoHttpRequest(method string, address string, body string, contentType string,
 	audience string, scopes string, outputPath string) uint32 {
+	status, data := rhoHttpDo(method, address, body, contentType, audience, scopes)
+	if status != 0 && outputPath != "" {
+		_ = os.MkdirAll(filepath.Dir(outputPath), 0o700)
+		_ = os.WriteFile(outputPath, data, 0o600)
+	}
+	return status
+}
+
+// rhoHttpBody is a request whose answer is its body, returned rather than
+// written to a file: two callers at once cannot read each other's answer. A
+// status outside 2xx, or no answer, is "".
+func rhoHttpBody(method string, address string, body string, contentType string,
+	audience string, scopes string) string {
+	status, data := rhoHttpDo(method, address, body, contentType, audience, scopes)
+	if status < 200 || status > 299 {
+		return ""
+	}
+	return string(data)
+}
+
+// rhoHttpDo sends one request, with the service's token for an audience, and
+// answers the status (0 when nothing answered) and up to 4 MiB of the body.
+func rhoHttpDo(method string, address string, body string, contentType string,
+	audience string, scopes string) (uint32, []byte) {
 	var reader io.Reader
 	if body != "" {
 		reader = strings.NewReader(body)
 	}
 	request, err := http.NewRequest(method, address, reader)
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
@@ -118,21 +142,17 @@ func rhoHttpRequest(method string, address string, body string, contentType stri
 	if audience != "" {
 		token := rhoServiceToken(audience, scopes)
 		if token == "" {
-			return 0
+			return 0, nil
 		}
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	response, err := rhoServiceClient.Do(request)
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 	defer response.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if outputPath != "" {
-		_ = os.MkdirAll(filepath.Dir(outputPath), 0o700)
-		_ = os.WriteFile(outputPath, data, 0o600)
-	}
-	return uint32(response.StatusCode)
+	return uint32(response.StatusCode), data
 }
 
 // rhoSseFollowers are the streams already followed, so asking twice for the

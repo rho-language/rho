@@ -386,12 +386,31 @@ type aMarker struct {
 func markersIn(statement string) []aMarker {
 	out := []aMarker{}
 	runes := []rune(statement)
+	positional := 0
 	for i := 0; i < len(runes); i++ {
 		switch runes[i] {
 		case '\'', '"', '`':
 			i = skipLiteral(runes, i)
+		case '-':
+			// A comment is text: a `?` in `-- why?` is not a value.
+			if i+1 < len(runes) && runes[i+1] == '-' {
+				for i < len(runes) && runes[i] != '\n' {
+					i++
+				}
+			}
+		case '/':
+			if i+1 < len(runes) && runes[i+1] == '*' {
+				i += 2
+				for i+1 < len(runes) && !(runes[i] == '*' && runes[i+1] == '/') {
+					i++
+				}
+				i++
+			}
 		case '?':
-			out = append(out, aMarker{name: "?", kind: MarkerPositional, at: i})
+			// Each `?` is a value of its own, named by its place among them:
+			// `SET qty = ? WHERE id = ?` takes two, each typed by its column.
+			positional++
+			out = append(out, aMarker{name: "?" + strconv.Itoa(positional), kind: MarkerPositional, at: i})
 		case '$':
 			if i+1 < len(runes) && isDigit(runes[i+1]) {
 				start := i

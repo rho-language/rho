@@ -1626,6 +1626,53 @@ func rhoYamlKeyLess(a, b string) bool {
 			imports: []string{"encoding/hex", "crypto/rand"},
 		},
 		{
+			call:  "rhoHttpBody(",
+			needs: []string{"rhoServiceToken("},
+		},
+		{
+			// A program's output as a value: one argument per line and no
+			// shell, as rhoExecArgs, but nothing written to a file another
+			// caller could be reading. "" unless the program succeeded.
+			call: "rhoExecCapture(",
+			define: "func rhoExecCapture(program string, arguments string) string {\n" +
+				"\targs := []string{}\n" +
+				"\tif arguments != \"\" {\n" +
+				"\t\targs = strings.Split(strings.TrimSuffix(arguments, \"\\n\"), \"\\n\")\n" +
+				"\t}\n" +
+				"\toutput, err := exec.Command(program, args...).CombinedOutput()\n" +
+				"\tif err != nil {\n" +
+				"\t\treturn \"\"\n" +
+				"\t}\n" +
+				"\treturn string(output)\n" +
+				"}\n",
+			imports: []string{"os/exec", "strings"},
+		},
+		{
+			// The clock, read from the process rather than from `date` written
+			// to a file and read back, which two callers at once could truncate
+			// under each other.
+			call:    "rhoNowS(",
+			define:  "func rhoNowS() uint32 {\n\treturn uint32(time.Now().Unix())\n}\n",
+			imports: []string{"time"},
+		},
+		{
+			call:    "rhoLocalDate(",
+			define:  "func rhoLocalDate() string {\n\treturn time.Now().Format(\"2006-01-02\")\n}\n",
+			imports: []string{"time"},
+		},
+		{
+			call:    "rhoLocalClock(",
+			define:  "func rhoLocalClock() string {\n\treturn time.Now().Format(\"15:04\")\n}\n",
+			imports: []string{"time"},
+		},
+		{
+			// The local zone's offset from UTC at a moment, in seconds: a time
+			// written last winter is shown with last winter's offset.
+			call:    "rhoUtcOffsetAt(",
+			define:  "func rhoUtcOffsetAt(epoch int64) int64 {\n\t_, offset := time.Unix(epoch, 0).Zone()\n\treturn int64(offset)\n}\n",
+			imports: []string{"time"},
+		},
+		{
 			// Waiting: a background task that ticks sleeps between ticks.
 			call:    "rhoSleepMs(",
 			define:  "func rhoSleepMs(milliseconds uint32) {\n\ttime.Sleep(time.Duration(milliseconds) * time.Millisecond)\n}\n",

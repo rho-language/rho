@@ -213,6 +213,50 @@ unsigned int rho_exec_args(const char* program, const char* arguments, const cha
     return code;
 }
 
+/* rho_exec_capture is rho_exec_args whose output is the answer: the program's
+ * standard output and error when it exited 0, "" otherwise. The output goes
+ * through a file of its own, made with mkstemp and removed after it is read, so
+ * two callers at once never read each other's output. */
+#include <unistd.h>
+char* rho_exec_capture(const char* program, const char* arguments)
+{
+    char path[] = "/tmp/rho-capture-XXXXXX";
+    int fd = mkstemp(path);
+    if (fd < 0) {
+        char* empty = (char*)malloc(1);
+        if (empty != NULL) {
+            empty[0] = '\0';
+        }
+        return empty;
+    }
+    close(fd);
+    unsigned int code = rho_exec_args(program, arguments, path);
+    char* text = NULL;
+    size_t length = 0;
+    FILE* file = code == 0 ? fopen(path, "rb") : NULL;
+    if (file != NULL) {
+        if (fseek(file, 0, SEEK_END) == 0) {
+            long size = ftell(file);
+            if (size > 0 && fseek(file, 0, SEEK_SET) == 0) {
+                text = (char*)malloc((size_t)size + 1);
+                if (text != NULL) {
+                    length = fread(text, 1, (size_t)size, file);
+                }
+            }
+        }
+        fclose(file);
+    }
+    unlink(path);
+    if (text == NULL) {
+        text = (char*)malloc(1);
+        length = 0;
+    }
+    if (text != NULL) {
+        text[length] = '\0';
+    }
+    return text;
+}
+
 /* rho_sleep_ms waits, which is what a background task that ticks does between
  * ticks. Interrupted by a signal, it sleeps the rest of the time. */
 #include <time.h>
