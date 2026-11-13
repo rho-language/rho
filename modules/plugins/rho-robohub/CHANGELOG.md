@@ -6,6 +6,14 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.5.1] - 2026-11-13
+
+The gateway port's serial link is opened again when it goes away — a port that
+was not there at start, a board on USB that re-enumerated when it reset — every
+two seconds at most, instead of once at start for good. A failed read or write
+closes it; a failure to open is said once, not on every try. A read and a write
+each keep the file they started with, under a lock.
+
 ## [0.5.0] - 2026-11-13
 
 The mqtt port: `mqtt_publish` (QoS 0 or 1, the connection kept for the next

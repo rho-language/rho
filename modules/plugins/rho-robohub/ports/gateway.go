@@ -75,11 +75,15 @@ const (
 )
 
 var (
-	// The serial link, opened once. A read and a write that race to open it
-	// reach the same file because the open is behind a sync.Once.
-	gatewaySerialOnce sync.Once
-	gatewaySerial     *os.File
-	gatewaySerialOK   bool
+	// The serial link. It is opened when it is first asked for and opened
+	// again when it goes away — a port that was not there at start, a board
+	// that re-enumerated on a reset — at most every gatewaySerialRetry. A read
+	// and a write that race to open it hold gatewaySerialMu.
+	gatewaySerialMu     sync.Mutex
+	gatewaySerial       *os.File
+	gatewaySerialOK     bool
+	gatewaySerialTried  time.Time
+	gatewaySerialWarned bool
 	// bytes that arrived without a delimiter yet, so a frame split across two
 	// reads is still one frame.
 	gatewayRx []byte
@@ -475,9 +479,22 @@ func childKey(area uint32, link uint32) uint32 {
 	return (area << 16) | (link & 0xFFFF)
 }
 
-// gatewayOpenSerial opens SERIAL_PORT at SERIAL_BAUD, once.
+// gatewaySerialRetry is how often a link that is not open is tried again.
+const gatewaySerialRetry = 2 * time.Second
+
+// gatewayOpenSerial opens SERIAL_PORT at SERIAL_BAUD when it is not open, and
+// answers whether it is. A failure is said once, not on every try.
 func gatewayOpenSerial() bool {
-	gatewaySerialOnce.Do(func() {
+	gatewaySerialMu.Lock()
+	defer gatewaySerialMu.Unlock()
+	if gatewaySerialOK {
+		return true
+	}
+	if !gatewaySerialTried.IsZero() && time.Since(gatewaySerialTried) < gatewaySerialRetry {
+		return false
+	}
+	gatewaySerialTried = time.Now()
+	func() {
 		path := strings.TrimSpace(os.Getenv("SERIAL_PORT"))
 		if path == "" {
 			path = gatewayDefaultSerial
@@ -490,18 +507,51 @@ func gatewayOpenSerial() bool {
 		}
 		file, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "gateway: cannot open %s: %v\n", path, err)
+			if !gatewaySerialWarned {
+				fmt.Fprintf(os.Stderr, "gateway: cannot open %s: %v; trying again every %s\n", path, err, gatewaySerialRetry)
+				gatewaySerialWarned = true
+			}
 			return
 		}
 		if err := gatewayConfigureTTY(file, baud); err != nil {
-			fmt.Fprintf(os.Stderr, "gateway: cannot configure %s: %v\n", path, err)
+			if !gatewaySerialWarned {
+				fmt.Fprintf(os.Stderr, "gateway: cannot configure %s: %v\n", path, err)
+				gatewaySerialWarned = true
+			}
 			file.Close()
 			return
 		}
+		if gatewaySerialWarned {
+			fmt.Fprintf(os.Stderr, "gateway: %s is open\n", path)
+		}
 		gatewaySerial = file
 		gatewaySerialOK = true
-	})
+		gatewaySerialWarned = false
+		gatewayRx = gatewayRx[:0]
+	}()
 	return gatewaySerialOK
+}
+
+// gatewaySerialFile is the open link, read under the lock: a read and a write
+// each keep the file they started with, whatever the other does.
+func gatewaySerialFile() *os.File {
+	gatewaySerialMu.Lock()
+	defer gatewaySerialMu.Unlock()
+	return gatewaySerial
+}
+
+// gatewayCloseSerial closes a link that failed, so the next read or write
+// opens it again.
+func gatewayCloseSerial(err error) {
+	gatewaySerialMu.Lock()
+	defer gatewaySerialMu.Unlock()
+	if gatewaySerial != nil {
+		gatewaySerial.Close()
+	}
+	gatewaySerial = nil
+	gatewaySerialOK = false
+	gatewaySerialTried = time.Now()
+	fmt.Fprintf(os.Stderr, "gateway: the serial link failed (%v); it is opened again when it is back\n", err)
 }
 
 // gatewayConfigureTTY sets the line to 8N1 at the given speed, raw.
@@ -558,6 +608,10 @@ func gatewaySerialRead(timeoutMs uint32) string {
 	if !gatewayOpenSerial() {
 		return ""
 	}
+	file := gatewaySerialFile()
+	if file == nil {
+		return ""
+	}
 	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
 	buf := make([]byte, 256)
 	for {
@@ -567,7 +621,7 @@ func gatewaySerialRead(timeoutMs uint32) string {
 			gatewayRx = rest
 			return frame
 		}
-		n, err := gatewaySerial.Read(buf)
+		n, err := file.Read(buf)
 		if n > 0 {
 			gatewayRx = append(gatewayRx, buf[:n]...)
 			// A line that never delimits is a line that is not speaking this
@@ -578,6 +632,9 @@ func gatewaySerialRead(timeoutMs uint32) string {
 			continue
 		}
 		if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK && err != syscall.EINTR {
+			// EIO or EOF: the device went away (a USB board reset). It is
+			// opened again on a later read.
+			gatewayCloseSerial(err)
 			return ""
 		}
 		if timeoutMs == 0 || !time.Now().Before(deadline) {
@@ -593,16 +650,21 @@ func gatewaySerialWrite(data string) bool {
 	if !gatewayOpenSerial() {
 		return false
 	}
+	file := gatewaySerialFile()
+	if file == nil {
+		return false
+	}
 	out := make([]byte, 0, len(data)+1)
 	out = append(out, data...)
 	out = append(out, 0x00)
 	for len(out) > 0 {
-		n, err := gatewaySerial.Write(out)
+		n, err := file.Write(out)
 		if n > 0 {
 			out = out[n:]
 			continue
 		}
 		if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK && err != syscall.EINTR {
+			gatewayCloseSerial(err)
 			return false
 		}
 		time.Sleep(time.Millisecond)
