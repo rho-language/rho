@@ -24,3 +24,19 @@ func TestToGoExprRewritesConditional(t *testing.T) {
 		}
 	}
 }
+
+// An if expression is lowered to a C conditional and rewritten as rhoSelect;
+// the same characters inside a string literal are text and stay as they are.
+func TestTernaryRewriteLeavesStringLiteralsAlone(t *testing.T) {
+	if got := rewriteTernaries("(ready ? 1 : 2)"); got != "rhoSelect(ready, 1, 2)" {
+		t.Fatalf("a conditional was rewritten as %q", got)
+	}
+	script := `("t.add(ok>=0?'yes':'no')" + x)`
+	if got := rewriteTernaries(script); got != script {
+		t.Fatalf("a string literal was rewritten: %q", got)
+	}
+	mixed := `(flag ? "a (b ? c : d)" : "e")`
+	if got := rewriteTernaries(mixed); got != `rhoSelect(flag, "a (b ? c : d)", "e")` {
+		t.Fatalf("a conditional around string literals was rewritten as %q", got)
+	}
+}

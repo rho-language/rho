@@ -990,6 +990,14 @@ func rewriteTernaries(expr string) string {
 	src := []byte(expr)
 	var out strings.Builder
 	for i := 0; i < len(src); {
+		// A string literal is copied as it is: a `(a ? b : c)` written inside
+		// one — a script a page carries, say — is text, not a conditional.
+		if src[i] == '"' || src[i] == '`' {
+			end := scanStringLiteral(src, i)
+			out.Write(src[i:end])
+			i = end
+			continue
+		}
 		if src[i] == '(' {
 			if close := matchParen(src, i); close > i {
 				if cond, thenPart, elsePart, ok := splitTernary(string(src[i+1 : close])); ok {
