@@ -1288,6 +1288,14 @@ var intrinsicLowering = map[string]string{
 	"str_at":          "rho_str_at",
 	"str_index_of":    "rho_str_index_of",
 	"str_slice":       "rho_str_slice",
+	"str_trim":        "rho_str_trim",
+	"str_url_encode":  "rho_str_url_encode",
+	"str_url_decode":  "rho_str_url_decode",
+	"form_field":      "rho_form_field",
+	"milli_valid":     "rho_milli_valid",
+	"milli_parse":     "rho_milli_parse",
+	"milli_format":    "rho_milli_format",
+	"milli_round":     "rho_milli_round",
 	"int_to_str":      "rho_int_to_str",
 	"int_from_str":    "rho_int_from_str",
 	"f32_to_bits":     "rho_f32_to_bits",
@@ -2868,6 +2876,26 @@ func init() {
 		params: []ir.Type{{Kind: ir.TypeU64, Name: "u64"}},
 		result: ir.Type{Kind: ir.TypeF64, Name: "f64"},
 	}
+	// Text every application reads from a form and writes to a page: a value
+	// without the white space around it, a URL's escapes, one field of a form
+	// body, and a decimal held as thousandths — written with a dot or a comma,
+	// read and rounded the same way on both backends.
+	oneString := []ir.Type{{Kind: ir.TypeString, Name: "string"}}
+	stringResult := ir.Type{Kind: ir.TypeString, Name: "string"}
+	intrinsicSignatures["str_trim"] = functionType{params: oneString, result: stringResult}
+	intrinsicSignatures["str_url_encode"] = functionType{params: oneString, result: stringResult}
+	intrinsicSignatures["str_url_decode"] = functionType{params: oneString, result: stringResult}
+	intrinsicSignatures["form_field"] = functionType{params: twoStrings, result: stringResult}
+	intrinsicSignatures["milli_valid"] = functionType{params: oneString, result: ir.Type{Kind: ir.TypeBool, Name: "bool"}}
+	intrinsicSignatures["milli_parse"] = functionType{params: oneString, result: ir.Type{Kind: ir.TypeI64, Name: "i64"}}
+	intrinsicSignatures["milli_format"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeI64, Name: "i64"}},
+		result: stringResult,
+	}
+	intrinsicSignatures["milli_round"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeI64, Name: "i64"}, {Kind: ir.TypeU32, Name: "u32"}},
+		result: ir.Type{Kind: ir.TypeI64, Name: "i64"},
+	}
 	// str_from_byte renders one byte as a one-character string.
 	intrinsicSignatures["str_from_byte"] = functionType{
 		params: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}},
@@ -2917,6 +2945,8 @@ func init() {
 	for _, name := range []string{
 		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
+		"str_trim", "str_url_encode", "str_url_decode", "form_field",
+		"milli_valid", "milli_parse", "milli_format", "milli_round",
 		"f32_to_bits", "f32_from_bits", "f64_to_bits", "f64_from_bits",
 		"template_get", "template_has", "template_fill", "env_or", "getenv",
 		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",

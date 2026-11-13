@@ -245,4 +245,51 @@ fn main() void {
 }
 `,
 	},
+	{
+		name: "the text an application reads from a form and writes to a page",
+		source: `module app
+
+fn show(label: string, value: string) void {
+    print(label + "=[" + value + "]")
+}
+
+fn milli(text: string) void {
+    var ok: string = "no"
+    if milli_valid(text) {
+        ok = "yes"
+    }
+    show("milli " + text, ok + " " + milli_format(milli_parse(text)))
+}
+
+fn main() void {
+    show("trim", str_trim("  \t a b \r\n"))
+    show("trim-empty", str_trim(" \n "))
+    show("encode", str_url_encode("a b&c=d/é~x"))
+    show("decode", str_url_decode("a+b%26c%3Dd%2F%C3%A9%7Ex%2%zz"))
+    let body: string = "name=Tank+1&temp=24%2C5&empty=&flag&name=second"
+    show("field-name", form_field(body, "name"))
+    show("field-temp", form_field(body, "temp"))
+    show("field-empty", form_field(body, "empty"))
+    show("field-flag", form_field(body, "flag"))
+    show("field-none", form_field(body, "nope"))
+    show("field-encoded-key", form_field("a%20b=1", "a b"))
+    milli("24.5")
+    milli("24,5")
+    milli("-0.25")
+    milli("+3")
+    milli(" 7 ")
+    milli("1.23456")
+    milli(".5")
+    milli("5.")
+    milli("")
+    milli("-")
+    milli("1.2.3")
+    milli("abc")
+    milli("1234567890123456")
+    show("format", milli_format(-1500) + " " + milli_format(20000) + " " + milli_format(1) + " " + milli_format(0) + " " + milli_format(-10))
+    show("round", milli_format(milli_round(2345, 2)) + " " + milli_format(milli_round(-2345, 2)) + " " + milli_format(milli_round(2500, 0)) + " " + milli_format(milli_round(2449, 1)) + " " + milli_format(milli_round(2345, 3)))
+}
+`,
+		want: "trim=[a b]trim-empty=[]encode=[a%20b%26c%3Dd%2F%C3%A9~x]decode=[a b&c=d/é~x%2%zz]field-name=[Tank 1]field-temp=[24,5]field-empty=[]field-flag=[]field-none=[]field-encoded-key=[1]milli 24.5=[yes 24.5]milli 24,5=[yes 24.5]milli -0.25=[yes -0.25]milli +3=[yes 3]milli  7 =[yes 7]milli 1.23456=[yes 1.234]milli .5=[yes 0.5]milli 5.=[yes 5]milli =[no 0]milli -=[no 0]milli 1.2.3=[no 0]milli abc=[no 0]milli 1234567890123456=[no 0]format=[-1.5 20 0.001 0 -0.01]round=[2.35 -2.35 3 2.4 2.345]",
+	},
 }

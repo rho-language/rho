@@ -49,6 +49,9 @@ var printSource string
 //go:embed csrc/strings.c
 var stringsSource string
 
+//go:embed csrc/text.c
+var textSource string
+
 //go:embed csrc/lock.c
 var lockSource string
 
@@ -176,6 +179,24 @@ var runtimeFragments = []RuntimeFragment{
 			"uint8_t rho_str_at(const char* s, uint32_t i);",
 			"int32_t rho_str_index_of(const char* haystack, const char* needle);",
 			"char* rho_str_slice(const char* s, uint32_t start, uint32_t length);",
+		},
+	},
+	{
+		Name:   "text",
+		Source: textSource,
+		Provides: []string{
+			"rho_str_trim", "rho_str_url_encode", "rho_str_url_decode", "rho_form_field",
+			"rho_milli_valid", "rho_milli_parse", "rho_milli_format", "rho_milli_round",
+		},
+		Decls: []string{
+			"char* rho_str_trim(const char* s);",
+			"char* rho_str_url_encode(const char* s);",
+			"char* rho_str_url_decode(const char* s);",
+			"char* rho_form_field(const char* body, const char* name);",
+			"bool rho_milli_valid(const char* text);",
+			"int64_t rho_milli_parse(const char* text);",
+			"char* rho_milli_format(int64_t milli);",
+			"int64_t rho_milli_round(int64_t milli, uint32_t places);",
 		},
 	},
 	{

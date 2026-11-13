@@ -144,6 +144,9 @@ type parityCase struct {
 	// expected to differ, and a case that stops differing fails — so the entry
 	// is removed when the divergence is fixed.
 	diverges string
+	// want, when set, is what both backends must print: agreeing on a wrong
+	// answer is still a wrong answer.
+	want string
 }
 
 func TestBackendsAgree(t *testing.T) {
@@ -178,6 +181,9 @@ func TestBackendsAgree(t *testing.T) {
 			}
 			if cOut.stdout != gOut.stdout {
 				t.Fatalf("backends disagree:\nC  = %q\nGo = %q", cOut.stdout, gOut.stdout)
+			}
+			if c.want != "" && cOut.stdout != c.want {
+				t.Fatalf("both backends print\n%s\nwant\n%s", cOut.stdout, c.want)
 			}
 		})
 	}

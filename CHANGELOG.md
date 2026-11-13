@@ -339,3 +339,16 @@ answers the clock and a program's output as values.
 - Manifest and scaffold paths are confined with `os.Root`.
 - The `same_origin` middleware refuses a write a browser says came from another
   origin.
+
+## [0.7.0] - 2026-11-14
+
+The text an application reads from a form and writes to a page is the
+toolchain's, the same on both backends: `str_trim`, `str_url_encode`,
+`str_url_decode`, `form_field(body, name)`, and decimals held as thousandths —
+`milli_valid`, `milli_parse`, `milli_format` and `milli_round(milli, places)`.
+A decimal is read with a dot or a comma, digits past the third decimal are
+dropped, and a text that is not a number is 0, which `milli_valid` tells apart
+from a real 0. Every RoboHub module carried its own copy of each, and the copies
+had drifted: some read a comma, some a sign, some neither.
+
+A parity case can say what both backends must print, not only that they agree.

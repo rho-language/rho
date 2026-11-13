@@ -1630,6 +1630,42 @@ func rhoYamlKeyLess(a, b string) bool {
 			needs: []string{"rhoServiceToken("},
 		},
 		{
+			// Text an application reads from a form and writes to a page:
+			// rho_str_trim, rho_str_url_encode/decode, rho_form_field and the
+			// thousandths, rho_milli_*. The source is gosrc/text.go.
+			call:    "rhoStrTrim(",
+			define:  goSourceBody(goTextSource),
+			imports: []string{"strconv", "strings"},
+		},
+		{
+			call:  "rhoStrUrlEncode(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoStrUrlDecode(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoFormField(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoMilliValid(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoMilliParse(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoMilliFormat(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoMilliRound(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
 			// A program's output as a value: one argument per line and no
 			// shell, as rhoExecArgs, but nothing written to a file another
 			// caller could be reading. "" unless the program succeeded.

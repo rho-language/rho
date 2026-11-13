@@ -12,6 +12,9 @@ import (
 //go:embed gosrc/service.go
 var goServiceSource string
 
+//go:embed gosrc/text.go
+var goTextSource string
+
 const goSourceMarker = "// --- emitted below ---\n"
 
 // goSourceBody is the part of a gosrc file a program carries: what follows the
