@@ -150,3 +150,34 @@ void rho_print_u32(uint32_t value)
         (void)RHO_DEFAULT_WRITE(1, forward, (int)at);
     }
 }
+
+/* A 64-bit integer, printed: `print(i64_to_str(n))` without the string. */
+__attribute__((optimize("Os")))
+void rho_print_i64(int64_t value)
+{
+    char reversed[24];
+    char forward[24];
+    uint64_t magnitude;
+    int count = 0;
+    int at = 0;
+
+    if (value < 0) {
+        forward[at++] = '-';
+        magnitude = (uint64_t)0 - (uint64_t)value;
+    } else {
+        magnitude = (uint64_t)value;
+    }
+    do {
+        reversed[count++] = (char)('0' + (magnitude % 10u));
+        magnitude /= 10u;
+    } while (magnitude != 0u);
+
+    while (count > 0) {
+        forward[at++] = reversed[--count];
+    }
+    if (rho_write != NULL) {
+        rho_write(1, forward, (uint32_t)at);
+    } else {
+        (void)RHO_DEFAULT_WRITE(1, forward, (int)at);
+    }
+}

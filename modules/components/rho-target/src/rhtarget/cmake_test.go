@@ -17,6 +17,7 @@
 package rhtarget
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -269,5 +270,63 @@ func TestAFlashCommandReadsTheEnvironmentInTheGeneratedCMake(t *testing.T) {
 	// handed `{env:…}` would be handed a device that does not exist.
 	if strings.Contains(content, "{env:AVRDUDE_PORT") {
 		t.Errorf("expected the reference to be resolved, got:\\n%s", content)
+	}
+}
+
+// A board's Rho strings live in a fixed arena, and the build says how big: what
+// the spec declares, else the default, else an eighth of a small part's RAM. The
+// host has no fixed arena and is given none.
+func TestTheStringArenaIsSizedFromTheSpec(t *testing.T) {
+	spec := testSpec()
+	if content := TargetCMake(spec, "cmake/linker.ld"); !strings.Contains(content, "add_compile_definitions(RHO_STRING_ARENA_BYTES=4096)") {
+		t.Errorf("expected the default arena for a part with 128 kB of RAM:\n%s", content)
+	}
+	spec.Linker.StringArenaBytes = 1536
+	if content := TargetCMake(spec, "cmake/linker.ld"); !strings.Contains(content, "add_compile_definitions(RHO_STRING_ARENA_BYTES=1536)") {
+		t.Errorf("expected the declared arena:\n%s", content)
+	}
+	small := testSpec()
+	small.Memory.RAM.Length = "0x800"
+	if content := TargetCMake(small, "cmake/linker.ld"); !strings.Contains(content, "add_compile_definitions(RHO_STRING_ARENA_BYTES=256)") {
+		t.Errorf("expected an eighth of 2 kB of RAM:\n%s", content)
+	}
+	host := Spec{Kind: KindArch, Name: "native"}
+	if content := TargetCMake(host, "cmake/linker.ld"); strings.Contains(content, "RHO_STRING_ARENA_BYTES") {
+		t.Errorf("the host's arena grows and is given no size:\n%s", content)
+	}
+	if (Linker{StringArenaBytes: 1}).isEmpty() {
+		t.Error("a linker block that sizes the arena says something")
+	}
+}
+
+// A target that is deployed to runs an operating system: its arena grows, even
+// when the spec also declares the RAM of a part on the same board. The shipped
+// pico, resolved, is a board.
+func TestADeployedTargetIsAHostAndThePicoIsABoard(t *testing.T) {
+	library := libraryOf(t, map[string]string{
+		"linux.json": `{
+  "kind": "board", "name": "linux-sbc", "family": "linux",
+  "toolchain": {"compiler": "aarch64-linux-gnu-gcc"},
+  "memory": {"ram": {"origin": "0x0", "length": "0x80000000"}},
+  "deploy": {"host": "sbc.local", "path": "/opt/app"}
+}`,
+	})
+	linux, diagnostics := library.Resolve("linux-sbc")
+	if linux.Name == "" {
+		t.Fatalf("the linux spec did not resolve: %v", diagnostics)
+	}
+	if size, fixed := StringArenaBytes(linux); fixed {
+		t.Errorf("a deployed target must have a growing arena, got %d bytes", size)
+	}
+	if strings.Contains(TargetCMake(linux, "cmake/linker.ld"), "RHO_STRING_ARENA_BYTES") {
+		t.Error("a deployed target's build must not be given a fixed arena")
+	}
+	shipped := Load(filepath.Join("..", "..", "targets"))
+	pico, diagnostics := shipped.Resolve("pico")
+	if pico.Name == "" {
+		t.Fatalf("pico did not resolve: %v", diagnostics)
+	}
+	if size, fixed := StringArenaBytes(pico); !fixed || size != DefaultStringArenaBytes {
+		t.Errorf("pico should have the default fixed arena, got %d, %v", size, fixed)
 	}
 }

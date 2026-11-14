@@ -239,6 +239,13 @@ type Linker struct {
 	StackBytes uint64 `json:"stack_bytes,omitempty"`
 	// HeapBytes is how much heap the program gets, and zero means as before.
 	HeapBytes uint64 `json:"heap_bytes,omitempty"`
+	// StringArenaBytes is the size of the fixed buffer a Rho program's strings
+	// live in on this target. Every string the C runtime builds comes from it
+	// and the compiler releases them at the end of each loop iteration, so it is
+	// the most the strings of one iteration may hold at once; running out stops
+	// the program with "string arena exhausted". Zero means the default: 4 kB,
+	// or an eighth of the RAM on a part with less than 32 kB of it.
+	StringArenaBytes uint64 `json:"string_arena_bytes,omitempty"`
 	// Entry is the symbol the program starts at. Empty is `Reset_Handler`, or the
 	// entry the startup assembly declares.
 	Entry string `json:"entry,omitempty"`
@@ -273,7 +280,7 @@ type Linker struct {
 // holding maps is not comparable — and because what counts as "said something"
 // is a list, not an accident of the layout.
 func (l Linker) isEmpty() bool {
-	return l.Script == "" && !l.ToolchainScript && l.StackBytes == 0 && l.HeapBytes == 0 &&
+	return l.Script == "" && !l.ToolchainScript && l.StackBytes == 0 && l.HeapBytes == 0 && l.StringArenaBytes == 0 &&
 		l.Entry == "" && len(l.Regions) == 0 && len(l.Sections) == 0 &&
 		len(l.Symbols) == 0 && len(l.ForeignFrames) == 0
 }

@@ -28,12 +28,7 @@ static char* rho_clock_format(const char* format)
     if (localtime_r(&now, &local) != NULL) {
         strftime(buffer, sizeof buffer, format, &local);
     }
-    size_t length = strlen(buffer);
-    char* out = (char*)malloc(length + 1);
-    if (out != NULL) {
-        memcpy(out, buffer, length + 1);
-    }
-    return out;
+    return rho_str_dup(buffer);
 }
 
 char* rho_local_date(void)

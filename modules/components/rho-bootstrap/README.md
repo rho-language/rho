@@ -9,5 +9,7 @@ rho bootstrap init -config /etc/rho/provisioning.json
 rho bootstrap status
 ```
 
-The contract contains no long-lived secret. A one-time enrollment token is
-exchanged for a credential issued by Keeper.
+The contract contains no long-lived secret. A one-time enrollment token, read
+from a file or standard input (`-token-file FILE|-`, never the command line), is
+exchanged over https for a credential issued by Keeper. A Linux host node then
+fetches its board key from Mesh with that credential (`rho bootstrap key`).

@@ -63,8 +63,23 @@ a part uses to say that the toolchain already knows:
 | `script` | A `.ld` of the spec's own, absolute or beside the spec that named it |
 | `toolchain_script` | The toolchain brings its own, and none is written |
 | `stack_bytes`, `heap_bytes` | How much stack and heap the program gets |
+| `string_arena_bytes` | How big the fixed buffer a Rho program's strings live in is |
 | `entry` | The symbol the program starts at |
 | `regions`, `sections`, `symbols` | Further places a program may be put, and what the script defines |
+
+`string_arena_bytes` sizes the string arena. Every string a Rho program builds
+on C comes from it, and the compiler releases it at the end of each loop
+iteration, so the size bounds the strings one iteration holds at once. A
+program that runs out stops with `string arena exhausted`. A target that does
+not say gets 4 kB, or an eighth of its RAM when it has less than 32 kB, and
+`target.cmake` passes the size as `RHO_STRING_ARENA_BYTES`. A target with no
+RAM declared, or with a `deploy` block, has no fixed arena: it runs an operating
+system and its arena grows. `rho build` reads the resolved spec by the same rule
+to decide whether the target is a board.
+
+```json
+{ "linker": { "string_arena_bytes": 8192 } }
+```
 
 `toolchain_script` is for the toolchains that know their part: `avr-gcc` knows
 where an AVR's vector table belongs and how its runtime expects to be reached,

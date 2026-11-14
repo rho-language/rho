@@ -120,7 +120,7 @@ func startRegistryWithSettings(t *testing.T, token, settings string) *registrySe
 	// the registry — the same shape as the toolchain and the sources above.
 	sqlComponentInstalled(t)
 
-	dirs, err := GenerateAllTargetsDetailed(entry, "", nil, nil, nil, "go-server", "")
+	dirs, err := GenerateAllTargetsDetailed(entry, "", nil, nil, nil, "go-server", "", "")
 	if err != nil {
 		t.Fatalf("generating the registry failed: %v", err)
 	}
@@ -641,7 +641,7 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	// generator that writes them. See sqlComponentInstalled.
 	sqlComponentInstalled(t)
 
-	dirs, err := GenerateAllTargetsDetailed(filepath.Join(root, "src", "main.rho"), "", nil, nil, nil, "go-server", "")
+	dirs, err := GenerateAllTargetsDetailed(filepath.Join(root, "src", "main.rho"), "", nil, nil, nil, "go-server", "", "")
 	if err != nil {
 		t.Fatalf("generating the registry failed: %v", err)
 	}

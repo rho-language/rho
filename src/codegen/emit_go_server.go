@@ -358,6 +358,10 @@ func goRequestType(cfg ServerConfig) string {
 	b.WriteString("\tBody   string\n")
 	b.WriteString("\tAuth   string\n")
 	b.WriteString("\tParams map[string]string\n")
+	// remote is the peer address of the connection the request came on, which
+	// no header a client writes can change. Unexported, so the fields a Rho
+	// program sees are the ones it declares.
+	b.WriteString("\tremote string\n")
 	if cfg.Routed() {
 		// Both are reached through the request rather than beside it. A Rho
 		// handler receives the request by value, and a value it keeps is a
@@ -754,6 +758,7 @@ func newRequest(r *http.Request) *Request {
 		Body:   body,
 		Auth:   r.Header.Get("Authorization"),
 		Params: requestParams(r),
+		remote: remoteHost(r.RemoteAddr),
 	}
 }
 
@@ -828,6 +833,27 @@ func requestPath(req Request) string {
 // request_method returns the request's method.
 func requestMethod(req Request) string {
 	return req.Method
+}
+
+// request_remote returns the IP address of the peer the request's connection
+// came from: the TCP connection's own, never a header such as X-Forwarded-For
+// that a client writes. Behind a proxy it is the proxy's address.
+func requestRemote(req Request) string {
+	return req.remote
+}
+
+// remoteHost is the host part of a connection's address, "203.0.113.7" from
+// "203.0.113.7:51234" and "::1" from "[::1]:51234".
+func remoteHost(addr string) string {
+	if strings.HasPrefix(addr, "[") {
+		if end := strings.Index(addr, "]"); end > 0 {
+			return addr[1:end]
+		}
+	}
+	if colon := strings.LastIndex(addr, ":"); colon >= 0 && strings.Count(addr, ":") == 1 {
+		return addr[:colon]
+	}
+	return addr
 }
 
 // json_string renders a string as a JSON string literal, quotes and escapes
@@ -907,6 +933,7 @@ func newRequest(r *http.Request) *Request {
 		Params: rhoRouteParams(r),
 		head:   head,
 		bind:   &bindState{},
+		remote: remoteHost(r.RemoteAddr),
 	}
 }
 
@@ -970,6 +997,27 @@ func requestPath(req Request) string {
 // request_method returns the request's method.
 func requestMethod(req Request) string {
 	return req.Method
+}
+
+// request_remote returns the IP address of the peer the request's connection
+// came from: the TCP connection's own, never a header such as X-Forwarded-For
+// that a client writes. Behind a proxy it is the proxy's address.
+func requestRemote(req Request) string {
+	return req.remote
+}
+
+// remoteHost is the host part of a connection's address, "203.0.113.7" from
+// "203.0.113.7:51234" and "::1" from "[::1]:51234".
+func remoteHost(addr string) string {
+	if strings.HasPrefix(addr, "[") {
+		if end := strings.Index(addr, "]"); end > 0 {
+			return addr[1:end]
+		}
+	}
+	if colon := strings.LastIndex(addr, ":"); colon >= 0 && strings.Count(addr, ":") == 1 {
+		return addr[:colon]
+	}
+	return addr
 }
 
 // json_string renders a string as a JSON string literal, quotes and escapes

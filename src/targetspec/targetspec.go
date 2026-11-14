@@ -74,6 +74,49 @@ type Target struct {
 	Flash Flash `json:"flash"`
 	// Debug is how a program's execution is inspected on it.
 	Debug Debug `json:"debug"`
+	// Deploy is how a program reaches a target that runs an operating system.
+	Deploy Deploy `json:"deploy"`
+	// Linker is what the spec says about the program's memory beyond the map.
+	Linker Linker `json:"linker"`
+}
+
+// Deploy is the part of a deploy block that says one is declared.
+type Deploy struct {
+	Host   string          `json:"host"`
+	Path   string          `json:"path"`
+	Docker json.RawMessage `json:"docker"`
+}
+
+// Declared reports whether the target is deployed to: a machine with an
+// operating system, reached by copying a program to it.
+func (d Deploy) Declared() bool {
+	docker := strings.TrimSpace(string(d.Docker))
+	return strings.TrimSpace(d.Host) != "" || strings.TrimSpace(d.Path) != "" || (docker != "" && docker != "null")
+}
+
+// Linker is the part of a linker block a compiler reads.
+type Linker struct {
+	// StringArenaBytes is the size the spec gives the string arena.
+	StringArenaBytes uint64 `json:"string_arena_bytes"`
+}
+
+// FixedStringArena reports whether a program built for this target keeps its
+// strings in an arena of fixed size: whether the target is a board.
+//
+// The same rule rho-target applies when it decides to pass
+// RHO_STRING_ARENA_BYTES to a build, so the compiler and the runtime cannot
+// disagree about which arena a program has. A spec that sizes the arena has one.
+// A target that is deployed to runs an operating system, and its arena grows,
+// whatever else it declares — the Linux side of a board that also has an MCU is
+// a host. A part whose RAM is declared is bare metal. Anything else is a host.
+func (t Target) FixedStringArena() bool {
+	if t.Linker.StringArenaBytes != 0 {
+		return true
+	}
+	if t.Deploy.Declared() {
+		return false
+	}
+	return strings.TrimSpace(t.Memory.RAM.Origin) != ""
 }
 
 // Toolchain is the programs a target is built with.

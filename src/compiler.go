@@ -97,9 +97,14 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 	if native {
 		irModule = ir.NewModuleIR(filepath.Base(ProjectRoot(path)))
 	} else {
-		converted, convertErr := compileToIR(compiled, path, dependencyRoots)
+		converted, escapes, convertErr := compileToIR(compiled, path, dependencyRoots)
 		if convertErr != nil {
 			return convertErr
+		}
+		if targetID == "c" {
+			if err := checkArenaEscapes(escapes, ""); err != nil {
+				return err
+			}
 		}
 		irModule = converted
 	}
@@ -143,7 +148,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 // When module.yml declares no build.targets the C target is generated, which
 // preserves the behaviour of builds that predate multi-target support.
 func GenerateAllTargets(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string) ([]string, error) {
-	generated, err := GenerateAllTargetsDetailed(path, outputRoot, includePaths, sourceFiles, dependencyRoots, "", "")
+	generated, err := GenerateAllTargetsDetailed(path, outputRoot, includePaths, sourceFiles, dependencyRoots, "", "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +172,13 @@ type GeneratedTarget struct {
 // GenerateAllTargetsDetailed generates one project per requested target and
 // reports how each is built. An only value restricts the build to that single
 // target, which is how a test module asks for the backend it can run.
-func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only, layoutDir string, shim ...[]string) ([]GeneratedTarget, error) {
+//
+// board names the board the build is for, or is "" when it is for a host. A
+// caller decides it from the resolved target spec (targetspec's
+// FixedStringArena), never from the name. It decides whether a loop that cannot
+// release its strings is a warning (a host, whose arena grows) or refuses the
+// build (a board, whose string arena is a fixed size).
+func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only, layoutDir, board string, shim ...[]string) ([]GeneratedTarget, error) {
 	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots)
 	projectRoot := ProjectRoot(path)
 	// A project that declared SQL gets its statements generated before anything
@@ -202,12 +213,14 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 	// with no Rho entry wrapper, which is what lets the project's own `main` be
 	// the entry rather than a second one.
 	irModule := ir.NewModuleIR(filepath.Base(ProjectRoot(path)))
+	var escapes []types.ArenaEscape
 	if !native {
-		compiledIR, compileErr := compileToIR(compiled, path, dependencyRoots)
+		compiledIR, compiledEscapes, compileErr := compileToIR(compiled, path, dependencyRoots)
 		if compileErr != nil {
 			return nil, compileErr
 		}
 		irModule = compiledIR
+		escapes = compiledEscapes
 	}
 
 	descriptor, err := ResolveDescriptor(projectRoot)
@@ -246,6 +259,16 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 	targets, err := descriptor.ResolveTargets(emitters)
 	if err != nil {
 		return nil, err
+	}
+	// Strings are released only by the C backend's arena, so a loop that cannot
+	// release them matters only to a build that emits C.
+	for _, target := range targets {
+		if target.Emitter == "c" {
+			if err := checkArenaEscapes(escapes, board); err != nil {
+				return nil, err
+			}
+			break
+		}
 	}
 
 	root := outputRoot
@@ -401,28 +424,54 @@ func readSource(path string) string {
 
 // compileToIR runs typechecking and codegen validation, reusing a preloaded
 // module when one is supplied.
-func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (ir.ModuleIR, error) {
+func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (ir.ModuleIR, []types.ArenaEscape, error) {
 	if compiled == nil {
 		loaded, err := loadModuleGraphWithDependencies(path, dependencyRoots)
 		if err != nil {
-			return ir.ModuleIR{}, err
+			return ir.ModuleIR{}, nil, err
 		}
 		compiled = loaded
 	}
 	tc := types.New()
 	if err := tc.CheckModule(*compiled); err != nil {
-		return ir.ModuleIR{}, sourceDiagnostic(path, readSource(path), "typechecking", err)
+		return ir.ModuleIR{}, nil, sourceDiagnostic(path, readSource(path), "typechecking", err)
 	}
 	irModule := tc.ToIR(*compiled)
 	if err := codegen.ValidateModule(irModule); err != nil {
-		return ir.ModuleIR{}, fmt.Errorf("codegen validation failed: %w", err)
+		return ir.ModuleIR{}, nil, fmt.Errorf("codegen validation failed: %w", err)
 	}
 	// The manifest version travels with the IR so a generated service can
 	// report which build it is.
 	if manifest, manifestErr := deps.LoadManifest(deps.ManifestPath(ProjectRoot(path))); manifestErr == nil {
 		irModule.Version = manifest.Version
 	}
-	return irModule, nil
+	return irModule, tc.ArenaEscapes(), nil
+}
+
+// checkArenaEscapes says what a loop that cannot release its strings costs.
+//
+// On a board the strings live in a fixed arena, and a loop that keeps every
+// string it builds runs it out: the program stops with "string arena
+// exhausted" some time after it was flashed. That is refused here, where the
+// loop can still be named. On a host the arena grows, so the same loop is
+// memory that grows for as long as it runs, and it is a warning.
+func checkArenaEscapes(escapes []types.ArenaEscape, board string) error {
+	if len(escapes) == 0 {
+		return nil
+	}
+	if board != "" {
+		lines := make([]string, 0, len(escapes))
+		for _, escape := range escapes {
+			lines = append(lines, "  "+escape.String())
+		}
+		return fmt.Errorf("%s is a board, whose strings live in a fixed arena, and a loop that keeps every string it builds would run it out:\n%s\n"+
+			"build the string in the iteration that uses it, or keep it in a variable declared inside the loop",
+			board, strings.Join(lines, "\n"))
+	}
+	for _, escape := range escapes {
+		fmt.Fprintf(os.Stderr, "warning: %s; on a host its memory grows for as long as the loop runs\n", escape.String())
+	}
+	return nil
 }
 
 // ResolveDescriptor returns the descriptor a build uses: the built-in one, a
@@ -828,7 +877,11 @@ func compileModule(mod ast.Module, outPath string, from ...string) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
-	if err := codegen.EmitCToFile(outPath, tc.ToIR(mod)); err != nil {
+	lowered := tc.ToIR(mod)
+	if err := checkArenaEscapes(tc.ArenaEscapes(), ""); err != nil {
+		return err
+	}
+	if err := codegen.EmitCToFile(outPath, lowered); err != nil {
 		return fmt.Errorf("codegen failed: %w", err)
 	}
 	return nil

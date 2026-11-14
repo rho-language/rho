@@ -187,6 +187,7 @@ static RhoYamlFound rho_yaml_lookup(const char* path, const char* key)
     if (document == NULL) {
         return found;
     }
+    free(found.value);
     char* work = strdup(key);
     char* part = work;
     size_t number = 0;
@@ -280,7 +281,7 @@ static RhoYamlFound rho_yaml_lookup(const char* path, const char* key)
 char* rho_yaml_value(const char* path, const char* key)
 {
     RhoYamlFound found = rho_yaml_lookup(path, key);
-    return found.value;
+    return rho_str_adopt(found.value);
 }
 
 /* rho_yaml_kind says what a value is: `string`, `number`, `boolean`, `list`,
@@ -293,9 +294,8 @@ char* rho_yaml_value(const char* path, const char* key)
 char* rho_yaml_kind(const char* path, const char* key)
 {
     RhoYamlFound found = rho_yaml_lookup(path, key);
-    char* kind = strdup(found.kind);
     free(found.value);
-    return kind;
+    return rho_str_dup(found.kind);
 }
 
 /* rho_yaml_keys returns the keys under a key, one per line.
@@ -308,7 +308,7 @@ char* rho_yaml_keys(const char* path, const char* key)
 {
     char* document = rho_yaml_document(path);
     if (document == NULL) {
-        return strdup("");
+        return (char*)"";
     }
     char* work = strdup(key);
     char* part = work;
@@ -408,7 +408,7 @@ char* rho_yaml_keys(const char* path, const char* key)
     }
     free(work);
     free(document);
-    return result;
+    return rho_str_adopt(result);
 }
 
 /* rho_yaml_load reads the name out of a file, the way the configuration of a
@@ -424,7 +424,7 @@ char* rho_yaml_load(const char* path)
     RhoYamlFound found = rho_yaml_lookup(path, "user.name");
     if (strcmp(found.kind, RHO_YAML_MISSING) == 0) {
         free(found.value);
-        return strdup("unknown");
+        return (char*)"unknown";
     }
-    return found.value;
+    return rho_str_adopt(found.value);
 }

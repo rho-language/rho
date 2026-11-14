@@ -217,6 +217,15 @@ const (
 	OpWhile
 	OpBreak
 	OpContinue
+	// OpArenaMark declares Dest as a mark of the string arena, taken here.
+	// OpArenaRelease gives back every string built since the mark Dest names.
+	//
+	// They are what the C backend frees strings with: a mark at the top of a
+	// loop and a release at the end of each iteration, and the same around a
+	// statement whose temporaries nothing keeps. Only the C backend acts on them;
+	// a backend with a collector of its own, as Go has, leaves them out.
+	OpArenaMark
+	OpArenaRelease
 )
 
 // Instr represents a single IR instruction.
@@ -229,6 +238,13 @@ type Instr struct {
 	Condition string
 	Then      []Instr
 	Else      []Instr
+	// Arena names the arena mark an instruction is released against, for the
+	// backend that has an arena. On OpLet and OpAssign the stored string is kept
+	// and everything else built since the mark is released; on OpIf the
+	// condition's temporaries are released once it is evaluated; on OpWhile the
+	// mark is taken afresh before each test of the condition and released after
+	// it. Empty means none, and a backend without an arena ignores it.
+	Arena string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -257,4 +273,25 @@ type RouteIR struct {
 	Path string
 	// Handler is the name of the serving Rho function.
 	Handler string
+}
+
+// WithoutArena is a body with the string arena's instructions taken out, for a
+// backend that has no arena: what is left is the body as it was lowered before
+// the arena existed, so that backend's output does not change.
+func WithoutArena(body []Instr) []Instr {
+	out := make([]Instr, 0, len(body))
+	for _, instr := range body {
+		if instr.Op == OpArenaMark || instr.Op == OpArenaRelease {
+			continue
+		}
+		instr.Arena = ""
+		if len(instr.Then) > 0 {
+			instr.Then = WithoutArena(instr.Then)
+		}
+		if len(instr.Else) > 0 {
+			instr.Else = WithoutArena(instr.Else)
+		}
+		out = append(out, instr)
+	}
+	return out
 }

@@ -40,6 +40,7 @@ import (
 	deps "rho/src/deps" // dependency system
 	"rho/src/privilege"
 	"rho/src/schema"
+	"rho/src/targetspec"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -648,7 +649,7 @@ func runGeneratedTarget(abs, projectRoot string, dependencyRoots, includePaths, 
 		os.Exit(1)
 	}
 
-	targets, err := src.GenerateAllTargetsDetailed(abs, "", includePaths, sourceFiles, dependencyRoots, "", "")
+	targets, err := src.GenerateAllTargetsDetailed(abs, "", includePaths, sourceFiles, dependencyRoots, "", "", "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho run:", err)
 		os.Exit(1)
@@ -1093,7 +1094,7 @@ func buildCLI(args []string) int {
 		}
 	}
 
-	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, only, programLayout(projectRoot, targetName), shimSources)
+	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, only, programLayout(projectRoot, targetName), boardFor(projectRoot, targetName), shimSources)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", err)
 		return 1
@@ -1277,30 +1278,8 @@ func canonicalBuildType(name string) (string, bool) {
 // resolves them — the same reason every other question about a target is asked
 // of that component.
 func programLayout(projectRoot, target string) string {
-	module, err := modcore.LoadInstalledModule("rho-target")
-	if err != nil {
-		return ""
-	}
-	entry := module.Entry()
-	if entry == nil {
-		return ""
-	}
-	// The component writes to a file rather than a buffer — its output is
-	// normally the build's own — so it is given one here and read back.
-	tmp, err := os.CreateTemp("", "rho-layout-*.json")
-	if err != nil {
-		return ""
-	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-	if err := entry.Run([]string{"show", "-json", "-project", projectRoot, target}, nil, tmp); err != nil {
-		return ""
-	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return ""
-	}
-	data, err := io.ReadAll(tmp)
-	if err != nil {
+	data, ok := resolvedTargetSpec(projectRoot, target)
+	if !ok {
 		return ""
 	}
 	var spec struct {
@@ -1312,6 +1291,66 @@ func programLayout(projectRoot, target string) string {
 		return ""
 	}
 	return spec.Layout.Dir
+}
+
+// resolvedTargetSpec is a target's spec as rho-target resolves it for a project:
+// what `rho target show -json` prints. False when the component is not there or
+// does not know the target.
+func resolvedTargetSpec(projectRoot, target string) ([]byte, bool) {
+	if target == "" {
+		return nil, false
+	}
+	module, err := modcore.LoadInstalledModule("rho-target")
+	if err != nil {
+		return nil, false
+	}
+	entry := module.Entry()
+	if entry == nil {
+		return nil, false
+	}
+	// The component writes to a file rather than a buffer — its output is
+	// normally the build's own — so it is given one here and read back.
+	tmp, err := os.CreateTemp("", "rho-target-*.json")
+	if err != nil {
+		return nil, false
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	if err := entry.Run([]string{"show", "-json", "-project", projectRoot, target}, nil, tmp); err != nil {
+		return nil, false
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return nil, false
+	}
+	data, err := io.ReadAll(tmp)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+// boardFor is the board a build is for, or "" for a host.
+//
+// Decided by the target's resolved spec rather than its name: a board is a
+// target whose program keeps its strings in a fixed arena — bare metal, with its
+// RAM declared — and a target that is deployed to runs an operating system and
+// is a host, whatever it is called. A spec that cannot be resolved is a host, so
+// a machine without the component is never refused a build for it.
+func boardFor(projectRoot, target string) string {
+	data, ok := resolvedTargetSpec(projectRoot, target)
+	if !ok {
+		return ""
+	}
+	return boardFromSpec(target, data)
+}
+
+// boardFromSpec is boardFor for a spec already read.
+func boardFromSpec(target string, data []byte) string {
+	spec, err := targetspec.ParseTarget(data)
+	if err != nil || !spec.FixedStringArena() {
+		return ""
+	}
+	return target
 }
 
 func buildTarget(generatedDir, projectRoot, target string, linkMap bool, buildType string) error {

@@ -113,3 +113,7 @@ Initial release.
 ## [0.5.2] - 2026-11-14
 
 The telemetry port is gone from here: Mesh's telemetry store is Mesh's, and lives in its repository (`plugins/mesh-telemetry`), versioned with Mesh. Needs rho 0.8.2, which reads a project's own plugins for ports.
+
+## [0.5.3] - 2026-11-14
+
+The gateway port's uplink has limits: a number of connections (`UPLINK_MAX_CONNECTIONS`, 32), an idle timeout (`UPLINK_IDLE_TIMEOUT_S`, 300 s), a cap on what one connection may send without a frame end, a queue cap and write deadlines; `UPLINK_BIND` falls back to the host of `RHO_HTTP_ADDR`. Refusals are logged at most once a minute. A serial read times out as it says, so a gateway's background work runs on a quiet line.

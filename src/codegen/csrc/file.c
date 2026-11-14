@@ -26,7 +26,7 @@ char* rho_read_text(const char* path)
     size_t length = 0;
     size_t capacity = 0;
     if (file == NULL) {
-        return strdup("");
+        return (char*)"";
     }
     for (;;) {
         if (length + 4096 + 1 > capacity) {
@@ -35,7 +35,7 @@ char* rho_read_text(const char* path)
             if (grown == NULL) {
                 free(result);
                 fclose(file);
-                return strdup("");
+                return (char*)"";
             }
             result = grown;
         }
@@ -47,10 +47,12 @@ char* rho_read_text(const char* path)
     }
     fclose(file);
     if (result == NULL) {
-        return strdup("");
+        return (char*)"";
     }
     result[length] = '\0';
-    return result;
+    /* Read into a buffer of its own, which grows, and handed back as a string of
+     * the arena's: the program releases strings in bulk, never one by one. */
+    return rho_str_adopt(result);
 }
 
 /* rho_write_text writes a whole file, and says whether it did.

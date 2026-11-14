@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -201,6 +202,12 @@ func gatewayUplinkPort() uint32 {
 // carries, so the Rho side decodes them with the codec it already has. The
 // goroutine reads and splits them; the Rho side drains the queue when it runs,
 // which is how a request-driven service receives something it did not ask for.
+//
+// The listener faces a network, so nothing a peer sends can grow without bound:
+// there are at most UPLINK_MAX_CONNECTIONS connections at once, a connection that
+// sends nothing for UPLINK_IDLE_TIMEOUT_S is closed, one that sends more than
+// gatewayUplinkMaxPending bytes without closing a frame is closed, and the queue
+// the Rho side drains holds at most gatewayUplinkMaxQueue frames.
 var (
 	gatewayUplinkOnce     sync.Once
 	gatewayUplinkListener net.Listener
@@ -212,6 +219,27 @@ var (
 	gatewayUplinkByID     = map[uint32]net.Conn{}
 	gatewayUplinkNextID   uint32
 	gatewayUplinkLastConn uint32
+	// What was refused, said at most once a minute each.
+	gatewayUplinkSaid = map[string]time.Time{}
+)
+
+const (
+	// gatewayUplinkDefaultMaxConns is how many connections an uplink holds at
+	// once unless UPLINK_MAX_CONNECTIONS says otherwise: a gateway has a few
+	// relays and boards on Wi-Fi below it, not hundreds.
+	gatewayUplinkDefaultMaxConns = 32
+	// gatewayUplinkDefaultIdle is how long a connection may send nothing before
+	// it is closed, unless UPLINK_IDLE_TIMEOUT_S says otherwise. A relay that is
+	// closed dials again and opens a new session.
+	gatewayUplinkDefaultIdle = 5 * time.Minute
+	// gatewayUplinkMaxPending is the most a connection may send without a frame
+	// delimiter. The largest frame the protocol has is a few hundred bytes.
+	gatewayUplinkMaxPending = 4096
+	// gatewayUplinkMaxQueue is the most frames waiting for the Rho side; past it
+	// a new frame is dropped.
+	gatewayUplinkMaxQueue = 4096
+	// gatewayUplinkWriteTimeout bounds a write to a peer that has stopped reading.
+	gatewayUplinkWriteTimeout = 5 * time.Second
 )
 
 // gatewayUplinkFrame is one frame and the connection it arrived on, so a reply
@@ -221,6 +249,61 @@ type gatewayUplinkFrame struct {
 	data       string
 }
 
+// gatewayUplinkMaxConns is UPLINK_MAX_CONNECTIONS, or the default.
+func gatewayUplinkMaxConns() int {
+	if value := strings.TrimSpace(os.Getenv("UPLINK_MAX_CONNECTIONS")); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return gatewayUplinkDefaultMaxConns
+}
+
+// gatewayUplinkIdle is UPLINK_IDLE_TIMEOUT_S, or the default.
+func gatewayUplinkIdle() time.Duration {
+	if value := strings.TrimSpace(os.Getenv("UPLINK_IDLE_TIMEOUT_S")); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			return time.Duration(parsed) * time.Second
+		}
+	}
+	return gatewayUplinkDefaultIdle
+}
+
+// gatewayUplinkBindAddress is the interface the uplink listens on. UPLINK_BIND
+// names it; without it, the host the service itself was told to listen on
+// (RHO_HTTP_ADDR with a host part) is used, so a gateway confined to one
+// interface is confined on both listeners. With neither, the uplink listens on
+// every interface: relays on other machines dial it, and what a peer can do
+// there is bounded by the limits above and by the sessions every frame is
+// sealed under.
+func gatewayUplinkBindAddress() string {
+	if bind, ok := os.LookupEnv("UPLINK_BIND"); ok && strings.TrimSpace(bind) != "" {
+		return strings.TrimSpace(bind)
+	}
+	if address := strings.TrimSpace(os.Getenv("RHO_HTTP_ADDR")); address != "" {
+		if host, _, err := net.SplitHostPort(address); err == nil {
+			return host
+		}
+	}
+	return ""
+}
+
+// gatewayUplinkSay writes a line about the uplink at most once a minute per
+// kind, so a peer that misbehaves in a loop does not fill the log.
+func gatewayUplinkSay(kind string, format string, args ...any) {
+	gatewayUplinkMu.Lock()
+	last := gatewayUplinkSaid[kind]
+	now := time.Now()
+	quiet := !last.IsZero() && now.Sub(last) < time.Minute
+	if !quiet {
+		gatewayUplinkSaid[kind] = now
+	}
+	gatewayUplinkMu.Unlock()
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "gateway: uplink: "+format+"\n", args...)
+	}
+}
+
 // gateway_uplink_start listens on a TCP port for gateways that dial in. Frames
 // that arrive are queued; the Rho side drains them with gateway_uplink_next.
 func gatewayUplinkStart(port uint32) bool {
@@ -228,11 +311,10 @@ func gatewayUplinkStart(port uint32) bool {
 		return false
 	}
 	gatewayUplinkOnce.Do(func() {
-		// UPLINK_BIND chooses the interface a relay may dial in on. An empty
-		// value keeps the previous behaviour of listening on every interface;
-		// a loopback address confines the uplink to the host itself, and a
-		// specific address confines it to one interface on a private network.
-		bind := os.Getenv("UPLINK_BIND")
+		bind := gatewayUplinkBindAddress()
+		if strings.Contains(bind, ":") && !strings.HasPrefix(bind, "[") {
+			bind = "[" + bind + "]" // an IPv6 address
+		}
 		address := bind + ":" + strconv.FormatUint(uint64(port), 10)
 		listener, err := net.Listen("tcp", address)
 		if err != nil {
@@ -246,12 +328,20 @@ func gatewayUplinkStart(port uint32) bool {
 }
 
 func gatewayUplinkAccept() {
+	limit := gatewayUplinkMaxConns()
 	for {
 		connection, err := gatewayUplinkListener.Accept()
 		if err != nil {
 			return
 		}
 		gatewayUplinkMu.Lock()
+		if len(gatewayUplinkByID) >= limit {
+			gatewayUplinkMu.Unlock()
+			connection.Close()
+			gatewayUplinkSay("full", "a connection from %s was refused: %d are open, the most allowed (UPLINK_MAX_CONNECTIONS)",
+				connection.RemoteAddr(), limit)
+			continue
+		}
 		gatewayUplinkNextID++
 		id := gatewayUplinkNextID
 		gatewayUplinkByID[id] = connection
@@ -261,17 +351,26 @@ func gatewayUplinkAccept() {
 }
 
 // gatewayUplinkRead reads one connection and queues the frames it completes. A
-// frame is COBS bytes closed with a zero, exactly as on a serial link.
+// frame is COBS bytes closed with a zero, exactly as on a serial link. The
+// connection is closed when it is idle too long or sends too much without a
+// delimiter.
 func gatewayUplinkRead(connection net.Conn, id uint32) {
+	idle := gatewayUplinkIdle()
 	defer func() {
 		gatewayUplinkMu.Lock()
 		delete(gatewayUplinkByID, id)
+		for key, bound := range gatewayUplinkConns {
+			if bound == connection {
+				delete(gatewayUplinkConns, key)
+			}
+		}
 		gatewayUplinkMu.Unlock()
 		connection.Close()
 	}()
 	pending := make([]byte, 0, 1024)
 	chunk := make([]byte, 512)
 	for {
+		connection.SetReadDeadline(time.Now().Add(idle))
 		count, err := connection.Read(chunk)
 		if count > 0 {
 			pending = append(pending, chunk[:count]...)
@@ -284,10 +383,23 @@ func gatewayUplinkRead(connection net.Conn, id uint32) {
 				pending = pending[at+1:]
 				if len(frame) > 0 {
 					gatewayUplinkMu.Lock()
-					gatewayUplinkQueue = append(gatewayUplinkQueue, gatewayUplinkFrame{connection: id, data: frame})
-					gatewayUplinkMu.Unlock()
+					if len(gatewayUplinkQueue) < gatewayUplinkMaxQueue {
+						gatewayUplinkQueue = append(gatewayUplinkQueue, gatewayUplinkFrame{connection: id, data: frame})
+						gatewayUplinkMu.Unlock()
+					} else {
+						gatewayUplinkMu.Unlock()
+						gatewayUplinkSay("queue", "a frame was dropped: %d are waiting, the most kept", gatewayUplinkMaxQueue)
+					}
 				}
 			}
+			if len(pending) > gatewayUplinkMaxPending {
+				gatewayUplinkSay("pending", "the connection from %s was closed: %d bytes without a frame delimiter",
+					connection.RemoteAddr(), len(pending))
+				return
+			}
+			// What is left is the start of the next frame; keep it in a buffer
+			// of its own rather than pinning the one it was read into.
+			pending = append(make([]byte, 0, 1024), pending...)
 		}
 		if err != nil {
 			return
@@ -352,6 +464,7 @@ func gatewayUplinkSend(childArea uint32, childLink uint32, frame string) bool {
 	if connection == nil {
 		return false
 	}
+	connection.SetWriteDeadline(time.Now().Add(gatewayUplinkWriteTimeout))
 	_, err := connection.Write(append([]byte(frame), 0))
 	return err == nil
 }
@@ -366,6 +479,7 @@ func gatewayUplinkReply(connection uint32, frame string) bool {
 	if conn == nil {
 		return false
 	}
+	conn.SetWriteDeadline(time.Now().Add(gatewayUplinkWriteTimeout))
 	_, err := conn.Write(append([]byte(frame), 0))
 	return err == nil
 }
@@ -613,6 +727,14 @@ func gatewaySerialRead(timeoutMs uint32) string {
 		return ""
 	}
 	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	// A tty opened non-blocking is handed to the runtime's poller, where a
+	// read parks until a byte comes rather than answering EAGAIN; the deadline
+	// is what makes the timeout hold, so the caller's loop goes on turning (the
+	// uplink, the relay, the manifest) while the link is quiet.
+	pollable := file.SetReadDeadline(deadline) == nil
+	if pollable {
+		defer file.SetReadDeadline(time.Time{})
+	}
 	buf := make([]byte, 256)
 	for {
 		if index := bytes.IndexByte(gatewayRx, 0x00); index >= 0 {
@@ -630,6 +752,9 @@ func gatewaySerialRead(timeoutMs uint32) string {
 				gatewayRx = gatewayRx[:0]
 			}
 			continue
+		}
+		if pollable && errors.Is(err, os.ErrDeadlineExceeded) {
+			return ""
 		}
 		if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK && err != syscall.EINTR {
 			// EIO or EOF: the device went away (a USB board reset). It is

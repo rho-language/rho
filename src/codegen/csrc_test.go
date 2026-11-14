@@ -100,13 +100,10 @@ func TestTheRuntimeWritesEachNumberIntoItsOwnString(t *testing.T) {
 	if err != nil {
 		t.Skip("no C compiler on the path")
 	}
-	source := ""
-	for _, fragment := range runtimeFragments {
-		if fragment.Name == "strings" {
-			source = fragment.Source
-		}
-	}
-	if source == "" {
+	// The runtime a program calling these gets, with what they need: the
+	// strings are the arena's, and running out of it is a panic.
+	source := runtimeFor("rho_concat( rho_int_to_str( rho_string_from_i32(")
+	if !strings.Contains(source, "rho runtime: strings") {
 		t.Fatal("the runtime has no strings fragment")
 	}
 	dir := t.TempDir()

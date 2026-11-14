@@ -108,7 +108,14 @@ panics on at startup.
 | `request_path(req)`, `request_method(req)` | The path and the method |
 | `request_body(req)` | The body, as text |
 | `request_auth(req)` | The raw `Authorization` header |
+| `request_remote(req)` | The IP address the TCP connection came from, without the port |
 | `request_query_param(req, "q")` | One query parameter, decoded |
+
+`request_remote` is the connection's own peer, which a client cannot change by
+sending `X-Forwarded-For` or `X-Real-IP`. That makes it what a limit kept per
+address is keyed on. Behind a reverse proxy every request comes from the proxy,
+so a service there keys on the proxy's forwarded header only when the peer is a
+proxy it trusts.
 
 The body is capped at 16 MB; `RHO_HTTP_MAX_BODY` (in bytes) changes the cap when
 the service starts.

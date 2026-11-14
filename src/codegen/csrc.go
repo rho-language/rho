@@ -46,6 +46,12 @@ var initSource string
 //go:embed csrc/print.c
 var printSource string
 
+// The string arena: where every string the runtime builds lives, and what the
+// compiler releases at the end of a loop iteration or a statement.
+//
+//go:embed csrc/arena.c
+var arenaSource string
+
 //go:embed csrc/strings.c
 var stringsSource string
 
@@ -156,11 +162,12 @@ var runtimeFragments = []RuntimeFragment{
 	{
 		Name:     "print",
 		Source:   printSource,
-		Provides: []string{"rho_print", "rho_print_i32", "rho_print_u32"},
+		Provides: []string{"rho_print", "rho_print_i32", "rho_print_u32", "rho_print_i64"},
 		Decls: []string{
 			"void rho_print(const char* s);",
 			"void rho_print_i32(int32_t value);",
 			"void rho_print_u32(uint32_t value);",
+			"void rho_print_i64(int64_t value);",
 		},
 	},
 	{
@@ -171,6 +178,25 @@ var runtimeFragments = []RuntimeFragment{
 		Decls:    []string{"void panicf(const char* msg);"},
 	},
 	{
+		// After the panic, because running out of a board's arena is one, and
+		// before everything that builds a string.
+		Name:   "arena",
+		Source: arenaSource,
+		Provides: []string{
+			"rho_str_alloc", "rho_str_dup", "rho_str_adopt",
+			"rho_arena_mark", "rho_arena_release", "rho_arena_keep", "rho_arena_release_cond", "rho_arena_used",
+		},
+		Needs: []string{"panicf"},
+		Decls: []string{
+			"char* rho_str_alloc(size_t n);",
+			"size_t rho_arena_mark(void);",
+			"void rho_arena_release(size_t mark);",
+			"const char* rho_arena_keep(size_t mark, const char* s);",
+			"bool rho_arena_release_cond(size_t mark, bool value);",
+			"size_t rho_arena_used(void);",
+		},
+	},
+	{
 		Name:   "strings",
 		Source: stringsSource,
 		Provides: []string{
@@ -179,6 +205,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_str_trim_prefix", "rho_str_contains", "rho_str_at",
 			"rho_str_index_of", "rho_str_slice",
 		},
+		Needs: []string{"rho_str_alloc"},
 		Decls: []string{
 			"char* rho_concat(const char* a, const char* b);",
 			"char* rho_string_from_i32(int32_t value);",
@@ -204,6 +231,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_i64_to_str", "rho_i64_from_str", "rho_str_lower", "rho_str_upper", "rho_str_field", "rho_str_replace",
 			"rho_json_str_field", "rho_json_num_field", "rho_app_workspace",
 		},
+		Needs: []string{"rho_str_alloc"},
 		Decls: []string{
 			"char* rho_str_trim(const char* s);",
 			"char* rho_str_url_encode(const char* s);",
@@ -275,6 +303,7 @@ var runtimeFragments = []RuntimeFragment{
 		Name:     "env",
 		Source:   envSource,
 		Provides: []string{"rho_env_or", "rho_getenv", "rho_setenv"},
+		Needs:    []string{"rho_str_dup"},
 		Decls: []string{
 			"const char* rho_env_or(const char* name, const char* fallback);",
 			"char* rho_getenv(const char* name);",
@@ -288,6 +317,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_hmac_sha256_hex",
 			"rho_random_hex",
 		},
+		Needs: []string{"rho_str_alloc"},
 		Decls: []string{
 			"char* rho_hmac_sha256_hex(const char* key_hex, const char* message_hex);",
 			"char* rho_random_hex(unsigned int bytes);",
@@ -302,7 +332,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_exec_capture",
 			"rho_sleep_ms",
 		},
-		Needs: []string{"rho_strlen"},
+		Needs: []string{"rho_strlen", "rho_str_adopt"},
 		Decls: []string{
 			"unsigned int rho_exec(const char* program, const char* arguments, const char* output_path);",
 			"unsigned int rho_exec_args(const char* program, const char* arguments, const char* output_path);",
@@ -319,6 +349,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_local_clock",
 			"rho_utc_offset_at",
 		},
+		Needs: []string{"rho_str_dup"},
 		Decls: []string{
 			"unsigned int rho_now_s(void);",
 			"char* rho_local_date(void);",
@@ -335,7 +366,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_write_secret",
 			"rho_append_text",
 		},
-		Needs: []string{"rho_strlen"},
+		Needs: []string{"rho_strlen", "rho_str_adopt"},
 		Decls: []string{
 			"char* rho_read_text(const char* path);",
 			"int rho_write_text(const char* path, const char* text);",
@@ -352,7 +383,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_yaml_kind",
 			"rho_yaml_keys",
 		},
-		Needs: []string{"rho_strlen"},
+		Needs: []string{"rho_strlen", "rho_str_adopt"},
 		Decls: []string{
 			"char* rho_yaml_load(const char* path);",
 			"char* rho_yaml_value(const char* path, const char* key);",

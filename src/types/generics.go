@@ -753,14 +753,17 @@ func (tc *TypeChecker) funcToSpecialisation(fn ast.FuncDecl, subs map[string]ir.
 
 	returnType := tc.declaredTypeWith(fn.ReturnType, subs)
 
+	name := mangleGeneric(fn.Name, args)
+
 	// The body is lowered with the substitution in place.
 	previous := tc.currentTypeArgs
 	tc.currentTypeArgs = subs
 	tc.currentReturnHint = tc.typeFor(fn.ReturnType)
+	savedArena := tc.arenaEnter(tc.qualifiedName(fn.Owner, name), name, fn.Owner)
 	body := tc.lowerStatements(fn.Body, scope)
+	tc.arenaLeave(savedArena)
 	tc.currentTypeArgs = previous
 
-	name := mangleGeneric(fn.Name, args)
 	return ir.FuncIR{
 		Name:       name,
 		CName:      tc.qualifiedName(fn.Owner, name),

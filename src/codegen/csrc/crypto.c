@@ -149,9 +149,9 @@ static uint8_t* rho_hex_decode(const char* hex, size_t* length)
 static char* rho_hex_encode(const uint8_t* data, size_t n)
 {
     static const char digits[] = "0123456789abcdef";
-    char* out = (char*)malloc(2 * n + 1);
+    char* out = rho_str_alloc(2 * n + 1);
     if (out == NULL) {
-        return strdup("");
+        return (char*)"";
     }
     for (size_t i = 0; i < n; i++) {
         out[2 * i] = digits[data[i] >> 4];
@@ -171,7 +171,7 @@ char* rho_hmac_sha256_hex(const char* key_hex, const char* message_hex)
     if (key == NULL || message == NULL) {
         free(key);
         free(message);
-        return strdup("");
+        return (char*)"";
     }
     uint8_t block[64];
     memset(block, 0, sizeof(block));
@@ -208,22 +208,22 @@ char* rho_hmac_sha256_hex(const char* key_hex, const char* message_hex)
 char* rho_random_hex(unsigned int bytes)
 {
     if (bytes == 0 || bytes > 1024) {
-        return strdup("");
+        return (char*)"";
     }
     uint8_t* raw = (uint8_t*)malloc(bytes);
     if (raw == NULL) {
-        return strdup("");
+        return (char*)"";
     }
     FILE* source = fopen("/dev/urandom", "rb");
     if (source == NULL) {
         free(raw);
-        return strdup("");
+        return (char*)"";
     }
     size_t got = fread(raw, 1, bytes, source);
     fclose(source);
     if (got != bytes) {
         free(raw);
-        return strdup("");
+        return (char*)"";
     }
     char* out = rho_hex_encode(raw, bytes);
     free(raw);

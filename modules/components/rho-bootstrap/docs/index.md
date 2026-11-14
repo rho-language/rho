@@ -7,9 +7,14 @@ an enrollment server, which issues the credential the machine uses from then on.
 The private key is generated where it is used and never leaves it.
 
 ```sh
-rho bootstrap init -config ~/.rho/provisioning.json -token <one-time-token>
+rho bootstrap init -config ~/.rho/provisioning.json -token-file /run/enroll.token
+printf '%s\n' "$TOKEN" | rho bootstrap init -token-file -     # or on standard input
 rho bootstrap status
 ```
+
+The token is read from a file or from standard input, never from the command
+line: a command line is visible to every user of the machine (`ps`, `/proc`) and
+stays in shell history, so `-token` is refused with a message saying so.
 
 ## The provisioning contract
 
@@ -32,7 +37,7 @@ where it belongs, and where it enrolls.
 | `device.kind` | `node`, `host` or `service`; required |
 | `placement.project` | The project the device belongs to; required |
 | `placement.area`, `placement.node` | Where in it; a `node` needs a node number |
-| `keeper.url` | The enrollment server; required only when a token is given |
+| `keeper.url` | The enrollment server; required only when a token is given. It must be `https://`; plain `http://` is accepted only for `127.0.0.1`, `::1` or `localhost` |
 | `secrets.store` | The identity directory (default `~/.rho/identity`) |
 | `permissions` | The modes asked for; only `0700`, `0750`, `0600` and `0640` are accepted |
 
@@ -44,9 +49,10 @@ is read from `/etc/rho/provisioning.json`, then `~/.rho/provisioning.json`.
 
 | Command | Flags | What it does |
 |---|---|---|
-| `init` | `-config FILE`, `-dir DIR`, `-token TOKEN`, `-force`, `-offline` | Create the identity, then enroll if a token is given |
+| `init` | `-config FILE`, `-dir DIR`, `-token-file FILE\|-`, `-force`, `-offline`, `-board-key`, `-mesh-url URL` | Create the identity, then enroll if a token is given; with `-board-key`, then fetch the board key |
 | `status` | `-dir DIR` | Print the identity as `key=value` lines |
-| `token` | `-device ID` (required), `-project`, `-area`, `-node`, `-ttl` (default `15m`), `-file` | On the enrollment server's machine: create a one-time token for one device |
+| `token` | `-device ID` (required), `-project`, `-area`, `-node`, `-ttl` (default `15m`, must be positive), `-reenroll`, `-file` | On the enrollment server's machine: create a one-time token for one device and one placement |
+| `key` | `-config FILE`, `-dir DIR`, `-mesh-url URL` | Fetch this node's board id and key from Mesh with the enrollment credential |
 
 `init` writes `identity.json` (the instance id, the device and placement, the
 public key) and `identity.key` (the private seed), both `0600`, and
@@ -54,11 +60,25 @@ public key) and `identity.key` (the private seed), both `0600`, and
 given, so a second run is safe. With a token and the contract's `keeper.url`, it
 posts the device id, the public key and the token to `<url>/api/enroll` and stores
 the credential that comes back as `credential`, `0600`; `-offline` skips
-enrollment.
+enrollment. The placement the node is recorded at is the token's: the contract's
+placement is sent only to be compared, and a token for another placement is
+refused. Redirects are not followed.
 
-`token` appends one line to the server's token file (default
-`~/.rho/keeper/enrollment.tokens`) and prints the token and its expiry; the
-server's enrollment endpoint reads that file.
+`token` adds one line to the server's token file (default
+`~/.rho/keeper/enrollment.tokens`) and prints the token, its expiry and its
+placement. The keeper marks lines used in the same file, so the line is added
+under the keeper's lock (the directory `enrollment.tokens.lock` beside the file)
+and the file is replaced whole through a temporary file and a rename. A device
+that is already enrolled is replaced only by a token made with `-reenroll`.
+
+`key` is for a Linux host node that speaks the board protocol (a host gateway
+node, for example). It posts to Mesh's node-key endpoint — by default
+`<keeper.url>/app/mesh/mesh/api/nodes/key`, Mesh behind the keeper's origin —
+with `Authorization: Node <device>:<credential>`. Mesh checks the credential with
+the keeper, finds the board it planned at the node's placement, and answers its
+id and key. They are kept as `board.key` (32 hex digits) and `board.env`
+(`RH_SECURE_UID` and `RH_SECURE_KEY_FILE`, to be read as an environment file),
+both `0600`, and are never printed.
 
 ## What belongs to firmware
 

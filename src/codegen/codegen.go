@@ -444,7 +444,7 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 			if strings.HasSuffix(instr.Dest, "=") {
 				operator = " "
 			}
-			cg.b.EmitLine(instr.Dest + operator + instr.Args[0] + ";")
+			cg.b.EmitLine(instr.Dest + operator + arenaKept(instr.Arena, instr.Args[0]) + ";")
 		}
 
 	case ir.OpLet:
@@ -463,7 +463,7 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 			if strings.HasPrefix(strings.TrimSpace(value), "{") && strings.HasSuffix(instr.Type, "*") {
 				value = "(" + strings.TrimSuffix(instr.Type, "*") + "[])" + value
 			}
-			line += " = " + value
+			line += " = " + arenaKept(instr.Arena, value)
 		}
 		cg.b.EmitLine(line + ";")
 
@@ -473,7 +473,13 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 		}
 
 	case ir.OpIf:
-		cg.b.EmitLine("if (" + instr.Condition + ") {")
+		condition := instr.Condition
+		if instr.Arena != "" {
+			// The condition's temporaries are given back once it is evaluated;
+			// the branch it chooses reads none of them.
+			condition = "rho_arena_release_cond(" + instr.Arena + ", " + condition + ")"
+		}
+		cg.b.EmitLine("if (" + condition + ") {")
 		cg.b.Indent()
 		cg.emitBlock(instr.Then)
 		cg.b.Dedent()
@@ -486,7 +492,14 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 		cg.b.EmitLine("}")
 
 	case ir.OpWhile:
-		cg.b.EmitLine("while (" + instr.Condition + ") {")
+		condition := instr.Condition
+		if instr.Arena != "" {
+			// A loop whose iterations cannot be released still gives back what
+			// each test of its condition built: a mark before the test and a
+			// release after it, every time it is evaluated.
+			condition = "(" + instr.Arena + " = rho_arena_mark(), rho_arena_release_cond(" + instr.Arena + ", " + condition + "))"
+		}
+		cg.b.EmitLine("while (" + condition + ") {")
 		cg.b.Indent()
 		cg.emitBlock(instr.Then)
 		cg.b.Dedent()
@@ -511,6 +524,12 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 	case ir.OpNop:
 		cg.b.EmitLine("/* nop */")
 
+	case ir.OpArenaMark:
+		cg.b.EmitLine("size_t " + instr.Dest + " = rho_arena_mark();")
+
+	case ir.OpArenaRelease:
+		cg.b.EmitLine("rho_arena_release(" + instr.Dest + ");")
+
 	case ir.OpRaw:
 		// `OpRaw` carries text that is already a whole line, so it is emitted at
 		// the current depth rather than being written verbatim: a raw statement
@@ -520,6 +539,16 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 	default:
 		cg.b.EmitLine("/* unknown op */")
 	}
+}
+
+// arenaKept is a stored string kept past the arena mark its statement took:
+// everything else the statement built is given back, and the string is moved
+// down to the mark. With no mark it is the value as it stands.
+func arenaKept(mark, value string) string {
+	if mark == "" {
+		return value
+	}
+	return "rho_arena_keep(" + mark + ", " + value + ")"
 }
 
 // emitBlock is a nested block of instructions, at the caller's indentation.

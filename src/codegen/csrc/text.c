@@ -18,9 +18,10 @@ static bool rho_text_space(char c)
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
+/* Every string returned here is the arena's (arena.c). */
 static char* rho_text_copy(const char* s, size_t n)
 {
-    char* out = (char*)malloc(n + 1);
+    char* out = rho_str_alloc(n + 1);
     if (out == NULL) {
         return "";
     }
@@ -66,7 +67,7 @@ char* rho_str_url_encode(const char* s)
         return "";
     }
     size_t n = strlen(s);
-    char* out = (char*)malloc(n * 3 + 1);
+    char* out = rho_str_alloc(n * 3 + 1);
     if (out == NULL) {
         return "";
     }
@@ -90,7 +91,7 @@ char* rho_str_url_encode(const char* s)
  * kept as it is. */
 static char* rho_text_decode(const char* s, size_t n)
 {
-    char* out = (char*)malloc(n + 1);
+    char* out = rho_str_alloc(n + 1);
     if (out == NULL) {
         return "";
     }
@@ -383,7 +384,7 @@ char* rho_str_replace(const char* s, const char* from, const char* to)
         count++;
     }
     size_t n = strlen(s) + count * to_n - count * from_n;
-    char* out = (char*)malloc(n + 1);
+    char* out = rho_str_alloc(n + 1);
     if (out == NULL) {
         return "";
     }
@@ -438,7 +439,7 @@ char* rho_json_str_field(const char* doc, const char* key)
     while (q[n] != 0 && q[n] != '"') {
         n += (q[n] == '\\' && q[n + 1] != 0) ? 2 : 1;
     }
-    char* out = (char*)malloc(n + 1);
+    char* out = rho_str_alloc(n + 1);
     if (out == NULL) {
         return "";
     }
@@ -484,7 +485,7 @@ char* rho_app_workspace(void)
     if (home == NULL) home = ".";
     if (app == NULL || app[0] == 0) app = "app";
     size_t n = strlen(home) + strlen(app) + 16;
-    char* out = (char*)malloc(n);
+    char* out = rho_str_alloc(n);
     if (out == NULL) {
         return "";
     }

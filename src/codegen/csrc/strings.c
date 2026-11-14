@@ -11,16 +11,28 @@
  * formats hex by hand into a stack buffer rather than calling
  * `printf("%08x")`. See `stm32_fault.c`.
  *
+ * Every string a function here returns comes from the string arena (arena.c),
+ * never from `malloc`, and the compiler releases it.
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* A string that is not there reads as the empty one, and the result is never
+ * NULL: a caller that concatenates the result again, or prints it, would read
+ * through a null pointer. */
 char* rho_concat(const char* a, const char* b)
 {
+    if (a == NULL) {
+        a = "";
+    }
+    if (b == NULL) {
+        b = "";
+    }
     size_t len_a = strlen(a);
     size_t len_b = strlen(b);
-    char* out = (char*)malloc(len_a + len_b + 1);
+    char* out = rho_str_alloc(len_a + len_b + 1);
     if (out == NULL) {
-        return NULL;
+        return (char*)"";
     }
     memcpy(out, a, len_a);
     memcpy(out + len_a, b, len_b + 1);
@@ -46,9 +58,9 @@ static char* rho_digits(uint32_t magnitude, bool negative)
         *--at = '-';
     }
     size_t len = (size_t)(buffer + sizeof(buffer) - at);
-    char* out = (char*)malloc(len);
+    char* out = rho_str_alloc(len);
     if (out == NULL) {
-        return "";
+        return (char*)"";
     }
     memcpy(out, at, len);
     return out;
@@ -66,9 +78,9 @@ char* rho_string_from_i32(int32_t value)
 
 char* rho_str_from_byte(uint8_t b)
 {
-    char* out = (char*)malloc(2);
+    char* out = rho_str_alloc(2);
     if (out == NULL) {
-        return "";
+        return (char*)"";
     }
     out[0] = (char)b;
     out[1] = 0;
@@ -160,9 +172,9 @@ char* rho_str_slice(const char* s, uint32_t start, uint32_t length)
     }
     size_t avail = n - start;
     size_t take = length < avail ? length : avail;
-    char* out = (char*)malloc(take + 1);
+    char* out = rho_str_alloc(take + 1);
     if (out == NULL) {
-        return "";
+        return (char*)"";
     }
     memcpy(out, s + start, take);
     out[take] = 0;

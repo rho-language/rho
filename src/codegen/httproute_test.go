@@ -645,6 +645,7 @@ type Request struct {
 	Body   string
 	Auth   string
 	Params map[string]string
+	remote string
 	head   map[string]string
 	bind   *bindState
 }

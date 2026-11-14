@@ -223,11 +223,7 @@ char* rho_exec_capture(const char* program, const char* arguments)
     char path[] = "/tmp/rho-capture-XXXXXX";
     int fd = mkstemp(path);
     if (fd < 0) {
-        char* empty = (char*)malloc(1);
-        if (empty != NULL) {
-            empty[0] = '\0';
-        }
-        return empty;
+        return (char*)"";
     }
     close(fd);
     unsigned int code = rho_exec_args(program, arguments, path);
@@ -248,13 +244,10 @@ char* rho_exec_capture(const char* program, const char* arguments)
     }
     unlink(path);
     if (text == NULL) {
-        text = (char*)malloc(1);
-        length = 0;
+        return (char*)"";
     }
-    if (text != NULL) {
-        text[length] = '\0';
-    }
-    return text;
+    text[length] = '\0';
+    return rho_str_adopt(text);
 }
 
 /* rho_sleep_ms waits, which is what a background task that ticks does between

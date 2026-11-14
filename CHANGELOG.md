@@ -426,3 +426,11 @@ A service whose module declares its own `GET /healthz` answers it itself, where 
 `rho protocol`: a `string[N]` field is N bytes on the wire for every target — the C size macro and the Go struct had counted N strings of 64 bytes — and the Rho target accepts it. Decoded strings end at their first NUL.
 
 `rho module install` installs a provider; `rho module enable` finds an installed library module, which resolves as a dependency only once enabled. A plugin that only provides an ecosystem's data is held to the integration contract. `rho module activate` says a version is required.
+
+## [0.9.0] - 2026-11-14
+
+Strings in a C program no longer leak. Every string the runtime builds comes from a string arena, and the compiler releases what a loop iteration built at the end of that iteration (and before `continue`), and what a statement built when nothing keeps it; a string a variable keeps is compacted down. On a board — a target with a RAM region and no `deploy` block, or one that sets `linker.string_arena_bytes` — the arena is a fixed buffer, so strings need no `malloc`, and running out stops with "string arena exhausted". On a host it grows in chunks. A loop that keeps what it builds in something declared outside it cannot be released: a board build refuses it and names the loop and the variable, a host build warns. C code that keeps a string it was given copies it. `rho_concat` never returns NULL, and `print(int_to_str(x))` and `print(i64_to_str(x))` build no string.
+
+`request_remote(req)` is the address of the connection a request came on, which no header can change.
+
+An unsigned value plus an expression made only of written numbers (`up + 2 * N`) keeps the unsigned type on the Go backend, where it was widened to a signed one that Go refused to assign.

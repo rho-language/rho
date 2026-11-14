@@ -372,4 +372,147 @@ fn main() void {
 `,
 		want: "env=[two] clock nsec",
 	},
+	// The string arena. The C side releases strings at the end of each loop
+	// iteration and after each statement, and is built with AddressSanitizer,
+	// which poisons what is released: a string the compiler gave back too early
+	// is a report here rather than the same output by luck.
+	{
+		name: "strings built in loops are released, and the ones kept survive",
+		source: `module app
+
+struct Reading {
+    name: string
+    value: u32
+}
+
+fn label(i: u32) string {
+    let unit = "C"
+    return "T" + int_to_str(i) + unit
+}
+
+fn joined(count: u32) string {
+    var out: string = ""
+    var k: u32 = 0
+    while k < count {
+        out = out + label(k + 8) + ","
+        k = k + 1
+    }
+    return out
+}
+
+fn first_long(limit: u32) string {
+    var i: u32 = 0
+    while i < limit {
+        let candidate = label(i * 7)
+        if strlen(candidate) > 3 {
+            return candidate
+        }
+        i = i + 1
+    }
+    return "none"
+}
+
+fn main() void {
+    var i: u32 = 0
+    var state: string = "idle"
+    while i < 6 {
+        let line = label(i) + "/" + state
+        if str_contains(line + "!", "T3") {
+            state = "warm"
+            i = i + 1
+            continue
+        }
+        var j: u32 = 0
+        var row: string = ""
+        while j < 3 {
+            row = row + int_to_str(j)
+            if j == 1 {
+                let note = "[" + row + "]"
+                print(note)
+            }
+            j = j + 1
+        }
+        match str_slice(line, 0, 2) {
+            "T0" => print("zero ")
+            "T5" => {
+                print("five ")
+                break
+            }
+            _ => print(str_trim_prefix(line, "T") + " ")
+        }
+        print(line + ":" + row + " ")
+        i = i + 1
+    }
+    let values: u32[3] = [1, 2, 3]
+    for value in values {
+        let item = "v" + int_to_str(value)
+        if value == 2 {
+            continue
+        }
+        print(item + " ")
+    }
+    print(joined(2) + " ")
+    print(first_long(5) + " ")
+    let r = Reading{ label(4), 4 }
+    print(r.name + " " + state + "\n")
+}
+`,
+		want: "[01]zero T0C/idle:012 [01]1C/idle T1C/idle:012 [01]2C/idle T2C/idle:012 [01]4C/warm T4C/warm:012 [01]five v1 v3 T8C,T9C, T14C T4C warm\n",
+	},
+	{
+		name: "a loop that keeps a string outside it still prints what it kept",
+		source: `module app
+
+fn main() void {
+    var i: u32 = 0
+    var log: string = ""
+    var last: string = "none"
+    while i < 4 {
+        last = "n" + int_to_str(i)
+        log = log + last + ";"
+        i = i + 1
+    }
+    var k: u32 = 0
+    while str_contains(log + "", int_to_str(k)) {
+        k = k + 1
+    }
+    print(log + " " + last + " " + int_to_str(k) + "\n")
+}
+`,
+		want: "n0;n1;n2;n3; n3 4\n",
+	},
+	{
+		name: "numbers printed without building a string",
+		source: `module app
+
+fn main() void {
+    let a: u32 = 4000000000
+    let b: i64 = -9000000000
+    print(int_to_str(a))
+    print(" ")
+    print(i64_to_str(b))
+    print(" ")
+    print(int_to_str(u32(7)))
+    print("\n")
+}
+`,
+		want: "4000000000 -9000000000 7\n",
+	},
+	{
+		name: "an unsigned value plus a constant expression over a module constant",
+		source: `module app
+
+const SECURE_STORE_EVERY: u32 = 16
+
+fn main() void {
+    let up: u32 = 4000000000
+    let next: u32 = up + 2 * SECURE_STORE_EVERY
+    let back: u32 = SECURE_STORE_EVERY * 3 - 1 + up
+    let small: u8 = 250
+    let wrapped: u8 = small + 2 * 3
+    print(int_to_str(next) + " " + int_to_str(back) + " " + int_to_str(u32(wrapped)) + "\n")
+}
+`,
+		want: "4000000032 4000000047 0\n",
+	},
 }

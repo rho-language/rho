@@ -115,6 +115,11 @@ type TypeChecker struct {
 	// than emitted as a variable.
 	moduleConsts     map[string]ast.ConstDecl
 	moduleConstTypes map[string]ir.Type
+
+	// arena is what lowering knows about releasing the C backend's strings:
+	// the loops around the statement being lowered, the calls made, and the
+	// loops that cannot be released. See arena.go.
+	arena arenaState
 }
 
 type functionType struct {
@@ -725,6 +730,13 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		if left.Kind == ir.TypeF32 || right.Kind == ir.TypeF32 {
 			return ir.Type{Kind: ir.TypeF32, Name: "f32"}, nil
+		}
+		// A number written out is an untyped constant and takes the type of the
+		// value it meets, as it does in C and in Go: `2 * LIMIT` is a u32 when
+		// LIMIT is, and `up + 2 * LIMIT` is then a u32 plus a u32 rather than a
+		// u32 plus an i32 that both backends would have to widen.
+		if isUntypedConstant(value.Left) && !isUntypedConstant(value.Right) {
+			return right, nil
 		}
 		return left, nil
 	case ast.MemberExpr:
@@ -1511,6 +1523,7 @@ func typeName(value ir.Type) string {
 
 // ToIR converts a validated AST module into IR.
 func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
+	tc.arenaRegister(m)
 	out := ir.NewModuleIR(m.Name)
 	out.Features = append(out.Features, "math")
 	out.Features = append(out.Features, m.Features...)
@@ -1688,6 +1701,8 @@ func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
 	previousOwner := tc.owner
 	tc.owner = fn.Owner
 	defer func() { tc.owner = previousOwner }()
+	savedArena := tc.arenaEnter(qualifiedCName(fn.Owner, fn.Name), fn.Name, fn.Owner)
+	defer tc.arenaLeave(savedArena)
 	// An extern's signature is foreign: `Ptr[T]` in it is the C pointer the
 	// declaration means, not the handle struct the language declares.
 	if fn.Extern {
@@ -1904,6 +1919,19 @@ func (tc *TypeChecker) lowerStatements(statements []ast.Stmt, scope map[string]i
 func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Type) []ir.Instr {
 	switch stmt := statement.(type) {
 	case ast.LetStmt:
+		// How the value's temporaries are released is decided before the
+		// binding is in scope, as the value is evaluated before it is.
+		stored := ir.Type{}
+		if written := stmt.Type.String(); written != "" {
+			stored = tc.typeFor(written)
+		} else if stmt.Value != nil {
+			stored, _ = tc.exprType(stmt.Value, scope)
+		}
+		wrap := tc.arenaWrapFor(stmt.Value, stored, scope)
+		if wrap != wrapNone {
+			tc.arena.released++
+			defer func() { tc.arena.released-- }()
+		}
 		value := ""
 		declaredName := stmt.Type.String()
 		if stmt.Value != nil {
@@ -1927,13 +1955,13 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		// Record the binding so later expressions see its type.
 		scope[stmt.Name] = tc.typeFor(declaredName)
-		return []ir.Instr{{
+		return tc.arenaWrapped(wrap, ir.Instr{
 			Op:       ir.OpLet,
 			Dest:     stmt.Name,
 			Type:     tc.cTypeForTypeName(declaredName),
 			TypeName: declaredName,
 			Args:     []string{value},
-		}}
+		})
 	case ast.AssignStmt:
 		// A write to a bit field clears its bits in the storage integer and puts
 		// the masked value back — what a C bit field does behind the same
@@ -1951,13 +1979,19 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 				return []ir.Instr{{Op: ir.OpAssign, Dest: storage, Args: []string{rmw}}}
 			}
 		}
-		value := tc.lowerExpr(stmt.Value, scope)
-		if target, err := tc.exprType(stmt.Target, scope); err == nil {
+		wrap := wrapNone
+		target, targetErr := tc.exprType(stmt.Target, scope)
+		if targetErr == nil && stmt.Op == "=" {
+			wrap = tc.arenaWrapFor(stmt.Value, target, scope)
+		}
+		value := tc.arenaReleasing(wrap, func() string { return tc.lowerExpr(stmt.Value, scope) })
+		if targetErr == nil {
 			value = tc.converted(value, stmt.Value, scope, target)
 		}
-		return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{value}}}
+		return tc.arenaWrapped(wrap, ir.Instr{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " " + stmt.Op, Args: []string{value}})
 	case ast.ExprStmt:
-		return []ir.Instr{{Op: ir.OpExpr, Args: []string{tc.lowerExpr(stmt.Expr, scope)}}}
+		wrap := tc.arenaWrapFor(stmt.Expr, ir.Type{}, scope)
+		return tc.arenaWrapped(wrap, ir.Instr{Op: ir.OpExpr, Args: []string{tc.arenaReleasing(wrap, func() string { return tc.lowerExpr(stmt.Expr, scope) })}})
 	case ast.ReturnStmt:
 		value := ""
 		if stmt.Value != nil {
@@ -1966,16 +2000,43 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		return []ir.Instr{{Op: ir.OpReturn, Args: []string{value}}}
 	case ast.IfStmt:
-		return []ir.Instr{{Op: ir.OpIf, Condition: tc.lowerExpr(stmt.Condition, scope), Then: tc.lowerStatements(stmt.Then, scope), Else: tc.lowerStatements(stmt.Else, scope)}}
+		// A condition's temporaries are released once it is evaluated, before
+		// the branch it chose runs.
+		conditionMark := ""
+		if tc.exprAllocates(stmt.Condition, scope) && !tc.passesReference(stmt.Condition, scope) {
+			conditionMark = tc.arenaMarkName()
+		}
+		conditionWrap := wrapNone
+		if conditionMark != "" {
+			conditionWrap = wrapRelease
+		}
+		condition := tc.arenaReleasing(conditionWrap, func() string { return tc.lowerExpr(stmt.Condition, scope) })
+		instr := ir.Instr{Op: ir.OpIf, Condition: condition, Then: tc.lowerStatements(stmt.Then, scope), Else: tc.lowerStatements(stmt.Else, scope), Arena: conditionMark}
+		if conditionMark == "" {
+			return []ir.Instr{instr}
+		}
+		return []ir.Instr{{Op: ir.OpArenaMark, Dest: conditionMark}, instr}
 	case ast.WhileStmt:
-		return []ir.Instr{{Op: ir.OpWhile, Condition: tc.lowerExpr(stmt.Condition, scope), Then: tc.lowerStatements(stmt.Body, scope)}}
+		var condition string
+		before, body, after, conditionMark := tc.lowerLoop(stmt.Pos, "while", stmt.Body, stmt.Condition, "", scope, func() []ir.Instr {
+			condition = tc.lowerExpr(stmt.Condition, scope)
+			return tc.lowerStatements(stmt.Body, scope)
+		})
+		out := append(before, ir.Instr{Op: ir.OpWhile, Condition: condition, Then: body, Arena: conditionMark})
+		return append(out, after...)
 	case ast.ForStmt:
 		return tc.lowerFor(stmt, scope)
 	case ast.MatchStmt:
 		return tc.lowerMatch(stmt, scope)
 	case ast.BreakStmt:
+		// A `break` leaves for the release that follows the loop.
 		return []ir.Instr{{Op: ir.OpBreak}}
 	case ast.ContinueStmt:
+		// A `continue` skips the release at the end of the body, so it releases
+		// first: the next iteration starts from the loop's mark.
+		if mark := tc.innermostLoopMark(); mark != "" {
+			return []ir.Instr{{Op: ir.OpArenaRelease, Dest: mark}, {Op: ir.OpContinue}}
+		}
 		return []ir.Instr{{Op: ir.OpContinue}}
 	default:
 		return nil
@@ -2044,7 +2105,9 @@ func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir
 	}
 	previous, shadowed := tc.lowerAliases[stmt.Name]
 	tc.lowerAliases[stmt.Name] = elementName
-	body := tc.lowerStatements(stmt.Body, bodyScope)
+	before, body, after, _ := tc.lowerLoop(stmt.Pos, "for", stmt.Body, nil, stmt.Name, bodyScope, func() []ir.Instr {
+		return tc.lowerStatements(stmt.Body, bodyScope)
+	})
 	if shadowed {
 		tc.lowerAliases[stmt.Name] = previous
 	} else {
@@ -2065,10 +2128,10 @@ func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir
 		{Op: ir.OpAssign, Dest: indexName, Args: []string{step}},
 	}, body...)
 
-	out = append(out,
-		ir.Instr{Op: ir.OpLet, Dest: indexName, Type: "int64_t", TypeName: "i64", Args: []string{start}},
-		ir.Instr{Op: ir.OpWhile, Condition: condition, Then: body})
-	return out
+	out = append(out, ir.Instr{Op: ir.OpLet, Dest: indexName, Type: "int64_t", TypeName: "i64", Args: []string{start}})
+	out = append(out, before...)
+	out = append(out, ir.Instr{Op: ir.OpWhile, Condition: condition, Then: body})
+	return append(out, after...)
 }
 
 // lowerMatch rewrites `match x { p => a, _ => b }` as a chain of ifs comparing
@@ -2078,13 +2141,14 @@ func (tc *TypeChecker) lowerMatch(stmt ast.MatchStmt, scope map[string]ir.Type) 
 	tc.lowerSeq++
 	valueName := "rho_match_value_" + strconv.Itoa(tc.lowerSeq)
 
-	out := []ir.Instr{{
+	wrap := tc.arenaWrapFor(stmt.Value, valueType, scope)
+	out := tc.arenaWrapped(wrap, ir.Instr{
 		Op:       ir.OpLet,
 		Dest:     valueName,
 		Type:     tc.cTypeFor(valueType),
 		TypeName: typeName(valueType),
-		Args:     []string{tc.lowerExpr(stmt.Value, scope)},
-	}}
+		Args:     []string{tc.arenaReleasing(wrap, func() string { return tc.lowerExpr(stmt.Value, scope) })},
+	})
 	scope[valueName] = valueType
 
 	tail := []ir.Instr{}
@@ -2171,6 +2235,20 @@ func (tc *TypeChecker) lengthExpr(name string, collectionType ir.Type) string {
 func (tc *TypeChecker) integerPrint(expr ast.Expr, scope map[string]ir.Type) (string, bool) {
 	call, ok := expr.(ast.CallExpr)
 	if !ok || len(call.Args) != 1 {
+		return "", false
+	}
+	// `int_to_str(n)` and `i64_to_str(n)` are the same shape under the names a
+	// program more often writes. They are intrinsics whatever a module declares,
+	// as their lowering is, so the shape is recognised by name.
+	if identifier, isIdentifier := call.Callee.(ast.IdentifierExpr); isIdentifier {
+		switch identifier.Name {
+		case "int_to_str":
+			value := tc.converted(tc.lowerExpr(call.Args[0], scope), call.Args[0], scope, ir.Type{Kind: ir.TypeU32, Name: "u32"})
+			return "rho_print_u32(" + value + ")", true
+		case "i64_to_str":
+			value := tc.converted(tc.lowerExpr(call.Args[0], scope), call.Args[0], scope, ir.Type{Kind: ir.TypeI64, Name: "i64"})
+			return "rho_print_i64(" + value + ")", true
+		}
 		return "", false
 	}
 	member, ok := call.Callee.(ast.MemberExpr)
@@ -2291,7 +2369,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		promote := leftErr == nil && rightErr == nil &&
 			numeric(leftType) && numeric(rightType) &&
 			leftType.Kind != rightType.Kind &&
-			!isNumericLiteral(expr.Left) && !isNumericLiteral(expr.Right)
+			!isUntypedConstant(expr.Left) && !isUntypedConstant(expr.Right)
 		if promote {
 			target := promotedKind(leftType.Kind, rightType.Kind)
 			// The operand is parenthesised: `(int64_t)-b` is a cast of a
@@ -2542,6 +2620,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			}
 			args = append(args, lowered)
 		}
+		tc.arenaRecordCall(callee)
 		return callee + "(" + strings.Join(args, ", ") + ")"
 	case ast.StructLiteralExpr:
 		values := []string{}
@@ -2686,6 +2765,23 @@ func ifExprCastable(typ ir.Type) bool {
 func isNumericLiteral(expr ast.Expr) bool {
 	_, ok := expr.(ast.NumberExpr)
 	return ok
+}
+
+// isUntypedConstant is whether an expression is made of written numbers only —
+// `2`, `-1`, `2 * 16` — and so has no type of its own until it meets one.
+func isUntypedConstant(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case ast.NumberExpr:
+		return true
+	case ast.UnaryExpr:
+		return e.Op == "-" && isUntypedConstant(e.Value)
+	case ast.BinaryExpr:
+		switch e.Op {
+		case "+", "-", "*", "/", "%", "<<", ">>", "&", "|", "^":
+			return isUntypedConstant(e.Left) && isUntypedConstant(e.Right)
+		}
+	}
+	return false
 }
 
 // promotedKind returns the numeric type both operands are promoted to,

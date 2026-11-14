@@ -21,10 +21,9 @@ const char* rho_env_or(const char* name, const char* fallback)
 char* rho_getenv(const char* name)
 {
     const char* value = getenv(name);
-    if (value == NULL) {
-        return strdup("");
-    }
-    return strdup(value);
+    /* A copy in the string arena: the environment's own storage changes with
+     * the next setenv, and a string a program holds must not. */
+    return rho_str_dup(value);
 }
 
 /* rho_setenv sets a variable for this process and the programs it runs,

@@ -216,6 +216,13 @@ var protocolFuncs = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// request_remote returns the IP address of the peer the request's TCP
+	// connection came from — not a header a client can write, so a limit kept
+	// per address cannot be dodged by sending a different X-Forwarded-For.
+	"request_remote": {
+		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
 	// Authentication, supplied by a server target's generated auth.go.
 	"auth_bearer": {
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},

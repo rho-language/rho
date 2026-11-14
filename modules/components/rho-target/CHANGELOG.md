@@ -98,3 +98,7 @@ The generated build can flash what it built. The `flash` target now names the
 program's own file rather than the placeholder the command carries, and the
 command is split into arguments rather than handed to the tool as one: a tool
 given the whole command as one argument is a tool given a name it cannot parse.
+
+## [0.1.11] - 2026-11-14
+
+`linker.string_arena_bytes` sizes the fixed string arena of a board build; without it a board gets 4096 bytes or an eighth of its RAM, whichever is smaller. A target with a `deploy` block runs an operating system and gets no fixed arena.

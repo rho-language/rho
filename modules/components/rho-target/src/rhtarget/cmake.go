@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -174,6 +175,13 @@ func TargetCMake(spec Spec, linkerScript string) string {
 			fmt.Fprintf(&b, "add_compile_definitions(%s)\n", define)
 		}
 		b.WriteString("\n")
+	}
+
+	if arena, ok := StringArenaBytes(spec); ok {
+		b.WriteString("# The fixed buffer a Rho program's strings live in, released at the end of\n")
+		b.WriteString("# every loop iteration. A program that runs out stops with \"string arena\n")
+		b.WriteString("# exhausted\"; `linker.string_arena_bytes` in the target spec sets it.\n")
+		fmt.Fprintf(&b, "add_compile_definitions(RHO_STRING_ARENA_BYTES=%d)\n\n", arena)
 	}
 
 	flags := spec.AllFlags()
@@ -601,6 +609,45 @@ const (
 	// DefaultHeapBytes is the heap a target gets when nothing says otherwise.
 	DefaultHeapBytes = 0x200
 )
+
+// DefaultStringArenaBytes is the string arena a board gets when its spec says
+// nothing: enough for the strings a sensor loop builds in one iteration, and
+// small beside the RAM of every part with 32 kB or more.
+const DefaultStringArenaBytes = 0x1000
+
+// StringArenaBytes is the size of the string arena a target's program gets, and
+// whether the target has one of fixed size at all.
+//
+// A target that declares the size gets it. A target that is deployed to runs an
+// operating system and has none: its arena grows, whatever else it declares, as
+// the Linux side of a board that also carries an MCU does. A part whose RAM is
+// declared is a board and gets the default, or an eighth of its RAM when that is
+// smaller — an AVR with 2 kB of RAM cannot give 4 kB to strings. A target with
+// none of these is the host, or a part whose RAM nobody declared, and the runtime
+// chooses for it.
+//
+// The compiler reads the resolved spec by the same rule (targetspec's
+// FixedStringArena) to decide whether a loop that cannot release its strings
+// refuses the build.
+func StringArenaBytes(spec Spec) (uint64, bool) {
+	if spec.Linker.StringArenaBytes != 0 {
+		return spec.Linker.StringArenaBytes, true
+	}
+	if spec.Deploy.declared() {
+		return 0, false
+	}
+	if spec.Memory.RAM.Origin == "" {
+		return 0, false
+	}
+	ram, err := strconv.ParseUint(strings.TrimSpace(spec.Memory.RAM.Length), 0, 64)
+	if err != nil || ram == 0 {
+		return DefaultStringArenaBytes, true
+	}
+	if ram/8 < DefaultStringArenaBytes {
+		return ram / 8, true
+	}
+	return DefaultStringArenaBytes, true
+}
 
 // hexBytes is a size as the linker script writes one: a hexadecimal number.
 func hexBytes(value, fallback uint64) string {

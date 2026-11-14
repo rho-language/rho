@@ -481,6 +481,9 @@ func isSimpleGoVar(arg string) bool {
 }
 
 func emitGoFunc(b *strings.Builder, fn ir.FuncIR, goName string, sliceParams map[string][]bool) {
+	// Go collects its own garbage: the string arena's marks and releases are the
+	// C backend's, and the body without them is the one this backend always had.
+	fn.Body = ir.WithoutArena(fn.Body)
 	returnType := goTypeForIR(fn.ReturnType)
 
 	// Names are tracked so a repeated assignment reuses `=` instead of `:=`,
@@ -923,6 +926,12 @@ func EmitGoRuntime(implementation string) string {
 	body.WriteString("\treturn strings.Join(os.Args[1:], \" \")\n}\n\n")
 	body.WriteString("// rhoPrintI32 writes a signed number to stdout.\n")
 	body.WriteString("func rhoPrintI32(value int32) { fmt.Print(value) }\n\n")
+	// The C backend prints `int_to_str(n)` and `i64_to_str(n)` without building
+	// the string, and the same lowered call reaches this backend.
+	body.WriteString("// rhoPrintU32 writes an unsigned number to stdout.\n")
+	body.WriteString("func rhoPrintU32(value uint32) { fmt.Print(value) }\n\n")
+	body.WriteString("// rhoPrintI64 writes a 64-bit signed number to stdout.\n")
+	body.WriteString("func rhoPrintI64(value int64) { fmt.Print(value) }\n\n")
 	imports = addGoImport(imports, "fmt")
 
 	needed := []struct {

@@ -214,6 +214,7 @@ declaration. {ref}`building/services` describes the service they belong to.
 | `query_default(req, name: string, fallback: string) string` | A query value, or the fallback |
 | `request_query_param(req, name: string) string` | One decoded value from the raw query string |
 | `request_body(req) string`, `request_auth(req) string`, `request_path(req) string`, `request_method(req) string` | The raw body, the `Authorization` header, the path and the method |
+| `request_remote(req) string` | The IP address of the peer the request's TCP connection came from (`203.0.113.7`, `::1`), never a header such as `X-Forwarded-For`. Behind a proxy it is the proxy's address |
 | `openapi_document() string` | The service's own API description, written by the `openapiemit` port |
 
 A response is built with `std.web.http` (`text`, `json`, `html`, `redirect`,
