@@ -106,10 +106,15 @@ func TestAPointerIsSpelledAsAPointerInC(t *testing.T) {
 // compared and passed on, and that C would spell `void*`. It stays a name here
 // because a program has to be able to declare a field of that type and assign a
 // null to it, which `void*` does not give it as cleanly as a name does.
-func TestAPointerToNothingIsAHandle(t *testing.T) {
-	got := New().cTypeForTypeName("Ptr[Unit]")
-	if strings.HasSuffix(got, "*") {
-		t.Errorf("Ptr[Unit] is a handle and is named rather than raw, got %q", got)
+// A pointer to nothing is still a pointer: C calls it void*, and it is the same
+// IR type as every other `Ptr[T]`.
+func TestAPointerToNothingIsVoidPointer(t *testing.T) {
+	tc := New()
+	if got := tc.cTypeForTypeName("Ptr[Unit]"); got != "void*" {
+		t.Errorf("Ptr[Unit] should be void*, got %q", got)
+	}
+	if got := tc.declaredType("Ptr[Unit]"); got.Kind != ir.TypePtr {
+		t.Errorf("Ptr[Unit] should resolve to a pointer type, got kind %v", got.Kind)
 	}
 }
 

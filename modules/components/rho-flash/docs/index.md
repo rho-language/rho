@@ -50,6 +50,8 @@ is one, and the handbook's integrations page describes the contract.
 | `-target NAME` | The board, as its target spec names it |
 | `-project DIR` | The project, whose manifest names the platform that declares the board |
 | The positional path | The binary to flash |
+| `--production` | Also run the platform's production plan; see below |
+| `--dry-run`, `-n` | Print what would be run, and run nothing |
 
 A board whose target spec declares no way to be reached is refused with that
 said, rather than being flashed with a guess.
@@ -68,3 +70,47 @@ said, rather than being flashed with a guess.
 `-allow-unsigned` for development). The artifact is verified and extracted
 before the flasher or deployment command runs. Remote OTA capability and
 firmware rollback are described in `rho-artifact`'s remaining-work notes.
+
+## Production flashing
+
+Some hardening cannot be undone: an ESP32 burns eFuses for flash encryption and
+secure boot, an RP2350 writes its boot key hash into OTP. An ordinary
+`rho flash` never does any of it. `--production` does, and only after two
+things:
+
+1. It prints the whole plan — every step in the order it runs, the exact
+   command with every placeholder filled in, the full contents of any file a
+   step burns, and `[IRREVERSIBLE]` against each step that cannot be undone,
+   including the ones a production image performs itself at its first boot.
+2. It asks for the board's name to be typed. Only the exact name continues;
+   anything else, an empty line or the end of the input stops before the first
+   step. There is no flag that answers for you.
+
+```sh
+rho flash -target pico2w build/output/app.elf --production --dry-run   # read it
+rho flash -target pico2w build/output/app.elf --production             # then do it
+```
+
+The plan is the platform's, not this component's. The platform module ships
+`production/<name>.json`, looked up by the target's name, then its preset, its
+family, and finally `production.json`; a platform with none has no production
+mode and says so. A plan is a list of steps:
+
+```json
+{
+  "name": "rp2350 production",
+  "build": "how the image must have been built",
+  "steps": [
+    {"description": "what it does to the part", "irreversible": true,
+     "when": "before-flash", "command": "picotool otp load {env:RH_PICO_OTP_JSON}",
+     "show": "{env:RH_PICO_OTP_JSON}"}
+  ],
+  "notes": ["what is reversible, and how"]
+}
+```
+
+`when` is `before-flash`, `after-flash` or `first-boot` (printed only: the
+firmware does it). A command is split like a flash command, never handed to a
+shell, with `{binary}`, `{env:NAME}` and `{platform}` (the platform module's
+directory) filled in. The first step that fails stops the rest.
+

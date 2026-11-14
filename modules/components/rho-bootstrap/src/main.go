@@ -477,8 +477,12 @@ func meshKeyURL(contract schema.Provisioning, given string) string {
 
 // fetchBoardKey asks Mesh for the board id and key of the node this machine was
 // enrolled as, and keeps them where the host node reads them: board.key (the
-// key, 32 hex digits) and board.env (RH_SECURE_UID and RH_SECURE_KEY_FILE), both
-// 0600. Neither is printed.
+// key as `<epoch>:<32 hex digits>`, the key epoch being the one Mesh answers;
+// the hex alone when an older Mesh names no epoch) and board.env (RH_SECURE_UID
+// and RH_SECURE_KEY_FILE), both 0600. Neither is printed. A key the node's
+// keystore kept beside the file (`board.key.keystore`, robohub-linux) is removed:
+// the key Mesh hands out is the current one, and a stored key from another mesh
+// must not stand in for it.
 func fetchBoardKey(contract schema.Provisioning, dir string, record identity, given string) error {
 	credential, err := os.ReadFile(filepath.Join(dir, "credential"))
 	if err != nil {
@@ -510,19 +514,27 @@ func fetchBoardKey(contract schema.Provisioning, dir string, record identity, gi
 		return fmt.Errorf("Mesh refused the board key: %s", refusal.Error)
 	}
 	var answer struct {
-		UID string `json:"uid"`
-		Key string `json:"key"`
+		UID   string  `json:"uid"`
+		Key   string  `json:"key"`
+		Epoch *uint32 `json:"epoch"`
 	}
 	if err := json.Unmarshal(body, &answer); err != nil || !uidPattern.MatchString(answer.UID) ||
 		!keyPattern.MatchString(answer.Key) {
 		return fmt.Errorf("Mesh returned no board id and key")
 	}
+	keyText := answer.Key + "\n"
+	if answer.Epoch != nil {
+		keyText = fmt.Sprintf("%d:%s\n", *answer.Epoch, answer.Key)
+	}
 	keyPath, err := filepath.Abs(filepath.Join(dir, "board.key"))
 	if err != nil {
 		return err
 	}
-	if err := writeAtomic(keyPath, []byte(answer.Key+"\n"), 0600); err != nil {
+	if err := writeAtomic(keyPath, []byte(keyText), 0600); err != nil {
 		return err
+	}
+	if err := os.Remove(keyPath + ".keystore"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("the old keystore beside the key could not be removed: %w", err)
 	}
 	env := "RH_SECURE_UID=" + answer.UID + "\nRH_SECURE_KEY_FILE=" + keyPath + "\n"
 	if err := writeAtomic(filepath.Join(dir, "board.env"), []byte(env), 0600); err != nil {

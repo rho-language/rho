@@ -733,19 +733,12 @@ func TestDeductionFromGenericStructArgument(t *testing.T) {
 	}
 }
 
-// `Ptr[T]` means two things, and the context decides which. In an `extern fn`
-// signature it is the C pointer the declaration names; in an ordinary
-// signature it is the handle struct the standard library declares. The same
-// spelling is one thing in each place, and this pins which.
-func TestPtrIsForeignPointerInExternAndHandleElsewhere(t *testing.T) {
+// `Ptr[T]` is one type wherever it is written: a foreign signature and a Rho
+// function both take the pointer, and a struct cannot take its name.
+func TestPtrIsOnePointerTypeEverywhere(t *testing.T) {
 	ptrU8 := ast.TypeExpr{Name: "Ptr", Args: []ast.TypeExpr{{Name: "u8"}}}
 	tc := New()
 	m := ast.Module{Name: "app", Decls: []ast.Decl{
-		ast.StructDecl{
-			Name:       "Ptr",
-			TypeParams: []string{"T"},
-			Fields:     []ast.Field{{Name: "raw", Type: "u64", TypeExpr: ast.TypeExpr{Name: "u64"}}},
-		},
 		ast.FuncDecl{
 			Name:       "write",
 			Extern:     true,
@@ -762,11 +755,20 @@ func TestPtrIsForeignPointerInExternAndHandleElsewhere(t *testing.T) {
 	if err := tc.CheckModule(m); err != nil {
 		t.Fatalf("checking: %v", err)
 	}
-	if got := tc.funcs["write"].params[0]; got.Kind != ir.TypePtr {
-		t.Errorf("an extern Ptr[u8] should be a C pointer, got kind %v name %q", got.Kind, got.Name)
+	for _, name := range []string{"write", "keep"} {
+		got := tc.funcs[name].params[0]
+		if got.Kind != ir.TypePtr || len(got.Args) != 1 || got.Args[0].Kind != ir.TypeU8 {
+			t.Errorf("%s: Ptr[u8] should be the pointer type at u8, got %#v", name, got)
+		}
 	}
-	if got := tc.funcs["keep"].params[0]; got.Kind != ir.TypeStruct {
-		t.Errorf("a Rho Ptr[u8] should be the handle struct, got kind %v name %q", got.Kind, got.Name)
+
+	declared := ast.Module{Name: "app", Decls: []ast.Decl{ast.StructDecl{
+		Name:       "Ptr",
+		TypeParams: []string{"T"},
+		Fields:     []ast.Field{{Name: "raw", Type: "u64", TypeExpr: ast.TypeExpr{Name: "u64"}}},
+	}}}
+	if err := New().CheckModule(declared); err == nil || !strings.Contains(err.Error(), "Ptr") {
+		t.Errorf("a struct named Ptr should be refused, got %v", err)
 	}
 }
 
@@ -817,5 +819,47 @@ func TestBitFieldsPackIntoRuns(t *testing.T) {
 	}
 	if layout.Fields[2].Shift != 2 {
 		t.Errorf("c should start at bit 2, got %d", layout.Fields[2].Shift)
+	}
+}
+
+// A declared function that shares an intrinsic's name takes the calls the
+// intrinsic does not apply to: `len` on a struct is the module's own len, and
+// `len` on a string or an array beside it is still the built-in.
+func TestDeclaredFunctionTakesWhatTheIntrinsicDoesNotApplyTo(t *testing.T) {
+	module := parseSource(t, `module app
+
+struct Wrap {
+    n: u32
+}
+
+fn len(w: Wrap) u32 {
+    return w.n
+}
+
+fn main() void {
+    let w: Wrap = Wrap{ 3 }
+    let a: u32 = len(w)
+    let b: u32 = len("abc")
+    let values: u32[2] = [1, 2]
+    let c: u32 = len(values)
+    print(int_to_str(a + b + c))
+}
+`)
+	tc := New()
+	if err := tc.CheckModule(*module); err != nil {
+		t.Fatalf("typecheck failed: %v", err)
+	}
+	scope := map[string]ir.Type{
+		"w":      {Kind: ir.TypeStruct, Name: "Wrap"},
+		"values": {Kind: ir.TypeU32, Name: "u32", ArrayLen: 2},
+	}
+	if tc.callsIntrinsic("len", []ast.Expr{ast.IdentifierExpr{Name: "w"}}, scope) {
+		t.Errorf("len on a struct should be the declared function")
+	}
+	if !tc.callsIntrinsic("len", []ast.Expr{ast.StringExpr{Value: "abc"}}, scope) {
+		t.Errorf("len on a string should be the built-in")
+	}
+	if !tc.callsIntrinsic("len", []ast.Expr{ast.IdentifierExpr{Name: "values"}}, scope) {
+		t.Errorf("len on a fixed-size array should be the built-in")
 	}
 }

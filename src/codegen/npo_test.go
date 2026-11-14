@@ -98,25 +98,39 @@ func firstLines(out string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// A pointer to a pointer is a pointer to the pointer: the C type of
-// `Ptr_Ptr_Thing` is `Thing**`, and a name that stopped at one star would be a
-// declaration of a different type than the program means.
-func TestAMangledPointerToAPointerKeepsBothStars(t *testing.T) {
+// A pointer to a pointer is a pointer to the pointer. A pointer is a type, so
+// `Ptr[Ptr[Thing]]` is `Thing**`; and inside a mangled specialisation name,
+// where a pointer is all that is left of it, the optional pointer's payload
+// keeps both levels too.
+func TestAPointerToAPointerKeepsBothStars(t *testing.T) {
+	thing := ir.Type{Kind: ir.TypeStruct, Name: "Thing"}
+	inner := ir.Type{Kind: ir.TypePtr, Name: "Ptr[Thing]", Args: []ir.Type{thing}}
+	outer := ir.Type{Kind: ir.TypePtr, Name: "Ptr[Ptr[Thing]]", Args: []ir.Type{inner}}
+	if got := cTypeFor(outer); got != "Thing**" {
+		t.Errorf("Ptr[Ptr[Thing]] should be Thing**, got %q", got)
+	}
 	cases := map[string]string{
-		"Ptr_Thing":     "Thing*",
-		"Ptr_u8":        "uint8_t*",
-		"Thing_Ptr":     "Thing*",
-		"Ptr_Ptr_Thing": "Thing**",
-		"Ptr_Ptr_u8":    "uint8_t**",
+		"Option_Ptr_Thing":     "Thing*",
+		"Option_Ptr_u8":        "uint8_t*",
+		"Option_Ptr_Ptr_Thing": "Thing**",
+		"Option_Ptr_Ptr_u8":    "uint8_t**",
 	}
 	for name, want := range cases {
-		got, ok := mangledPointerCType(name)
+		got, ok := optionalPointerCType(name)
 		if !ok {
-			t.Errorf("expected %q to be a pointer", name)
+			t.Errorf("expected %q to be an optional pointer", name)
 			continue
 		}
 		if got != want {
 			t.Errorf("expected %q to be %q, got %q", name, want, got)
 		}
+	}
+}
+
+// A struct whose name happens to start like a mangled pointer is a struct: a
+// pointer is a type, and no name is read as one.
+func TestAStructNamedLikeAPointerIsAStruct(t *testing.T) {
+	if got := cTypeFor(ir.Type{Kind: ir.TypeStruct, Name: "Ptr_Info"}); got != "Ptr_Info" {
+		t.Errorf("a struct called Ptr_Info should be spelled as itself, got %q", got)
 	}
 }

@@ -102,6 +102,9 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 			return convertErr
 		}
 		if targetID == "c" {
+			if err := checkCRefusals(converted); err != nil {
+				return err
+			}
 			if err := checkArenaEscapes(escapes, ""); err != nil {
 				return err
 			}
@@ -264,6 +267,9 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 	// release them matters only to a build that emits C.
 	for _, target := range targets {
 		if target.Emitter == "c" {
+			if err := checkCRefusals(irModule); err != nil {
+				return nil, err
+			}
 			if err := checkArenaEscapes(escapes, board); err != nil {
 				return nil, err
 			}
@@ -446,6 +452,15 @@ func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (i
 		irModule.Version = manifest.Version
 	}
 	return irModule, tc.ArenaEscapes(), nil
+}
+
+// checkCRefusals fails a build that emits C for a program that does something
+// the C backend cannot emit (ir.ModuleIR.CRefusals), naming each place.
+func checkCRefusals(module ir.ModuleIR) error {
+	if len(module.CRefusals) == 0 {
+		return nil
+	}
+	return fmt.Errorf("this program cannot be built for C:\n  %s", strings.Join(module.CRefusals, "\n  "))
 }
 
 // checkArenaEscapes says what a loop that cannot release its strings costs.
@@ -878,6 +893,9 @@ func compileModule(mod ast.Module, outPath string, from ...string) error {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 	lowered := tc.ToIR(mod)
+	if err := checkCRefusals(lowered); err != nil {
+		return err
+	}
 	if err := checkArenaEscapes(tc.ArenaEscapes(), ""); err != nil {
 		return err
 	}
@@ -2099,13 +2117,13 @@ func BuiltBinary(entry string) (string, bool) {
 // module that declares it.
 //
 // The language knows these names without an import, so a file can use one with no
-// declaration of it anywhere. What the compiler still needs is the declaration,
+// declaration of it anywhere. `Ptr[T]` is not among them: it is the language's
+// pointer type, not a struct a specialisation is built from. What the compiler still needs is the declaration,
 // because that is what a specialisation is built from: `Slice[u8]` is an
 // expanded copy of `struct Slice[T]`, and a copy of nothing is a type the
 // backend has never heard of.
 var preludeGenerics = map[string]string{
 	"Slice":  "core.slice",
-	"Ptr":    "core.ptr",
 	"Option": "core.option",
 	"Result": "core.result",
 	"Array":  "collections.array",

@@ -107,7 +107,8 @@ fn main() {
 
 Declaring one, a literal, indexing and passing work on both backends. On Go a
 `[T]` is a slice, so `len`, `for` and `append` work on it. On C it is a bare
-pointer, which carries no length, so those three are Go-only.
+pointer, which carries no length, so those three are Go-only; `len` on one stops a
+C build with the call named. `len` of a fixed-size array `T[N]` is `N` on both.
 
 `Slice[T]` from `std.core.slice` is a struct of a `Ptr[T]` and a `len`. A
 function that has to know how many elements it was given on both backends takes

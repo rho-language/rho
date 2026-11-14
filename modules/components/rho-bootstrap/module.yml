@@ -4,7 +4,7 @@
 module:
   name: rho-bootstrap
   type: component
-  version: 0.2.0
+  version: 0.2.1
   author: Aurel Miron
   description: Generates a local instance identity and enrolls it with an enrollment service
   command: bootstrap

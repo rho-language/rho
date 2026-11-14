@@ -76,9 +76,12 @@ node, for example). It posts to Mesh's node-key endpoint — by default
 `<keeper.url>/app/mesh/mesh/api/nodes/key`, Mesh behind the keeper's origin —
 with `Authorization: Node <device>:<credential>`. Mesh checks the credential with
 the keeper, finds the board it planned at the node's placement, and answers its
-id and key. They are kept as `board.key` (32 hex digits) and `board.env`
+id, key and key epoch. They are kept as `board.key` (`<epoch>:<32 hex digits>`;
+the hex alone from an older Mesh that names no epoch) and `board.env`
 (`RH_SECURE_UID` and `RH_SECURE_KEY_FILE`, to be read as an environment file),
-both `0600`, and are never printed.
+both `0600`, and are never printed. A key the node's keystore kept beside the file
+(`board.key.keystore`) is removed: the key Mesh answers is the board's current
+one. When the gateway rotates the key, the host node rewrites `board.key` itself.
 
 ## What belongs to firmware
 

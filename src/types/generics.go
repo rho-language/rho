@@ -63,21 +63,6 @@ func (in instantiation) key() string {
 /*  Mangling                                                                  */
 /* -------------------------------------------------------------------------- */
 
-// ptrIsHandle reports whether `Ptr[T]` in the current context is the language
-// handle rather than a foreign C pointer.
-//
-// It is the handle outside a foreign signature, when the standard library has
-// declared the struct; it is the C pointer inside one, and when no struct has
-// been declared to use in its place. A handle and a C pointer share the spelling
-// `Ptr[T]`, and this is the one place that decides which is meant.
-func (tc *TypeChecker) ptrIsHandle() bool {
-	if tc.foreign > 0 {
-		return false
-	}
-	_, declared := tc.genericStructs["Ptr"]
-	return declared
-}
-
 // parameterType resolves a declared parameter or field type for unification.
 //
 // The written form is kept — `Ptr[T]` rather than the mangled `PtrT` — because
@@ -107,15 +92,10 @@ func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir
 	}
 	base := name[:open]
 	// A pointer is not a generic struct that happens to be called Ptr. It is the
-	// pointer type, and it has to be resolved as one here as well as on the path
-	// that reads a type used in an expression, or the same `Ptr[u8]` becomes two
-	// different things depending on where it was written.
-	//
-	// Mangling it produced `Ptr_u8` in a parameter and return position, which a
-	// backend then emitted as a struct — so an extern declared to take a C string
-	// pointer declared a function taking a struct, and no call of it could
-	// compile however the argument was written.
-	if base == "Ptr" && !tc.ptrIsHandle() {
+	// pointer type, and it is resolved as one here as on the path that reads a
+	// type used in an expression, so `Ptr[u8]` is one type wherever it is
+	// written.
+	if base == "Ptr" {
 		return tc.substituteType(tc.typeFor(name), subs)
 	}
 	if _, ok := tc.genericStructs[base]; !ok {
@@ -143,6 +123,46 @@ func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir
 	tc.recordSpelling(mangled, base, resolved)
 	tc.registerSpecialisationFields(base, resolved)
 	return ir.Type{Kind: ir.TypeStruct, Name: mangled}
+}
+
+// writtenWithoutAliases is a written generic application with every alias among
+// its arguments replaced by what it names: `Slice[String]` is written
+// `Slice[Slice[u8]]`. The specialisation is built from the resolved arguments,
+// so a backend that spells a type from the written name — Go's declaration of a
+// local — has to read the same arguments, or it names a specialisation nothing
+// emitted. A name that is not an application of a generic struct is returned as
+// it was: an alias on its own is a name each backend declares.
+func (tc *TypeChecker) writtenWithoutAliases(name string) string {
+	return tc.writtenWithoutAliasesBounded(name, 0)
+}
+
+func (tc *TypeChecker) writtenWithoutAliasesBounded(name string, depth int) string {
+	if depth > 16 {
+		return name
+	}
+	open := strings.IndexByte(name, '[')
+	if open <= 0 || !strings.HasSuffix(name, "]") {
+		return name
+	}
+	base := name[:open]
+	if _, ok := tc.genericStructs[base]; !ok {
+		return name
+	}
+	args := splitTypeArgs(strings.TrimSuffix(name[open+1:], "]"))
+	for i, arg := range args {
+		arg = strings.TrimSpace(arg)
+		// An alias is followed, depth-bounded as resolveType bounds it, because
+		// `type A = B` and `type B = A` is a claim a program can make.
+		for step := 0; step < 16; step++ {
+			target, ok := tc.aliases[arg]
+			if !ok || target == arg {
+				break
+			}
+			arg = target
+		}
+		args[i] = tc.writtenWithoutAliasesBounded(arg, depth+1)
+	}
+	return base + "[" + strings.Join(args, ", ") + "]"
 }
 
 // registerSpecialisationFields makes a specialisation's fields reachable under
@@ -179,10 +199,8 @@ func (tc *TypeChecker) cTypeForTypeName(name string) string {
 	}
 	base := name[:open]
 	// A pointer is spelled as a C pointer, by `cTypeForName` below, which knows
-	// to do it. Mangling it first wrote `Ptr_u8`, which is a name a C compiler
-	// has never heard of, so a local declared to hold what a foreign function
-	// returned could not be declared at all.
-	if base == "Ptr" && !tc.ptrIsHandle() {
+	// to do it.
+	if base == "Ptr" {
 		return cTypeForName(name)
 	}
 	if _, ok := tc.genericStructs[base]; !ok {
@@ -552,6 +570,11 @@ func (tc *TypeChecker) substituteType(typ ir.Type, subs map[string]ir.Type) ir.T
 			arguments[i] = tc.substituteType(argument, subs)
 		}
 		typ.Args = arguments
+		// The name a pointer carries is its written spelling, and it has to
+		// follow the element, or `Ptr[T]` specialised at u8 would still say T.
+		if typ.Kind == ir.TypePtr && len(arguments) == 1 {
+			typ.Name = "Ptr[" + typeName(arguments[0]) + "]"
+		}
 	}
 	if typ.Kind != ir.TypeStruct {
 		return typ
@@ -714,10 +737,7 @@ func (tc *TypeChecker) structToSpecialisation(s ast.StructDecl, subs map[string]
 			// which is what a struct field goes through normally — loses both the
 			// kind and the element, so `ptr: Ptr[T]` became a field of a type
 			// called `Ptr` that no backend can name.
-			fieldType = ir.Type{Kind: ir.TypePtr, Name: fieldType.Name}
-			for _, argument := range fieldType.Args {
-				fieldType.Args = append(fieldType.Args, tc.substituteType(argument, subs))
-			}
+			fieldType = tc.substituteType(fieldType, subs)
 			fields[i] = ir.FieldIR{Name: f.Name, Type: fieldType}
 			continue
 		}
@@ -951,8 +971,8 @@ func sameStruct(a, b ir.StructIR) bool {
 //
 // A field's type is compared by what it is rather than by comparing the
 // structs that hold it: a type carries its arguments, and those are a slice.
-// The comparison is the IR's own, so that a pointer written in a source and
-// the mangled name of the same pointer are one type — which is what they are.
+// The comparison is the IR's own, so two pointers at the same element are one
+// type however each spelled the element's name.
 func sameField(a, b ir.FieldIR) bool {
 	if a.Name != b.Name || a.BitWidth != b.BitWidth || a.Unit != b.Unit || a.Shift != b.Shift {
 		return false

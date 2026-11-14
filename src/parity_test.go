@@ -119,6 +119,9 @@ func runBothBackends(t *testing.T, source string) (c outcome, g outcome) {
 // runBinary runs a built program and records what it said and whether it was clean.
 func runBinary(path string) outcome {
 	command := exec.Command(path)
+	// In the directory the binary was built into, which is the test's own, so
+	// a program that makes a file makes it there.
+	command.Dir = filepath.Dir(path)
 	// Leaks are not what this is about, and a short-lived program that exits
 	// through a panic path would report them for reasons that are not the
 	// program's.

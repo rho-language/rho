@@ -141,7 +141,7 @@ func TestThePortImplementsTheWholeStandardSurface(t *testing.T) {
 // caller would have to wrap itself.
 func TestThePortImplementsBatchExecution(t *testing.T) {
 	port := EmitGoPorts(PortContext{ModuleName: "billing"}, []string{"sql"})
-	if !strings.Contains(port, "func stdSqlSqlExecMany(db SqlDb, name string, query string, columns uint32, values SliceSqlValue, affected PtrU32) uint32") {
+	if !strings.Contains(port, "func stdSqlSqlExecMany(db SqlDb, name string, query string, columns uint32, values SliceSqlValue, affected unsafe.Pointer) uint32") {
 		t.Error("the port does not implement sql_exec_many")
 	}
 	for _, part := range []string{"handle.Begin()", "transaction.Prepare(", "transaction.Commit()", "transaction.Rollback()"} {
@@ -284,6 +284,8 @@ func TestABatchIsOneTransactionAndRollsBackOnFailure(t *testing.T) {
 	write("ports.go", EmitGoPorts(PortContext{ModuleName: "billing"}, []string{"sql"}))
 	write("types.go", `package main
 
+import "unsafe"
+
 type SqlDb struct{ raw uint64 }
 type SqlStmt struct{ raw uint64 }
 type SqlValue struct {
@@ -296,13 +298,9 @@ type SqlValue struct {
 	isNull  bool
 }
 type SliceSqlValue struct {
-	ptr PtrUnit
+	ptr unsafe.Pointer
 	len uint32
 }
-type PtrUnit struct{ raw uint64 }
-type PtrU32 struct{ raw uint64 }
-type PtrSqlStmt struct{ raw uint64 }
-type PtrSqlValue struct{ raw uint64 }
 type ResultSqlDbString struct {
 	isOk bool
 	ok   SqlDb
@@ -379,7 +377,7 @@ func sliceOf(values []SqlValue) SliceSqlValue {
 		return SliceSqlValue{}
 	}
 	return SliceSqlValue{
-		ptr: PtrUnit{raw: uint64(uintptr(unsafe.Pointer(&values[0])))},
+		ptr: unsafe.Pointer(&values[0]),
 		len: uint32(len(values)),
 	}
 }
@@ -413,7 +411,7 @@ func main() {
 		{kind: 1, integer: 2}, {kind: 4, text: "b"},
 	}
 	var affectedCount uint32
-	affected := PtrU32{raw: uint64(uintptr(unsafe.Pointer(&affectedCount)))}
+	affected := unsafe.Pointer(&affectedCount)
 	ok := stdSqlSqlExecMany(db, "insert", "INSERT INTO t (id, name) VALUES (?, ?)", 2, sliceOf(good), affected)
 	if ok != 1 || affectedCount != 2 || fake.committed != 2 {
 		fmt.Printf("batch failed: ok=%d affected=%d committed=%d err=%s\n",
@@ -427,7 +425,7 @@ func main() {
 		{kind: 1, integer: 99}, {kind: 4, text: "d"},
 	}
 	var rollbackCount uint32
-	rollbackAffected := PtrU32{raw: uint64(uintptr(unsafe.Pointer(&rollbackCount)))}
+	rollbackAffected := unsafe.Pointer(&rollbackCount)
 	ok = stdSqlSqlExecMany(db, "insert", "INSERT INTO t (id, name) VALUES (?, ?)", 2, sliceOf(bad), rollbackAffected)
 	if ok != 0 || rollbackCount != 0 || fake.committed != before {
 		fmt.Printf("rollback failed: ok=%d affected=%d committed=%d err=%s\n",
@@ -456,34 +454,33 @@ func main() {
 	}
 }
 
-// A slice carries its data as an address — a pointer to nothing — and the
-// backend gives that address a name so the generated file can declare a field of
-// it. A module that holds a slice needs that definition, and one that does not
-// must not carry a type nothing refers to.
-//
-// The type arrives as a pointer with an empty element rather than as a type
-// already called PtrUnit, which is the shape a check has to read.
-func TestASliceBringsTheAddressTypeWithIt(t *testing.T) {
+// A slice carries its data as a pointer, and every pointer is an
+// unsafe.Pointer on the Go backend: a module holding a slice imports the package
+// its field names, and defines no address type of its own.
+func TestASliceCarriesItsDataAsAnUnsafePointer(t *testing.T) {
 	withSlice := ir.ModuleIR{
 		Name: "billing",
 		Structs: []ir.StructIR{{
 			Name:  "SliceRow",
 			CName: "SliceRow",
 			Fields: []ir.FieldIR{
-				{Name: "ptr", Type: ir.Type{Kind: ir.TypePtr, Args: []ir.Type{{Kind: ir.TypeStruct, Name: "Unit"}}}},
+				{Name: "ptr", Type: pointerTo(ir.Type{Kind: ir.TypeStruct, Name: "Row"})},
 				{Name: "len", Type: ir.Type{Kind: ir.TypeU32, Name: "u32"}},
 			},
 		}},
 	}
 	out := EmitGo(withSlice)
-	if !strings.Contains(out, "type PtrUnit struct") {
-		t.Errorf("a module holding a slice does not define the address its data is:\n%s", out)
+	if !strings.Contains(out, "ptr unsafe.Pointer") || !strings.Contains(out, `"unsafe"`) {
+		t.Errorf("a slice's data is not an unsafe.Pointer with its import:\n%s", out)
 	}
+	if strings.Contains(out, "PtrUnit") {
+		t.Errorf("a pointer has one spelling, and it is not a struct:\n%s", out)
+	}
+}
 
-	plain := EmitGo(greetIR())
-	if strings.Contains(plain, "type PtrUnit struct") {
-		t.Error("a module holding no address carries a definition nothing refers to")
-	}
+// pointerTo is the one pointer type, `Ptr[T]`, at an element.
+func pointerTo(element ir.Type) ir.Type {
+	return ir.Type{Kind: ir.TypePtr, Name: "Ptr[" + element.Name + "]", Args: []ir.Type{element}}
 }
 
 // irModuleWithHandle is the compiler's own output for a module that opens a
@@ -502,7 +499,7 @@ func irModuleWithHandle() ir.ModuleIR {
 			{Name: "InvoicesOverRow", CName: "InvoicesOverRow", Fields: []ir.FieldIR{
 				{Name: "id", Type: whole}, {Name: "total", Type: whole}}},
 			{Name: "SliceInvoicesOverRow", CName: "SliceInvoicesOverRow", Fields: []ir.FieldIR{
-				{Name: "ptr", Type: handle}, {Name: "len", Type: wide}}},
+				{Name: "ptr", Type: pointerTo(ir.Type{Kind: ir.TypeStruct, Name: "InvoicesOverRow"})}, {Name: "len", Type: wide}}},
 			{Name: "SqlError", CName: "SqlError", Fields: []ir.FieldIR{
 				{Name: "message", Type: ir.Type{Kind: ir.TypeString, Name: "string"}},
 				{Name: "code", Type: ir.Type{Kind: ir.TypeI32, Name: "i32"}}}},
@@ -522,15 +519,9 @@ func irModuleWithHandle() ir.ModuleIR {
 				{Name: "blob", Type: ir.Type{Kind: ir.TypeString, Name: "string"}},
 				{Name: "is_null", Type: ir.Type{Kind: ir.TypeBool, Name: "bool"}}}},
 			{Name: "SqlStmt", CName: "SqlStmt", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
-			{Name: "PtrU32", CName: "PtrU32", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
-			{Name: "PtrSqlStmt", CName: "PtrSqlStmt", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
-			{Name: "PtrSqlValue", CName: "PtrSqlValue", Fields: []ir.FieldIR{{Name: "raw", Type: ir.Type{Kind: ir.TypeU64, Name: "u64"}}}},
 			{Name: "SliceSqlValue", CName: "SliceSqlValue", Fields: []ir.FieldIR{
-				{Name: "ptr", Type: ir.Type{Kind: ir.TypeStruct, Name: "PtrUnit"}},
+				{Name: "ptr", Type: pointerTo(ir.Type{Kind: ir.TypeStruct, Name: "SqlValue"})},
 				{Name: "len", Type: wide}}},
-			// PtrUnit is the address a slice carries and a program cannot read.
-			// It is defined by the backend itself when a slice names it, so it
-			// is deliberately not declared here.
 			{Name: "ResultSqlDbString", CName: "ResultSqlDbString", Fields: []ir.FieldIR{
 				{Name: "is_ok", Type: ir.Type{Kind: ir.TypeBool, Name: "bool"}},
 				{Name: "ok", Type: handle}, {Name: "err", Type: ir.Type{Kind: ir.TypeString, Name: "string"}}}},
@@ -602,6 +593,8 @@ func TestTheTelemetryPortCompilesWithTheSQLPort(t *testing.T) {
 	}
 	write("types.go", `package main
 
+import "unsafe"
+
 type SqlDb struct{ raw uint64 }
 type SqlStmt struct{ raw uint64 }
 type SqlValue struct {
@@ -614,13 +607,9 @@ type SqlValue struct {
 	isNull  bool
 }
 type SliceSqlValue struct {
-	ptr PtrUnit
+	ptr unsafe.Pointer
 	len uint32
 }
-type PtrUnit struct{ raw uint64 }
-type PtrU32 struct{ raw uint64 }
-type PtrSqlStmt struct{ raw uint64 }
-type PtrSqlValue struct{ raw uint64 }
 type ResultSqlDbString struct {
 	isOk bool
 	ok   SqlDb

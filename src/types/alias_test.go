@@ -96,8 +96,13 @@ func TestACallToATypeIsAConversion(t *testing.T) {
 		Args:     []ast.Expr{ast.NumberExpr{Value: "0"}},
 	}
 	got := tc.lowerExpr(expr, map[string]ir.Type{})
-	if got != "(void*)(0)" {
+	if got != "((void*)NULL)" {
 		t.Errorf("converting to a handle emitted %q, which is not a cast", got)
+	}
+	// An address held as a number goes through the integer a pointer is.
+	expr.Args = []ast.Expr{ast.NumberExpr{Value: "4096"}}
+	if got := tc.lowerExpr(expr, map[string]ir.Type{}); got != "((void*)(uintptr_t)(4096))" {
+		t.Errorf("converting a number to a handle emitted %q", got)
 	}
 
 	// And an alias converts to the same thing, because it is the same type.
@@ -109,7 +114,7 @@ func TestACallToATypeIsAConversion(t *testing.T) {
 		Callee: ast.IdentifierExpr{Name: "SqlDb"},
 		Args:   []ast.Expr{ast.NumberExpr{Value: "0"}},
 	}, map[string]ir.Type{})
-	if got != "(void*)(0)" {
+	if got != "((void*)NULL)" {
 		t.Errorf("converting to an aliased handle emitted %q", got)
 	}
 }

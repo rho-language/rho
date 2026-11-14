@@ -52,15 +52,10 @@ func TestAPointerToNothingIsAnOpaqueHandle(t *testing.T) {
 }
 
 // The unsafe import follows what the file actually says, because Go refuses a
-// file with an unused import.
-//
-// Nothing in a generated module reaches an address on its own: a pointer whose
-// element is known is spelled `*T`, and a handle is a struct carrying one. The
-// import belongs to the parts that do reach a raw address — the database port
-// writing rows into a caller's slice — and those are in the port's own file,
-// which carries its imports itself.
-func TestTheGoBackendImportsUnsafeOnlyWhenAnAddressIsUsed(t *testing.T) {
-	// A module that names a pointer: ordinary Go, and no import.
+// file with an unused import. Every pointer is an unsafe.Pointer, so a module
+// that names one imports the package, and a module that names none does not.
+func TestTheGoBackendImportsUnsafeOnlyWhenAPointerIsNamed(t *testing.T) {
+	row := ir.Type{Kind: ir.TypeStruct, Name: "CustomerRow"}
 	named := ir.ModuleIR{
 		Name: "handles",
 		Structs: []ir.StructIR{{
@@ -69,36 +64,15 @@ func TestTheGoBackendImportsUnsafeOnlyWhenAnAddressIsUsed(t *testing.T) {
 			Fields: []ir.FieldIR{{Name: "id", Type: ir.Type{Kind: ir.TypeI64, Name: "i64"}}},
 		}},
 		Funcs: []ir.FuncIR{{
-			Name: "rows_of",
-			Params: []ir.ParamIR{{
-				Name: "p",
-				Type: ir.Type{Kind: ir.TypePtr, Args: []ir.Type{
-					{Kind: ir.TypeStruct, Name: "CustomerRow"},
-				}},
-			}},
-			ReturnType: ir.Type{Kind: ir.TypePtr, Args: []ir.Type{
-				{Kind: ir.TypeStruct, Name: "CustomerRow"},
-			}},
-			Body: []ir.Instr{{Op: ir.OpReturn, Args: []string{"p"}}},
+			Name:       "rows_of",
+			Params:     []ir.ParamIR{{Name: "p", Type: ir.Type{Kind: ir.TypePtr, Name: "Ptr[CustomerRow]", Args: []ir.Type{row}}}},
+			ReturnType: ir.Type{Kind: ir.TypePtr, Name: "Ptr[CustomerRow]", Args: []ir.Type{row}},
+			Body:       []ir.Instr{{Op: ir.OpReturn, Args: []string{"p"}}},
 		}},
 	}
-	if with := EmitGo(named); strings.Contains(with, `"unsafe"`) {
-		t.Errorf("a module that only names a pointer carried an unused import:\n%s", with)
-	}
-
-	// A handle is a struct, not a raw address, so it does not bring the import.
-	held := ir.ModuleIR{
-		Name:    "handles",
-		Aliases: []ir.AliasIR{{Name: "SqlDb", Target: "PtrUnit"}},
-		Funcs: []ir.FuncIR{{
-			Name:       "open_db",
-			Params:     []ir.ParamIR{{Name: "path", Type: ir.Type{Kind: ir.TypeString, Name: "string"}}},
-			ReturnType: ir.Type{Kind: ir.TypeStruct, Name: "PtrUnit"},
-			Body:       []ir.Instr{{Op: ir.OpReturn, Args: []string{"PtrUnit{raw: 0}"}}},
-		}},
-	}
-	if with := EmitGo(held); strings.Contains(with, `"unsafe"`) {
-		t.Errorf("a module holding a handle carried an unused import:\n%s", with)
+	with := EmitGo(named)
+	if !strings.Contains(with, `"unsafe"`) || !strings.Contains(with, "func rowsOf(p unsafe.Pointer) unsafe.Pointer") {
+		t.Errorf("a module that names a pointer must spell it unsafe.Pointer and import it:\n%s", with)
 	}
 
 	plain := EmitGo(greetIR())

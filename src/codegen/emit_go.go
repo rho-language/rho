@@ -164,17 +164,10 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	if strings.Contains(body.String(), "fmt.") {
 		imports = addGoImport(imports, "fmt")
 	}
-	// A pointer is carried as an unsafe.Pointer, because a Rho pointer is a raw
-	// address rather than a Go reference: it may point into memory a foreign
-	// library owns, and the language does not promise it points at anything Go
-	// keeps alive. A module that declares one needs the import; importing it
-	// unconditionally would be an unused import in every module that does not.
-	// The import follows what the file actually says. A pointer whose element
-	// is known is spelled `*T` and needs no import; what needs one is a pointer
-	// the file touches as an address — a slice's data, a cast of a raw value.
-	// A module that only ever names a pointer's element would otherwise carry
-	// an import nothing uses, and an unused import does not compile.
-	if moduleHasPointer(m) && goBodyUsesUnsafe(body.String()) {
+	// Every pointer is an unsafe.Pointer, so a file that names one imports
+	// the package; the import follows what the file says, because an unused
+	// import does not compile.
+	if goBodyUsesUnsafe(text) {
 		imports = addGoImport(imports, "unsafe")
 	}
 	if len(imports) == 1 {
@@ -196,64 +189,8 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	b.WriteString("type RhoUnit struct{}\n")
 	b.WriteString("\n")
 
-	// PtrUnit is a raw address a program cannot look inside, which is what a
-	// handle and a slice's data both are. It is defined when a declaration names
-	// it rather than always, because a module that holds neither has no reason
-	// to carry a type nothing in it refers to.
-	if moduleUsesPtrUnit(m) {
-		b.WriteString("// PtrUnit is an address Rho can carry and not read: what a slice's\n")
-		b.WriteString("// data is, and what an engine handle is.\n")
-		b.WriteString("type PtrUnit struct {\n\traw uint64\n}\n")
-		b.WriteString("\n")
-	}
 	b.WriteString(text)
 	return b.String()
-}
-
-// bodyUsesPtrUnit reports whether the emitted body names the opaque address.
-//
-// It is asked of the text rather than the declarations because a slice's data
-// field names it without any declaration of its own: the field is a pointer into
-// a buffer, and the buffer's address is a thing a program can hold and not read.
-func moduleUsesPtrUnit(m ir.ModuleIR) bool {
-	// A struct field is where it first appears: a slice's data is one, and a
-	// value built from that slice is one too. The declarations are asked rather
-	// than the emitted text, because the struct that names it is written after
-	// the point at which the decision has to be made.
-	found := false
-	var visit func(typ ir.Type)
-	visit = func(typ ir.Type) {
-		// A pointer to nothing renders as PtrUnit, which is the one pointer the
-		// backend gives a name to. The type arrives as a pointer with no element
-		// or an empty one — a slice's data, a handle — so it is the element that
-		// is asked about rather than the name, which is decided here.
-		if typ.Kind == ir.TypePtr && (len(typ.Args) == 0 ||
-			typ.Args[0].Kind == ir.TypeVoid ||
-			typ.Args[0].Name == "Unit" || typ.Args[0].Name == "RhoUnit" ||
-			typ.Args[0].Name == "") {
-			found = true
-			return
-		}
-		if typ.Name == "PtrUnit" || typ.Name == "PtrVoid" {
-			found = true
-			return
-		}
-		for _, argument := range typ.Args {
-			visit(argument)
-		}
-	}
-	for _, structure := range m.Structs {
-		for _, field := range structure.Fields {
-			visit(field.Type)
-		}
-	}
-	for _, fn := range m.Funcs {
-		for _, param := range fn.Params {
-			visit(param.Type)
-		}
-		visit(fn.ReturnType)
-	}
-	return found
 }
 
 func emitGoStruct(b *strings.Builder, structure ir.StructIR) {
@@ -594,7 +531,13 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 		// declaration is OpLet, not a trailing "=" here.
 		dest := strings.TrimSpace(instr.Dest)
 		dest = strings.TrimRight(dest, "=+-*/")
-		fmt.Fprintf(b, "%s%s = %s\n", pad, goFieldName(strings.TrimSpace(dest)), ToGoExpr(instr.Args[0]))
+		target := goFieldName(strings.TrimSpace(dest))
+		// A store through a pointer, `((T*)(p))[i] = v`, is an expression
+		// and is translated as one.
+		if strings.Contains(dest, "*)(") {
+			target = ToGoExpr(strings.TrimSpace(dest))
+		}
+		fmt.Fprintf(b, "%s%s = %s\n", pad, target, ToGoExpr(instr.Args[0]))
 
 	case ir.OpLet:
 		// The Rho type is preferred when it was carried, because a dynamic
@@ -1405,24 +1348,45 @@ func rhoYamlKeyLess(a, b string) bool {
 				"}\n",
 		},
 		{
-			// The address a handle carries, for a variable a program built the
-			// handle from: `Ptr[T](&values[0])`.
+			// The address a pointer refers to, as a number: `u64(p)` and
+			// `std.core.ptr.to_u64`.
 			//
-			// A handle carries the address as a number, and Go moves a
-			// goroutine's stack when it grows, without updating numbers. A
-			// variable whose address only left as a number stayed on the stack,
-			// so a callee that grew the stack — a database read does — wrote
-			// through the handle to where the variable used to be, and the
-			// caller read it empty. Storing the pointer where the compiler
-			// cannot see it stay local puts the variable on the heap, which Go
-			// does not move; it stays alive for as long as its function uses it.
+			// A number is not something the collector follows, and Go moves a
+			// goroutine's stack when it grows without updating numbers. Storing
+			// the pointer where the compiler cannot see it stay local puts what
+			// it refers to on the heap, which Go does not move, so the number
+			// stays the address of the same memory for as long as a pointer to
+			// it is live.
 			call: "rhoAddress(",
 			define: "var rhoAddressSink unsafe.Pointer\n\n" +
-				"func rhoAddress(pointer unsafe.Pointer) uint64 {\n" +
+				"func rhoAddress(pointer unsafe.Pointer) uintptr {\n" +
 				"\tatomic.StorePointer(&rhoAddressSink, pointer)\n" +
-				"\treturn uint64(uintptr(pointer))\n" +
+				"\treturn uintptr(pointer)\n" +
 				"}\n",
 			imports: []string{"sync/atomic", "unsafe"},
+		},
+		{
+			// A string where a foreign function takes a Ptr[u8]: its bytes and
+			// a terminating zero, as a C string is, in memory the pointer keeps
+			// alive.
+			call: "rhoCstring(",
+			define: "func rhoCstring(s string) unsafe.Pointer {\n" +
+				"\tbytes := make([]byte, len(s)+1)\n" +
+				"\tcopy(bytes, s)\n" +
+				"\treturn unsafe.Pointer(&bytes[0])\n" +
+				"}\n",
+			imports: []string{"unsafe"},
+		},
+		{
+			// The element i places after the one p points at: `p[i]` and `*p`.
+			// It is a typed pointer into the memory p refers to, so the access
+			// is an lvalue and the collector sees what is read and written.
+			call: "rhoPtrAt[",
+			define: "func rhoPtrAt[T any](p unsafe.Pointer, i int) *T {\n" +
+				"\tvar zero T\n" +
+				"\treturn (*T)(unsafe.Add(p, i*int(unsafe.Sizeof(zero))))\n" +
+				"}\n",
+			imports: []string{"unsafe"},
 		},
 		{
 			// What a value is, from the line it is on and the block below it.
@@ -1853,38 +1817,57 @@ func rhoYamlKeyLess(a, b string) bool {
 			imports: []string{"time"},
 		},
 		{
-			// std.os.fs and std.os.sys read and write through a Ptr[u8], which
-			// on this backend is a handle with no memory behind it, so the
-			// descriptor calls stop the program and say why rather than reading
-			// from address zero. They are defined rather than left out because
-			// every function of an imported module is emitted, and a program that
-			// imports std.os.sys for exit or setenv must still build.
-			call:   "rhoFdOpen(",
-			needs:  []string{"rhoFdRefuse("},
-			define: "func rhoFdOpen(_ ...any) int32 {\n\trhoFdRefuse(\"open\")\n\treturn -1\n}\n",
-		},
-		{
-			call:   "rhoFdClose(",
-			needs:  []string{"rhoFdRefuse("},
-			define: "func rhoFdClose(_ ...any) uint32 {\n\trhoFdRefuse(\"close\")\n\treturn 0\n}\n",
-		},
-		{
-			call:   "rhoFdWrite(",
-			needs:  []string{"rhoFdRefuse("},
-			define: "func rhoFdWrite(_ ...any) uint32 {\n\trhoFdRefuse(\"write\")\n\treturn 0\n}\n",
-		},
-		{
-			call:   "rhoFdRead(",
-			needs:  []string{"rhoFdRefuse("},
-			define: "func rhoFdRead(_ ...any) uint32 {\n\trhoFdRefuse(\"read\")\n\treturn 0\n}\n",
-		},
-		{
-			call: "rhoFdRefuse(",
-			define: "func rhoFdRefuse(call string) {\n" +
-				"\tfmt.Fprintln(os.Stderr, \"rho: std.os \"+call+\" needs the C backend: a Ptr[u8] on the Go backend has no memory behind it\")\n" +
-				"\tos.Exit(1)\n" +
+			// std.os.fs and std.os.sys: the descriptor calls, over the memory a
+			// Ptr[u8] refers to. A pointer is an unsafe.Pointer on this backend,
+			// so the buffer is the program's own bytes — an array, a slice's
+			// data — and the system call reads and writes them where they are,
+			// as the C library's wrappers do. The collector keeps them alive for
+			// the call, because the argument is a pointer to them.
+			//
+			// The path is NUL-terminated, as a C string is, and the flags are
+			// the C library's `O_*`, which are the system's own.
+			call: "rhoFdOpen(",
+			define: "func rhoFdOpen(path unsafe.Pointer, flags uint32) int32 {\n" +
+				"\tif path == nil {\n\t\treturn -1\n\t}\n" +
+				"\tn := 0\n" +
+				"\tfor *(*byte)(unsafe.Add(path, n)) != 0 {\n\t\tn++\n\t}\n" +
+				"\tname := string(unsafe.Slice((*byte)(path), n))\n" +
+				"\tfd, err := syscall.Open(name, int(flags), 0o644)\n" +
+				"\tif err != nil {\n\t\treturn -1\n\t}\n" +
+				"\treturn int32(fd)\n" +
 				"}\n",
-			imports: []string{"fmt", "os"},
+			imports: []string{"syscall", "unsafe"},
+		},
+		{
+			call: "rhoFdClose(",
+			define: "func rhoFdClose(fd uint32) uint32 {\n" +
+				"\tif err := syscall.Close(int(fd)); err != nil {\n\t\treturn 0xFFFFFFFF\n\t}\n" +
+				"\treturn 0\n" +
+				"}\n",
+			imports: []string{"syscall"},
+		},
+		{
+			// The number of bytes moved, or 0xFFFFFFFF when the call failed.
+			call: "rhoFdWrite(",
+			define: "func rhoFdWrite(fd uint32, buf unsafe.Pointer, length uint32) uint32 {\n" +
+				"\tvar bytes []byte\n" +
+				"\tif buf != nil && length > 0 {\n\t\tbytes = unsafe.Slice((*byte)(buf), length)\n\t}\n" +
+				"\tn, err := syscall.Write(int(fd), bytes)\n" +
+				"\tif err != nil {\n\t\treturn 0xFFFFFFFF\n\t}\n" +
+				"\treturn uint32(n)\n" +
+				"}\n",
+			imports: []string{"syscall", "unsafe"},
+		},
+		{
+			call: "rhoFdRead(",
+			define: "func rhoFdRead(fd uint32, buf unsafe.Pointer, length uint32) uint32 {\n" +
+				"\tvar bytes []byte\n" +
+				"\tif buf != nil && length > 0 {\n\t\tbytes = unsafe.Slice((*byte)(buf), length)\n\t}\n" +
+				"\tn, err := syscall.Read(int(fd), bytes)\n" +
+				"\tif err != nil {\n\t\treturn 0xFFFFFFFF\n\t}\n" +
+				"\treturn uint32(n)\n" +
+				"}\n",
+			imports: []string{"syscall", "unsafe"},
 		},
 		{
 			call:    "rhoStringFromI32(",
@@ -2035,63 +2018,11 @@ func goBanner(m ir.ModuleIR, file, brief string) string {
 		file, brief, m.Name)
 }
 
-// moduleHasPointer reports whether any of the module's declarations mention a
-// pointer.
-//
-// It is asked of the declarations rather than of the emitted text, because a
-// pointer in a signature reaches the generated file whether or not a body
-// happens to use it, and a module whose only pointer is a parameter — a handle
-// passed to a foreign call, which is the usual shape — would otherwise be
-// emitted without the import its own signature needs.
 // goBodyUsesUnsafe reports whether the emitted body reaches the unsafe package.
 //
-// The import exists for the places a value crosses into Go's own pointer world:
-// building a slice from an address, or converting a raw one. A pointer that is
-// only ever named as `*T` is ordinary Go and needs no import.
+// Every Rho pointer is an `unsafe.Pointer` in Go, so a file that names one —
+// a field, a parameter, a conversion — needs the import, and one that names
+// none must not carry it.
 func goBodyUsesUnsafe(body string) bool {
 	return strings.Contains(body, "unsafe.")
-}
-
-func moduleHasPointer(m ir.ModuleIR) bool {
-	found := false
-	var visit func(typ ir.Type)
-	visit = func(typ ir.Type) {
-		// A pointer to nothing is a handle, and a handle lowers to the
-		// `PtrUnit` struct rather than to an `unsafe.Pointer`. It is the one
-		// pointer that is not a raw address, so it does not bring the import
-		// with it — and importing it anyway would be an unused import in every
-		// module that only holds handles.
-		if typ.Kind == ir.TypePtr {
-			// A handle arrives spelled either way: as a pointer to nothing, or
-			// already carrying the name the backend gives it. Both are the same
-			// type, and neither is a raw address.
-			if typ.Name == "PtrUnit" || typ.Name == "PtrVoid" {
-				return
-			}
-			if len(typ.Args) > 0 {
-				element := typ.Args[0]
-				if element.Name == "Unit" || element.Name == "" ||
-					element.Kind == ir.TypeVoid {
-					return
-				}
-			}
-			found = true
-			return
-		}
-		for _, argument := range typ.Args {
-			visit(argument)
-		}
-	}
-	for _, structure := range m.Structs {
-		for _, field := range structure.Fields {
-			visit(field.Type)
-		}
-	}
-	for _, fn := range m.Funcs {
-		for _, param := range fn.Params {
-			visit(param.Type)
-		}
-		visit(fn.ReturnType)
-	}
-	return found
 }

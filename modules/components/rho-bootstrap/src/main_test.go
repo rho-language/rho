@@ -271,6 +271,7 @@ func TestBoardKeyIsFetchedAfterEnrollment(t *testing.T) {
 	dir := t.TempDir()
 	const uid = "0123456789abcdef"
 	const key = "00112233445566778899aabbccddeeff"
+	oldMesh := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -282,7 +283,11 @@ func TestBoardKeyIsFetchedAfterEnrollment(t *testing.T) {
 				io.WriteString(w, `{"ok":false,"error":"unknown node or credential"}`)
 				return
 			}
-			io.WriteString(w, `{"ok":true,"uid":"`+uid+`","key":"`+key+`"}`)
+			if oldMesh {
+				io.WriteString(w, `{"ok":true,"uid":"`+uid+`","key":"`+key+`"}`)
+				return
+			}
+			io.WriteString(w, `{"ok":true,"uid":"`+uid+`","key":"`+key+`","epoch":3}`)
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -305,8 +310,8 @@ func TestBoardKeyIsFetchedAfterEnrollment(t *testing.T) {
 	}
 	keyPath := filepath.Join(dir, "identity", "board.key")
 	stored, err := os.ReadFile(keyPath)
-	if err != nil || string(stored) != key+"\n" {
-		t.Fatalf("board.key = %q, %v", stored, err)
+	if err != nil || string(stored) != "3:"+key+"\n" {
+		t.Fatalf("board.key = %q, %v (want the epoch Mesh answered, then the key)", stored, err)
 	}
 	env, _ := os.ReadFile(filepath.Join(dir, "identity", "board.env"))
 	if !strings.Contains(string(env), "RH_SECURE_UID="+uid+"\n") ||
@@ -319,6 +324,20 @@ func TestBoardKeyIsFetchedAfterEnrollment(t *testing.T) {
 			t.Errorf("%s mode = %o, want 600", name, info.Mode().Perm())
 		}
 	}
+	// Fetching again replaces a key the node's keystore kept beside the file,
+	// and an older Mesh, which names no epoch, has the key written alone.
+	os.WriteFile(keyPath+".keystore", []byte("stale"), 0600)
+	oldMesh = true
+	if err := boardKey([]string{"-config", path}); err != nil {
+		t.Fatalf("fetching the key again failed: %v", err)
+	}
+	if _, err := os.Stat(keyPath + ".keystore"); !os.IsNotExist(err) {
+		t.Fatalf("the keystore beside the key was not removed: %v", err)
+	}
+	if stored, _ := os.ReadFile(keyPath); string(stored) != key+"\n" {
+		t.Fatalf("board.key from an older Mesh = %q", stored)
+	}
+	oldMesh = false
 	// A credential Mesh does not accept stores nothing.
 	os.WriteFile(filepath.Join(dir, "identity", "credential"), []byte("wrong\n"), 0600)
 	if err := boardKey([]string{"-config", path}); err == nil || !strings.Contains(err.Error(), "unknown node") {

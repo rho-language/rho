@@ -8,7 +8,7 @@ extern fn rho_fd_open(path: Ptr[u8], flags: u32) i32
 extern fn rho_fd_close(fd: u32) u32
 
 // open opens a NUL-terminated path with the C library's `O_*` flags. A file it
-// creates is mode 0644. C only, as the descriptor calls in std.os.sys are.
+// creates is mode 0644.
 fn open(path: Ptr[u8], flags: u32) Result[u32, u32] {
     let fd: i32 = rho_fd_open(path, flags)
     if fd < 0 {

@@ -434,3 +434,9 @@ Strings in a C program no longer leak. Every string the runtime builds comes fro
 `request_remote(req)` is the address of the connection a request came on, which no header can change.
 
 An unsigned value plus an expression made only of written numbers (`up + 2 * N`) keeps the unsigned type on the Go backend, where it was widened to a signed one that Go refused to assign.
+
+## [0.10.0] - 2026-11-14
+
+`Ptr[T]` is one type on both backends: `T*` in C and `unsafe.Pointer` in Go, which the Go collector follows. A cast from an integer or another pointer, `to_u64`, indexing, `*p`, `p + n` and `&x` mean the same on both, and `std.os` file descriptors (`open`, `read`, `write`, `close`) work on Go too. `std/core/ptr.rho` declares no struct any more, and a program may not declare one named `Ptr`. A generic struct's pointer field keeps its element type.
+
+C declarations come in dependency order, so `std.strings.string` builds on C; an alias to a generic type brings that specialisation with it. A function a program declares wins over a built-in of the same name when the built-in does not apply to the argument (`len` of a `String`). The built-in `len` works on C for a string and a fixed-size array; `len` of a dynamic array stops a C build and names the call.

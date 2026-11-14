@@ -34,7 +34,7 @@ hex.
 | Signature | What it answers | C | Go |
 |---|---|---|---|
 | `strlen(s: string) u32` | The length in bytes | yes | yes |
-| `len(value) u32` | The length of a string, a `[T]` or a fixed array. On C the type checker accepts it, but the C runtime has no `len`: use `strlen` for a string and the declared size for an array | no | yes |
+| `len(value) u32` | The length of a string (as `strlen`; 0 for a NULL string on C), of a fixed-size array (the `N` of its type, a constant), or of a `[T]`. A `[T]` is a bare pointer on C, so `len` on one refuses a C build, naming the call: use a fixed-size array or a `Slice[T]`. A module that declares its own `len` — `std.strings.string` does, for `String` — gets the calls whose argument is none of these | string, fixed array | yes |
 | `str_eq(a: string, b: string) bool` | Whether two strings are equal. `==` between strings is the same call | yes | yes |
 | `str_at(s: string, i: u32) u8` | The byte at `i`, or 0 past the end | yes | yes |
 | `str_from_byte(b: u8) string` | A one-byte string | yes | yes |

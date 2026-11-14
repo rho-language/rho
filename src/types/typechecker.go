@@ -47,6 +47,9 @@ type TypeChecker struct {
 	owned map[string]map[string]functionType
 	// owner is the module whose code is being checked or lowered.
 	owner string
+	// cRefusals are the calls lowered for every backend that C cannot emit
+	// (ModuleIR.CRefusals).
+	cRefusals []string
 	// moduleAliases maps the name code uses for an imported module — the last
 	// segment of its name, `log` for `rho.log` — to the module, for a call
 	// written `log.info(...)`. A name two modules share maps to "" and is
@@ -77,12 +80,6 @@ type TypeChecker struct {
 	// where the parameter is `Option[T]` — so the arguments have to be
 	// recoverable for deduction to bind `T`.
 	specialisations map[string]specialisation
-	// foreign is non-zero while a foreign signature is being resolved: an
-	// `extern fn`'s parameters and return. `Ptr[T]` there is the C pointer the
-	// declaration means; in ordinary code it is the handle struct `std.core.ptr`
-	// declares. The two share a spelling, and the context is what tells them
-	// apart.
-	foreign int
 	// lowerSeq numbers the temporaries a `for` and a `match` introduce, so a
 	// loop inside a loop gets a name of its own.
 	lowerSeq int
@@ -214,6 +211,12 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	// First pass: register struct types
 	for _, decl := range m.Decls {
 		if s, ok := decl.(ast.StructDecl); ok {
+			// `Ptr[T]` is the language's pointer, one type that each backend
+			// spells as its own pointer. A struct of that name would be a second
+			// meaning for the same spelling, and nothing would ever resolve to it.
+			if s.Name == "Ptr" {
+				return fmt.Errorf("Ptr is the language's pointer type and cannot be declared as a struct")
+			}
 			// A generic struct is also a template. Its field types are recorded
 			// with the parameters unresolved, because memberType substitutes
 			// them at each use site.
@@ -228,6 +231,38 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			}
 			tc.fields[s.Name] = fields
 			tc.genericParams[s.Name] = append([]string{}, s.TypeParams...)
+		}
+	}
+	// An alias is registered before anything is validated, because a function
+	// body may name the alias as a type and as a constructor — `SqlDb(0)` —
+	// and a body validated before the alias exists would be told it calls a
+	// function nobody declared. Registration is a first pass because it is a
+	// declaration rather than a check: nothing here can fail on a well-formed
+	// alias, and a malformed one is a manifest a resolver reports.
+	//
+	// It also comes before the signatures are read: a signature that names the
+	// alias inside an application — `out: Slice[String]` — resolves it there,
+	// and read first it would be specialised over a struct called `String`
+	// that nothing defines, a second type beside the `Slice[Slice[u8]]` the
+	// callers build.
+	for _, decl := range m.Decls {
+		if d, ok := decl.(ast.TypeDecl); ok {
+			// An alias is a name for another type, not a new type of its own.
+			// Registering it as a struct would make the backend define a struct
+			// whose name is the written spelling — `SqlDb` becoming a type called
+			// `Ptr[Unit]` — so an alias a program uses for a handle is a type
+			// nothing can name. The alias is recorded and resolution follows it.
+			tc.aliases[d.Name] = d.Type.String()
+			tc.types[d.Name] = ir.Type{Kind: ir.TypeStruct, Name: d.Name}
+		}
+	}
+	// An alias of a generic application — `String = Slice[u8]` — is defined in
+	// terms of that specialisation, so the specialisation is emitted whether or
+	// not anything else in the program spells it out: a program that only ever
+	// writes `String` still needs `Slice_u8` for the typedef to name.
+	for _, decl := range m.Decls {
+		if d, ok := decl.(ast.TypeDecl); ok && strings.Contains(d.Type.String(), "[") {
+			tc.declaredType(d.Type.String())
 		}
 	}
 	for _, decl := range m.Decls {
@@ -252,11 +287,6 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			if len(fn.TypeParams) > 0 {
 				signatureType = tc.typeFor
 			}
-			// An extern's signature is foreign, so `Ptr[T]` in it is the C
-			// pointer it names rather than the language handle.
-			if fn.Extern {
-				tc.foreign++
-			}
 			params := make([]ir.Type, len(fn.Params))
 			for i, param := range fn.Params {
 				params[i] = signatureType(param.Type)
@@ -267,9 +297,6 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				cName:  qualifiedCName(fn.Owner, fn.Name),
 				extern: fn.Extern,
 				owner:  fn.Owner,
-			}
-			if fn.Extern {
-				tc.foreign--
 			}
 			if fn.Owner != "" {
 				tc.funcs[fn.Owner+"."+fn.Name] = entry
@@ -327,23 +354,6 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	for _, decl := range m.Decls {
 		if s, ok := decl.(ast.StructDecl); ok {
 			tc.types[s.Name] = ir.Type{Kind: ir.TypeStruct, Name: s.Name}
-		}
-	}
-	// An alias is registered before anything is validated, because a function
-	// body may name the alias as a type and as a constructor — `SqlDb(0)` —
-	// and a body validated before the alias exists would be told it calls a
-	// function nobody declared. Registration is a first pass because it is a
-	// declaration rather than a check: nothing here can fail on a well-formed
-	// alias, and a malformed one is a manifest a resolver reports.
-	for _, decl := range m.Decls {
-		if d, ok := decl.(ast.TypeDecl); ok {
-			// An alias is a name for another type, not a new type of its own.
-			// Registering it as a struct would make the backend define a struct
-			// whose name is the written spelling — `SqlDb` becoming a type called
-			// `Ptr[Unit]` — so an alias a program uses for a handle is a type
-			// nothing can name. The alias is recorded and resolution follows it.
-			tc.aliases[d.Name] = d.Type.String()
-			tc.types[d.Name] = ir.Type{Kind: ir.TypeStruct, Name: d.Name}
 		}
 	}
 
@@ -539,12 +549,6 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	previousOwner := tc.owner
 	tc.owner = fn.Owner
 	defer func() { tc.owner = previousOwner }()
-	// An extern's signature is foreign, so `Ptr[T]` in it is a C pointer rather
-	// than the language handle. The context is set for the whole declaration.
-	if fn.Extern {
-		tc.foreign++
-		defer func() { tc.foreign-- }()
-	}
 	// Check parameters
 	for _, p := range fn.Params {
 		if !fn.Extern && backendReservedName(p.Name) {
@@ -722,6 +726,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			}
 			return left, nil
 		}
+		// A pointer moved by a whole number of elements is a pointer:
+		// `s.ptr + start` is the address of element `start`.
+		if left.Kind == ir.TypePtr && (value.Op == "+" || value.Op == "-") && isIntegerKind(right.Kind) && right.Kind != ir.TypeBool {
+			return left, nil
+		}
 		if !numeric(left) || !numeric(right) {
 			return ir.Type{}, fmt.Errorf("operator %s requires numeric values", value.Op)
 		}
@@ -824,6 +833,12 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 					return ir.Type{}, errors.New(reason)
 				}
 			}
+			// A declared function that shares an intrinsic's name gives way to
+			// the intrinsic where the intrinsic applies (callsIntrinsic).
+			if exists && !signature.extern && tc.callsIntrinsic(identifier.Name, value.Args, scope) {
+				exists = false
+				signature = functionType{}
+			}
 			if !exists && identifier.Name != "print" && !isCallableBuiltin(identifier.Name, tc.types) && !isExternalBuiltin(identifier.Name) && !tc.isTypeName(identifier.Name) {
 				// A call to a type is a construction, not a call to something
 				// missing: `SqlDb(0)` builds a value of that type, and a program
@@ -849,6 +864,20 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 					written = identifier.Name + "[" + strings.Join(parts, ", ") + "]"
 				}
 				if converted, isType := tc.resolveType(written); isType {
+					converted = tc.substituteType(converted, tc.currentTypeArgs)
+					// A pointer is made from an address — a whole number — or
+					// from another pointer, and from nothing else.
+					if converted.Kind == ir.TypePtr && len(value.Args) == 1 {
+						operand, err := tc.exprType(value.Args[0], scope)
+						if err != nil {
+							return ir.Type{}, err
+						}
+						if operand.Kind != ir.TypePtr && (!isIntegerKind(operand.Kind) || operand.Kind == ir.TypeBool) {
+							return ir.Type{}, locate(
+								fmt.Errorf("%s is made from an address or another pointer, not a %s", typeName(converted), typeName(operand)),
+								value.Position(), "")
+						}
+					}
 					return converted, nil
 				}
 			}
@@ -1165,19 +1194,6 @@ func elementType(value ir.Type) ir.Type {
 	if (value.Kind == ir.TypePtr || value.Kind == ir.TypeSlice) && len(value.Args) > 0 {
 		return value.Args[0]
 	}
-	// A pointer named as its struct is still a pointer. The standard library's
-	// handle `Ptr[T]` is mangled to `Ptr_X` (or `X_Ptr`), and a field of that
-	// type no longer carries its element in its arguments, so indexing it used
-	// to hand back the pointer itself rather than the element: `Slice[T].ptr`
-	// is a `Ptr[T]`, and `fields.ptr[i]` was `Ptr_X`, which has no `value`
-	// field, instead of the `X` the index names.
-	if element, isPtr := stripPointerSpelling(value.Name); isPtr {
-		typ := ir.Type{Kind: ir.TypeStruct, Name: element}
-		if kind := primitiveKind(element); kind != ir.TypeInvalid {
-			typ.Kind = kind
-		}
-		return typ
-	}
 
 	if value.ArrayLen > 0 {
 		element := value
@@ -1261,11 +1277,16 @@ func substituteGeneric(value ir.Type, params []string, args []ir.Type) ir.Type {
 			return args[index]
 		}
 	}
+	// A pointer carries its element as an argument, not in its name, so the
+	// element is what is substituted: `Slice[u8].ptr` is a `Ptr[u8]`.
+	if value.Kind == ir.TypePtr && len(value.Args) == 1 {
+		element := substituteGeneric(value.Args[0], params, args)
+		return ir.Type{Kind: ir.TypePtr, Name: "Ptr[" + typeName(element) + "]", Args: []ir.Type{element}}
+	}
 	// A type parameter nested inside a field's type is folded into the mangled
-	// name: `Ptr[T]` is stored as `Ptr_T`. Substitution has to rewrite the
-	// segment the parameter occupies, or `Slice[F].ptr`, a `Ptr[T]`, comes back
-	// as `Ptr_T` whose element is the parameter `T` rather than the argument
-	// `F` - and `fields.ptr[i].value` fails because `T` is not `F`.
+	// name: `Box[T]` is stored as `Box_T`. Substitution has to rewrite the
+	// segment the parameter occupies, or the field comes back naming the
+	// parameter `T` rather than the argument.
 	parts := strings.Split(value.Name, "_")
 	changed := false
 	for i, part := range parts {
@@ -1414,20 +1435,10 @@ func stringToC(got, want ir.Type) bool {
 	return len(want.Args) == 0 || want.Args[0].Kind == ir.TypeU8
 }
 
-// pointsAtBytes reports whether a type is a pointer to a byte.
-//
-// A pointer arrives here in one of two spellings, because it is resolved on two
-// paths: as the type of a thing, which is a `TypePtr`, and as a type written in
-// a declaration, which is the concrete specialisation a generic application
-// mangles to. `Ptr[u8]` and `Ptr_u8` are the same pointer; accepting only one of
-// them would make the rule depend on which of the two paths a signature was read
-// by, which is not a distinction a program can see and so should not be one the
-// language makes.
+// pointsAtBytes reports whether a type is a pointer, which stringToC then
+// narrows to a pointer at bytes.
 func pointsAtBytes(want ir.Type) bool {
-	if want.Kind == ir.TypePtr {
-		return true
-	}
-	return strings.HasPrefix(want.Name, "Ptr_")
+	return want.Kind == ir.TypePtr
 }
 
 func assignable(want, got ir.Type) bool {
@@ -1454,62 +1465,43 @@ func assignable(want, got ir.Type) bool {
 		}
 		return assignable(want.Args[0], elementType(got))
 	}
-	// A pointer is the same pointer under two spellings: the `Ptr[T]` struct the
-	// standard library declares for ordinary Rho code, and the C pointer type a
-	// foreign signature names. A program holds storage through `Slice[T].ptr` and
-	// passes that field to a foreign function — `Slice[SqlStmt].ptr` into
-	// `sql_prepare` — and the two have to be one type at that boundary. Both
-	// spellings reduce to the element they point at, so two references that
-	// point at the same element are assignable wherever a pointer is wanted.
+	// Two pointers are the same type when they point at the same element. A
+	// program holds storage through `Slice[T].ptr` and passes that field to a
+	// foreign function — `Slice[SqlStmt].ptr` into `sql_prepare` — and a
+	// pointer at a statement is not a pointer at a value, though both are
+	// pointers.
 	if wElement, wIsPtr := ptrElementName(want); wIsPtr {
 		if gElement, gIsPtr := ptrElementName(got); gIsPtr {
-			return wElement == gElement
+			return mangleTypeName(wElement) == mangleTypeName(gElement)
 		}
 	}
 	return want.Kind == got.Kind || (numeric(want) && numeric(got))
 }
 
-// ptrElementName is the element a pointer points at, and whether the type is a
-// pointer at all.
-//
-// A pointer is spelled several ways and is still one type. The foreign pointer
-// type has kind `TypePtr`; the standard library's handle struct is `Ptr[T]`
-// mangled to `Ptr_T` or written as `T_Ptr`; an optional pointer is
-// `Option_Ptr_T` on top of one of those. Every spelling reduces to the element
-// `T`, which is what tells two references apart — a reference to a statement
-// and a reference to a value are not the same thing even though both are
-// pointers.
+// ptrElementName is the name of the element a pointer points at, and whether
+// the type is a pointer at all.
 func ptrElementName(value ir.Type) (string, bool) {
-	if value.Kind == ir.TypePtr {
-		// A foreign signature can point at a struct the checker has no
-		// definition of — an opaque C type — and then carries no element; the
-		// name still says what it points at.
-		if len(value.Args) == 1 && value.Args[0].Name != "" {
-			return value.Args[0].Name, true
-		}
-		element, _ := stripPointerSpelling(value.Name)
-		return element, true
-	}
-	if value.Kind != ir.TypeStruct {
+	if value.Kind != ir.TypePtr {
 		return "", false
 	}
-	return stripPointerSpelling(value.Name)
+	// A foreign signature can point at a struct the checker has no definition
+	// of — an opaque C type — and then the name still says what it points at.
+	if len(value.Args) == 1 && value.Args[0].Name != "" {
+		return value.Args[0].Name, true
+	}
+	element, _ := pointerSpellingElement(value.Name)
+	return element, true
 }
 
-// stripPointerSpelling takes the element out of any pointer spelling a name
-// may be, and reports whether the name was a pointer spelling at all.
-func stripPointerSpelling(name string) (string, bool) {
+// pointerSpellingElement takes the element out of a pointer as written,
+// `Ptr[X]`, and reports whether the name was one.
+func pointerSpellingElement(name string) (string, bool) {
 	if strings.HasPrefix(name, "Ptr[") && strings.HasSuffix(name, "]") && len(name) > len("Ptr[]") {
 		return name[len("Ptr[") : len(name)-1], true
 	}
-	if strings.HasPrefix(name, "Ptr_") && len(name) > len("Ptr_") {
-		return name[len("Ptr_"):], true
-	}
-	if strings.HasSuffix(name, "_Ptr") && len(name) > len("_Ptr") {
-		return strings.TrimSuffix(name, "_Ptr"), true
-	}
 	return "", false
 }
+
 func typeName(value ir.Type) string {
 	if value.Name != "" {
 		return value.Name
@@ -1612,6 +1604,15 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 	// Expand every generic application the program asks for.
 	tc.monomorphise(m, &out)
 
+	// What C cannot emit, once each: a body may be lowered more than once.
+	seen := map[string]bool{}
+	for _, refusal := range tc.cRefusals {
+		if !seen[refusal] {
+			seen[refusal] = true
+			out.CRefusals = append(out.CRefusals, refusal)
+		}
+	}
+
 	return out
 }
 
@@ -1703,12 +1704,6 @@ func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
 	defer func() { tc.owner = previousOwner }()
 	savedArena := tc.arenaEnter(qualifiedCName(fn.Owner, fn.Name), fn.Name, fn.Owner)
 	defer tc.arenaLeave(savedArena)
-	// An extern's signature is foreign: `Ptr[T]` in it is the C pointer the
-	// declaration means, not the handle struct the language declares.
-	if fn.Extern {
-		tc.foreign++
-		defer func() { tc.foreign-- }()
-	}
 	// A written type in a signature is resolved the way one anywhere else is, so
 	// a generic application mangles to the specialisation that was emitted for
 	// it. Resolving a parameter from its expression left the name as written —
@@ -1794,34 +1789,19 @@ func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type 
 	typ := tc.typeFor(expr.Name)
 	// A pointer is a kind and not a name. The parser writes `Ptr[u8]` as the
 	// name Ptr with u8 as an argument, so the kind is decided from the name
-	// before the written spelling replaces it: a backend handed a struct named
-	// `Ptr[u8]` mangles it into a name no C compiler knows, and every foreign
-	// call that passes a pointer goes through here.
-	if expr.Name == "Ptr" && !tc.ptrIsHandle() {
-		// A pointer to nothing is a handle, and a handle is a struct carrying an
-		// address rather than a raw pointer. That is what lets a program hold
-		// one, pass it, and get one back: a pointer to an empty struct has none
-		// of those, and a cast of 0 could not build it.
-		//
-		// Every other `Ptr[T]` stays a real pointer, because a pointer into the
-		// middle of a buffer has no name of its own and nothing to hold.
-		element := ""
-		if len(expr.Args) > 0 {
-			element = expr.Args[0].String()
-		}
-		if element == "Unit" || element == "void" || element == "" {
-			typ.Kind = ir.TypeStruct
-			typ.Name = "PtrUnit"
-			typ.Args = nil
-			return typ
-		}
-		typ.Kind = ir.TypePtr
+	// before the written spelling replaces it. `Ptr[T]` is one type wherever it
+	// is written — a field, a parameter, a local or a foreign signature — and
+	// each backend spells it once: C as `T*`, Go as `unsafe.Pointer`. A pointer
+	// to nothing, `Ptr[Unit]`, is the same type with an element nothing can
+	// read, which C calls `void*`.
+	if expr.Name == "Ptr" {
+		typ = ir.Type{Kind: ir.TypePtr, Name: expr.String()}
 	}
 	// An alias is a name for another type, so the written spelling is not the
 	// type: replacing the name with it would make `SqlDb` a type of its own
 	// that nothing defines, which is what a handle would otherwise be.
 	_, aliased := tc.aliases[expr.Name]
-	if typ.Kind != ir.TypePtr && !aliased {
+	if expr.Name != "Ptr" && !aliased {
 		typ.Name = expr.String()
 	}
 	typ.ArrayLen = 0
@@ -1869,17 +1849,7 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 	// A pointer keeps the type it points at. Losing it would make every backend
 	// spell `Ptr[u8]` as a name, which is what a C compiler rejects.
 	if base == "Ptr" {
-		// Outside a foreign signature the name is the language handle, which is
-		// the struct `std.core.ptr` declares, so it resolves to that
-		// specialisation: the same `Ptr[u32]` is one thing wherever it is
-		// written. A bare `Ptr` is the unspecialised base.
-		if tc.ptrIsHandle() {
-			if element == "" {
-				return ir.Type{Kind: ir.TypeStruct, Name: "Ptr"}, true
-			}
-			return tc.declaredType(name), true
-		}
-		// In a foreign signature it is the C pointer the declaration means.
+		// `Ptr[T]` is the pointer type wherever it is written.
 		pointer := ir.Type{Kind: ir.TypePtr, Name: name}
 		if element != "" {
 			pointer.Args = []ir.Type{tc.typeFor(element)}
@@ -1959,7 +1929,7 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 			Op:       ir.OpLet,
 			Dest:     stmt.Name,
 			Type:     tc.cTypeForTypeName(declaredName),
-			TypeName: declaredName,
+			TypeName: tc.writtenWithoutAliases(declaredName),
 			Args:     []string{value},
 		})
 	case ast.AssignStmt:
@@ -2274,6 +2244,15 @@ func (tc *TypeChecker) integerPrint(expr ast.Expr, scope map[string]ir.Type) (st
 // conversion is written out, in the cast spelling both backends read. A bare
 // literal is untyped and takes the type it meets.
 func (tc *TypeChecker) converted(lowered string, expr ast.Expr, scope map[string]ir.Type, target ir.Type) string {
+	// A string passed where a foreign function takes a `Ptr[u8]` — which the
+	// checker allows only at a foreign call — is the string's bytes. In C the
+	// string already is that pointer; Go has to give it a terminating byte.
+	if target.Kind == ir.TypePtr {
+		if source, err := tc.exprType(expr, scope); err == nil && source.Kind == ir.TypeString {
+			return "rho_cstring(" + lowered + ")"
+		}
+		return lowered
+	}
 	if !numeric(target) || isNumericLiteral(expr) {
 		return lowered
 	}
@@ -2289,10 +2268,10 @@ func (tc *TypeChecker) converted(lowered string, expr ast.Expr, scope map[string
 
 // calleeParams are the parameter types of the function a call names, when it
 // is a concrete function: a generic one deduces its own.
-func (tc *TypeChecker) calleeParams(callee ast.Expr, scope map[string]ir.Type) []ir.Type {
+func (tc *TypeChecker) calleeParams(callee ast.Expr, args []ast.Expr, scope map[string]ir.Type) []ir.Type {
 	if identifier, ok := callee.(ast.IdentifierExpr); ok {
-		if signature, found := intrinsicSignatures[identifier.Name]; found {
-			return signature.params
+		if tc.callsIntrinsic(identifier.Name, args, scope) {
+			return intrinsicSignatures[identifier.Name].params
 		}
 		if signature, found := tc.lookupFunc(identifier.Name); found && len(signature.genericParams) == 0 {
 			return signature.params
@@ -2345,6 +2324,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return "false"
 	case ast.UnaryExpr:
+		if lowered, ok := tc.lowerPointerUnary(expr, scope); ok {
+			return lowered
+		}
 		// The operand is parenthesised: `-(-b)` written as `--b` is C's
 		// pre-decrement, which compiles and changes b.
 		return expr.Op + "(" + tc.lowerExpr(expr.Value, scope) + ")"
@@ -2354,6 +2336,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		// numbers use the host operator directly.
 		if expr.Op == "+" && tc.isStringExpr(expr, scope) {
 			return "rho_concat(" + tc.lowerExpr(expr.Left, scope) + ", " + tc.lowerExpr(expr.Right, scope) + ")"
+		}
+		if lowered, ok := tc.lowerPointerOffset(expr, scope); ok {
+			return lowered
 		}
 
 		left, right := tc.lowerExpr(expr.Left, scope), tc.lowerExpr(expr.Right, scope)
@@ -2427,6 +2412,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return tc.lowerExpr(expr.Object, scope) + "." + expr.Name
 	case ast.IndexExpr:
+		if object, err := tc.exprType(expr.Object, scope); err == nil && object.Kind == ir.TypePtr && len(object.Args) == 1 {
+			return tc.pointerElementAt(object, tc.lowerExpr(expr.Object, scope), tc.lowerExpr(expr.Index, scope))
+		}
 		return tc.lowerExpr(expr.Object, scope) + "[" + tc.lowerExpr(expr.Index, scope) + "]"
 	case ast.CallExpr:
 		// sizeof(T) is the size of a type, decided here rather than emitted:
@@ -2491,6 +2479,12 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			}
 			return "rho_print(\"\")"
 		}
+		if identifier, ok := expr.Callee.(ast.IdentifierExpr); ok && identifier.Name == "len" &&
+			len(expr.Args) == 1 && tc.callsIntrinsic("len", expr.Args, scope) {
+			if lowered, ok := tc.lowerLen(expr, scope); ok {
+				return lowered
+			}
+		}
 		callee := ""
 		if qualified, named, err := tc.qualifiedCall(expr.Callee, scope); named && err == nil {
 			// A qualified call is emitted under the name the module's function
@@ -2538,11 +2532,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 					args := make([]string, 0, len(expr.TypeArgs))
 					for _, argument := range expr.TypeArgs {
 						// The element is spelled as Rho writes it, not as C
-						// does. `Ptr[u32]` must mangle the same way the struct
-						// the field is declared with does: spelling `u32` as
-						// `uint32_t` here built `Ptr_uint32_t` while the
-						// definition built `Ptr_u32`, and the conversion named
-						// a struct nothing declared.
+						// does, so it resolves as the type it names.
 						args = append(args, argument.String())
 					}
 					// Square brackets: a type application is `Ptr[u32]`, and
@@ -2550,13 +2540,20 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 					// declares, so the conversion built the wrong thing.
 					written = identifier.Name + "[" + strings.Join(args, ", ") + "]"
 				}
-				resolved := tc.typeFor(written)
+				// Inside a specialisation the written arguments name its
+				// parameters: `Ptr[T](v)` in `from_u64[u8]` is a `Ptr[u8]`.
+				resolved := tc.substituteType(tc.typeFor(written), tc.currentTypeArgs)
 				callee = tc.cTypeFor(resolved)
 				if len(expr.Args) > 0 {
+					// A conversion to or from a pointer goes through the
+					// integer an address is, `uintptr_t`, which both C and Go
+					// convert to and from a pointer.
+					if lowered, ok := tc.lowerPointerConversion(resolved, expr.Args[0], scope); ok {
+						return lowered
+					}
 					// Building a struct from a value is a compound literal, not
-					// a conversion: `Ptr[u8](addr)` is the handle whose address
-					// that is, and neither C nor Go converts an integer into a
-					// struct. A pointer or a scalar still converts.
+					// a conversion: neither C nor Go converts a value into a
+					// struct. A scalar still converts.
 					if resolved.Kind == ir.TypeStruct {
 						return "(" + mangleTypeName(resolved.Name) + "){ " + tc.lowerExpr(expr.Args[0], scope) + " }"
 					}
@@ -2595,7 +2592,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				// or the generated code will not link. An intrinsic is exempt:
 				// the backend supplies it unprefixed, so a module that declares
 				// one is documenting it rather than defining it.
-				_, isIntrinsic := intrinsicSignatures[identifier.Name]
+				isIntrinsic := tc.callsIntrinsic(identifier.Name, expr.Args, scope)
 				if signature, found := tc.lookupFunc(identifier.Name); found && signature.cName != "" && !isIntrinsic {
 					// A foreign function is called by the name its header gave
 					// it. The qualified name is what the language uses to tell two
@@ -2611,7 +2608,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				}
 			}
 		}
-		params := tc.calleeParams(expr.Callee, scope)
+		params := tc.calleeParams(expr.Callee, expr.Args, scope)
 		args := []string{}
 		for i, arg := range expr.Args {
 			lowered := tc.lowerExpr(arg, scope)
@@ -2728,6 +2725,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		// a cast to a pointer or to an alias is not a type with that name: `Ptr[T]`
 		// cast to by name is a C expression naming a function, not a cast.
 		castTo := tc.typeFor(expr.Type.String())
+		if lowered, ok := tc.lowerPointerConversion(castTo, expr.Value, scope); ok {
+			return lowered
+		}
 		return "(" + tc.cTypeFor(castTo) + ")(" + tc.lowerExpr(expr.Value, scope) + ")"
 	default:
 		return "0"
@@ -2890,25 +2890,121 @@ func cTypeForName(name string) string {
 	case "void", "Unit":
 		return "void" + arraySuffix
 	case "Ptr":
-		// A pointer is spelled as a C pointer. Mangling the name would write
-		// `Ptr_u8`, which is not a type a C compiler knows: every foreign call
-		// that passes a pointer crosses this path, so a binding generated for
-		// any native library would not compile at all.
+		// A pointer is spelled as a C pointer, `T*`, wherever it is written.
 		element := strings.TrimSuffix(strings.TrimPrefix(name[len(base):], "["), "]")
 		// A pointer to nothing is a pointer to nothing: `Ptr[Unit]` is how a
 		// foreign handle is declared, and C spells that void*.
-		//
-		// Go spells it as a nameable struct rather than a raw pointer, because a
-		// program has to be able to hold a handle, pass it, and get one back. A
-		// bare `*Unit` would be a pointer to an empty struct — something no
-		// address can meaningfully be, and something a cast of `0` could not
-		// build.
 		if element == "" || element == "Unit" || element == "void" {
-			return mangleTypeName("Ptr" + element)
+			return "void*"
 		}
 		return cTypeForName(element) + "*"
 	}
 	return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(name)
+}
+
+// fixedArrayLength is the length a fixed-size array's type carries: its
+// ArrayLen, or the outer dimension written into the name of a nested one —
+// `u8[3][2]` holds three rows.
+func fixedArrayLength(typ ir.Type) (int, bool) {
+	if typ.ArrayLen > 0 {
+		return typ.ArrayLen, true
+	}
+	if _, dims, ok := nameArrayDims(typ.Name); ok && len(dims) > 0 {
+		return dims[0], true
+	}
+	return 0, false
+}
+
+// lowerLen lowers the built-in len to what each backend can measure.
+//
+//   - a string is `rho_strlen`, which both runtimes supply, and which is 0 for a
+//     NULL string on C;
+//   - a fixed-size array is its length, which is part of its type and so known
+//     here: the constant is written, and the array is not evaluated;
+//   - a dynamic array `[T]` is a Go slice, which Go's len measures, and a bare
+//     `T*` in C, which carries no length. It is lowered for Go and recorded as a
+//     refusal, so a build that emits C stops with the call named rather than
+//     emitting a `len` the C compiler has never heard of.
+//
+// It reports false for an argument whose type is not one of those, which the
+// caller lowers as an ordinary call.
+func (tc *TypeChecker) lowerLen(call ast.CallExpr, scope map[string]ir.Type) (string, bool) {
+	arg := call.Args[0]
+	typ, err := tc.exprType(arg, scope)
+	if err != nil {
+		return "", false
+	}
+	if n, fixed := fixedArrayLength(typ); fixed {
+		return "((uint32_t)" + strconv.Itoa(n) + ")", true
+	}
+	switch {
+	case typ.Kind == ir.TypeString:
+		return "rho_strlen(" + tc.lowerExpr(arg, scope) + ")", true
+	case typ.Kind == ir.TypeSlice:
+		written := "len(...)"
+		if identifier, ok := arg.(ast.IdentifierExpr); ok {
+			written = "len(" + identifier.Name + ")"
+		}
+		where := fmt.Sprintf("line %d", call.Pos.Line)
+		if tc.owner != "" {
+			where = tc.owner + ", " + where
+		}
+		tc.cRefusals = append(tc.cRefusals, fmt.Sprintf(
+			"%s (%s): a dynamic array %s is a bare pointer in C and carries no length, so len cannot measure it on a C target; "+
+				"use a fixed-size array (T[N]), whose length is part of its type, or a Slice[T] from std.core.slice, which carries its own",
+			written, where, typeName(typ)))
+		return "len(" + tc.lowerExpr(arg, scope) + ")", true
+	}
+	return "", false
+}
+
+// callsIntrinsic reports whether a call written `name(args)` is the backend's
+// intrinsic of that name rather than a function a module declares.
+//
+// An intrinsic applies to the types it supports and to nothing else. When a
+// module the program can see declares a Rho function of the same name — not an
+// extern, which is how the standard library documents an intrinsic — the call is
+// the intrinsic where the intrinsic applies to the arguments, and the declared
+// function everywhere else. So `len(s)` on a `String` from std.strings.string is
+// that module's `len`, and `len("abc")` beside it is still the built-in.
+func (tc *TypeChecker) callsIntrinsic(name string, args []ast.Expr, scope map[string]ir.Type) bool {
+	intrinsic, isIntrinsic := intrinsicSignatures[name]
+	if !isIntrinsic {
+		return false
+	}
+	signature, declared := tc.lookupFunc(name)
+	if !declared || signature.extern {
+		return true
+	}
+	return tc.intrinsicApplies(name, intrinsic, args, scope)
+}
+
+// intrinsicApplies is whether an intrinsic accepts these arguments. A type that
+// cannot be worked out is given the benefit of the doubt, which is how the call
+// was read before a declared function could take it.
+func (tc *TypeChecker) intrinsicApplies(name string, intrinsic functionType, args []ast.Expr, scope map[string]ir.Type) bool {
+	if len(args) != len(intrinsic.params) {
+		return false
+	}
+	for i, arg := range args {
+		got, err := tc.exprType(arg, scope)
+		if err != nil {
+			continue
+		}
+		if name == "len" {
+			// len's parameter is typed as anything, so its own types are named:
+			// a string, a dynamic array and a fixed-size array are what a
+			// backend's len measures.
+			if _, fixed := fixedArrayLength(got); !fixed && got.Kind != ir.TypeString && got.Kind != ir.TypeSlice {
+				return false
+			}
+			continue
+		}
+		if !assignable(intrinsic.params[i], got) {
+			return false
+		}
+	}
+	return true
 }
 
 // intrinsicSignatures are the calls a backend supplies directly. They are

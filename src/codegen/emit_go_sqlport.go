@@ -437,7 +437,7 @@ func rhoSqlStatements(schema string) []string {
 // Preparing is separate from running because it is the only way to read a
 // statement's shape, which is how a caller types a result rather than guessing
 // at one from the select list.
-func stdSqlSqlPrepare(db SqlDb, query string, stmt PtrSqlStmt) uint32 {
+func stdSqlSqlPrepare(db SqlDb, query string, stmt unsafe.Pointer) uint32 {
 	handle, ok := rhoSqlHandle(db.raw)
 	if !ok {
 		return 0
@@ -464,17 +464,17 @@ func stdSqlSqlPrepare(db SqlDb, query string, stmt PtrSqlStmt) uint32 {
 // caller gave. The address is the caller's own, so writing through it is what
 // the declaration means; a zero address is a caller that asked for a handle
 // and gave nowhere to put it, which is not a failure worth reporting.
-func rhoSqlSetStmt(stmt PtrSqlStmt, value uint64) {
-	if stmt.raw == 0 {
+func rhoSqlSetStmt(stmt unsafe.Pointer, value uint64) {
+	if stmt == nil {
 		return
 	}
-	(*(*SqlStmt)(unsafe.Pointer(uintptr(stmt.raw)))).raw = value
+	(*SqlStmt)(stmt).raw = value
 }
 
 // stdSqlSqlRun steps a prepared statement once, answering whether it has another row,
 // so a caller can walk a result a row at a time without holding every row in
 // memory at once.
-func stdSqlSqlRun(stmt SqlStmt, more PtrU32) uint32 {
+func stdSqlSqlRun(stmt SqlStmt, more unsafe.Pointer) uint32 {
 	rhoSqlMu.Lock()
 	held, ok := rhoSqlRows[stmt.raw]
 	rhoSqlMu.Unlock()
@@ -512,14 +512,14 @@ func stdSqlSqlRun(stmt SqlStmt, more PtrU32) uint32 {
 // returned, because that is the shape the declaration has: a caller cannot read
 // a Go pointer out of a Rho value, and a value it allocated is the only place a
 // result can land.
-func rhoSqlSetMore(more PtrU32, value uint32) {
+func rhoSqlSetMore(more unsafe.Pointer, value uint32) {
 	// The address is the caller's own, so writing through it is what the
 	// declaration means. A zero address is a caller that asked for an answer
 	// and gave nowhere to put it, which is not a failure worth reporting.
-	if more.raw == 0 {
+	if more == nil {
 		return
 	}
-	*(*uint32)(unsafe.Pointer(uintptr(more.raw))) = value
+	*(*uint32)(more) = value
 }
 
 // stdSqlSqlReset rewinds a prepared statement so it can be run again with new values,
@@ -613,7 +613,7 @@ func stdSqlSqlColumnType(stmt SqlStmt, index uint32) string {
 }
 
 // stdSqlSqlExec runs a statement that changes rows, and answers how many it changed.
-func stdSqlSqlExec(db SqlDb, name string, query string, values SliceSqlValue, affected PtrU32) uint32 {
+func stdSqlSqlExec(db SqlDb, name string, query string, values SliceSqlValue, affected unsafe.Pointer) uint32 {
 	handle, ok := rhoSqlHandle(db.raw)
 	if !ok {
 		return 0
@@ -637,7 +637,7 @@ func stdSqlSqlExec(db SqlDb, name string, query string, values SliceSqlValue, af
 // The values are row-major and columns says how many of them make a row. The
 // statement is prepared once and executed per row, so a batch of reads is one
 // prepare and one commit rather than one of each per row.
-func stdSqlSqlExecMany(db SqlDb, name string, query string, columns uint32, values SliceSqlValue, affected PtrU32) uint32 {
+func stdSqlSqlExecMany(db SqlDb, name string, query string, columns uint32, values SliceSqlValue, affected unsafe.Pointer) uint32 {
 	handle, ok := rhoSqlHandle(db.raw)
 	if !ok {
 		return 0
@@ -748,7 +748,7 @@ func rhoSqlExecBatch(db SqlDb, name string, statements []rhoSqlStatementBatch) u
 // the port's own and copied across: the caller's memory is a raw address that
 // this side cannot safely write through, and a read that faulted would take the
 // process rather than report a value.
-func stdSqlSqlReadColumn(stmt SqlStmt, index uint32, value PtrSqlValue) uint32 {
+func stdSqlSqlReadColumn(stmt SqlStmt, index uint32, value unsafe.Pointer) uint32 {
 	rhoSqlMu.Lock()
 	held, ok := rhoSqlRows[stmt.raw]
 	rhoSqlMu.Unlock()
@@ -761,7 +761,9 @@ func stdSqlSqlReadColumn(stmt SqlStmt, index uint32, value PtrSqlValue) uint32 {
 		// The handle carries the address of the caller's value; filling it is
 		// the one place the port writes to memory Rho owns, so it happens
 		// exactly once and only on success.
-		*(*SqlValue)(unsafe.Pointer(uintptr(value.raw))) = heldValue
+		if value != nil {
+			*(*SqlValue)(value) = heldValue
+		}
 	}
 	return uint32(status)
 }
@@ -891,15 +893,14 @@ func rhoSqlArg(value SqlValue) any {
 
 // rhoSqlArgs unpacks a Rho slice of values as driver arguments.
 //
-// A Rho slice is a raw address and a length rather than a Go slice, because the
-// language does not promise the memory stays alive for as long as the reference
-// does. The address is therefore used as what it is: a pointer to the first
-// element, with the length deciding how many there are.
+// A Rho slice is a pointer and a length rather than a Go slice: the pointer is
+// the address of the first element, as an unsafe.Pointer the collector follows,
+// and the length decides how many there are.
 func rhoSqlArgs(values SliceSqlValue) []any {
-	if values.ptr.raw == 0 || values.len == 0 {
+	if values.ptr == nil || values.len == 0 {
 		return nil
 	}
-	held := unsafe.Slice((*SqlValue)(unsafe.Pointer(uintptr(values.ptr.raw))), values.len)
+	held := unsafe.Slice((*SqlValue)(values.ptr), values.len)
 	out := make([]any, 0, values.len)
 	for i := range held {
 		out = append(out, rhoSqlArg(held[i]))
@@ -1088,8 +1089,8 @@ func writeSQLSelect(b *strings.Builder, statement SQLStatement, arguments []stri
 	for index, field := range statement.Fields {
 		writeSQLNarrow(b, field, index)
 	}
-	b.WriteString("\t\t\tif out.ptr.raw != 0 {\n")
-	fmt.Fprintf(b, "\t\t\t\tunsafe.Slice((*%s)(unsafe.Pointer(uintptr(out.ptr.raw))), capacity)[wrote] = row\n", statement.Result)
+	b.WriteString("\t\t\tif out.ptr != nil {\n")
+	fmt.Fprintf(b, "\t\t\t\tunsafe.Slice((*%s)(out.ptr), capacity)[wrote] = row\n", statement.Result)
 	b.WriteString("\t\t\t}\n")
 	b.WriteString("\t\t}\n")
 	b.WriteString("\t\twrote++\n")

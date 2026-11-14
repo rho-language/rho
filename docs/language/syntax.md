@@ -210,7 +210,7 @@ let wide: u32 = u32(small)
 | `[T]` | a dynamic array of `T` |
 | `T[N]` | a fixed array of `N` of `T` |
 | `Name[T]` | a generic type, such as `Option[u32]` |
-| `Ptr[T]` | see the note under [pointers](#pointers) |
+| `Ptr[T]` | a pointer to a `T`; see [pointers](#pointers) |
 
 `type` gives a name to another type:
 
@@ -472,19 +472,22 @@ declare one.
 
 ## Pointers
 
-`&value` takes an address and `*pointer` reads through one. These are the
-foreign operators: they are used to pass addresses to `extern fn` calls and to
-read what such a call leaves behind.
+`Ptr[T]` is the language's pointer: one type wherever it is written, in a
+field, a parameter, a local or an `extern fn` signature. C spells it `T*`
+(`void*` for `Ptr[Unit]`, how an opaque foreign handle is written) and Go spells
+every pointer `unsafe.Pointer`, so the same value crosses a foreign boundary and
+lives in a Rho struct without a conversion.
 
-`Ptr[T]` is the handle a program holds: a struct with a `raw` address, so it can
-be named, stored and returned. `Ptr[T](&value)` makes one from a variable's
-address, and `std.core.ptr` declares `from_u64`, `to_u64` and `index` over it.
-The handle is not finished on either backend. See the
-[known limitations](#known-limitations).
+| Written | Means |
+|---|---|
+| `&value` | the address of a variable, field or element, a `Ptr[T]` |
+| `*p`, `p[i]` | the element `p` points at, and the one `i` places after it; `p[i]` can be assigned |
+| `p + n`, `p - n` | the address `n` elements on, or back |
+| `Ptr[T](x)` | the pointer at an address held as a number, `Ptr[T](0)` being null; or another pointer, retyped |
+| `u64(p)` | the address as a number |
 
-The same spelling `Ptr[T]` is a **C pointer** in an `extern fn` signature —
-there it is the pointer the foreign declaration names, and an argument reaches
-it as an address:
+`std.core.ptr` names the same operations as functions: `from_u64`, `to_u64`
+and `index`.
 
 ```rho
 extern fn uart_hw_write(ptr: Ptr[u8], len: u32) void
@@ -492,10 +495,23 @@ extern fn uart_hw_write(ptr: Ptr[u8], len: u32) void
 fn send(buf: u8[4]) void {
     uart_hw_write(&buf[0], 4)
 }
+
+fn fill(out: Ptr[u8], count: u32) void {
+    var i: u32 = 0
+    while i < count {
+        out[i] = u8(i)
+        i = i + 1
+    }
+}
 ```
 
-Which one `Ptr[T]` is depends on where it is written: a foreign signature is
-the C pointer, and every other type position is meant to be the handle struct.
+A string passed where an `extern fn` takes a `Ptr[u8]` is its bytes, ended by a
+zero byte as a C string is.
+
+On Go a pointer is a reference the collector follows: the memory it points at
+stays alive, and moves with it, for as long as a pointer to it does. An address
+held as a number is not one. `Ptr[T](n)` of an address `u64(p)` gave is valid
+while `p`, or another pointer to the same memory, is still in use.
 
 ## Protocol declarations
 
@@ -559,12 +575,6 @@ literal from an index.
   a bare pointer does not carry is its length, so `len`, `for` and `append`
   over a `[T]` are Go-only. On C, `len` of a string fails at the link too; use
   `strlen`. `std.core.slice`'s `Slice[T]` carries a pointer and a length.
-- **The pointer handle.** `std.core.ptr`'s generic functions do not type-check
-  at a call: `from_u64[u32](0)` is reported as a `Ptr_T` that cannot be assigned
-  to a `Ptr[u32]`. The C backend spells a `Ptr[T]` parameter of a Rho function as
-  a C pointer, so reading `.raw` through it does not compile. The Go backend
-  does not import `unsafe` for `Ptr[T](&value)`. A `Ptr[T]` in an `extern fn`
-  signature, reached with `&`, is the form that works.
 - **No casts as an index.** `values[u32(i)]` does not parse; `values[i as u32]`
   does.
 - **`test fn` is not syntax.** A `_test.rho` file marks its cases `test fn`,

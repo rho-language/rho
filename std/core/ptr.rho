@@ -1,17 +1,23 @@
 module std.core.ptr
 
-struct Ptr[T] {
-    raw: u64
-}
+// Ptr[T] is the language's pointer, and not a struct: it is one type wherever it
+// is written, and each backend spells it once — C as `T*`, Go as an
+// `unsafe.Pointer` over the memory it refers to. These are the three things a
+// program does with one that are not taking an address or reading through it.
 
+// from_u64 is the pointer at an address held as a number. The address has to be
+// one a pointer gave: on the Go backend a number is not something the
+// collector can see, so the memory must still be referred to by a live pointer.
 fn from_u64[T](v: u64) Ptr[T] {
-    return Ptr[T]{ v }
+    return Ptr[T](v)
 }
 
+// to_u64 is the address a pointer refers to, as a number.
 fn to_u64[T](p: Ptr[T]) u64 {
-    return p.raw
+    return u64(p)
 }
 
+// index is the element i places after the one p points at.
 fn index[T](p: Ptr[T], i: u32) T {
-    return *(p.raw + i * sizeof(T))
+    return p[i]
 }

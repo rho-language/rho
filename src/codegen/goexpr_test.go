@@ -430,8 +430,8 @@ func TestGoTypeForIRSliceIsSliceNotPointer(t *testing.T) {
 		t.Fatalf("expected []uint8 for a slice, got %q", got)
 	}
 	pointer := ir.Type{Kind: ir.TypePtr, Name: "Ptr[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}}
-	if got := goTypeForIR(pointer); got != "*uint8" {
-		t.Fatalf("expected *uint8 for a pointer, got %q", got)
+	if got := goTypeForIR(pointer); got != "unsafe.Pointer" {
+		t.Fatalf("expected unsafe.Pointer for a pointer, got %q", got)
 	}
 }
 
@@ -442,24 +442,26 @@ func TestGoTypeForArrayParameterKeepsOneDimension(t *testing.T) {
 	}
 }
 
-func TestGoPtrLiteralFromReferenceCarriesAnAddress(t *testing.T) {
-	got := ToGoExpr("PtrCategories{ &categories[0] }")
-	want := "PtrCategories{rhoAddress(unsafe.Pointer(&categories[0]))}"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
+// Every pointer operation the type checker lowers, and the Go each becomes. A
+// pointer is an unsafe.Pointer, so the casts that name an element in C convert
+// to it, and the one access form reads the element through a typed pointer.
+func TestGoPointerOperations(t *testing.T) {
+	cases := map[string]string{
+		"((uint32_t*)(&(more)))":           "(unsafe.Pointer((&(more))))",
+		"((uint8_t*)(uintptr_t)(v))":       "(unsafe.Pointer(uintptr((v))))",
+		"((uint8_t*)NULL)":                 "(unsafe.Pointer(nil))",
+		"((SqlStmt*)(p))":                  "(unsafe.Pointer((p)))",
+		"((uint64_t)(uintptr_t)(p))":       "(uint64(rhoAddress((p))))",
+		"((uint32_t*)(p))[i + 1]":          "(*rhoPtrAt[uint32]((p), int(i + 1)))",
+		"((uint8_t*)(s.ptr))[0]":           "(*rhoPtrAt[uint8]((s.ptr), int(0)))",
+		"((Entry_u32_u32*)(m.entries))[i]": "(*rhoPtrAt[EntryU32U32]((m.entries), int(i)))",
+		"((uint8_t**)(pp))[1]":             "(*rhoPtrAt[unsafe.Pointer]((pp), int(1)))",
+		"((const char**)(names))[2]":       "(*rhoPtrAt[string]((names), int(2)))",
+		"(const char*)(name)":              "string((name))",
 	}
-}
-
-// The pointer the SQL port carries over a builtin element is the same struct
-// the general spelling mangles to: `Ptr_u32` over the Rho spelling `u32` is
-// `PtrU32`, which is the name the port declares for a step counter and an
-// affected row count. A conversion that named it `PtrUint32T` would build a
-// struct nothing declared and break every database call that rounds up.
-func TestGoPtrLiteralOverABuiltinUsesThePortsName(t *testing.T) {
-	src := "(Ptr_u32){ &more }"
-	got := ToGoExpr(src)
-	want := "PtrU32{rhoAddress(unsafe.Pointer(&more))}"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
+	for c, want := range cases {
+		if got := ToGoExpr(c); got != want {
+			t.Errorf("%s: expected %q, got %q", c, want, got)
+		}
 	}
 }

@@ -132,7 +132,9 @@ A program reaches the machine through the runtime functions in
 - **Files:** `rho_read_text`, `rho_write_text`, `rho_append_text` and
   `rho_write_secret` read, write or append a whole text file. A secret is written
   only its owner can read. `yaml.value`, `yaml.kind` and `yaml.keys` read a
-  YAML document by a dotted path.
+  YAML document by a dotted path. `std.os.fs` and `std.os.sys` open, read,
+  write and close a file descriptor, moving bytes through a `Ptr[u8]` into the
+  program's own memory.
 - **Processes:** `rho_exec(program, arguments, report)` splits its arguments on
   spaces and double quotes. `rho_exec_args` takes one argument per line and
   interprets nothing. `rho_exec_capture` returns the output instead of writing

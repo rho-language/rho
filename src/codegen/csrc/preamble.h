@@ -36,5 +36,10 @@
  */
 void rho_print(const char* s);
 
+/* A Rho string where a foreign function takes a `Ptr[u8]`. A string is already a
+ * C string — NUL-terminated bytes — so in C it is passed as it is; the Go backend
+ * spells the same call as a terminated copy of the string's bytes. */
+#define rho_cstring(s) (s)
+
 {{range .Features}}#define RHO_FEATURE_{{.}} 1
 {{end}}

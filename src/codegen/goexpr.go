@@ -111,15 +111,9 @@ var goCasts = map[string]string{
 	"f32":  "float32",
 	"f64":  "float64",
 	"f128": "float64",
-	// A pointer to nothing is a handle, and the backend gives it a nameable
-	// type so a program can hold one. A cast written `void*` and left as a cast
-	// is not a Go expression at all, and every call that carried a handle would
-	// fail to parse.
-	"void *":  "PtrUnit",
-	"void*":   "PtrUnit",
-	"Unit *":  "PtrUnit",
-	"Unit*":   "PtrUnit",
-	"PtrUnit": "PtrUnit",
+	// The integer an address is. A pointer converts to and from it, and from
+	// nothing else, in C and in Go alike.
+	"uintptr_t": "uintptr",
 }
 
 // cLibraryCalls maps the helpers the C backend emits to their Go equivalents.
@@ -229,6 +223,11 @@ func ToGoExpr(expr string) string {
 
 		// Call or cast opening parenthesis.
 		if c == '(' {
+			if consumed, replacement, ok := translatePointerAccess(src, i); ok {
+				out.WriteString(replacement)
+				i = consumed
+				continue
+			}
 			if consumed, replacement, ok := translateParen(src, i); ok {
 				out.WriteString(replacement)
 				i = consumed
@@ -268,69 +267,7 @@ func ToGoExpr(expr string) string {
 		i++
 	}
 
-	return strings.TrimSpace(rewritePtrLiterals(out.String()))
-}
-
-// rewritePtrLiterals turns a handle built from a reference into the address its
-// Go struct carries, through rhoAddress, which keeps the variable where Go does
-// not move it. `Ptr[T](&x)` lowers to `PtrT{ &x }`, but the field is a
-// uint64, so the pointer has to cross into Go's unsafe world once here rather
-// than at every use of a slice built from an array.
-func rewritePtrLiterals(expr string) string {
-	var out strings.Builder
-	src := []byte(expr)
-	for i := 0; i < len(src); {
-		if src[i] == '"' || src[i] == '\'' {
-			end := scanStringLiteral(src, i)
-			out.WriteString(string(src[i:end]))
-			i = end
-			continue
-		}
-		if isIdentStart(src[i]) {
-			end := scanIdent(src, i)
-			word := string(src[i:end])
-			if strings.HasPrefix(word, "Ptr") && end < len(src) && src[end] == '{' {
-				close, ok := scanBraces(src, end)
-				if ok {
-					content := string(src[end+1 : close])
-					trimmed := strings.TrimSpace(content)
-					if strings.HasPrefix(trimmed, "&") {
-						out.WriteString(word + "{rhoAddress(unsafe.Pointer(" +
-							trimmed + "))}")
-						i = close + 1
-						continue
-					}
-				}
-			}
-			out.WriteString(word)
-			i = end
-			continue
-		}
-		out.WriteByte(src[i])
-		i++
-	}
-	return out.String()
-}
-
-// scanBraces finds the brace that closes the one at open, skipping braces in
-// string and character literals.
-func scanBraces(src []byte, open int) (int, bool) {
-	depth := 0
-	for i := open; i < len(src); i++ {
-		if src[i] == '"' || src[i] == '\'' {
-			i = scanStringLiteral(src, i) - 1
-			continue
-		}
-		if src[i] == '{' {
-			depth++
-		} else if src[i] == '}' {
-			depth--
-			if depth == 0 {
-				return i, true
-			}
-		}
-	}
-	return 0, false
+	return strings.TrimSpace(out.String())
 }
 
 // translateWord maps a single identifier to its Go spelling.
@@ -427,15 +364,15 @@ func translateParen(src []byte, start int) (int, string, bool) {
 		}
 	}
 
-	// A pointer type such as `const char *`.
-	sawPointer := false
+	// A pointer type such as `const char *`, or `uint8_t**`.
+	stars := 0
 	afterType := skipSpaces(src, wordEnd)
-	if afterType < len(src) && src[afterType] == '*' {
-		sawPointer = true
-		afterType++
+	for afterType < len(src) && src[afterType] == '*' {
+		stars++
+		afterType = skipSpaces(src, afterType+1)
 	}
-	if sawPointer {
-		typeName += " *"
+	if stars > 0 {
+		typeName += " " + strings.Repeat("*", stars)
 	}
 
 	if afterType >= len(src) || src[afterType] != ')' {
@@ -453,17 +390,17 @@ func translateParen(src []byte, start int) (int, string, bool) {
 		return afterCast, goType, true
 	}
 
-	// A cast to a struct is a literal, not a conversion: `PtrUnit(0)` would be
-	// a call of a struct, which is not a thing. A handle is built from its
-	// address, and the struct's one field is that address.
-	if goStruct := goCompoundType(typeName); goStruct != "" && isStructCastTarget(typeName) {
+	// A cast to a pointer is a conversion to the one type every pointer is in
+	// Go. The C text names the element, which Go has no use for here: an
+	// address, wherever it came from, is an `unsafe.Pointer`.
+	if isCPointerSpelling(typeName) {
 		operandStart := skipSpaces(src, afterCast)
 		operandEnd, ok := scanPrimaryExpr(src, operandStart)
 		if !ok {
 			return 0, "", false
 		}
 		operand := ToGoExpr(string(src[operandStart:operandEnd]))
-		return operandEnd, goStruct + "{raw: " + operand + "}", true
+		return operandEnd, "unsafe.Pointer(" + operand + ")", true
 	}
 
 	// Plain cast: (Type)expr becomes GoType(expr). The operand is a single
@@ -474,6 +411,18 @@ func translateParen(src []byte, start int) (int, string, bool) {
 			return afterCast, "", true
 		}
 		operandStart := skipSpaces(src, afterCast)
+		// A pointer read as a number, `(uint64_t)(uintptr_t)(p)`: the address
+		// goes through rhoAddress, which keeps what it refers to where Go does
+		// not move it, so the number stays its address.
+		if inner, afterInner, ok := readCType(src, operandStart); ok && inner == "uintptr_t" && conversion != "uintptr" {
+			pointerStart := skipSpaces(src, afterInner)
+			pointerEnd, ok := scanPrimaryExpr(src, pointerStart)
+			if !ok {
+				return 0, "", false
+			}
+			pointer := ToGoExpr(string(src[pointerStart:pointerEnd]))
+			return pointerEnd, conversion + "(rhoAddress(" + pointer + "))", true
+		}
 		operandEnd, ok := scanPrimaryExpr(src, operandStart)
 		if !ok {
 			return 0, "", false
@@ -483,21 +432,6 @@ func translateParen(src []byte, start int) (int, string, bool) {
 	}
 
 	return 0, "", false
-}
-
-// isStructCastTarget reports whether a cast to this type builds a struct rather
-// than converting a value.
-//
-// A pointer is the one that matters: a Rho handle is a pointer to nothing, which
-// the backend spells as a struct carrying the address, and `PtrUnit(0)` written
-// as a conversion is a call of a struct — not a thing Go can express.
-func isStructCastTarget(typeName string) bool {
-	trimmed := strings.TrimSpace(typeName)
-	switch trimmed {
-	case "void *", "void*", "Unit *", "Unit*", "PtrUnit", "PtrVoid":
-		return true
-	}
-	return strings.HasPrefix(trimmed, "Ptr[")
 }
 
 // isCTypeQualifier reports whether a C type word is only a qualifier or width
@@ -843,19 +777,11 @@ func goTypeForIR(t ir.Type) string {
 	case ir.TypeStruct:
 		return goTypeName(t.Name)
 	case ir.TypePtr:
-		// A pointer to nothing is a handle, and it is a nameable struct rather
-		// than a raw pointer: a program has to be able to hold one, pass it and
-		// get one back, and `*Unit` is a pointer to an empty struct that a cast
-		// of 0 could not build.
-		if len(t.Args) == 0 || t.Args[0].Kind == ir.TypeVoid ||
-			t.Args[0].Name == "Unit" || t.Args[0].Name == "" {
-			return "PtrUnit"
-		}
-		element := goTypeForIR(t.Args[0])
-		if element == "" {
-			return "unsafe.Pointer"
-		}
-		return "*" + element
+		// Every pointer is one type in Go, whatever it points at and wherever
+		// it was declared: the address of a Rho variable, the data of a slice,
+		// a foreign handle. `unsafe.Pointer` is the one Go type the collector
+		// follows and that converts to and from an address held as a number.
+		return "unsafe.Pointer"
 	case ir.TypeSlice:
 		// A dynamic array is a Go slice. This is the difference from a pointer
 		// that makes the two kinds worth telling apart.
@@ -896,6 +822,9 @@ func goTypeForCName(name string) string {
 	}
 	if converted, ok := goCasts[trimmed]; ok {
 		return converted
+	}
+	if isCPointerSpelling(trimmed) {
+		return "unsafe.Pointer"
 	}
 	return goTypeName(trimmed)
 }
@@ -956,6 +885,9 @@ func goTypeForRhoName(name string) string {
 	}
 	if mapped, ok := goRhoPrimitives[trimmed]; ok {
 		return mapped
+	}
+	if isRhoPointerName(trimmed) {
+		return "unsafe.Pointer"
 	}
 	// Every written dimension becomes a prefix in Go: `u32[2][2]` is
 	// `[2][2]uint32`.

@@ -24,7 +24,7 @@ The types every other module is built out of.
 |---|---|
 | `std.core.option` | `Option[T]`: `Some`, `None`, `is_some`, `is_none`, `value`, `unwrap` |
 | `std.core.result` | `Result[T, E]`: `Ok`, `Err`, `is_ok`, `is_err`, `value`, `error`, `unwrap` |
-| `std.core.ptr` | `Ptr[T]`, a handle that carries an address as a number: `from_u64`, `to_u64`, `index` |
+| `std.core.ptr` | The functions over the language's pointer `Ptr[T]`: `from_u64`, `to_u64`, `index` |
 | `std.core.slice` | `Slice[T]`: a pointer and a length, and `slice_empty` |
 | `std.core.range` | `Range`: a start and an end, with `range` and `next` |
 | `std.core.maybe_uninit` | `MaybeUninit[T]`: a value not yet written, with `uninit` and `assume_init` |
@@ -119,12 +119,13 @@ thing on every architecture:
 |---|---|---|---|
 | `std.os.time` | `now()`, a `TimeSpec` of seconds and nanoseconds from the realtime clock | yes | yes |
 | `std.os.sys` | `exit(code)`, `setenv(key, value)` (replaces a value already set) | yes | yes |
-| `std.os.sys` | `write(fd, buf, len)`, `read(fd, buf, len)`: bytes moved, or `0xFFFFFFFF` on failure | yes | no |
-| `std.os.fs` | `open(path, flags)` with the C library's `O_*` flags (a created file is mode 0644), `close(fd)` | yes | no |
+| `std.os.sys` | `write(fd, buf, len)`, `read(fd, buf, len)`: bytes moved, or `0xFFFFFFFF` on failure | yes | yes |
+| `std.os.fs` | `open(path, flags)` with the C library's `O_*` flags (a created file is mode 0644), `close(fd)` | yes | yes |
 
-The descriptor calls take a `Ptr[u8]`, which on the Go backend is a handle with
-no memory behind it, so there they stop the program with a message that says
-so. A hosted program reads and writes files, runs programs and reads the clock
+The descriptor calls move bytes through a `Ptr[u8]`, which on both backends is
+the program's own memory: `write(fd, &buf[0], n)` writes an array's bytes where
+they are, and a path is a NUL-terminated `Ptr[u8]`. A hosted program that
+handles text reads and writes whole files, runs programs and reads the clock
 with the runtime functions in {ref}`built-in functions <language/builtins>`,
 which both backends supply.
 

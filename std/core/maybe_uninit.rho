@@ -5,9 +5,9 @@ struct MaybeUninit[T] {
 }
 
 fn uninit[T]() MaybeUninit[T] {
-    return MaybeUninit[T]{ from_u64[T](0) }
+    return MaybeUninit[T]{ Ptr[T](0) }
 }
 
 fn assume_init[T](m: MaybeUninit[T]) T {
-    return *(m.storage.raw)
+    return *m.storage
 }

@@ -58,7 +58,12 @@ func optionalPointerCType(name string) (string, bool) {
 	}
 	// The payload is a mangled type name, which for anything that is not a
 	// declared struct is not what C calls it: `u8` is `uint8_t`. A pointer is
-	// spelled from the element's C type, so the element is asked for its own.
+	// spelled from the element's C type, so the element is asked for its own —
+	// and an element that is itself a pointer, `Option[Ptr[Ptr[u8]]]`, keeps
+	// both levels.
+	if inner, ok := mangledPointerCType(payload); ok {
+		return inner + "*", true
+	}
 	if cType, ok := cPrimitive(payload); ok {
 		return cType + "*", true
 	}
@@ -97,13 +102,12 @@ func cPrimitive(name string) (string, bool) {
 	return "", false
 }
 
-// mangledPointerElement returns the element of a mangled pointer name, or "" when
-// the name is not one.
+// mangledPointerElement returns the element of a pointer as a mangled
+// specialisation name carries it, or "" when the name is not one.
 //
-// A pointer is mangled two ways: `Ptr[X]` becomes `Ptr_X`, and the optional
-// pointer's payload keeps the suffix as `X_Ptr`. Both spell one pointer, and
-// both are read off the name rather than re-derived, for the same reason the
-// option's is.
+// A pointer is a type, not a name, everywhere but inside the name of a generic
+// specialised at one: `Option[Ptr[X]]` is mangled `Option_Ptr_X`, and the
+// payload of an optional pointer is read back off that name.
 func mangledPointerElement(name string) (string, bool) {
 	if strings.HasPrefix(name, "Ptr_") && len(name) > len("Ptr_") {
 		return name[len("Ptr_"):], true
@@ -114,8 +118,8 @@ func mangledPointerElement(name string) (string, bool) {
 	return "", false
 }
 
-// mangledPointerCType returns the C type a mangled pointer name is, and whether
-// the name was one at all.
+// mangledPointerCType returns the C type a pointer inside a mangled name is, and
+// whether the name was one at all.
 //
 // The element is asked for its own spelling, because a mangled name is a Rho
 // name: `u8` is not what C calls it.

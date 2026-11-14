@@ -1,8 +1,9 @@
 module std.os.sys
 
-// The process, through the runtime: the C library's wrappers on the C backend,
-// so the same call means the same thing on every architecture. The descriptor
-// calls take a Ptr[u8] and are C only; exit and setenv work on both backends.
+// The process, through the runtime: the C library's wrappers on the C backend
+// and the system calls on the Go backend, so the same call means the same thing
+// on every architecture. The descriptor calls move bytes through a Ptr[u8],
+// which on both backends is the program's own memory.
 extern fn rho_exit(code: u32)
 extern fn rho_fd_write(fd: u32, buf: Ptr[u8], len: u32) u32
 extern fn rho_fd_read(fd: u32, buf: Ptr[u8], len: u32) u32

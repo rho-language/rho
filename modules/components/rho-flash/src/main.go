@@ -252,6 +252,21 @@ func splitCommand(command string) []string {
 // it is run as one; a machine that has not installed it is told so rather than
 // being handed a default that would be wrong for every board but one.
 func resolve(name, project string) (Flash, error) {
+	spec, err := resolveSpec(name, project)
+	return spec.Flash, err
+}
+
+// resolvedSpec is the part of a resolved target spec this program reads: how
+// the board is reached, and the names a production plan is looked up by.
+type resolvedSpec struct {
+	Name   string `json:"name"`
+	Preset string `json:"preset"`
+	Family string `json:"family"`
+	Flash  Flash  `json:"flash"`
+}
+
+// resolveSpec asks rho-target what a target is.
+func resolveSpec(name, project string) (resolvedSpec, error) {
 	if project == "" {
 		project = "."
 	}
@@ -260,17 +275,14 @@ func resolve(name, project string) (Flash, error) {
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return Flash{}, fmt.Errorf("rho target show %s: %w", name, err)
+		return resolvedSpec{}, fmt.Errorf("rho target show %s: %w", name, err)
 	}
 
-	var spec struct {
-		Name  string `json:"name"`
-		Flash Flash  `json:"flash"`
-	}
+	var spec resolvedSpec
 	if err := json.Unmarshal(out, &spec); err != nil {
-		return Flash{}, fmt.Errorf("rho target show %s returned something that is not a target spec: %w", name, err)
+		return resolvedSpec{}, fmt.Errorf("rho target show %s returned something that is not a target spec: %w", name, err)
 	}
-	return spec.Flash, nil
+	return spec, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -382,6 +394,11 @@ func platformToolEntry(project, tool string) string {
 // FlashArtifact verifies a signed firmware artifact and flashes the entrypoint
 // it carries. The running image is not touched until verification succeeds.
 func FlashArtifact(archive, targetName, project, pubPath string, allowUnsigned bool) error {
+	return flashArtifactWith(archive, targetName, project, pubPath, allowUnsigned, productionOptions{})
+}
+
+// flashArtifactWith is FlashArtifact with the production options.
+func flashArtifactWith(archive, targetName, project, pubPath string, allowUnsigned bool, production productionOptions) error {
 	temp, err := os.MkdirTemp("", "rho-flash-artifact-")
 	if err != nil {
 		return err
@@ -403,7 +420,7 @@ func FlashArtifact(archive, targetName, project, pubPath string, allowUnsigned b
 	if _, err := os.Stat(binary); err != nil {
 		return fmt.Errorf("the artifact entrypoint is missing: %w", err)
 	}
-	return FlashFile(binary, targetName, project)
+	return flashWith(binary, targetName, project, production)
 }
 
 // FlashFile writes a binary to a board, using whatever the target says.
@@ -413,6 +430,18 @@ func FlashArtifact(archive, targetName, project, pubPath string, allowUnsigned b
 // boards of the same family, and a constant picked for one of them is a fault
 // on the other.
 func FlashFile(binary string, targetName string, project string) error {
+	return flashWith(binary, targetName, project, productionOptions{})
+}
+
+// flashWith is FlashFile with the production options: with neither set it is
+// an ordinary flash, and nothing a production plan declares is read or run.
+func flashWith(binary string, targetName string, project string, options productionOptions) error {
+	// The working directory when no project is named, as resolve already reads
+	// it: the platform module — its tool entry points and its production plans —
+	// is found from the project, and from "" it is found nowhere.
+	if project == "" {
+		project = "."
+	}
 	if binary == "" {
 		return fmt.Errorf("nothing to flash: name the binary")
 	}
@@ -420,10 +449,11 @@ func FlashFile(binary string, targetName string, project string) error {
 		return fmt.Errorf("nothing to flash: %w", err)
 	}
 
-	flash, err := resolve(targetName, project)
+	spec, err := resolveSpec(targetName, project)
 	if err != nil {
 		return err
 	}
+	flash := spec.Flash
 	// A platform may say how its boards are reached, for the cases a target
 	// spec cannot state. The spec's own answer stands where the plugin is silent.
 	flash = platformFlash(project, targetName, binary, flash)
@@ -445,14 +475,37 @@ func FlashFile(binary string, targetName string, project string) error {
 	if entry := platformToolEntry(project, flash.Tool); entry != "" {
 		program = entry
 	}
-	if _, lookErr := exec.LookPath(program); lookErr != nil {
-		return fmt.Errorf("the target %q reaches its board with %s, which is not installed: %w", targetName, program, lookErr)
-	}
-
 	if flash.Comment != "" {
 		fmt.Fprintf(os.Stderr, "note: %s\n", flash.Comment)
 	}
 
+	// A production flash is the same flash with the platform's plan around it,
+	// printed in full and confirmed by the board's name before anything runs.
+	if options.Production {
+		plan, err := loadProductionPlan(deps.PlatformRoot(project), targetName, spec.Preset, spec.Family)
+		if err != nil {
+			return err
+		}
+		if options.In == nil {
+			options.In = os.Stdin
+		}
+		if options.Out == nil {
+			options.Out = os.Stdout
+		}
+		return flashProduction(targetName, binary, plan, program, args, options)
+	}
+	if options.DryRun {
+		fmt.Printf("dry run: would flash %s with: %s\n", binary, renderedStep{Program: program, Args: args}.commandLine())
+		return nil
+	}
+	return runFlash(targetName, program, args, binary)
+}
+
+// runFlash runs the flash command itself.
+func runFlash(targetName, program string, args []string, binary string) error {
+	if _, lookErr := exec.LookPath(program); lookErr != nil {
+		return fmt.Errorf("the target %q reaches its board with %s, which is not installed: %w", targetName, program, lookErr)
+	}
 	cmd := exec.Command(program, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -474,11 +527,14 @@ func main() {
 	archive := fs.String("artifact", "", "verify and flash a signed artifact instead of a loose binary")
 	pubKey := fs.String("pub", "", "base64 Ed25519 public key for the artifact")
 	allowUnsigned := fs.Bool("allow-unsigned", false, "accept an unsigned artifact after verifying its checksum")
+	production := fs.Bool("production", false, "also run the platform's production plan (prints every step, irreversible ones marked, and asks for the board name)")
+	dryRun := fs.Bool("dry-run", false, "print what would be run, and run nothing")
 
 	// Flags are read wherever they appear, because `rho flash firmware.elf
 	// -target pico` is what a person types first. Only the two that take a
 	// value are pulled out with it.
 	argv := []string{}
+	flags := []string{}
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		switch {
@@ -491,10 +547,19 @@ func main() {
 				argv = append(argv, arg, os.Args[i+1])
 				i++
 			}
+		case arg == "-production" || arg == "--production" || arg == "-dry-run" || arg == "--dry-run" || arg == "-n":
+			// Boolean flags, read wherever they appear: `rho flash -target pico
+			// build/app.elf --production` must not flash an ordinary image because
+			// the flag came after the file. They go first so the parser sees them.
+			if arg == "-n" {
+				arg = "-dry-run"
+			}
+			flags = append(flags, arg)
 		default:
 			argv = append(argv, arg)
 		}
 	}
+	argv = append(flags, argv...)
 	if err := fs.Parse(argv); err != nil {
 		os.Exit(2)
 	}
@@ -510,11 +575,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	options := productionOptions{Production: *production, DryRun: *dryRun}
 	var err error
 	if *archive != "" {
-		err = FlashArtifact(*archive, *target, *project, *pubKey, *allowUnsigned)
+		err = flashArtifactWith(*archive, *target, *project, *pubKey, *allowUnsigned, options)
 	} else {
-		err = FlashFile(fs.Arg(0), *target, *project)
+		err = flashWith(fs.Arg(0), *target, *project, options)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho flash:", err)
@@ -525,5 +591,8 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: rho flash -target <board> [-project dir] <file.bin>")
 	fmt.Fprintln(os.Stderr, "       rho flash -target <board> -artifact <file.tar.gz> [-pub key]")
+	fmt.Fprintln(os.Stderr, "       rho flash -target <board> <file> --production [--dry-run]")
+	fmt.Fprintln(os.Stderr, "       --production runs the platform's production plan too: it prints every step,")
+	fmt.Fprintln(os.Stderr, "       marks the irreversible ones, and runs nothing until the board name is typed")
 	fmt.Fprintln(os.Stderr, "       the board's own target spec says which tool writes to it")
 }

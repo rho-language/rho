@@ -529,11 +529,7 @@ func (tc *TypeChecker) olderValue(value ast.Expr, declared map[string]bool) bool
 // isReference is whether a variable of a type is a pointer or a slice: storage
 // somewhere else, which a write through it reaches.
 func (tc *TypeChecker) isReference(typ ir.Type) bool {
-	if typ.Kind == ir.TypePtr || typ.Kind == ir.TypeSlice {
-		return true
-	}
-	_, isPointer := stripPointerSpelling(typ.Name)
-	return isPointer
+	return typ.Kind == ir.TypePtr || typ.Kind == ir.TypeSlice
 }
 
 // isArrayValue is whether a type is a fixed array: storage where it is declared.
@@ -848,7 +844,7 @@ func (tc *TypeChecker) stmtsAllocate(body []ast.Stmt, scope map[string]ir.Type) 
 func (tc *TypeChecker) calledDecl(call ast.CallExpr, scope map[string]ir.Type) (ast.FuncDecl, bool) {
 	switch callee := call.Callee.(type) {
 	case ast.IdentifierExpr:
-		if _, intrinsic := intrinsicSignatures[callee.Name]; intrinsic {
+		if tc.callsIntrinsic(callee.Name, call.Args, scope) {
 			return ast.FuncDecl{}, false
 		}
 		if decl, generic := tc.genericFuncs[callee.Name]; generic {
@@ -920,9 +916,6 @@ func (tc *TypeChecker) containsString(typ ir.Type, depth int) bool {
 	if typ.Kind != ir.TypeStruct {
 		return false
 	}
-	if _, isPointer := stripPointerSpelling(typ.Name); isPointer {
-		return false
-	}
 	for _, field := range tc.structFields(typ.Name) {
 		if tc.containsString(field, depth+1) {
 			return true
@@ -947,7 +940,7 @@ func (tc *TypeChecker) refersToStrings(typ ir.Type, depth int) bool {
 		if len(typ.Args) > 0 {
 			return tc.containsString(typ.Args[0], depth+1)
 		}
-		if element, ok := stripPointerSpelling(typ.Name); ok {
+		if element, ok := pointerSpellingElement(typ.Name); ok {
 			return tc.containsString(tc.typeFor(element), depth+1)
 		}
 		return false
@@ -957,9 +950,6 @@ func (tc *TypeChecker) refersToStrings(typ ir.Type, depth int) bool {
 	}
 	if typ.Kind != ir.TypeStruct {
 		return false
-	}
-	if element, isPointer := stripPointerSpelling(typ.Name); isPointer {
-		return tc.containsString(tc.typeFor(element), depth+1)
 	}
 	for _, field := range tc.structFields(typ.Name) {
 		if tc.refersToStrings(field, depth+1) {

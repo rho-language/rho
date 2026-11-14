@@ -63,3 +63,7 @@ its platform found again, so a flash runs the platform's own entry point
 that entry point is what attaches the board, loads it over PICOBOOT or writes
 the UF2 through Windows; without it the ELF was converted and nothing was
 flashed. The fix is the toolchain's (`deps.PlatformRoot` expands the path).
+
+## [0.2.0] - 2026-11-14
+
+`--production` flashes a board with its platform's production plan: every step is printed with its exact command, irreversible ones are marked, and nothing runs until the board's name is typed; `--dry-run` prints the plan and runs nothing. A board without a production plan says so. Without `-project`, the project is the current folder.

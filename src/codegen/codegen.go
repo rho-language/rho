@@ -84,8 +84,7 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	cg.foreign = foreignCallNames(m.Funcs)
 	m.Funcs = cg.renameForeignInFuncs(m.Funcs)
 
-	cg.emitStructs(m.Structs)
-	cg.emitAliases(m.Aliases)
+	cg.emitTypes(m.Structs, m.Aliases)
 	cg.emitFuncPrototypes(m.Funcs)
 	cg.emitFuncs(m.Funcs)
 
@@ -156,49 +155,112 @@ func (cg *Codegen) emitHeader(m ir.ModuleIR) {
 	cg.b.WriteString("\n")
 }
 
-// orderedStructs returns the structs so that one is emitted after every struct
-// its fields name. C needs a type defined before it is used, and a nested
-// specialisation — `Box[Box[u32]]` — refers to one built from it. Go does not
-// care, and reads the same list either way.
-func orderedStructs(structs []ir.StructIR) []ir.StructIR {
-	emitted := map[string]bool{}
-	out := make([]ir.StructIR, 0, len(structs))
-	pending := append([]ir.StructIR(nil), structs...)
-	for len(pending) > 0 {
-		progress := false
-		kept := pending[:0:0]
-		for _, s := range pending {
-			ready := true
-			for _, field := range packedFields(s) {
-				// The type is compared as C spells it, because that is the name
-				// the definition has to come before: a field of `Box[u32]` is
-				// written `Box_u32` in the emitted C.
-				spelling := cTypeFor(field.Type)
-				for _, other := range structs {
-					if other.Name != s.Name && containsWord(spelling, other.Name) && !emitted[other.Name] {
-						ready = false
-						break
-					}
-				}
-				if !ready {
+// typeDecl is one type the C program declares before its functions: a struct
+// (a declared one or a generic specialisation) or an alias. They are ordered as
+// one list, because either may name the other — std.strings.string declares
+// `String = Slice[u8]` and then uses `Slice[String]`, whose field is `String*`.
+type typeDecl struct {
+	name string
+	// refs is the C text the declaration is written from: its fields' types,
+	// or the alias's target. A name occurring in it is a type that has to be
+	// declared first.
+	refs []string
+	// exactly one of these is set
+	structDecl *ir.StructIR
+	aliasDecl  *ir.AliasIR
+}
+
+// orderedTypeDecls returns the structs and aliases so that each is emitted
+// after every type its text names. C needs a type defined before it is used,
+// and an anonymous `typedef struct` cannot be declared ahead of its definition;
+// a nested specialisation — `Box[Box[u32]]` — refers to one built from it, and
+// a specialisation over an alias refers to the alias. Go does not care, and
+// reads the same lists either way.
+//
+// The order is topological and otherwise stable: of the declarations whose
+// dependencies are out, the earliest in the input goes first, so a program
+// whose types are already in order is emitted as it was.
+func orderedTypeDecls(structs []ir.StructIR, aliases []ir.AliasIR) []typeDecl {
+	decls := make([]typeDecl, 0, len(structs)+len(aliases))
+	for i := range structs {
+		s := &structs[i]
+		d := typeDecl{name: s.Name, structDecl: s}
+		for _, field := range packedFields(*s) {
+			// The type is compared as C spells it, because that is the name
+			// the definition has to come before: a field of `Box[u32]` is
+			// written `Box_u32` in the emitted C.
+			d.refs = append(d.refs, cTypeFor(field.Type))
+		}
+		decls = append(decls, d)
+	}
+	for i := range aliases {
+		a := &aliases[i]
+		if a.CTarget == "" {
+			continue
+		}
+		decls = append(decls, typeDecl{name: a.Name, refs: []string{a.CTarget}, aliasDecl: a})
+	}
+
+	// deps[i] are the indices of the declarations decls[i] names.
+	deps := make([][]int, len(decls))
+	for i, d := range decls {
+		for j, other := range decls {
+			if i == j || other.name == d.name {
+				continue
+			}
+			for _, ref := range d.refs {
+				if containsWord(ref, other.name) {
+					deps[i] = append(deps[i], j)
 					break
 				}
 			}
-			if ready {
-				out = append(out, s)
-				emitted[s.Name] = true
-				progress = true
-			} else {
-				kept = append(kept, s)
-			}
 		}
-		pending = kept
+	}
+
+	emitted := make([]bool, len(decls))
+	out := make([]typeDecl, 0, len(decls))
+	for len(out) < len(decls) {
+		progress := false
+		for i := range decls {
+			if emitted[i] {
+				continue
+			}
+			ready := true
+			for _, j := range deps[i] {
+				if !emitted[j] {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				continue
+			}
+			out = append(out, decls[i])
+			emitted[i] = true
+			progress = true
+			// Start again from the top, so a declaration that was waiting on
+			// this one goes before a later one that waited on nothing.
+			break
+		}
 		if !progress {
 			// A cycle of value types cannot be laid out; emit what is left so
 			// the error is the C compiler's about the cycle rather than silence.
-			out = append(out, pending...)
-			break
+			for i := range decls {
+				if !emitted[i] {
+					out = append(out, decls[i])
+					emitted[i] = true
+				}
+			}
 		}
+	}
+	return out
+}
+
+// orderedStructs is orderedTypeDecls over structs alone.
+func orderedStructs(structs []ir.StructIR) []ir.StructIR {
+	out := make([]ir.StructIR, 0, len(structs))
+	for _, d := range orderedTypeDecls(structs, nil) {
+		out = append(out, *d.structDecl)
 	}
 	return out
 }
@@ -236,48 +298,56 @@ func packedFields(s ir.StructIR) []ir.FieldIR {
 	return s.Fields
 }
 
-func (cg *Codegen) emitStructs(structs []ir.StructIR) {
-	for _, s := range orderedStructs(structs) {
-		// An optional pointer is the pointer. It is declared as the C type it
-		// is represented as rather than as a struct with a tag and a payload,
-		// because that is what makes a value returned by a C library usable
-		// without a translation step in either direction.
-		if payload, ok := optionalPointerCType(s.Name); ok {
-			cg.b.WriteString("typedef ")
-			cg.b.WriteString(payload)
-			cg.b.WriteString(" ")
-			cg.b.WriteString(s.Name)
-			cg.b.WriteString(";\n\n")
-			continue
+// emitTypes declares the structs and the aliases in the order they refer to one
+// another (orderedTypeDecls).
+func (cg *Codegen) emitTypes(structs []ir.StructIR, aliases []ir.AliasIR) {
+	for _, d := range orderedTypeDecls(structs, aliases) {
+		if d.aliasDecl != nil {
+			cg.emitAlias(*d.aliasDecl)
+		} else {
+			cg.emitStruct(*d.structDecl)
 		}
-		cg.b.WriteString("typedef struct {\n")
-		for _, f := range packedFields(s) {
-			cg.b.WriteString("    ")
-			cg.b.WriteString(cTypeFor(f.Type))
-			cg.b.WriteString(" ")
-			cg.b.WriteString(f.Name)
-			cg.b.WriteString(";\n")
-		}
-		cg.b.WriteString("} ")
-		cg.b.WriteString(s.Name)
-		cg.b.WriteString(";\n\n")
 	}
 }
 
-// emitAliases declares each type alias as a typedef, so a name a program gave
-// a type is a name the C compiler knows. The Go backend writes the same aliases
-// as Go aliases; here they are C typedefs.
-func (cg *Codegen) emitAliases(aliases []ir.AliasIR) {
-	for _, alias := range aliases {
-		if alias.CTarget == "" {
-			continue
-		}
+func (cg *Codegen) emitStruct(s ir.StructIR) {
+	// An optional pointer is the pointer. It is declared as the C type it
+	// is represented as rather than as a struct with a tag and a payload,
+	// because that is what makes a value returned by a C library usable
+	// without a translation step in either direction.
+	if payload, ok := optionalPointerCType(s.Name); ok {
 		cg.b.WriteString("typedef ")
-		cg.b.WriteString(alias.CTarget)
+		cg.b.WriteString(payload)
 		cg.b.WriteString(" ")
-		cg.b.WriteString(alias.Name)
+		cg.b.WriteString(s.Name)
 		cg.b.WriteString(";\n\n")
+		return
 	}
+	cg.b.WriteString("typedef struct {\n")
+	for _, f := range packedFields(s) {
+		cg.b.WriteString("    ")
+		cg.b.WriteString(cTypeFor(f.Type))
+		cg.b.WriteString(" ")
+		cg.b.WriteString(f.Name)
+		cg.b.WriteString(";\n")
+	}
+	cg.b.WriteString("} ")
+	cg.b.WriteString(s.Name)
+	cg.b.WriteString(";\n\n")
+}
+
+// emitAlias declares a type alias as a typedef, so a name a program gave a type
+// is a name the C compiler knows. The Go backend writes the same aliases as Go
+// aliases; here they are C typedefs.
+func (cg *Codegen) emitAlias(alias ir.AliasIR) {
+	if alias.CTarget == "" {
+		return
+	}
+	cg.b.WriteString("typedef ")
+	cg.b.WriteString(alias.CTarget)
+	cg.b.WriteString(" ")
+	cg.b.WriteString(alias.Name)
+	cg.b.WriteString(";\n\n")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -611,15 +681,6 @@ func cTypeFor(t ir.Type) string {
 		return "const char*" + suffix
 	case ir.TypeStruct:
 		if t.Name != "" {
-			// A mangled pointer name is a pointer, not a structure. `Ptr_X` and
-			// `X_Ptr` are the same pointer written two ways — one is what a
-			// source writes and the other is what a foreign declaration
-			// carries — and the C a declaration has to be given is `X*`. Spelling
-			// it as a structure names a type no backend emitted, and the
-			// declaration that uses it does not compile.
-			if pointer, ok := mangledPointerCType(t.Name); ok {
-				return pointer + suffix
-			}
 			return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(t.Name) + suffix
 		}
 		return "struct /* anonymous */"
@@ -632,9 +693,9 @@ func cTypeFor(t ir.Type) string {
 		}
 		return "uint8_t*" + suffix
 	case ir.TypePtr:
-		// A pointer is a pointer. A pointer to nothing — `Ptr[Unit]`, which is
-		// how a foreign handle is declared — is what C calls void*, and spelling
-		// it as a mangled name would make every handle undeclareable.
+		// `Ptr[T]` is `T*`, wherever it was written. A pointer to nothing —
+		// `Ptr[Unit]`, which is how a foreign handle is declared — is what C
+		// calls void*.
 		if len(t.Args) == 0 || isUnitType(t.Args[0]) {
 			return "void*"
 		}

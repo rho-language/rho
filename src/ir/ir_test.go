@@ -126,3 +126,23 @@ func TestInstr(t *testing.T) {
 		t.Fatalf("unexpected instruction: %+v", instr)
 	}
 }
+
+// A pointer is one type at its element: two pointers at the same element are the
+// same type whatever spelling each name carries, and pointers at different
+// elements are not.
+func TestSameTypeComparesAPointerByItsElement(t *testing.T) {
+	u8 := Type{Kind: TypeU8, Name: "u8"}
+	u32 := Type{Kind: TypeU32, Name: "u32"}
+	written := Type{Kind: TypePtr, Name: "Ptr[u8]", Args: []Type{u8}}
+	substituted := Type{Kind: TypePtr, Name: "Ptr[T]", Args: []Type{u8}}
+	other := Type{Kind: TypePtr, Name: "Ptr[u32]", Args: []Type{u32}}
+	if !SameType(written, substituted) {
+		t.Error("two pointers at u8 should be one type")
+	}
+	if SameType(written, other) {
+		t.Error("a pointer at u8 and a pointer at u32 are different types")
+	}
+	if SameType(written, Type{Kind: TypeStruct, Name: "Ptr_u8"}) {
+		t.Error("a struct is not a pointer, whatever it is called")
+	}
+}

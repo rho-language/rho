@@ -17,8 +17,6 @@
 
 package ir
 
-import "strings"
-
 /* -------------------------------------------------------------------------- */
 /*  Basic Types                                                               */
 /* -------------------------------------------------------------------------- */
@@ -48,10 +46,10 @@ const (
 	TypeF64
 	TypeString
 	TypeStruct
-	// TypePtr is a pointer to another type. It is a type of its own rather than
-	// a name, because a pointer is how a value crosses a foreign boundary: C
-	// takes `const char*` where Rho takes `Ptr[u8]`, and a backend that spelled a
-	// pointer as a name would generate something that does not compile.
+	// TypePtr is a pointer to another type, `Ptr[T]`, with T as its one
+	// argument. It is one type wherever it is written — a field, a parameter,
+	// a local, a foreign signature — and each backend spells it once: C as `T*`
+	// (`void*` for `Ptr[Unit]`), Go as `unsafe.Pointer`.
 	TypePtr
 	// TypeSlice is a dynamic array, written `[T]`. It is distinct from a pointer
 	// because the two are the same in C — both are `T*` with a length the
@@ -76,19 +74,12 @@ type Type struct {
 
 // SameType reports whether two types are the same one.
 //
-// A pointer is spelled two ways: `Ptr[X]` in a source, and the mangled
-// `Ptr_X` a foreign declaration carries. They are one type reached two ways,
-// and a program that names both has one type rather than two — a generic
-// applied to a pointer written in a source and the same generic applied to the
-// mangled name a foreign declaration carries is one specialisation, and a
-// backend that emitted a definition for each would be emitting the same
-// definition twice.
+// A pointer is one type, `TypePtr`, wherever it was written, and it is the
+// pointer at its element: two pointers are the same when they point at the same
+// thing, whatever spelling of the element's name each carries in its own.
 func SameType(a, b Type) bool {
-	if a.Kind == TypePtr {
-		return SameType(Type{Kind: TypeStruct, Name: mangledPointerName(a)}, b)
-	}
-	if b.Kind == TypePtr {
-		return SameType(a, Type{Kind: TypeStruct, Name: mangledPointerName(b)})
+	if a.Kind == TypePtr && b.Kind == TypePtr && len(a.Args) == 1 && len(b.Args) == 1 {
+		return a.ArrayLen == b.ArrayLen && SameType(a.Args[0], b.Args[0])
 	}
 	if a.Kind != b.Kind || a.Name != b.Name || a.ArrayLen != b.ArrayLen {
 		return false
@@ -102,15 +93,6 @@ func SameType(a, b Type) bool {
 		}
 	}
 	return true
-}
-
-// mangledPointerName is the mangled name of a pointer type: `Ptr[X]` is `Ptr_X`.
-func mangledPointerName(t Type) string {
-	name := t.Name
-	if strings.HasPrefix(name, "Ptr[") && strings.HasSuffix(name, "]") && len(name) > len("Ptr[]") {
-		return "Ptr_" + name[len("Ptr["):len(name)-1]
-	}
-	return name
 }
 
 /* -------------------------------------------------------------------------- */
@@ -134,6 +116,12 @@ type ModuleIR struct {
 	// that emitted only the type it names would leave that declaration referring
 	// to a name nothing defines.
 	Aliases []AliasIR
+	// CRefusals are the things the program does that the C backend cannot
+	// emit, each a sentence naming where. They are carried rather than raised
+	// while lowering because one lowering serves every backend: a program built
+	// only for Go is not refused for what it would mean in C. A build that
+	// emits C fails on the first of them.
+	CRefusals []string
 }
 
 // AliasIR is one type alias a module declares.

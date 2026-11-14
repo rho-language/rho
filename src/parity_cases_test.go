@@ -515,4 +515,244 @@ fn main() void {
 `,
 		want: "4000000032 4000000047 0\n",
 	},
+	// Ptr[T] is one type, spelled `T*` in C and `unsafe.Pointer` in Go. Each
+	// operation on one is written so both backends read it: a conversion from a
+	// number and back, the null pointer, an element read and written through the
+	// pointer, an offset, and the slice_empty a Slice starts from.
+	{
+		name: "pointers: casts, to_u64, index and slice_empty",
+		source: `module app
+
+import std.core.ptr
+import std.core.slice
+
+// deep grows the stack, which Go does by moving it: an address held only as a
+// number would then name where a variable used to be.
+fn deep(n: u32) u32 {
+    var pad: u32[32] = [0; 32]
+    pad[31] = n
+    if n == 0 {
+        return pad[31]
+    }
+    return deep(n - 1) + pad[31] - n + 1
+}
+
+fn main() void {
+    let values: u32[4] = [10, 20, 30, 40]
+    let p: Ptr[u32] = Ptr[u32](&values[0])
+    print(int_to_str(index[u32](p, 2)))
+    let z: Ptr[u8] = Ptr[u8](0)
+    print(" " + int_to_str(u32(to_u64[u8](z))))
+    let address: u64 = to_u64[u32](p)
+    print(" " + int_to_str(deep(2000)))
+    let q: Ptr[u32] = from_u64[u32](address)
+    print(" " + int_to_str(index[u32](q, 3)))
+    if to_u64[u32](q) == to_u64[u32](p) {
+        print(" same")
+    }
+    let e: Slice[u32] = slice_empty[u32]()
+    print(" " + int_to_str(e.len))
+    if to_u64[u32](e.ptr) == 0 {
+        print(" empty")
+    }
+}
+`,
+		want: "30 0 2000 40 same 0 empty",
+	},
+	{
+		name: "pointers: stores through a pointer, a struct pointer, offsets",
+		source: `module app
+
+import std.core.ptr
+import std.core.slice
+import std.core.maybe_uninit
+
+struct Point {
+    x: u32
+    y: u32
+}
+
+fn bump(p: Ptr[Point]) void {
+    p[0].x = p[0].x + 1
+    p[0].y = 7
+}
+
+fn main() void {
+    var storage: u32[4] = [0, 0, 0, 0]
+    let a: Ptr[u32] = Ptr[u32](&storage[0])
+    a[2] = 42
+    print(int_to_str(index(a, 2)) + " " + int_to_str(storage[2]))
+    var pt: Point = Point{ 1, 2 }
+    bump(&pt)
+    print(" " + int_to_str(pt.x) + "," + int_to_str(pt.y))
+    var bytes: u8[4] = [97, 98, 99, 100]
+    let s: Slice[u8] = Slice[u8]{ Ptr[u8](&bytes[0]), 4 }
+    let tail: Ptr[u8] = s.ptr + 2
+    let back: Ptr[u8] = tail - 1
+    print(" " + int_to_str(u32(tail[0])) + "," + int_to_str(u32(back[0])) + "," + int_to_str(u32(*(s.ptr + 3))))
+    let v: u32 = 9
+    let m: MaybeUninit[u32] = MaybeUninit[u32]{ Ptr[u32](&v) }
+    print(" " + int_to_str(assume_init(m)))
+    let p: Ptr[u32] = &storage[1]
+    p[0] = 5
+    print(" " + int_to_str(*p) + " " + int_to_str(storage[1]))
+}
+`,
+		want: "42 42 2,7 99,98,100 9 5 5",
+	},
+	// The descriptor calls of std.os.sys and std.os.fs move bytes through a
+	// Ptr[u8], which on both backends is the program's own memory: the bytes
+	// written are an array's, and the bytes read land in another. The program
+	// runs in a directory of its own, so the file it makes is its own too.
+	{
+		name: "std.os: descriptor open, write, close and read through Ptr[u8]",
+		source: `module app
+
+import std.os.sys
+import std.os.fs
+
+fn main() void {
+    // "rho-parity-fd.txt" and the byte that ends a C string
+    let path: u8[18] = [114, 104, 111, 45, 112, 97, 114, 105, 116, 121, 45, 102, 100, 46, 116, 120, 116, 0]
+    let text: u8[5] = [104, 101, 108, 108, 111]
+    // O_WRONLY | O_CREAT | O_TRUNC
+    let opened: Result[u32, u32] = open(&path[0], 577)
+    if !opened.is_ok {
+        print("open failed")
+        return
+    }
+    let wrote: u32 = write(opened.ok, &text[0], 5)
+    close(opened.ok)
+    var back: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
+    let reopened: Result[u32, u32] = open(&path[0], 0)
+    let got: u32 = read(reopened.ok, &back[0], 8)
+    close(reopened.ok)
+    print("wrote=" + int_to_str(wrote) + " read=" + int_to_str(got) + " bytes=")
+    var i: u32 = 0
+    while i < got {
+        print(int_to_str(u32(back[i])) + ",")
+        i = i + 1
+    }
+    print(" bad=" + int_to_str(read(9999, &back[0], 8)))
+}
+`,
+		want: "wrote=5 read=5 bytes=104,101,108,108,111, bad=4294967295",
+	},
+	{
+		name: "std.os: a string path and a write to standard output",
+		source: `module app
+
+import std.os.sys
+import std.os.fs
+
+fn main() void {
+    let fd: i32 = rho_fd_open("/dev/null", 1)
+    let line: u8[3] = [111, 107, 10]
+    if fd >= 0 {
+        let n: u32 = write(u32(fd), &line[0], 3)
+        close(u32(fd))
+        if n == 3 {
+            write(1, &line[0], 3)
+        }
+    }
+    write(1, Ptr[u8](0), 0)
+}
+`,
+		want: "ok\n",
+	},
+	// std.strings.string declares `String = Slice[u8]` and uses Slice[String],
+	// so the C program needs the alias before the specialisation built over it:
+	// the types are emitted in the order they refer to one another.
+	{
+		name: "std.strings.string: an alias used by a specialisation, and its len",
+		source: `module app
+
+import std.core.ptr
+import std.core.slice
+import std.core.option
+import std.strings.string
+
+fn main() void {
+    // "ab,cd,e"
+    var bytes: u8[7] = [97, 98, 44, 99, 100, 44, 101]
+    let s: String = String{ Ptr[u8](&bytes[0]), 7 }
+    // len on a String is std.strings.string's len, not the built-in, which
+    // measures strings and arrays and has nothing to say about a struct.
+    print(int_to_str(len(s)) + " ")
+    var parts: String[4] = [slice_empty[u8](), slice_empty[u8](), slice_empty[u8](), slice_empty[u8]()]
+    let out: Slice[String] = Slice[String]{ Ptr[String](&parts[0]), 4 }
+    let n: u32 = split(s, 44, out)
+    print(int_to_str(n))
+    var i: u32 = 0
+    while i < n {
+        print(" " + int_to_str(len(parts[i])))
+        i = i + 1
+    }
+    let ab: String = String{ Ptr[u8](&bytes[0]), 2 }
+    if eq(parts[0], ab) {
+        print(" eq")
+    }
+    if starts_with(s, ab) {
+        print(" starts")
+    }
+    let e: String = String{ Ptr[u8](&bytes[6]), 1 }
+    if ends_with(s, e) {
+        print(" ends")
+    }
+    let at: Option[u32] = find(s, parts[1])
+    if at.is_some {
+        print(" at=" + int_to_str(at.value))
+    }
+}
+`,
+		want: "7 3 2 2 1 eq starts ends at=3",
+	},
+	// A program that only ever writes `String` still gets the Slice[u8] the
+	// alias names, and len on it is std.strings.string's len.
+	{
+		name: "std.strings.string: len on a String, with nothing else naming Slice[u8]",
+		source: `module app
+
+import std.strings.string
+
+fn main() void {
+    var bytes: u8[5] = [104, 101, 108, 108, 111]
+    let s: String = String{ Ptr[u8](&bytes[0]), 5 }
+    let head: String = String{ Ptr[u8](&bytes[0]), 2 }
+    print(int_to_str(len(s)) + " " + int_to_str(len(head)))
+    if starts_with(s, head) {
+        print(" starts")
+    }
+}
+`,
+		want: "5 2 starts",
+	},
+	// The built-in len: a string is measured by the runtime on both backends,
+	// and a fixed-size array's length is the one its type carries.
+	{
+		name: "len: a string and a fixed-size array",
+		source: `module app
+
+fn label() string {
+    return "parity"
+}
+
+fn main() void {
+    let word: string = "hello"
+    let empty: string = ""
+    let values: u32[4] = [1, 2, 3, 4]
+    var grid: u8[3][2] = [[1, 2], [3, 4], [5, 6]]
+    print(int_to_str(len(word)) + " " + int_to_str(len(empty)) + " " + int_to_str(len(label())))
+    print(" " + int_to_str(len(values)) + " " + int_to_str(len(grid)))
+    var total: u32 = 0
+    var i: u32 = 0
+    while i < len(values) {
+        total = total + values[i]
+        i = i + 1
+    }
+    print(" " + int_to_str(total))
+}
+`,
+		want: "5 0 6 4 3 10",
+	},
 }
