@@ -111,3 +111,21 @@ func TestIndexReadsClosures(t *testing.T) {
 		t.Errorf("k is used inside the closure and has %d places, want its declaration and the use", len(ix.Symbols.LocalRefs["k"]))
 	}
 }
+
+// A constrained generic function is indexed like any other, and naming one
+// with its type arguments as a value is a use of it.
+func TestIndexReadsConstraintsAndGenericValues(t *testing.T) {
+	source := "module shop\n\nfn total[T: Number](xs: Slice[T]) -> T {\n  var t: T = T(0)\n  return t\n}\n\nfn main() void {\n  let f = total[u32]\n}\n"
+	ix := BuildIndex("file:///test.rho", source)
+	if ix == nil {
+		t.Fatal("a well-formed file was not indexed")
+	}
+	for _, name := range []string{"total", "xs", "f"} {
+		if !ix.Symbols.Local[name] {
+			t.Errorf("%q is declared and was not indexed", name)
+		}
+	}
+	if len(ix.Symbols.LocalRefs["total"]) < 2 {
+		t.Errorf("total is used as a value and has %d places, want its declaration and the use", len(ix.Symbols.LocalRefs["total"]))
+	}
+}

@@ -164,9 +164,18 @@ func entryFor(decl ast.Decl) (Entry, bool) {
 			types[i] = normalise(param.Type)
 			named[i] = param.Name + ": " + param.Type
 		}
+		// A constraint is part of the promise: adding one refuses type
+		// arguments a caller may be passing.
 		generic := ""
 		if len(declaration.TypeParams) > 0 {
-			generic = "[" + strings.Join(declaration.TypeParams, ", ") + "]"
+			params := make([]string, len(declaration.TypeParams))
+			for i, param := range declaration.TypeParams {
+				params[i] = param
+				if bounds := declaration.TypeParamBounds[param]; len(bounds) > 0 {
+					params[i] += ": " + ast.BoundsText(bounds)
+				}
+			}
+			generic = "[" + strings.Join(params, ", ") + "]"
 		}
 		returns := normalise(declaration.ReturnType)
 		return Entry{

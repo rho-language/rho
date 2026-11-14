@@ -60,8 +60,12 @@ type ApiFunction struct {
 	// TypeParams are the type parameters the function declares, so a generic
 	// declaration is named the way it is written.
 	TypeParams []string
-	Parameters []ApiParameter
-	Result     string
+	// Constraints are what each constrained type parameter is written with,
+	// `Ordered + Equal` for `T: Ordered + Equal`, so the signature says what a
+	// type argument has to be.
+	Constraints map[string]string
+	Parameters  []ApiParameter
+	Result      string
 }
 
 // ApiParameter is one parameter, with its name and its type.
@@ -76,7 +80,23 @@ func (f ApiFunction) Signature() string {
 	for _, parameter := range f.Parameters {
 		parts = append(parts, parameter.Name+": "+parameter.Type)
 	}
-	return "fn " + f.Name + typeParams(f.TypeParams) + "(" + strings.Join(parts, ", ") + ") " + f.Result
+	return "fn " + f.Name + constrainedTypeParams(f.TypeParams, f.Constraints) + "(" + strings.Join(parts, ", ") + ") " + f.Result
+}
+
+// constrainedTypeParams names a function's type parameters with the
+// constraints written on them: `[T: Number, U]`.
+func constrainedTypeParams(names []string, constraints map[string]string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = name
+		if constraint := constraints[name]; constraint != "" {
+			parts[i] += ": " + constraint
+		}
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // typeParams names a declaration's type parameters: empty when it has none, and
@@ -235,11 +255,22 @@ func readApiModule(path string) (ApiModule, Diagnostic, bool) {
 				})
 				continue
 			}
+			var constraints map[string]string
+			for param, bounds := range decl.TypeParamBounds {
+				if len(bounds) == 0 {
+					continue
+				}
+				if constraints == nil {
+					constraints = map[string]string{}
+				}
+				constraints[param] = ast.BoundsText(bounds)
+			}
 			entry.Functions = append(entry.Functions, ApiFunction{
-				Name:       decl.Name,
-				TypeParams: decl.TypeParams,
-				Parameters: parameters(decl.Params),
-				Result:     decl.ReturnType,
+				Name:        decl.Name,
+				TypeParams:  decl.TypeParams,
+				Constraints: constraints,
+				Parameters:  parameters(decl.Params),
+				Result:      decl.ReturnType,
 			})
 		case ast.StructDecl:
 			entry.Structs = append(entry.Structs, ApiStruct{

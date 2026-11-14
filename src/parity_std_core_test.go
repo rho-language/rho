@@ -195,4 +195,34 @@ fn main() void {
 `,
 		want: "head ascii all not tail not empty ascii 104 tail none empty none",
 	},
+	// std.core.cmp: min, max and clamp over Ordered, each specialised for the
+	// type it is called with.
+	{
+		name: "std.core.cmp: min, max and clamp on integers of every width, floats and strings",
+		source: `module app
+
+import std.core.cmp
+
+fn main() void {
+    print(int_to_str(max(3, 9) as u32) + " " + i64_to_str(min(-3, 9) as i64) + " ")
+    let lo: u8 = 10
+    let hi: u8 = 200
+    print(int_to_str(clamp(250, lo, hi) as u32) + " " + int_to_str(clamp(5, lo, hi) as u32) + " " + int_to_str(clamp(77, lo, hi) as u32) + " ")
+    let big: u64 = 18446744073709551615
+    let small: u64 = 1
+    print(i64_to_str((max(big, small) - 1) as i64 - 9223372036854775807) + " ")
+    let a: i16 = -32768
+    let b: i16 = 32767
+    print(i64_to_str(min(a, b) as i64) + " ")
+    let f: f64 = clamp(1.5, 0.0, 1.0)
+    let g: f32 = min(2.5, 0.25)
+    print(i64_to_str((f * 10.0) as i64) + " " + i64_to_str((g * 100.0) as i64) + " ")
+    print(max("pear", "apple") + " " + min("pear", "apple") + " " + clamp("m", "a", "k") + " ")
+    let x: u32 = 4
+    let y: u32 = 4
+    print(int_to_str(max(x, y)) + " " + int_to_str(min(x, y)))
+}
+`,
+		want: "9 -3 200 10 77 9223372036854775807 -32768 10 25 pear apple k 4 4",
+	},
 }

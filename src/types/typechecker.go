@@ -62,6 +62,9 @@ type TypeChecker struct {
 	// body is being checked, so a value parameter (the N of `Array[T, N]`)
 	// named in it is a u32.
 	checkingTypeParams []string
+	// checkingBounds are the constraints on those parameters (constraints.go),
+	// which decide what the body may do with a value of one.
+	checkingBounds map[string][]string
 	// moduleAliases maps the name code uses for an imported module — the last
 	// segment of its name, `log` for `rho.log` — to the module, for a call
 	// written `log.info(...)`. A name two modules share maps to "" and is
@@ -647,6 +650,12 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	tc.owner = fn.Owner
 	defer func() { tc.owner = previousOwner }()
 	// Check parameters
+	// A function's name is written as it is in C, where a type word is not a
+	// name; Go's keywords are not a problem here, as the Go backend qualifies
+	// a function it names.
+	if !fn.Extern && backendReservedName(fn.Name) && !strings.Contains(backendReservedReason(fn.Name), "Go") {
+		return locate(fmt.Errorf("function %q: %s", fn.Name, backendReservedReason(fn.Name)), fn.Pos, "")
+	}
 	for _, p := range fn.Params {
 		if !fn.Extern && backendReservedName(p.Name) {
 			return fmt.Errorf("parameter %q of function %q: %s", p.Name, fn.Name, backendReservedReason(p.Name))
@@ -672,9 +681,17 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	for _, param := range fn.Params {
 		scope[param.Name] = tc.typeFor(param.Type)
 	}
+	if err := checkBounds(fn); err != nil {
+		return err
+	}
 	previousParams := tc.checkingTypeParams
+	previousBounds := tc.checkingBounds
 	tc.checkingTypeParams = fn.TypeParams
-	defer func() { tc.checkingTypeParams = previousParams }()
+	tc.checkingBounds = map[string][]string{}
+	for param, bounds := range fn.TypeParamBounds {
+		tc.checkingBounds[param] = boundNames(bounds)
+	}
+	defer func() { tc.checkingTypeParams, tc.checkingBounds = previousParams, previousBounds }()
 	reported := 0
 	if tc.collect != nil {
 		reported = len(tc.collect.errors) + tc.collect.omitted
@@ -855,6 +872,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			}
 			return inner, nil
 		}
+		if value.Op == "-" {
+			if typ, handled, err := tc.typeParamNegation(value, inner); handled {
+				return typ, err
+			}
+		}
 		if value.Op == "-" && !numeric(inner) {
 			return ir.Type{}, fmt.Errorf("unary - requires numeric value")
 		}
@@ -870,6 +892,10 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		if err := tc.enumOperands(value, left, right); err != nil {
 			return ir.Type{}, err
+		}
+		// A type parameter on either side: what its constraints allow.
+		if typ, handled, err := tc.typeParamBinary(value, left, right); handled {
+			return typ, err
 		}
 		// A constant meeting a typed integer becomes that type, so it has to
 		// fit it: `b + 300` for a u8 b is refused by Go and computed in int by
@@ -888,6 +914,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if value.Op == "==" || value.Op == "!=" || value.Op == "<" || value.Op == "<=" || value.Op == ">" || value.Op == ">=" {
 			if left.Kind == ir.TypeFunc || right.Kind == ir.TypeFunc {
 				return ir.Type{}, locate(fmt.Errorf(msgFuncCompare, value.Op), value.Position(), "")
+			}
+			if tc.isPlainStruct(left) || tc.isPlainStruct(right) {
+				return ir.Type{}, locate(fmt.Errorf(msgStructCompare, value.Op, typeName(left)), value.Position(), "")
 			}
 			if !comparable(left, right) {
 				return ir.Type{}, locate(
@@ -970,6 +999,13 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 	case ast.FuncLitExpr:
 		return tc.funcLitType(value, scope)
 	case ast.IndexExpr:
+		// `identity[u32]`: a specialisation of a generic function, as a value.
+		if fv, named, err := tc.explicitFuncValue(value, scope); named {
+			if err != nil {
+				return ir.Type{}, err
+			}
+			return fv.typ, nil
+		}
 		object, err := tc.exprType(value.Object, scope)
 		if err != nil {
 			return ir.Type{}, err
@@ -993,6 +1029,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		converted, ok := tc.resolveType(value.Type.String())
 		if !ok {
 			return ir.Type{}, fmt.Errorf("unknown cast type %q", value.Type.String())
+		}
+		// `x as T` in a specialisation is a cast to what T was specialised at.
+		converted = tc.substituteType(converted, tc.currentTypeArgs)
+		if err := tc.typeParamConversion(converted, value.Value, scope, value.Position()); err != nil {
+			return ir.Type{}, err
 		}
 		if err := tc.checkEnumConversion(value.Value, scope, converted, true); err != nil {
 			return ir.Type{}, err
@@ -1039,6 +1080,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		var subs map[string]ir.Type
 		if identifier, ok := value.Callee.(ast.IdentifierExpr); ok {
 			if decl, generic := tc.genericFuncs[identifier.Name]; generic && tc.isGenericName(identifier.Name) {
+				callAt := placed(identifier.Pos, value.Pos)
 				args := value.TypeArgs
 				if len(args) == 0 {
 					if deduced := tc.applicationFor(value, scope, expected); len(deduced) > 0 {
@@ -1050,12 +1092,29 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 							}
 						}
 					} else {
-						return ir.Type{}, withNote(locate(fmt.Errorf("cannot deduce the type arguments of %s from this call (%s unresolved); write them explicitly, as in %s[%s](...)",
-							identifier.Name, strings.Join(tc.undeducedParams(decl.TypeParams, decl.TypeParamDefaults, subs), ", "), identifier.Name, strings.Join(decl.TypeParams, ", ")), identifier.Pos, ""),
-							identifier.Pos, declaredAt("generic function "+identifier.Name, decl.Pos))
+						if err := tc.deductionArgsError(decl, value.Args, scope); err != nil {
+							return ir.Type{}, err
+						}
+						missing := tc.undeducedParams(decl.TypeParams, decl.TypeParamDefaults, tc.partialDeduction(decl, value.Args, scope, expected))
+						return ir.Type{}, withNote(locate(fmt.Errorf(msgCannotDeduce,
+							identifier.Name, strings.Join(missing, " or "), identifier.Name, strings.Join(decl.TypeParams, ", ")), callAt, ""),
+							callAt, declaredAt("generic function "+identifier.Name, decl.Pos))
 					}
 				} else {
+					if len(args) > len(decl.TypeParams) {
+						return ir.Type{}, locate(fmt.Errorf("%s takes %d type arguments (%s), and %d are written", identifier.Name, len(decl.TypeParams), strings.Join(decl.TypeParams, ", "), len(args)), callAt, "")
+					}
 					subs = tc.buildSubstitution(decl.TypeParams, decl.TypeParamDefaults, args)
+					// The written arguments are the first parameters, and the
+					// rest come from defaults; what has neither is not deduced
+					// from the call, which would make one call name its types
+					// two ways.
+					if missing := tc.undeducedParams(decl.TypeParams, decl.TypeParamDefaults, subs); len(missing) > 0 {
+						return ir.Type{}, locate(fmt.Errorf(msgPartialTypeArgs, identifier.Name, len(decl.TypeParams), strings.Join(decl.TypeParams, ", "), len(args), strings.Join(missing, ", ")), callAt, "")
+					}
+				}
+				if err := tc.checkTypeArgBounds(decl, subs, callAt); err != nil {
+					return ir.Type{}, err
 				}
 			}
 		}
@@ -1120,6 +1179,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				if converted, isType := tc.resolveType(written); isType {
 					converted = tc.substituteType(converted, tc.currentTypeArgs)
 					if len(value.Args) == 1 {
+						if err := tc.typeParamConversion(converted, value.Args[0], scope, value.Pos); err != nil {
+							return ir.Type{}, err
+						}
 						if err := tc.checkEnumConversion(value.Args[0], scope, converted, false); err != nil {
 							return ir.Type{}, err
 						}
@@ -1818,6 +1880,10 @@ func assignable(want, got ir.Type) bool {
 	// A plain enum is an integer to a backend and a type of its own here: one
 	// enum does not stand in for another, nor a number for an enum or an enum
 	// for a number, without a conversion that says so.
+	// An array of one converts to a Slice of it, as any fixed array does.
+	if got.Enum && !want.Enum && fixedArrayToSlice(want, got) {
+		return true
+	}
 	if want.Enum || got.Enum {
 		return want.Enum && got.Enum && baseTypeName(want.Name) == baseTypeName(got.Name) && want.ArrayLen == got.ArrayLen
 	}
@@ -2338,7 +2404,7 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		// binding is in scope, as the value is evaluated before it is.
 		stored := ir.Type{}
 		if written := stmt.Type.String(); written != "" {
-			stored = tc.typeFor(written)
+			stored = tc.substituteType(tc.typeFor(written), tc.currentTypeArgs)
 		} else if stmt.Value != nil {
 			stored, _ = tc.exprType(stmt.Value, scope)
 		}
@@ -2369,7 +2435,10 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 			}
 		}
 		// Record the binding so later expressions see its type.
-		scope[stmt.Name] = tc.typeFor(declaredName)
+		// In a specialisation a local of a type parameter is of the type the
+		// parameter stands for, so what is done with it later — a `+`, a `<`
+		// on strings — is lowered for that type.
+		scope[stmt.Name] = tc.resolveApplied(tc.substituteType(tc.typeFor(declaredName), tc.currentTypeArgs))
 		return tc.arenaWrapped(wrap, ir.Instr{
 			Op:       ir.OpLet,
 			Dest:     stmt.Name,
@@ -2905,6 +2974,10 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			}
 			return "!rho_str_eq(" + left + ", " + right + ")"
 		}
+		// String order: s < t compares the bytes, not the pointers.
+		if (expr.Op == "<" || expr.Op == "<=" || expr.Op == ">" || expr.Op == ">=") && (tc.isStringExpr(expr.Left, scope) || tc.isStringExpr(expr.Right, scope)) {
+			return "(rho_str_cmp(" + left + ", " + right + ") " + expr.Op + " 0)"
+		}
 		// An integer operation whose C operator does not mean what Rho means
 		// is lowered to the helper that does (checked.go). Two constants are
 		// one constant, folded by both compilers, and refused when it
@@ -2977,6 +3050,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return tc.lowerExpr(expr.Object, scope) + "." + expr.Name
 	case ast.IndexExpr:
+		if fv, named, err := tc.explicitFuncValue(expr, scope); named && err == nil {
+			return tc.lowerNamedFuncValue(fv)
+		}
 		object, objectErr := tc.exprType(expr.Object, scope)
 		if objectErr == nil {
 			if element, isSlice := tc.sliceElement(object); isSlice {
@@ -3373,7 +3449,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		// The type is resolved rather than spelled from the written name, because
 		// a cast to a pointer or to an alias is not a type with that name: `Ptr[T]`
 		// cast to by name is a C expression naming a function, not a cast.
-		castTo := tc.typeFor(expr.Type.String())
+		castTo := tc.substituteType(tc.typeFor(expr.Type.String()), tc.currentTypeArgs)
 		if lowered, ok := tc.lowerPointerConversion(castTo, expr.Value, scope); ok {
 			return lowered
 		}
@@ -4486,4 +4562,16 @@ func (tc *TypeChecker) arrayConstantsResolved(name string) string {
 		current = current[:open]
 	}
 	return current + suffix
+}
+
+// isPlainStruct is whether a type is a struct the program declares, and not
+// an enum laid out as one: such a value has no == of its own on C.
+func (tc *TypeChecker) isPlainStruct(typ ir.Type) bool {
+	if typ.Kind != ir.TypeStruct || typ.ArrayLen > 0 {
+		return false
+	}
+	if info, _ := tc.enumOf(typ); info != nil {
+		return false
+	}
+	return tc.userStructs[baseTypeName(typ.Name)]
 }

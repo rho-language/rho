@@ -238,6 +238,8 @@ const (
 	msgNotAFunction = "%s is %s, not a function, and cannot be called; only a function or a value of a function type `fn(...) -> ...` can"
 	// msgFuncValueArity: the value, its type, the count it takes, the count passed.
 	msgFuncValueArity = "%s is %s and takes %s, and this call passes %d"
+	// msgStructCompare: the operator, the struct.
+	msgStructCompare = "structs cannot be compared with %s: %s is a struct, which C cannot compare as a whole; compare the fields that matter, or write a function that does"
 	// msgFuncCompare: the operator.
 	msgFuncCompare = "function values cannot be compared with %s: two closures of one function differ in what they captured, and C and Go would answer differently; compare what the functions compute instead"
 	// msgCaptureArray: the name, its type.
@@ -249,4 +251,45 @@ const (
 	msgCaptureAssigned = "a closure cannot assign to %s, which it captured: captures are copies made when the closure was created; declare a local inside it (`var %s_copy = %s`) and change that"
 	// msgCaptureAddressed: the name twice.
 	msgCaptureAddressed = "a closure cannot take the address of %s, which it captured: captures are copies made when the closure was created; declare a local inside it (`var copy = %s`) and use that"
+)
+
+// What is refused about constraints on type parameters (constraints.go), each
+// with what to write instead.
+const (
+	// msgUnknownConstraint: the constraint, the parameter, the function, the
+	// constraints there are.
+	msgUnknownConstraint = "unknown constraint %s on type parameter %s of %s: the constraints are %s"
+	// msgConstraintUnsatisfied: the function, the parameter, the constraint,
+	// the type, the constraint, what satisfies it.
+	msgConstraintUnsatisfied = "%s needs its type parameter %s to satisfy %s, and %s does not: %s is satisfied by %s"
+	// msgTypeParamUnconstrainedArg: the function, its parameter, the
+	// constraint, the caller's parameter, its constraints, the caller's
+	// parameter, the constraint.
+	msgTypeParamUnconstrainedArg = "%s needs its type parameter %s to satisfy %s, and %s (%s) is not known to; write the constraint on it, as in [%s: %s]"
+	// msgTypeParamOperator: the operator, the parameter, its constraints, the
+	// constraint needed, the declaration to write.
+	msgTypeParamOperator = "operator %s is not defined on %s, a type parameter with %s: it needs %s; constrain it, as in [%s]"
+	// msgTypeParamShift: the operator, the parameter.
+	msgTypeParamShift = "operator %s is not defined on %s, a type parameter: a shift's meaning depends on the width of the type; convert to a type of known width first"
+	// msgTypeParamMixed: the operator, the two parameters.
+	msgTypeParamMixed = "operator %s needs one type on both sides, and %s and %s are different type parameters"
+	// msgTypeParamWithConcrete: the operator, the parameter, the other type,
+	// the parameter.
+	msgTypeParamWithConcrete = "operator %s needs one type on both sides, and %s is a type parameter while the other side is %s; convert it, as in %s(value)"
+	// msgTypeParamLiteralNotNumber: the parameter, its constraints, the
+	// parameter.
+	msgTypeParamLiteralNotNumber = "a number cannot meet %s, a type parameter with %s, which is not always a number; constrain it with Number, Integer or Float, or compare with a value of type %s"
+	// msgTypeParamLiteralRange: the number, the parameter, its constraints,
+	// the parameter.
+	msgTypeParamLiteralRange = "the number %s does not fit every type %s (%s) may be: a written number meeting a type parameter is an integer from 0 to 127 (to 16777216 when it is only Float); convert a value of a known type instead, as in %s(x)"
+	// msgTypeParamConversion: the parameter, its constraints, the parameter.
+	msgTypeParamConversion = "cannot convert to %s, a type parameter with %s: a conversion needs a number type; constrain it, as in [%s: Number]"
+	// msgTypeParamConversionFrom: the type, the parameter.
+	msgTypeParamConversionFrom = "cannot convert %s to %s: only a number converts to a number type parameter"
+	// msgPartialTypeArgs: the function, how many parameters, their names,
+	// how many are written, the ones left without a type.
+	msgPartialTypeArgs = "%s takes %d type arguments (%s), and %d are written, leaving %s with no type and no default; write all of them, or none and let the call deduce them"
+	// msgCannotDeduce: the function, the parameters not deduced, the
+	// function, its type parameters.
+	msgCannotDeduce = "cannot deduce the type arguments of %s from this call: nothing passed says what %s is; write them explicitly, as in %s[%s](...)"
 )

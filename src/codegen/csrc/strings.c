@@ -119,6 +119,15 @@ bool rho_str_eq(const char* a, const char* b)
     return strcmp(a != NULL ? a : "", b != NULL ? b : "") == 0;
 }
 
+/* The order of two strings, byte by byte as unsigned values, which is the
+ * order Go's `<` on strings is: negative, zero or positive. A NULL string is
+ * the empty one. */
+int32_t rho_str_cmp(const char* a, const char* b)
+{
+    int c = strcmp(a != NULL ? a : "", b != NULL ? b : "");
+    return c < 0 ? -1 : (c > 0 ? 1 : 0);
+}
+
 bool rho_str_starts_with(const char* s, const char* prefix)
 {
     if (s == NULL || prefix == NULL) {

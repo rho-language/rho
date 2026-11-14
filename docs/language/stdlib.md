@@ -57,6 +57,7 @@ The types every other module is built out of.
 | `std.core.result` | `enum Result[T, E = Unit] { Err(E), Ok(T) }`: `Ok`, `Err`, `is_ok`, `is_err`, `value`, `error`, `unwrap` |
 | `std.core.ptr` | The functions over the language's pointer `Ptr[T]`: `from_u64`, `to_u64`, `index` |
 | `std.core.slice` | `Slice[T]`: a pointer and a length, and `slice_empty`. The language provides the type and its operations (`s[i]`, `s[a..b]`, `for`, `append`, `len`, `Slice.from_raw`) without an import |
+| `std.core.cmp` | `min`, `max` and `clamp` for any `Ordered` type (every integer type, `f32`, `f64`, `string`) |
 | `std.core.range` | `Range`: a half-open range of `u32`, with `range` and `next` (`Some(i)` while `start <= i < end`) |
 | `std.core.maybe_uninit` | `MaybeUninit[T]`: a value not yet written, with `uninit` and `assume_init` |
 | `std.core.builtin` | Nothing to call: a written account of the primitive types and the built-ins, which the compiler supplies. Importing it changes nothing |
@@ -98,6 +99,7 @@ over bytes it holds.
 | `std.collections.array` | `Array[T, N]`: a pointer to `N` elements, the count a type parameter, with `get`, `set` and `as_slice` |
 | `std.collections.bitset` | `BitSet`: the 64-bit words the caller owns, built with `bitset(words)` from a `Slice[u64]` (a `u64[N]` converts to one), with `capacity`, `set`, `clear` and `get`. An index past the last word is outside the set |
 | `std.collections.map` | `Map[K, V, N]`: a fixed-capacity hash table of `N` slots, with `insert` and `get` |
+| `std.collections.slices` | Generic functions over a `Slice[T]`: `sum`, `contains`, `index_of`, `map_into`, `filter_into`, `sort` and `sort_by` |
 
 The map is plain Rho, with no port behind it. It uses open addressing with
 linear probing over entries the caller supplies. A key is hashed as a `u32`, so
@@ -112,6 +114,40 @@ through one is a write to the caller's memory.
 
 An `Array[T, N]` answers a question an embedded program asks often: how big is
 this, exactly. The size is a type parameter, so it is known at compile time.
+
+`std.collections.slices` and `std.core.cmp` are generic functions with
+{ref}`constraints <language/types>`, specialised for the type each call is made
+with, so `sum` over a `Slice[i8]` adds as `i8` does, wrapping:
+
+```rho
+fn min[T: Ordered](a: T, b: T) T                    // a when they are equal
+fn max[T: Ordered](a: T, b: T) T                    // a when they are equal
+fn clamp[T: Ordered](x: T, lo: T, hi: T) T          // lo below the range, hi above it
+
+fn sum[T: Number](s: Slice[T]) T                    // 0 for none
+fn contains[T: Equal](s: Slice[T], x: T) bool
+fn index_of[T: Equal](s: Slice[T], x: T) Option[u32]     // the first, or None
+fn map_into[T, U](s: Slice[T], out: Slice[U], f: fn(T) -> U) u32
+fn filter_into[T](s: Slice[T], out: Slice[T], keep: fn(T) -> bool) u32
+fn sort[T: Ordered](s: Slice[T])                    // ascending, in place, stable
+fn sort_by[T](s: Slice[T], less: fn(T, T) -> bool)  // in place, stable
+```
+
+Nothing is allocated. `map_into` and `filter_into` write into the Slice the
+caller passes as `out`, as many elements as it holds, and answer how many they
+wrote; the sorts reorder the caller's elements in place. The sorts are
+insertion sorts — stable, with no memory beyond one element, and quick on the
+short or nearly sorted runs an embedded program sorts — so a long run is better
+sorted by a program's own algorithm. A fixed array or a cut of one is passed
+where a `Slice[T]` is taken:
+
+```rho
+var readings: u32[6] = [5, 3, 8, 1, 9, 2]
+sort(readings)                               // 1 2 3 5 8 9
+let total = sum(readings[1..4])              // 2 + 3 + 5
+var big: u32[6] = [0, 0, 0, 0, 0, 0]
+let n = filter_into(readings, big, fn(x: u32) -> bool { return x > 4 })   // 3
+```
 
 ## math
 

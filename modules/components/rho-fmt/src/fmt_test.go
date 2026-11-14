@@ -340,3 +340,46 @@ fn main() void {
 		t.Errorf("formatting is not stable (%v):\n%s\n---\n%s", err, once, twice)
 	}
 }
+
+// Constraints on a function's type parameters are printed as written, several
+// joined by `+` and before a default, and a generic function named with its
+// type arguments as a value keeps every one of them.
+func TestFormatKeepsConstraintsAndGenericValues(t *testing.T) {
+	source := `module app
+
+fn sum[T: Number](xs: Slice[T]) -> T {
+    var t: T = T(0)
+    return t
+}
+
+fn pick[T: Ordered + Equal, U = Unit](a: T, b: T) -> T {
+    return a
+}
+
+fn pair[A, B](a: A, b: B) -> A {
+    return a
+}
+
+fn main() void {
+    let f = pair[u32, string]
+    let g = sum[u8]
+    let x = pick[u32](1, 2)
+}
+`
+	once, err := FormatSource(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"fn sum[T: Number](xs: Slice[T]) T {", "fn pick[T: Ordered + Equal, U = Unit](a: T, b: T) T {",
+		"let f = pair[u32, string]", "let g = sum[u8]", "let x = pick[u32](1, 2)",
+	} {
+		if !strings.Contains(once, want) {
+			t.Errorf("the formatted source has no %q:\n%s", want, once)
+		}
+	}
+	twice, err := FormatSource(once)
+	if err != nil || twice != once {
+		t.Errorf("formatting is not stable (%v):\n%s\n---\n%s", err, once, twice)
+	}
+}

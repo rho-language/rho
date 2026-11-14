@@ -173,4 +173,116 @@ fn main() void {
 `,
 		want: "21 -3 2 12 6",
 	},
+	// std.collections.slices: generic functions over a Slice[T], with the
+	// constraint each needs, writing into what the caller provides.
+	{
+		name: "std.collections.slices: sum, contains and index_of over Number and Equal",
+		source: `module app
+
+import std.collections.slices
+
+enum Mode { Idle, Busy, Off }
+
+fn main() void {
+    var xs: u32[6] = [5, 3, 8, 1, 9, 2]
+    print(int_to_str(sum(xs)) + " " + int_to_str(sum(xs[1..3])) + " ")
+    var empty: u32[1] = [7]
+    print(int_to_str(sum(empty[0..0])) + " ")
+    var tiny: i8[3] = [100, 27, 1]
+    print(i64_to_str(sum(tiny) as i64) + " ")
+    var fs: f64[3] = [0.5, 0.25, 2.0]
+    print(i64_to_str((sum(fs) * 100.0) as i64) + " | ")
+    if contains(xs, 8) { print("has8 ") }
+    if !contains(xs, 7) { print("no7 ") }
+    var words: string[3] = ["kiwi", "fig", "date"]
+    if contains(words, "fig") { print("fig ") }
+    var modes: Mode[2] = [Mode.Idle, Mode.Off]
+    if contains(modes, Mode.Off) && !contains(modes, Mode.Busy) { print("modes ") }
+    match index_of(xs, 9) {
+        Some(i) => print("at" + int_to_str(i) + " ")
+        None => print("none ")
+    }
+    match index_of(words, "plum") {
+        Some(i) => print("at" + int_to_str(i))
+        None => print("none")
+    }
+}
+`,
+		want: "28 11 0 -128 275 | has8 no7 fig modes at4 none",
+	},
+	{
+		name: "std.collections.slices: map_into and filter_into write into the caller's buffer and count",
+		source: `module app
+
+import std.collections.slices
+
+fn is_even(x: u32) -> bool {
+    return x % 2 == 0
+}
+
+fn square(x: u32) -> i64 {
+    return (x * x) as i64
+}
+
+fn main() void {
+    var xs: u32[6] = [5, 3, 8, 1, 9, 2]
+    var sq: i64[6] = [0, 0, 0, 0, 0, 0]
+    let n = map_into(xs, sq[0..4], square)
+    print(int_to_str(n) + ":" + i64_to_str(sq[0]) + "," + i64_to_str(sq[3]) + "," + i64_to_str(sq[4]) + " ")
+    var names: string[2] = ["", ""]
+    let m = map_into(xs, names, fn(x: u32) -> string { return "n" + int_to_str(x) })
+    print(int_to_str(m) + ":" + names[0] + names[1] + " | ")
+    var evens: u32[6] = [0, 0, 0, 0, 0, 0]
+    let k = filter_into(xs, evens, is_even)
+    print(int_to_str(k) + ":" + int_to_str(evens[0]) + "," + int_to_str(evens[1]) + " ")
+    var one: u32[1] = [0]
+    let limit: u32 = 4
+    let j = filter_into(xs, one, fn(x: u32) -> bool { return x > limit })
+    print(int_to_str(j) + ":" + int_to_str(one[0]))
+}
+`,
+		want: "4:25,1,0 2:n5n3 | 2:8,2 1:5",
+	},
+	{
+		name: "std.collections.slices: sort over Ordered and sort_by with a function, both stable and in place",
+		source: `module app
+
+import std.collections.slices
+
+struct Item {
+    name: string
+    weight: u32
+}
+
+fn heavier(a: Item, b: Item) -> bool {
+    return a.weight > b.weight
+}
+
+fn main() void {
+    var xs: u32[6] = [5, 3, 8, 1, 9, 2]
+    sort(xs)
+    for x in xs { print(int_to_str(x) + " ") }
+    var neg: i64[4] = [3, -7, 0, -1]
+    sort(neg[1..])
+    for v in neg { print(i64_to_str(v) + " ") }
+    var names: string[4] = ["kiwi", "fig", "apple", "date"]
+    sort(names)
+    for s in names { print(s + " ") }
+    var fs: f32[3] = [2.5, -1.0, 0.5]
+    sort(fs)
+    print(i64_to_str((fs[0] * 10.0) as i64) + " | ")
+    var items: Item[4] = [Item{"a", 3}, Item{"b", 1}, Item{"c", 3}, Item{"d", 2}]
+    sort_by(items, fn(a: Item, b: Item) -> bool { return a.weight < b.weight })
+    for it in items { print(it.name) }
+    print(" ")
+    sort_by(items, heavier)
+    for it in items { print(it.name) }
+    var none: u32[1] = [4]
+    sort(none[0..0])
+    sort(none)
+    print(" " + int_to_str(none[0]))
+}
+`,
+		want: "1 2 3 5 8 9 3 -7 -1 0 apple date fig kiwi -10 | bdac acdb 4",
+	},
 }

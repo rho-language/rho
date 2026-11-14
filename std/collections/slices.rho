@@ -1,0 +1,129 @@
+//
+// @file slices.rho
+// @brief Generic functions over a Slice[T]: sum, search, map, filter and sort.
+//
+// Each takes the elements as a `Slice[T]`, so a caller passes a fixed array, a
+// cut of one, or `Slice.from_raw(p, n)`, and nothing is allocated: a function
+// that produces elements writes them into a Slice the caller provides and
+// answers how many it wrote, and a sort reorders the caller's elements in
+// place.
+//
+//	sum(s)                  the elements added up; 0 for none. `+` is the
+//	                        type's own, so an integer sum wraps
+//	contains(s, x)          whether an element is x
+//	index_of(s, x)          Some(the first index of x), or None
+//	map_into(s, out, f)     out[i] = f(s[i]) for as many as both hold
+//	filter_into(s, out, k)  the elements k answers true for, in order, into
+//	                        out, as many as it holds
+//	sort(s)                 ascending, in place; equal elements keep their order
+//	sort_by(s, less)        in place, by less(a, b); equal elements keep their order
+//
+// The sorts are insertion sorts: no memory beyond one element, stable, and
+// quick on the short or nearly sorted runs an embedded program sorts.
+//
+// Pure Rho, the same on every backend.
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
+module std.collections.slices
+
+import std.core.option
+
+// sum answers the elements of s added up, and 0 when there are none.
+fn sum[T: Number](s: Slice[T]) T {
+    var total: T = T(0)
+    for x in s {
+        total = total + x
+    }
+    return total
+}
+
+// contains answers whether an element of s is x.
+fn contains[T: Equal](s: Slice[T], x: T) bool {
+    for v in s {
+        if v == x {
+            return true
+        }
+    }
+    return false
+}
+
+// index_of answers the index of the first element of s that is x, or None.
+fn index_of[T: Equal](s: Slice[T], x: T) Option[u32] {
+    var i: u32 = 0
+    while i < s.len {
+        if s[i] == x {
+            return Some[u32](i)
+        }
+        i = i + 1
+    }
+    return None[u32]()
+}
+
+// map_into writes f(s[i]) to out[i] for as many elements as both hold, and
+// answers how many it wrote.
+fn map_into[T, U](s: Slice[T], out: Slice[U], f: fn(T) -> U) u32 {
+    var n: u32 = s.len
+    if out.len < n {
+        n = out.len
+    }
+    var i: u32 = 0
+    while i < n {
+        out[i] = f(s[i])
+        i = i + 1
+    }
+    return n
+}
+
+// filter_into writes the elements of s that keep answers true for to out, in
+// order, until out is full, and answers how many it wrote.
+fn filter_into[T](s: Slice[T], out: Slice[T], keep: fn(T) -> bool) u32 {
+    var n: u32 = 0
+    for x in s {
+        if n == out.len {
+            return n
+        }
+        if keep(x) {
+            out[n] = x
+            n = n + 1
+        }
+    }
+    return n
+}
+
+// sort puts the elements of s in ascending order, in place. Equal elements
+// keep the order they had.
+fn sort[T: Ordered](s: Slice[T]) void {
+    var i: u32 = 1
+    while i < s.len {
+        let key: T = s[i]
+        var j: u32 = i
+        while j > 0 && key < s[j - 1] {
+            s[j] = s[j - 1]
+            j = j - 1
+        }
+        s[j] = key
+        i = i + 1
+    }
+}
+
+// sort_by puts the elements of s in the order less says, in place: a before b
+// when less(a, b). Equal elements keep the order they had.
+fn sort_by[T](s: Slice[T], less: fn(T, T) -> bool) void {
+    var i: u32 = 1
+    while i < s.len {
+        let key: T = s[i]
+        var j: u32 = i
+        while j > 0 && less(key, s[j - 1]) {
+            s[j] = s[j - 1]
+            j = j - 1
+        }
+        s[j] = key
+        i = i + 1
+    }
+}

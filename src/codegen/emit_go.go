@@ -1810,6 +1810,11 @@ func rhoYamlKeyLess(a, b string) bool {
 			define: "func rhoStrEq(a, b string) bool {\n\treturn a == b\n}\n",
 		},
 		{
+			// The order of two strings, as C's rho_str_cmp answers it.
+			call:   "rhoStrCmp(",
+			define: "func rhoStrCmp(a, b string) int32 {\n\tif a < b {\n\t\treturn -1\n\t}\n\tif a > b {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
+		},
+		{
 			// An if expression, which Go has no syntax for: both branches have
 			// the same type, so one generic function answers for every one.
 			call:   "rhoSelect(",

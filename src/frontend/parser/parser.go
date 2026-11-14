@@ -621,15 +621,50 @@ func (p *Parser) parseConstDecl() ast.Decl {
 // parseTypeParams parses a bracketed type parameter list, including any
 // defaults: `[T, E = Unit]`.
 func (p *Parser) parseTypeParams() ([]string, map[string]string) {
+	params, defaults, bounds := p.parseTypeParamsWithBounds()
+	for _, name := range params {
+		if written := bounds[name]; len(written) > 0 {
+			panic(NewErrorf(p.boundToken(written[0]), "a constraint is written on a function's type parameter; %s of a struct, an enum or a type takes none (write it on the functions that need it)", name))
+		}
+	}
+	return params, defaults
+}
+
+// boundToken is a token placed where a constraint was written, for an error.
+func (p *Parser) boundToken(bound ast.TypeBound) lexer.Token {
+	at := p.current
+	at.Line = bound.Pos.Line
+	at.Column = bound.Pos.Column
+	at.Lex = bound.Name
+	return at
+}
+
+// parseTypeParamsWithBounds parses a bracketed type parameter list with the
+// constraints a function's parameters may carry: `[T: Number, U = Unit]`, and
+// several joined by `+`, `[T: Ordered + Equal]`.
+func (p *Parser) parseTypeParamsWithBounds() ([]string, map[string]string, map[string][]ast.TypeBound) {
 	params := []string{}
 	defaults := map[string]string{}
+	bounds := map[string][]ast.TypeBound{}
 	if p.current.Kind != lexer.TokenLBracket {
-		return params, defaults
+		return params, defaults, bounds
 	}
 	p.readToken()
 	for p.current.Kind != lexer.TokenRBracket {
 		name := p.name()
 		params = append(params, name)
+		// Constraints, after a colon and joined by plus signs.
+		if p.current.Kind == lexer.TokenColon {
+			p.readToken()
+			for {
+				at := p.position()
+				bounds[name] = append(bounds[name], ast.TypeBound{Name: p.name(), Pos: at})
+				if p.current.Kind != lexer.TokenPlus {
+					break
+				}
+				p.readToken()
+			}
+		}
 		// An optional default, written after an equals sign.
 		if p.current.Kind == lexer.TokenAssign {
 			p.readToken()
@@ -640,7 +675,7 @@ func (p *Parser) parseTypeParams() ([]string, map[string]string) {
 		}
 	}
 	p.readToken()
-	return params, defaults
+	return params, defaults, bounds
 }
 
 func (p *Parser) parseType() ast.TypeExpr {
@@ -1037,7 +1072,10 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 		p.readToken()
 	}
 	name := p.name()
-	typeParams, typeDefaults := p.parseTypeParams()
+	typeParams, typeDefaults, typeBounds := p.parseTypeParamsWithBounds()
+	if len(typeBounds) == 0 {
+		typeBounds = nil
+	}
 	p.expect(lexer.TokenLParen)
 	p.readToken()
 	params := []ast.Param{}
@@ -1065,7 +1103,7 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 	} else if p.current.Kind == lexer.TokenSemicolon {
 		p.readToken()
 	}
-	return ast.FuncDecl{Name: name, Params: params, ReturnType: returnType.String(), TypeParams: typeParams, TypeParamDefaults: typeDefaults, Extern: extern, Body: body}
+	return ast.FuncDecl{Name: name, Params: params, ReturnType: returnType.String(), TypeParams: typeParams, TypeParamDefaults: typeDefaults, TypeParamBounds: typeBounds, Extern: extern, Body: body}
 }
 
 // parseCondition reads an if or while condition. The brace that follows it
@@ -1490,7 +1528,7 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 				expression = ast.MemberExpr{Object: expression, Name: p.name(), TypeArgs: args}
 			} else {
 				index := ast.IdentifierExpr{Name: args[0].Name}
-				expression = ast.IndexExpr{Object: expression, Index: index}
+				expression = ast.IndexExpr{Object: expression, Index: index, TypeArgs: args}
 			}
 		case lexer.TokenLBrace:
 			// A condition's brace opens the body, whatever the name before it

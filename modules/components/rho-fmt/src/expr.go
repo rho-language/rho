@@ -146,6 +146,14 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 
 	case ast.IndexExpr:
 		printExpr(b, x.Object, 7)
+		// `pair[u32, string]`: a generic function named with its type
+		// arguments, every one of them.
+		if len(x.TypeArgs) > 0 {
+			b.WriteString("[")
+			printTypeArgs(b, x.TypeArgs)
+			b.WriteString("]")
+			break
+		}
 		b.WriteString("[")
 		printExpr(b, x.Index, 0)
 		b.WriteString("]")

@@ -502,3 +502,19 @@ A literal captures the names it uses by value, when it runs. On C a function val
 Refused, each with what to write instead: assigning to or taking the address of a captured name; capturing a `Ptr`, `[T]`, `Slice[T]` or a value holding one (pass it as a parameter); capturing a fixed array; fixed arrays in a function type; comparing or printing a function value; a built-in used as a value.
 
 Fixed: type arguments containing commas were split wrongly, so `Slice[fn(u32) -> u32]` and nested applications got the wrong element type (#39); a bare generic function as a value (`return None`) produced invalid C and Go and is now refused with the fix (#41). rho-lint no longer reports an import used only in a type as unused (#40).
+
+## [0.17.0] - 2026-11-15
+
+Generic functions can say what their type parameters must support: `fn sum[T: Number](xs: Slice[T]) T`, `[T: Ordered + Equal]`. The constraints are `Integer`, `Float`, `Number`, `Ordered` (numbers and strings) and `Equal` (numbers, bool, strings, plain enums); each implies the ones it contains. Inside the body the operators a constraint allows are checked once, and every specialisation lowers them exactly as the concrete type would — wrapping, checked division and the same panics on both backends. A type argument that does not satisfy a constraint is refused at the call, naming both.
+
+Type parameters are deduced through `Slice[T]`, fixed arrays, `Option[T]`, function types, nested generic structs and the expected type, with literals consulted last (`max(5, x)` for a `u8` x is `max[u8]`). Type arguments may be written (`f[u32](x)`), and a generic function with its arguments written is a value (`apply(doubled[u32], 21)`). A deduction that fails names the parameters and suggests `f[A, B](...)`.
+
+New in std: `std.core.cmp` (`min`, `max`, `clamp`) and `std.collections.slices` (`sum`, `contains`, `index_of`, `map_into`, `filter_into`, `sort`, `sort_by`), on every backend.
+
+### Breaking
+
+- `<`, `<=`, `>`, `>=` on an unconstrained type parameter are refused: write `[T: Ordered]`. `==` and `!=` on one are still accepted.
+- A function named like a C type word (`fn double`, `fn float`) is refused at its declaration, as a parameter or a local of that name already was: rename it.
+- `==` and `!=` between two structs are refused on every backend (C could not compile them; Go compared field by field): compare the fields.
+
+Fixed: string ordering compared pointers on C (#42); `x as T` and `T` locals in a specialisation kept the name `T` (#43, #44), which made an `i32` `+` in a generic plain C `+`; a nested generic call deduced `add_T` (#45); a fixed array of a plain enum did not become a `Slice` (#46); #47 and #48 above.

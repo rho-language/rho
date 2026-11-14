@@ -24,6 +24,7 @@ package parser
 import (
 	"rho/src/frontend/ast"
 	"rho/src/frontend/lexer"
+	"strings"
 	"testing"
 )
 
@@ -600,5 +601,50 @@ func TestParseFunctionTypesAndLiterals(t *testing.T) {
 	params, result, ok := ast.SplitFuncTypeName("fn(Slice[u8], fn(i32) -> i32) -> Option[u32]")
 	if !ok || len(params) != 2 || params[1] != "fn(i32) -> i32" || result != "Option[u32]" {
 		t.Errorf("split gives %v %q %v", params, result, ok)
+	}
+}
+
+// A function's type parameters carry their constraints, several joined by `+`
+// and before a default, each placed where it is written; a struct's parameter
+// takes none; a generic function named with its type arguments keeps them all.
+func TestParseConstraintsAndGenericValues(t *testing.T) {
+	source := "module app\n" +
+		"fn sum[T: Number](xs: Slice[T]) -> T {\n  return xs[0]\n}\n" +
+		"fn pick[T: Ordered + Equal, U = Unit](a: T) -> T {\n  return a\n}\n" +
+		"fn main() {\n  let f = pick[u32, string]\n  let g = sum[u8]\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	sum := mod.Decls[0].(ast.FuncDecl)
+	if bounds := sum.TypeParamBounds["T"]; len(bounds) != 1 || bounds[0].Name != "Number" || bounds[0].Pos.Line != 2 || bounds[0].Pos.Column != 11 {
+		t.Errorf("sum's T is bounded by %+v", bounds)
+	}
+	pick := mod.Decls[1].(ast.FuncDecl)
+	if text := ast.BoundsText(pick.TypeParamBounds["T"]); text != "Ordered + Equal" {
+		t.Errorf("pick's T is bounded by %q", text)
+	}
+	if len(pick.TypeParamBounds["U"]) != 0 || pick.TypeParamDefaults["U"] != "Unit" || len(pick.TypeParams) != 2 {
+		t.Errorf("pick's U is %+v with default %q", pick.TypeParamBounds["U"], pick.TypeParamDefaults["U"])
+	}
+	main := mod.Decls[2].(ast.FuncDecl)
+	value, ok := main.Body[0].(ast.LetStmt).Value.(ast.IndexExpr)
+	if !ok || len(value.TypeArgs) != 2 || value.TypeArgs[1].String() != "string" {
+		t.Errorf("pick[u32, string] is %#v", main.Body[0].(ast.LetStmt).Value)
+	}
+	if one := main.Body[1].(ast.LetStmt).Value.(ast.IndexExpr); len(one.TypeArgs) != 1 || one.Index.(ast.IdentifierExpr).Name != "u8" {
+		t.Errorf("sum[u8] is %#v", one)
+	}
+
+	tokens, err = lexer.Lex("module app\nstruct Box[T: Number] { v: T }\n")
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	if _, err := Parse(tokens); err == nil || !strings.Contains(err.Error(), "a constraint is written on a function's type parameter") {
+		t.Errorf("a constraint on a struct's parameter should be refused, got %v", err)
 	}
 }

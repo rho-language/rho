@@ -41,3 +41,7 @@ Slice cuts (`s[a..b]`, `s[..b]`, `s[a..]`, `s[..]`) are printed.
 ## [0.1.6] - 2026-11-15
 
 Function types (`fn(A) -> R`, `(fn(u32) -> u32)[4]`) and function literals are printed.
+
+## [0.1.7] - 2026-11-15
+
+Constraints on type parameters (`[T: Ordered + Equal]`) and explicit type arguments are printed.

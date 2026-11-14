@@ -236,7 +236,7 @@ var runtimeFragments = []RuntimeFragment{
 		Source: stringsSource,
 		Provides: []string{
 			"rho_concat", "rho_string_from_i32", "rho_str_from_byte",
-			"rho_int_from_str", "rho_int_to_str", "rho_strlen", "rho_str_eq", "rho_str_starts_with",
+			"rho_int_from_str", "rho_int_to_str", "rho_strlen", "rho_str_eq", "rho_str_cmp", "rho_str_starts_with",
 			"rho_str_trim_prefix", "rho_str_contains", "rho_str_at",
 			"rho_str_index_of", "rho_str_slice",
 		},
@@ -249,6 +249,7 @@ var runtimeFragments = []RuntimeFragment{
 			"const char* rho_int_to_str(uint32_t value);",
 			"uint32_t rho_strlen(const char* s);",
 			"bool rho_str_eq(const char* a, const char* b);",
+			"int32_t rho_str_cmp(const char* a, const char* b);",
 			"bool rho_str_starts_with(const char* s, const char* prefix);",
 			"const char* rho_str_trim_prefix(const char* s, const char* prefix);",
 			"bool rho_str_contains(const char* haystack, const char* needle);",

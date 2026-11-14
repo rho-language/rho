@@ -443,6 +443,23 @@ func (tc *TypeChecker) applicationFor(expr ast.Expr, scope map[string]ir.Type, e
 // An expected result type is consulted first, which is what lets
 // `let x: string = make(1)` pin the result even when an argument is ambiguous.
 func (tc *TypeChecker) deduceCallArgs(decl ast.FuncDecl, args []ast.Expr, scope map[string]ir.Type, expected ir.Type) []ir.Type {
+	for _, arg := range args {
+		if _, err := tc.exprType(arg, scope); err != nil {
+			return nil
+		}
+	}
+	subs := tc.partialDeduction(decl, args, scope, expected)
+	return tc.orderedArgs(decl.TypeParams, decl.TypeParamDefaults, subs)
+}
+
+// partialDeduction is what a call's arguments and expected type say about a
+// generic function's type parameters, before defaults: the parameters it
+// could not bind are missing from the result.
+//
+// A written number is consulted last, and only for a parameter nothing else
+// bound: in `max(x, 5)` and `max(5, x)` alike the u8 `x` says what T is and
+// the 5 becomes a u8, as it would beside a u8 anywhere else.
+func (tc *TypeChecker) partialDeduction(decl ast.FuncDecl, args []ast.Expr, scope map[string]ir.Type, expected ir.Type) map[string]ir.Type {
 	subs := map[string]ir.Type{}
 
 	// The expected type seeds the result, and any parameter it mentions.
@@ -454,15 +471,37 @@ func (tc *TypeChecker) deduceCallArgs(decl ast.FuncDecl, args []ast.Expr, scope 
 	if len(decl.Params) < limit {
 		limit = len(decl.Params)
 	}
+	deferred := []int{}
 	for i := 0; i < limit; i++ {
+		if isUntypedConstant(args[i]) {
+			deferred = append(deferred, i)
+			continue
+		}
 		actual, err := tc.exprType(args[i], scope)
 		if err != nil {
-			return nil
+			continue
 		}
 		tc.unifyTypeArgs(decl.TypeParams, tc.parameterType(decl.Params[i].TypeExpr, decl.Params[i].Type, decl.TypeParams), actual, subs)
 	}
+	for _, i := range deferred {
+		actual, err := tc.exprType(args[i], scope)
+		if err != nil {
+			continue
+		}
+		tc.unifyTypeArgs(decl.TypeParams, tc.parameterType(decl.Params[i].TypeExpr, decl.Params[i].Type, decl.TypeParams), actual, subs)
+	}
+	return subs
+}
 
-	return tc.orderedArgs(decl.TypeParams, decl.TypeParamDefaults, subs)
+// deductionArgsError is the error of an argument that does not type, which is
+// the one worth reporting when a call's type arguments cannot be deduced.
+func (tc *TypeChecker) deductionArgsError(decl ast.FuncDecl, args []ast.Expr, scope map[string]ir.Type) error {
+	for _, arg := range args {
+		if _, err := tc.exprType(arg, scope); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // deduceStructArgs infers a generic struct's type arguments from its field
@@ -890,7 +929,10 @@ func (tc *TypeChecker) funcToSpecialisation(fn ast.FuncDecl, subs map[string]ir.
 	// The body is lowered with the substitution in place.
 	previous := tc.currentTypeArgs
 	tc.currentTypeArgs = subs
-	tc.currentReturnHint = tc.typeFor(fn.ReturnType)
+	// The hint a returned call is deduced from is the specialised result: a
+	// `return add(x, y)` in a body specialised at u8 returns a u8, and the
+	// unsubstituted `T` would deduce the call's own T as the name T.
+	tc.currentReturnHint = tc.substituteType(tc.typeFor(fn.ReturnType), subs)
 	savedArena := tc.arenaEnter(tc.qualifiedName(fn.Owner, name), name, fn.Owner)
 	previousBackings := tc.backings
 	tc.backings = sliceBackings(fn.Body, fn.Params)

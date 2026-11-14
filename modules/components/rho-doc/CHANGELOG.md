@@ -46,3 +46,7 @@ A repository describes its site in `docs/site.yml`: the title, the page `index.h
 ## [0.2.1] - 2026-11-14
 
 The API reference lists enums and their variants.
+
+## [0.2.2] - 2026-11-15
+
+API signatures show the constraints on type parameters.

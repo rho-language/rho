@@ -150,6 +150,92 @@ Generic declarations are templates, and they are instantiated rather than looked
 up through a table: every application of a declaration is a concrete function, so
 a call is a direct, inlinable call and there is no vtable to indirect through.
 
+### Constraints
+
+A generic body is checked once, for every type its parameters may become, so
+what it may do with a `T` is what every one of those types supports. On its own
+a type parameter supports being passed, returned, stored, compared with `==` and
+`!=` (which the type it is specialised at then has to support; `Equal` checks
+that where the generic is called), and converted with `u32(x)`; its arithmetic
+and ordering are refused. A
+constraint, written after the parameter, says which types it may be and so
+what the body may do with it:
+
+```rho
+fn sum[T: Number](values: Slice[T]) T {
+    var total: T = T(0)
+    for v in values {
+        total = total + v
+    }
+    return total
+}
+
+fn largest[T: Ordered](a: T, b: T) T {
+    if a > b {
+        return a
+    }
+    return b
+}
+```
+
+| Constraint | Satisfied by | Allows on a `T` |
+|---|---|---|
+| `Integer` | `i8` … `i64`, `u8` … `u64` | `+ - * / %`, `& \| ^`, unary `-`, ordering, `==` |
+| `Float` | `f32`, `f64` | `+ - * /`, unary `-`, ordering, `==` |
+| `Number` | an `Integer` or a `Float` | `+ - * /`, unary `-`, ordering, `==` |
+| `Ordered` | a number type, `string` | `< <= > >=`, `==`, `!=` |
+| `Equal` | a number type, `bool`, `string`, an enum without data | `==`, `!=` |
+
+Each row includes the rows below it, so a `T: Integer` may be passed where a
+`U: Number` is wanted. Several are joined with `+`, `[T: Ordered + Equal]`, and
+a type argument satisfies each. A constraint is written on a function's type
+parameter; a struct's or an enum's takes none.
+
+Both operands of an operator are the same `T`. A number written beside one is
+converted to it, and has to mean the same for every type `T` may be: an integer
+from 0 to 127 (`total + 1`, `x == 0`), or, for a parameter that is only a
+`Float`, an integer up to 2^24. Anything else is converted explicitly — `T(10)`,
+`T(n)` for a number `n`, `x as T` — which a number-constrained `T` allows, and a
+written number in it is held to the same rule. A value of another type is
+converted to `T` before it meets one (`x * T(n)`). A shift on a `T` is refused,
+as its meaning depends on the width.
+
+A specialisation is lowered exactly as the same code written at the concrete
+type: `sum` at `i8` adds as `i8` does, wrapping, and a `/` by zero in a generic
+body stops the program with `rho: division by zero`, on C and on Go.
+
+A type argument that does not satisfy a constraint is refused where the call is
+written, naming the function, the parameter, the constraint and the type:
+`add needs its type parameter T to satisfy Number, and string does not`. An
+operator a parameter's constraints do not allow is refused where it is written,
+with the constraint to add.
+
+### Deduction
+
+A call's type arguments are deduced from its arguments and, when it has one,
+the type it is expected to have. A parameter is found wherever it is written in
+a parameter's type: `Slice[T]` against a `Slice[u8]` or a fixed array `u8[4]`,
+`Option[T]`, `Pair[A, B]` and a generic struct holding one, and a function type
+`fn(T) -> U` against the function passed. A written number is consulted last:
+in `largest(5, x)` with `x` a `u8`, `T` is `u8` and the 5 becomes one.
+
+```rho
+let v: u64 = make()                 // T from the declared type
+let r: Result[u32, string] = Ok(5)  // T and E from the declared type
+let total = sum(raw)                // T from the fixed array u32[6]
+```
+
+A parameter nothing passed says anything about, and that has no default, is
+refused with the parameter named and the call to write instead
+(`make[T](...)`). The type arguments may always be written: `make[u64]()`. Either
+all of them are written, or those left out have defaults; a call does not write
+some and deduce the rest.
+
+A generic function named with its type arguments is a value of the
+specialisation they name: `let f = identity[u32]`, `apply(doubled[u32], 21)`.
+Without them it is a value only where a function type says which
+specialisation is meant.
+
 ## Arrays, slices and pointers
 
 There are three sequence types, each with one job.
@@ -368,6 +454,22 @@ let r = Pair[string].Neither     // written, when nothing else says
 
 A variant whose values do not say what `T` is takes it from where it is used —
 a declared type, a parameter, a return — or from a default, or is written.
+
+A generic function takes one apart with `match` and builds one, whatever its
+parameters are specialised at:
+
+```rho
+fn area[T: Number](s: Pair[T]) T {
+    match s {
+        Both(a, b) => { return a * b }
+        One(a) => { return a }
+        Neither => { return T(0) }
+    }
+}
+```
+
+An enum cannot hold itself (`Node(Tree[T], Tree[T])`), which would make it
+infinitely large; it holds an index into an array of them, or a `Ptr`.
 
 ### What an enum is, and what it is not
 

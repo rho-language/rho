@@ -443,6 +443,10 @@ func countNamesIn(node any, names map[string]bool) {
 	case ast.IndexExpr:
 		countNamesIn(one.Object, names)
 		countNamesIn(one.Index, names)
+		// `pair[alert.Rule, u32]`: a generic function named with its types.
+		for _, argument := range one.TypeArgs {
+			countTypeNames(argument, names)
+		}
 	case ast.SliceExpr:
 		countNamesIn(one.Object, names)
 		if one.Low != nil {

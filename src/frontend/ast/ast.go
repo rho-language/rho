@@ -386,7 +386,31 @@ type FuncDecl struct {
 	// TypeParamDefaults holds the default type written for a parameter, as in
 	// `fn Ok[T, E = Unit](v: T)`. A parameter with no entry has no default.
 	TypeParamDefaults map[string]string
-	Extern            bool
+	// TypeParamBounds holds the constraints written on a parameter, as in
+	// `fn sum[T: Number](xs: Slice[T])` or `[T: Ordered + Equal]`. A parameter
+	// with no entry is unconstrained.
+	TypeParamBounds map[string][]TypeBound
+	Extern          bool
+}
+
+// TypeBound is one constraint written on a type parameter: `Number` in
+// `[T: Number]`, with where it is written, so a constraint nothing defines is
+// reported at its name.
+type TypeBound struct {
+	Name string
+	Pos  Position
+}
+
+// BoundsText renders a parameter's constraints as written: `Ordered + Equal`.
+func BoundsText(bounds []TypeBound) string {
+	text := ""
+	for i, bound := range bounds {
+		if i > 0 {
+			text += " + "
+		}
+		text += bound.Name
+	}
+	return text
 }
 
 func (FuncDecl) declNode() {}
@@ -652,6 +676,10 @@ func (n MemberExpr) Position() Position { return n.Pos }
 type IndexExpr struct {
 	Node
 	Object, Index Expr
+	// TypeArgs are set when the brackets held types rather than a value:
+	// `identity[u32]` or `pair[u32, string]` naming a specialisation of a
+	// generic function as a value. Index is then the first of them, as a name.
+	TypeArgs []TypeExpr
 }
 
 func (IndexExpr) exprNode() {}

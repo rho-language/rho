@@ -56,22 +56,49 @@ appears below as open.
 | 39 | type checker | A member of a struct named by a generic application with a nested one in it, `Pair[Slice[u8], u32]`, or a function type, `Slice[fn(u32) -> u32]`, read its type arguments by splitting at every comma and resolved none of them, so `s[i]` of a `Slice[fn(u32) -> u32]` was typed as a struct named `fn_u32_u32`. | The arguments are split at the top level and a function type among them is resolved. | parity: "closures: arrays, a Slice and an Option of functions…" |
 | 40 | rho-lint | An import used only as the module of a type, `fn f(r: alert.Rule)`, was reported as unused: the rule recorded the type's name `alert.Rule` and not its module. | A dotted type name counts its module as used, and a function type counts every type it names. | `TestRhoRulesReadClosuresAndFunctionTypes` |
 | 41 | type checker | A generic function named where a value goes, `return None` for `None()`, was typed as a placeholder every struct type accepted, and the build failed in the C and Go compilers on a name nothing declared. | It is refused where it is written, with the call to write instead. | `TestClosuresThatCannotBeHonouredAreRefused` ("a generic function named where…") |
+| 42 | C backend | `<`, `<=`, `>` and `>=` between two strings compared their addresses on C and their bytes on Go, so `"b" < "a"` could be true on C. | Both compare the bytes as unsigned values, through `rho_str_cmp` on C. | parity: "generics: Ordered on numbers and strings…", "std.collections.slices: sort over Ordered…" |
+| 43 | compiler: generics | A cast to a type parameter in a generic body, `x as T`, was emitted as a cast to the name `T` in every specialisation. | It is a cast to the type the specialisation substitutes. | parity: "generics: Integer remainder and bitwise operators, conversions…" |
+| 44 | compiler: generics | A local of a type parameter, `let key: T = s[i]`, was the name `T` to what was lowered after it in a specialisation, so an operation on it was lowered for no type: a `<` or `==` on a string compared addresses on C, and a `+` on an i32 was C's `+`, which overflows. | The local has the type the specialisation substitutes. | parity: "std.collections.slices: sort over Ordered…", "generics: Number on every integer width…" |
+| 45 | compiler: generics | A generic function returning a call of another, `return add(a, b)`, deduced the inner call's parameter from its own unsubstituted result type, so it called a specialisation `add_T` nothing could compile. | The result type a return is deduced from is the specialised one. | parity: "generics: a constrained generic calls another…" |
+| 46 | type checker | A fixed array of a plain enum, `Mode[2]`, was not taken where a `Slice[Mode]` is, as every other fixed array is. | It converts to a Slice of its elements. | parity: "std.collections.slices: sum, contains and index_of…" |
+| 47 | type checker | A function named like a C type word, `fn double(n: u32) u32`, was accepted and the C build failed on it, while a parameter or a local of that name was refused with a reason. | A function of that name is refused the same way, on every backend, at the declaration. | `TestWhatCCannotCompileIsRefusedByTheChecker` |
+| 48 | type checker | `==` between two structs was accepted and emitted as C's `==`, which C refuses for a struct, while Go compared field by field. | It is refused on every backend, saying to compare the fields. | `TestWhatCCannotCompileIsRefusedByTheChecker` |
 
 ## Open
 
-None. An open entry is a row of `#`, where, what is wrong and a reproduction.
+An open entry is a row of `#`, where, what is wrong and a reproduction.
+
+| # | Where | What is wrong | Reproduction |
+|---|---|---|---|
+| — | | Nothing is open. | |
 
 A case added to the cross-backend suite with `diverges:` is a new open entry
 here.
 
-Limitations, recorded so they are not mistaken for bugs: a generic body cannot
-do arithmetic on a type parameter (`T + T` is refused); `std.collections.map`
+Limitations, recorded so they are not mistaken for bugs: `std.collections.map`
 hashes its key through `u32(key)`, so a key must convert to one; a Go platform
 port could in principle supply the `*_hw_*` functions, but the embedded modules
 are tagged for C and a Go build is refused; there are no `<<=`, `>>=` or `%=`
 operators; a compound assignment evaluates its target twice, which matters only
 for a target with a call in it; an index into a `[T]` or a `Ptr[T]` is not
 checked.
+
+Limitations of generics (Phase 3d): a type parameter is constrained only by
+the language's constraints (`Integer`, `Float`, `Number`, `Ordered`, `Equal`),
+not by functions a type must have — Rho has no overloading, so `to_string(x: T)`
+could name one function only; pass a function value (`fn(T) -> string`)
+instead; a constraint is written on a function's type parameter, not a
+struct's or an enum's; arithmetic and ordering on an unconstrained parameter
+are refused, but `==`, `!=` and a conversion such as `u32(x)` are accepted on
+one as they were before constraints, and are checked only by the C and Go
+compilers at each specialisation (`T: Equal` checks `==` at the call); a shift on
+a type parameter is refused; a written number meeting a `T` is an integer from 0
+to 127 (to 2^24 for a parameter that is only `Float`), anything else is written
+`T(...)`; both sides of an operator are the same parameter; a call writes all of
+its type arguments or none (those with defaults may be left out), and does not
+deduce the ones it leaves out; a type argument is deduced from what a call
+passes and from the type it is expected to have, not from how its result is
+used later; an enum cannot hold itself, even through a type parameter.
 
 Limitations of closures (Phase 3c): a closure captures by value and cannot
 assign to what it captured or take its address; it cannot capture a pointer, a
@@ -81,7 +108,8 @@ cannot copy into an environment — pass those as parameters, or wrap an array i
 a struct; a closure cannot name itself, so recursion goes through a named
 function; a function type cannot take or return a fixed array, and an array of
 functions is written `(fn(...) -> R)[N]`; a generic function is a value only
-where a function type says which specialisation is meant, and a built-in such as
+where a function type says which specialisation is meant or when its type
+arguments are written (`identity[u32]`), and a built-in such as
 `print` never is; function values cannot be compared or printed; an environment
 lives in the string arena under the string rule, so a loop that keeps the
 closures it makes is not released (refused on a board, as for strings), and a

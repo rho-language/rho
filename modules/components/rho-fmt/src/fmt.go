@@ -220,7 +220,7 @@ func printDecl(b *strings.Builder, decl ast.Decl) {
 
 	case ast.FuncDecl:
 		if x.Extern {
-			b.WriteString("extern fn " + x.Name + typeParams(x.TypeParams, x.TypeParamDefaults))
+			b.WriteString("extern fn " + x.Name + boundedTypeParams(x.TypeParams, x.TypeParamDefaults, x.TypeParamBounds))
 			b.WriteString("(")
 			printParams(b, x.Params)
 			b.WriteString(")")
@@ -230,7 +230,7 @@ func printDecl(b *strings.Builder, decl ast.Decl) {
 			b.WriteString("\n")
 			return
 		}
-		b.WriteString("fn " + x.Name + typeParams(x.TypeParams, x.TypeParamDefaults))
+		b.WriteString("fn " + x.Name + boundedTypeParams(x.TypeParams, x.TypeParamDefaults, x.TypeParamBounds))
 		b.WriteString("(")
 		printParams(b, x.Params)
 		b.WriteString(")")
@@ -277,16 +277,25 @@ func fieldType(f ast.Field) string {
 // defaults, as in `[T, E = Unit]`. It returns an empty string when there are
 // none, so the caller can write it straight after the name.
 func typeParams(params []string, defaults map[string]string) string {
+	return boundedTypeParams(params, defaults, nil)
+}
+
+// boundedTypeParams is a function's type parameters with the constraints
+// written on them: `[T: Ordered + Equal, U = Unit]`.
+func boundedTypeParams(params []string, defaults map[string]string, bounds map[string][]ast.TypeBound) string {
 	if len(params) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(params))
 	for _, param := range params {
-		if def, ok := defaults[param]; ok && def != "" {
-			parts = append(parts, param+" = "+def)
-			continue
+		part := param
+		if written := bounds[param]; len(written) > 0 {
+			part += ": " + ast.BoundsText(written)
 		}
-		parts = append(parts, param)
+		if def, ok := defaults[param]; ok && def != "" {
+			part += " = " + def
+		}
+		parts = append(parts, part)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }

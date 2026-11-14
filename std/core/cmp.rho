@@ -1,0 +1,48 @@
+//
+// @file cmp.rho
+// @brief The smaller, the larger, and a value kept between two others, for any
+// ordered type.
+//
+// Each is a generic function over `Ordered` — every integer type, f32, f64 and
+// string — and is specialised for the type it is called with, so `max(a, b)` on
+// two u8 is the u8 comparison and nothing else. Two equal values answer the
+// first. `clamp(x, lo, hi)` answers `lo` below the range and `hi` above it; a
+// range with `lo > hi` answers `lo` for every x below `lo`, and `hi` otherwise.
+//
+// Pure Rho, the same on every backend.
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
+module std.core.cmp
+
+// min answers the smaller of a and b, and a when they are equal.
+fn min[T: Ordered](a: T, b: T) T {
+    if b < a {
+        return b
+    }
+    return a
+}
+
+// max answers the larger of a and b, and a when they are equal.
+fn max[T: Ordered](a: T, b: T) T {
+    if b > a {
+        return b
+    }
+    return a
+}
+
+// clamp answers x kept between lo and hi.
+fn clamp[T: Ordered](x: T, lo: T, hi: T) T {
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}

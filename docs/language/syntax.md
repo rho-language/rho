@@ -128,6 +128,32 @@ fn first[T](items: Slice[T]) T {
 }
 ```
 
+A parameter may carry a constraint after a colon, several joined by `+`, before
+any default; the constraints and what each allows are in
+{ref}`types <language/types>`:
+
+```rho
+fn clamp[T: Ordered](x: T, lo: T, hi: T) T {
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+fn count_equal[T: Ordered + Equal](items: Slice[T], x: T) u32 {
+    var n: u32 = 0
+    for v in items {
+        if v == x {
+            n = n + 1
+        }
+    }
+    return n
+}
+```
+
 `extern fn` declares a function the host supplies rather than one the program
 writes. Its body is absent. The runtime implements the `rho_*` functions
 ({ref}`built-in functions <language/builtins>`); a port
@@ -203,7 +229,8 @@ element of a `Slice[T]` and the payload of an `Option`. An array of functions
 puts the type in parentheses, `(fn(u32) -> u32)[4]`, because
 `fn() -> u32[4]` would be a function returning an array, which is refused. A
 generic function is a value where a function type says which specialisation is
-meant (`let f: fn(u32) -> u32 = identity`); a built-in such as `print` is not a
+meant (`let f: fn(u32) -> u32 = identity`), or when it is named with its type
+arguments (`let f = identity[u32]`); a built-in such as `print` is not a
 value, and is wrapped in a literal. Calling a value that holds no function — the
 zero of a function type, as in a struct field never set — stops the program with
 `call of a function value that holds no function` on both backends. Function
@@ -558,6 +585,10 @@ fn main() void {
     print(int_to_str(n))
 }
 ```
+
+The type arguments are left out when the call says what they are, and are
+deduced ({ref}`types <language/types>`): `identity(n)`. A generic function named
+with its type arguments and not called is a value, `let f = identity[u32]`.
 
 A cast is written `as`, or as the type applied to the value:
 

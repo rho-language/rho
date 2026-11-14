@@ -626,3 +626,25 @@ fn main() void {
 		rule.Apply(source)
 	}
 }
+
+// An import named only in the type arguments of a generic function used as a
+// value is in use; and a constrained generic function is read without stopping
+// on its constraints.
+func TestRhoRulesReadConstraintsAndGenericValues(t *testing.T) {
+	source := aRho("/project/src/main.rho", `module main
+
+import alert
+
+fn pick[A: Equal, B](a: A, b: B) -> B {
+    return b
+}
+
+fn main() void {
+    let f = pick[u32, alert.Rule]
+}
+`)
+	assertNoFindings(t, rulesRun(t, RhoRules(), RhoUnusedImport, source), "the import is in use")
+	for _, rule := range RhoRules().Rules {
+		rule.Apply(source)
+	}
+}

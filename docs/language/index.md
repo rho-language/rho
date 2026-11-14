@@ -187,6 +187,10 @@ Stated plainly, because a reference that implies otherwise is worse than none:
   captured or capture a reference (a pointer, a `[T]`, a `Slice[T]`), and its
   environment lives in the string arena under the string rule
   ({ref}`language/types`).
+- Generics constrained by the language's own constraints only — `Integer`,
+  `Float`, `Number`, `Ordered`, `Equal` — and not by a set of functions a type
+  must have: pass a function value (`fn(T) -> string`) instead
+  ({ref}`language/types`).
 - No maps in the language. `std.collections.map` is a fixed-capacity table
   written in Rho.
 - No reflection.

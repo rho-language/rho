@@ -283,6 +283,9 @@ func (tc *TypeChecker) namedFuncValue(name string, at ast.Position, scope map[st
 			return funcValue{}, true, locate(fmt.Errorf(msgGenericFuncValue, name, typeName(expected), name, strings.Join(decl.TypeParams, ", ")), at, "")
 		}
 		full := tc.buildSubstitutionFromTypes(decl.TypeParams, decl.TypeParamDefaults, args)
+		if err := tc.checkTypeArgBounds(decl, full, at); err != nil {
+			return funcValue{}, true, err
+		}
 		paramTypes := make([]ir.Type, len(decl.Params))
 		for i, param := range decl.Params {
 			paramTypes[i] = tc.substituteType(tc.parameterType(param.TypeExpr, param.Type, decl.TypeParams), full)
@@ -313,6 +316,54 @@ func (tc *TypeChecker) namedFuncValue(name string, at ast.Position, scope map[st
 		callee = name
 	}
 	return funcValue{typ: funcTypeOf(signature.params, signature.result), callee: callee}, true, nil
+}
+
+// explicitFuncValue is a generic function named with its type arguments where a
+// value goes: `identity[u32]`, `pair[u32, string]`. ok is false for anything
+// else — an index into an array, or an application of a name that is not a
+// generic function.
+func (tc *TypeChecker) explicitFuncValue(index ast.IndexExpr, scope map[string]ir.Type) (funcValue, bool, error) {
+	identifier, isName := index.Object.(ast.IdentifierExpr)
+	if !isName || len(index.TypeArgs) == 0 {
+		return funcValue{}, false, nil
+	}
+	if _, local := scope[identifier.Name]; local {
+		return funcValue{}, false, nil
+	}
+	decl, generic := tc.genericFuncs[identifier.Name]
+	if !generic || !tc.isGenericName(identifier.Name) {
+		return funcValue{}, false, nil
+	}
+	at := placed(identifier.Pos, index.Pos)
+	if len(index.TypeArgs) > len(decl.TypeParams) {
+		return funcValue{}, true, locate(fmt.Errorf("%s takes %d type arguments (%s), and %d are written", identifier.Name, len(decl.TypeParams), strings.Join(decl.TypeParams, ", "), len(index.TypeArgs)), at, "")
+	}
+	for _, arg := range index.TypeArgs {
+		if _, ok := tc.resolveType(arg.String()); !ok {
+			return funcValue{}, true, locate(fmt.Errorf("unknown type %q in the type arguments of %s", arg.String(), identifier.Name), at, "")
+		}
+	}
+	args := tc.resolveTypeArgs(index.TypeArgs)
+	args = tc.expandWithDefaults(decl.TypeParams, decl.TypeParamDefaults, args)
+	if args == nil {
+		missing := decl.TypeParams[len(index.TypeArgs):]
+		return funcValue{}, true, locate(fmt.Errorf(msgCannotDeduce, identifier.Name, strings.Join(missing, " or "), identifier.Name, strings.Join(decl.TypeParams, ", ")), at, "")
+	}
+	full := tc.buildSubstitutionFromTypes(decl.TypeParams, decl.TypeParamDefaults, args)
+	if err := tc.checkTypeArgBounds(decl, full, at); err != nil {
+		return funcValue{}, true, err
+	}
+	paramTypes := make([]ir.Type, len(decl.Params))
+	for i, param := range decl.Params {
+		paramTypes[i] = tc.resolveApplied(tc.substituteType(tc.parameterType(param.TypeExpr, param.Type, decl.TypeParams), full))
+	}
+	result := tc.resolveApplied(tc.substituteType(tc.typeFor(decl.ReturnType), full))
+	in := instantiation{Name: identifier.Name, TypeArgs: args}
+	return funcValue{
+		typ:           funcTypeOf(paramTypes, result),
+		callee:        tc.qualifiedName(decl.Owner, mangleGeneric(identifier.Name, args)),
+		instantiation: &in,
+	}, true, nil
 }
 
 // qualifiedFuncValue is `module.function` named where a value goes.

@@ -783,3 +783,21 @@ func TestAStandaloneSiteHasNoLinkBack(t *testing.T) {
 		t.Fatal("expected no link back from a site published nowhere")
 	}
 }
+
+// A constrained generic function is documented with its constraints, so the
+// signature says what a type argument has to be.
+func TestApiSignatureCarriesConstraints(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "std/core/cmp.rho", "module std.core.cmp\n\nfn clamp[T: Ordered](x: T, lo: T, hi: T) T {\n    return x\n}\n\nfn pick[T: Ordered + Equal, U](a: T, b: U) T {\n    return a\n}\n")
+	set := ReadApiSet(root, "")
+	if len(set.Modules) != 1 || len(set.Modules[0].Functions) != 2 {
+		t.Fatalf("unexpected modules: %+v", set.Modules)
+	}
+	functions := set.Modules[0].Functions
+	if got := functions[0].Signature(); got != "fn clamp[T: Ordered](x: T, lo: T, hi: T) T" {
+		t.Errorf("unexpected signature %q", got)
+	}
+	if got := functions[1].Signature(); got != "fn pick[T: Ordered + Equal, U](a: T, b: U) T" {
+		t.Errorf("unexpected signature %q", got)
+	}
+}
