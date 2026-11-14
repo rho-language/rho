@@ -160,7 +160,7 @@ Only the Go backend has these:
   `rho_sse_follow` follows another service's event stream into a file. No token
   is put on a command line or in a URL.
 - **The file system beyond one file:** `rho_path_exists`, `rho_list_dir`,
-  `read_file` and `write_file` for bytes, and `get_args` and `rho_arg` for the
+  `read_file` and `write_file` for bytes (a `Slice[u8]`), and `get_args` and `rho_arg` for the
   command line.
 
 Anything else, such as a network socket, a serial line, a database or logging,

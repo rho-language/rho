@@ -926,14 +926,20 @@ func EmitGoRuntime(implementation string) string {
 	imports = addGoImport(imports, "strings")
 
 	// File and argument builtins.
-	body.WriteString("// rhoReadFile reads a whole file into a byte slice, or nil when it cannot.\n")
-	body.WriteString("func rhoReadFile(path string) []byte {\n")
+	imports = addGoImport(imports, "unsafe")
+	// read_file and write_file speak Slice[u8]. Its Go struct is the program's
+	// (SliceU8), and an unnamed struct of the same fields is assignable to it
+	// both ways, so the runtime needs no name the program declares.
+	body.WriteString("// rhoReadFile reads a whole file into a Slice[u8], or an empty one when it cannot.\n")
+	body.WriteString("func rhoReadFile(path string) struct {\n\tptr unsafe.Pointer\n\tlen uint32\n} {\n")
 	body.WriteString("\tdata, err := os.ReadFile(path)\n")
-	body.WriteString("\tif err != nil {\n\t\treturn nil\n\t}\n")
-	body.WriteString("\treturn data\n}\n\n")
-	body.WriteString("// rhoWriteFile writes a byte slice to a file.\n")
-	body.WriteString("func rhoWriteFile(path string, data []byte) {\n")
-	body.WriteString("\tos.WriteFile(path, data, 0644)\n}\n\n")
+	body.WriteString("\tif err != nil || len(data) == 0 || uint64(len(data)) > 0xFFFFFFFF {\n\t\treturn struct {\n\t\t\tptr unsafe.Pointer\n\t\t\tlen uint32\n\t\t}{}\n\t}\n")
+	body.WriteString("\treturn struct {\n\t\tptr unsafe.Pointer\n\t\tlen uint32\n\t}{unsafe.Pointer(&data[0]), uint32(len(data))}\n}\n\n")
+	body.WriteString("// rhoWriteFile writes a Slice[u8] to a file.\n")
+	body.WriteString("func rhoWriteFile(path string, data struct {\n\tptr unsafe.Pointer\n\tlen uint32\n}) {\n")
+	body.WriteString("\tvar bytes []byte\n")
+	body.WriteString("\tif data.ptr != nil && data.len > 0 {\n\t\tbytes = unsafe.Slice((*byte)(data.ptr), data.len)\n\t}\n")
+	body.WriteString("\tos.WriteFile(path, bytes, 0644)\n}\n\n")
 	body.WriteString("// rhoGetArgs returns the command-line arguments as one space-joined string.\n")
 	body.WriteString("func rhoGetArgs() string {\n")
 	body.WriteString("\treturn strings.Join(os.Args[1:], \" \")\n}\n\n")

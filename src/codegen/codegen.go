@@ -342,9 +342,7 @@ func (cg *Codegen) emitStruct(s ir.StructIR) {
 	fields, variants, shared := enumLayout(packedFields(s))
 	for _, f := range fields {
 		cg.b.WriteString("    ")
-		cg.b.WriteString(cTypeFor(f.Type))
-		cg.b.WriteString(" ")
-		cg.b.WriteString(f.Name)
+		cg.b.WriteString(cDeclaration(f.Type, f.Name))
 		cg.b.WriteString(";\n")
 	}
 	// An enum's variants share their storage: a value is one variant at a time,
@@ -356,9 +354,7 @@ func (cg *Codegen) emitStruct(s ir.StructIR) {
 			cg.b.WriteString("        struct {")
 			for _, f := range variant.fields {
 				cg.b.WriteString(" ")
-				cg.b.WriteString(cTypeFor(f.Type))
-				cg.b.WriteString(" ")
-				cg.b.WriteString(f.Name)
+				cg.b.WriteString(cDeclaration(f.Type, f.Name))
 				cg.b.WriteString(";")
 			}
 			cg.b.WriteString(" } ")
@@ -373,9 +369,7 @@ func (cg *Codegen) emitStruct(s ir.StructIR) {
 		cg.b.WriteString("    union {\n")
 		for _, f := range shared {
 			cg.b.WriteString("        ")
-			cg.b.WriteString(cTypeFor(f.Type))
-			cg.b.WriteString(" ")
-			cg.b.WriteString(f.Name)
+			cg.b.WriteString(cDeclaration(f.Type, f.Name))
 			cg.b.WriteString(";\n")
 		}
 		cg.b.WriteString("    };\n")
@@ -758,6 +752,16 @@ func isUnitType(t ir.Type) bool {
 		return true
 	}
 	return t.Kind == ir.TypeStruct && (t.Name == "Unit" || t.Name == "RhoUnit")
+}
+
+// cDeclaration declares a name of a type in C, where a fixed array's length
+// follows the name: `uint32_t items[4]`, not `uint32_t[4] items`.
+func cDeclaration(t ir.Type, name string) string {
+	ctype := cTypeFor(t)
+	if open := strings.IndexByte(ctype, '['); open >= 0 && strings.HasSuffix(ctype, "]") {
+		return ctype[:open] + " " + name + ctype[open:]
+	}
+	return ctype + " " + name
 }
 
 // cTypeFor maps IR types to C types.

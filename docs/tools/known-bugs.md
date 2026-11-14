@@ -51,6 +51,8 @@ appears below as open.
 | 34 | type checker | An element of a fixed array of strings, `names[i]` of a `string[4]`, was typed `u8` — the byte of a string — so it could not be compared with a string or passed as one. | The length of an array is asked about before its kind. | parity: "a local declared without a value…", "slices: strings built in loops…" |
 | 35 | runtime (C) | `rho_str_eq` answered false when either side was `NULL`, the zero of a string field in C, while Go's zero string `""` equals `""`. | A `NULL` string is the empty string there, as everywhere else in the runtime. | parity: "a local declared without a value is zero on both backends" |
 | 36 | compiler: generics | A local of a type parameter in a generic body, `var out: T`, was declared as `T` in the C and the Go of every specialisation. | It is declared as the type the specialisation substitutes. | parity: "slices: a generic over Slice[T], a Slice field, and a module-level array" |
+| 37 | type checker | A fixed array whose length is a module constant, `var buf: u8[MAX]`, was not a fixed array: it could not be cut, did not become a `Slice[T]`, and in a struct field it was emitted as a single element (`items uint32`). | The constant's value is the length wherever the type is written. | parity: "arrays: a length named by a constant, in a local, a parameter and a struct field" |
+| 38 | C backend | A struct field of a fixed-array type, `items: u32[4]`, was declared `uint32_t[4] items;`, which no C compiler accepts. | The length follows the name: `uint32_t items[4];`. | parity: "arrays: a length named by a constant…" |
 
 ## Open
 
@@ -91,8 +93,10 @@ the function's own array or at an array literal is refused, but a slice of a
 local array stored into something that outlives the function is not detected.
 There is no `for i, x in s`. `Slice[T].len` is a `u32` (`uint32_t` in C), not a
 `size_t`: the language has no `usize`, and every existing use compares it with a
-`u32`. `len`, `for` and `append` on a `[T]` are kept on Go, where a `[T]` is a Go
-slice (`read_file` returns one, and Go-only tools use it), and refused on C.
+`u32`. `len`, `for` and `append` on a `[T]` are refused on every backend; a
+Go program that builds a file of a size it learns at run time cuts it from a
+fixed array large enough for the largest it accepts (robohub-pico's `elf2uf2`
+does, for 16 MB of flash).
 
 Diagnostics, recorded so they are not mistaken for bugs: a diagnostic carries
 where the mistake begins and not where it ends, so the editor underlines the

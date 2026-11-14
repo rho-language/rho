@@ -24,6 +24,7 @@ package types
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,7 +129,10 @@ type TypeChecker struct {
 	// moduleConsts are the module-level bindings, by name. A module has no
 	// run-time initialisation order, so each one is inlined at every use rather
 	// than emitted as a variable.
-	moduleConsts     map[string]ast.ConstDecl
+	moduleConsts map[string]ast.ConstDecl
+	// arrayLengths are the module's positive integer constants, by name, as
+	// the number an array type written with one has for its length.
+	arrayLengths     map[string]string
 	moduleConstTypes map[string]ir.Type
 
 	// arena is what lowering knows about releasing the C backend's strings:
@@ -196,6 +200,7 @@ func New() *TypeChecker {
 		monomorphicStructs: map[string]ir.StructIR{},
 		monomorphicFuncs:   map[string]ir.FuncIR{},
 		moduleConsts:       map[string]ast.ConstDecl{},
+		arrayLengths:       map[string]string{},
 		moduleConstTypes:   map[string]ir.Type{},
 	}
 
@@ -246,6 +251,17 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	// Handler signature types are registered first so a handler's signature
 	// resolves when the function table is built below.
 	tc.registerProtocolTypes()
+
+	// The integer constants are known before any type is resolved, so an array
+	// whose length a constant names (`u32[MAX]`) is a fixed array wherever it
+	// is written — a struct field included, which is registered next.
+	for _, decl := range m.Decls {
+		if d, ok := decl.(ast.ConstDecl); ok && d.Value != nil {
+			if value, ok := constIntValue(d.Value); ok && value.Sign() > 0 && value.IsInt64() {
+				tc.arrayLengths[d.Name] = value.String()
+			}
+		}
+	}
 
 	// First pass: register struct types
 	for _, decl := range m.Decls {
@@ -1124,7 +1140,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			if !exists && !hasProtocolSignature {
 				// An intrinsic a backend supplies has a known signature, so a
 				// call to it is checked like any other.
-				if intrinsic, isIntrinsic := intrinsicSignatures[identifier.Name]; isIntrinsic {
+				if intrinsic, isIntrinsic := tc.intrinsicSignature(identifier.Name); isIntrinsic {
 					signature = intrinsic
 				} else {
 					if identifier.Name == "clamp_f64" || identifier.Name == "lerp" || identifier.Name == "sqrt" || identifier.Name == "sin" || identifier.Name == "cos" || identifier.Name == "atan2" || identifier.Name == "floor" {
@@ -2117,6 +2133,14 @@ func qualifiedCName(owner, name string) string {
 }
 
 func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type {
+	// `u32[MAX]` parses as an application of u32 to MAX; with MAX a module
+	// constant and u32 nothing generic, it is the fixed array u32[32].
+	if expr.ArrayLen == nil && len(expr.Args) == 1 && len(expr.Args[0].Args) == 0 && expr.Args[0].ArrayLen == nil {
+		if length, ok := tc.arrayLengths[expr.Args[0].Name]; ok && len(tc.genericParams[expr.Name]) == 0 && !slices.Contains(params, expr.Args[0].Name) {
+			n, _ := strconv.Atoi(length)
+			expr = ast.TypeExpr{Name: expr.Name, ArrayLen: &n}
+		}
+	}
 	if expr.Name != "" {
 		for _, param := range params {
 			if expr.Name == param {
@@ -2153,6 +2177,7 @@ func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type 
 }
 
 func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
+	name = tc.arrayConstantsResolved(name)
 	// An alias resolves to what it names, so a handle written as `SqlDb` is the
 	// pointer it is and a backend spells it as one.
 	//
@@ -2250,7 +2275,7 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 			defer func() { tc.arena.released-- }()
 		}
 		value := ""
-		declaredName := stmt.Type.String()
+		declaredName := tc.arrayConstantsResolved(stmt.Type.String())
 		if stmt.Value != nil {
 			if declaredName == "" {
 				// A type-less binding lowers with the type of its value, which
@@ -2664,7 +2689,8 @@ func (tc *TypeChecker) converted(lowered string, expr ast.Expr, scope map[string
 func (tc *TypeChecker) calleeParams(callee ast.Expr, args []ast.Expr, scope map[string]ir.Type) []ir.Type {
 	if identifier, ok := callee.(ast.IdentifierExpr); ok {
 		if tc.callsIntrinsic(identifier.Name, args, scope) {
-			return intrinsicSignatures[identifier.Name].params
+			signature, _ := tc.intrinsicSignature(identifier.Name)
+			return signature.params
 		}
 		if signature, found := tc.lookupFunc(identifier.Name); found && len(signature.genericParams) == 0 {
 			return signature.params
@@ -3543,7 +3569,7 @@ func (tc *TypeChecker) lowerLen(call ast.CallExpr, scope map[string]ir.Type) (st
 // function everywhere else. So `len(s)` on a `String` from std.strings.string is
 // that module's `len`, and `len("abc")` beside it is still the built-in.
 func (tc *TypeChecker) callsIntrinsic(name string, args []ast.Expr, scope map[string]ir.Type) bool {
-	intrinsic, isIntrinsic := intrinsicSignatures[name]
+	intrinsic, isIntrinsic := tc.intrinsicSignature(name)
 	if !isIntrinsic {
 		return false
 	}
@@ -3745,17 +3771,13 @@ func init() {
 		params: []ir.Type{{Kind: ir.TypeInvalid}},
 		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
 	}
-	// read_file reads a file into a byte slice.
+	// read_file and write_file take and give a Slice[u8]; their signatures are
+	// completed per program by intrinsicSignature, which specialises the Slice.
 	intrinsicSignatures["read_file"] = functionType{
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
-		result: ir.Type{Kind: ir.TypeSlice, Name: "[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}},
 	}
-	// write_file writes a byte slice to a file.
 	intrinsicSignatures["write_file"] = functionType{
-		params: []ir.Type{
-			{Kind: ir.TypeString, Name: "string"},
-			{Kind: ir.TypeSlice, Name: "[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}},
-		},
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}, {}},
 		result: ir.Type{Kind: ir.TypeVoid, Name: "void"},
 	}
 	// get_args returns command-line arguments as a space-joined string.
@@ -4315,4 +4337,50 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 	}
 
 	return statementTerminates, nil
+}
+
+// intrinsicSignature is an intrinsic's signature in this program. The file
+// built-ins read and write a whole file as a Slice[u8], whose specialisation is
+// recorded here so the backends emit it.
+func (tc *TypeChecker) intrinsicSignature(name string) (functionType, bool) {
+	signature, ok := intrinsicSignatures[name]
+	if !ok {
+		return signature, false
+	}
+	switch name {
+	case "read_file":
+		signature.result = tc.sliceOf(ir.Type{Kind: ir.TypeU8, Name: "u8"})
+	case "write_file":
+		signature.params = []ir.Type{{Kind: ir.TypeString, Name: "string"}, tc.sliceOf(ir.Type{Kind: ir.TypeU8, Name: "u8"})}
+	}
+	return signature, true
+}
+
+// arrayConstantsResolved writes the length of a fixed array named by a module
+// constant as its number: `u32[MAX]` with `const MAX: u32 = 32` is the type
+// `u32[32]`, so it is a fixed array to every check and backend, and two arrays
+// whose lengths are spelt differently but agree are one type.
+func (tc *TypeChecker) arrayConstantsResolved(name string) string {
+	if !strings.HasSuffix(name, "]") || strings.HasPrefix(name, "[") {
+		return name
+	}
+	suffix := ""
+	current := name
+	for strings.HasSuffix(current, "]") {
+		open := strings.LastIndexByte(current, '[')
+		if open <= 0 {
+			return name
+		}
+		inner := current[open+1 : len(current)-1]
+		if _, err := strconv.Atoi(inner); err != nil {
+			length, ok := tc.arrayLengths[inner]
+			if !ok {
+				return name
+			}
+			inner = length
+		}
+		suffix = "[" + inner + "]" + suffix
+		current = current[:open]
+	}
+	return current + suffix
 }

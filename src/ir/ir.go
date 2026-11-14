@@ -157,6 +157,9 @@ type Refusal struct {
 	Line, Column int
 	// Message says what it is and what to write instead.
 	Message string
+	// Everywhere is set when no backend can emit it, so a build for any
+	// target is refused, not only one that emits C.
+	Everywhere bool
 }
 
 // AliasIR is one type alias a module declares.

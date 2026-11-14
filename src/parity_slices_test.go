@@ -30,6 +30,42 @@ func init() {
 
 var sliceParityCases = []parityCase{
 	{
+		name: "arrays: a length named by a constant, in a local, a parameter and a struct field",
+		want: "4 11 25 | 9 0\n",
+		source: `module app
+
+const N: u32 = 4
+
+struct Box {
+    items: u32[N]
+    pair: u8[2]
+}
+
+fn total(xs: Slice[u32]) u32 {
+    var t: u32 = 0
+    for x in xs {
+        t = t + x
+    }
+    return t
+}
+
+fn first(xs: u32[N]) u32 {
+    return xs[0]
+}
+
+fn main() void {
+    var store: u32[N]
+    var s = store[..0]
+    s = append(s, 5)
+    s = append(s, 6)
+    var b: Box
+    b.items[1] = 9
+    print(int_to_str(len(store)) + " " + int_to_str(total(s)) + " " + int_to_str(total(store) + first(store) + total(b.items)))
+    print(" | " + int_to_str(b.items[1]) + " " + int_to_str(b.pair[1]) + "\n")
+}
+`,
+	},
+	{
 		name: "slices: len, index, cuts of cuts, and writes through a cut",
 		want: "6 6 3 2 3 | 4 4 2 | 99 99 | 0 6\n",
 		source: `module app
@@ -621,9 +657,9 @@ fn main() void {
 	}
 }
 
-// A `[T]` has no length, so what needs one is refused on C with the Slice to
-// use instead, and kept on Go, where a `[T]` is a Go slice.
-func TestLengthOperationsOnABarePointerAreRefusedOnC(t *testing.T) {
+// A `[T]` has no length, so what needs one is refused on every backend with
+// the Slice to use instead.
+func TestLengthOperationsOnABarePointerAreRefused(t *testing.T) {
 	source := `module app
 
 fn count(xs: [u32]) u32 {
@@ -640,21 +676,20 @@ fn main() void {
     print(int_to_str(count(xs)))
 }
 `
-	err := buildOneFile(t, source, "c")
-	if err == nil {
-		t.Fatal("expected the C build to be refused")
-	}
-	for _, want := range []string{
-		":5:5:", "for x in xs: xs is [u32]",
-		":8:16:", "len(xs): xs is [u32]",
-		":13:10:", "append(xs, ...): xs is [u32]",
-		"use a Slice[T]", "Slice.from_raw(p, n)",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal should mention %q, got:\n%v", want, err)
+	for _, target := range []string{"c", "go"} {
+		err := buildOneFile(t, source, target)
+		if err == nil {
+			t.Fatalf("expected the %s build to be refused", target)
 		}
-	}
-	if err := buildOneFile(t, source, "go"); err != nil {
-		t.Fatalf("a Go build keeps len, for and append on a [T]: %v", err)
+		for _, want := range []string{
+			":5:5:", "for x in xs: xs is [u32]",
+			":8:16:", "len(xs): xs is [u32]",
+			":13:10:", "append(xs, ...): xs is [u32]",
+			"use a Slice[T]", "Slice.from_raw(p, n)",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the %s refusal should mention %q, got:\n%v", target, want, err)
+			}
+		}
 	}
 }

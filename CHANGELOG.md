@@ -479,3 +479,16 @@ A C local declared without a value starts at zero (`0`, `""`, `NULL`, `{0}`), as
 - `std.collections.bitset`: `bitset(&words[0], n)` is `bitset(words)`, with `words` a `Slice[u64]` or a `u64[N]`.
 
 Fixed: an element of a `string[N]` was typed `u8`; `var x: T` in a generic body kept the name `T`; `Slice[T]` was not deduced from a fixed-array argument.
+
+## [0.15.0] - 2026-11-15
+
+A `[T]` means the same on every backend: it is a bare pointer, so `len`, `for` and `append` on one are refused on Go as they are on C, with the place named and the `Slice[T]` to use. `read_file` returns a `Slice[u8]` and `write_file` takes one (a `u8[N]` or a cut of one is passed as it is).
+
+A fixed array's length may be a module constant: with `const MAX: u32 = 32`, `u32[MAX]` is `u32[32]` in a local, a parameter or a struct field, so it can be cut and becomes a `Slice[T]`. A struct field of a fixed-array type compiles on C (`uint32_t items[4];`).
+
+### Breaking
+
+- `len(p)`, `for x in p` and `p = append(p, v)` on a `[T]` no longer build for Go. Declare a fixed array and cut it: `var buf: u8[4096]`, `var p = buf[..0]`, `p = append(p, v)`; or take a `Slice[T]` parameter.
+- `read_file(path)` is a `Slice[u8]`: `let data: [u8] = read_file(path)` becomes `let data: Slice[u8] = read_file(path)`; `extern fn read_file(path: string) -> [u8]` becomes `-> Slice[u8]`, and `write_file`'s `data: [u8]` becomes `data: Slice[u8]`.
+
+Fixed: a fixed array sized by a constant was not a fixed array (#37); a struct field of array type did not compile on C (#38).

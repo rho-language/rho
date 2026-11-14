@@ -102,10 +102,10 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 		if convertErr != nil {
 			return convertErr
 		}
+		if err := checkRefusals(converted, targetID == "c"); err != nil {
+			return err
+		}
 		if targetID == "c" {
-			if err := checkCRefusals(converted); err != nil {
-				return err
-			}
 			if err := checkArenaEscapes(escapes, ""); err != nil {
 				return err
 			}
@@ -269,11 +269,15 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 	}
 	// Strings are released only by the C backend's arena, so a loop that cannot
 	// release them matters only to a build that emits C.
+	emitsC := false
+	for _, target := range targets {
+		emitsC = emitsC || target.Emitter == "c"
+	}
+	if err := checkRefusals(irModule, emitsC); err != nil {
+		return nil, err
+	}
 	for _, target := range targets {
 		if target.Emitter == "c" {
-			if err := checkCRefusals(irModule); err != nil {
-				return nil, err
-			}
 			if err := checkArenaEscapes(escapes, board); err != nil {
 				return nil, err
 			}
@@ -465,21 +469,35 @@ func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (i
 	return irModule, tc.ArenaEscapes(), nil
 }
 
-// checkCRefusals fails a build that emits C for a program that does something
-// the C backend cannot emit (ir.ModuleIR.CRefusals), naming each place.
-func checkCRefusals(module ir.ModuleIR) error {
-	if len(module.CRefusals) == 0 {
-		return nil
-	}
+// checkRefusals fails a build for a program that does something its backends
+// cannot emit (ir.ModuleIR.CRefusals), naming each place: what no backend can
+// emit fails every build, and what only C cannot fails a build that emits C.
+func checkRefusals(module ir.ModuleIR, emitsC bool) error {
 	out := Diagnostics{}
 	for _, refusal := range module.CRefusals {
+		message := refusal.Message
+		switch {
+		case refusal.Everywhere:
+		case emitsC:
+			message = "this program cannot be built for C: " + message
+		default:
+			continue
+		}
 		out = append(out, Diagnostic{
 			File: refusal.File, Line: refusal.Line, Column: refusal.Column,
 			Severity: SeverityError, Code: "backend",
-			Message: "this program cannot be built for C: " + refusal.Message,
+			Message: message,
 		})
 	}
+	if len(out) == 0 {
+		return nil
+	}
 	return out
+}
+
+// checkCRefusals fails a build that emits C for what C cannot emit.
+func checkCRefusals(module ir.ModuleIR) error {
+	return checkRefusals(module, true)
 }
 
 // checkArenaEscapes says what a loop that cannot release its strings costs.
@@ -921,7 +939,7 @@ func compileModule(mod ast.Module, outPath string, from ...string) error {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 	lowered := tc.ToIR(mod)
-	if err := checkCRefusals(lowered); err != nil {
+	if err := checkRefusals(lowered, true); err != nil {
 		return err
 	}
 	if err := checkBackendSupport(&mod, lowered, backendTarget{ID: "c", Emitter: "c", Kind: "cli"}); err != nil {

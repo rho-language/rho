@@ -118,8 +118,8 @@ first occurrence of a key at any depth.
 | `env_or(name: string, fallback: string) string` | The variable's value when it is set (even to `""`), otherwise `fallback` | yes | yes |
 | `app_workspace() string` | Where the application keeps its data: `RHO_APP_WORKSPACE` when set, otherwise `$HOME/.rho/apps/<name>`. The name is `RHO_APP_NAME`; without it, C uses `app` and Go uses the program's file name | yes | yes |
 | `get_args() string` | The command-line arguments joined by spaces | no | yes |
-| `read_file(path: string) [u8]` | A whole file as bytes, or empty when it cannot be read | no | yes |
-| `write_file(path: string, data: [u8])` | Writes a whole file (mode 0644); says nothing about failure | no | yes |
+| `read_file(path: string) Slice[u8]` | A whole file as bytes, or an empty Slice when it cannot be read | no | yes |
+| `write_file(path: string, data: Slice[u8])` | Writes a whole file (mode 0644); says nothing about failure. A fixed array `u8[N]` or a cut of one is passed as it is | no | yes |
 | `s = append(s, v...)` on a `Slice[T]` | Writes each value at `s[s.len]` in the fixed array `s` was cut from and lengthens `s`; past the array's length the program stops (`rho: append past capacity N`). Written only as that statement, on a slice declared in the function from a fixed array ({ref}`language/types`) | yes | yes |
 | `append(items: [T], item: T) [T]` | The Go slice with one more element. A `[T]` is a bare pointer on C, so a C build is refused, naming the call | no | yes |
 | `Slice.from_raw(p, n) Slice[T]` | The `n` elements starting at `p`, a `Ptr[T]` or a `[T]`; nothing checks that they are there | yes | yes |

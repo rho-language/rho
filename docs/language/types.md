@@ -234,11 +234,12 @@ A **`[T]`** is a bare pointer — `T*` in C, 2 bytes on AVR, matching C's ABI �
 C interfaces, DMA and MMIO buffers, and an unsized pointer handed to a callback.
 It has no length, so declaring one, a literal, indexing it (unchecked) and
 passing it work on both backends, and nothing that needs a length is offered: a
-cut `p[a..b]` is refused everywhere, and `len`, `for` and `append` on one stop a
-C build with the place named and the Slice to use. A Go build keeps those three,
-because a `[T]` is a Go slice there and Go-only programs (the `read_file`
-built-in returns one) use them. `Slice.from_raw(p, n)` is how a `[T]` gets a
-length.
+cut `p[a..b]` is refused, and `len`, `for` and `append` on one stop the build
+with the place named and the Slice to use — on every backend, so a program means
+the same on each. `Slice.from_raw(p, n)` is how a `[T]` gets a length.
+
+A fixed array's length may be a module constant: with `const MAX: u32 = 32`,
+`u32[MAX]` is the type `u32[32]`, in a local, a parameter or a struct field.
 
 ## Structs
 

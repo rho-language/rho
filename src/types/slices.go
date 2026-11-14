@@ -798,10 +798,11 @@ func (tc *TypeChecker) literalForSlice(expr ast.Expr, want ir.Type) bool {
 	return isSlice
 }
 
-// refuseBarePointer records that a C build cannot do what needs a length — len,
-// for, append — on a `[T]`, which is a bare pointer there. Go keeps them on its
-// slices; a program meant for both backends takes a Slice[T]. written is the
-// operation as the program wrote it, and what the operand it applies to.
+// refuseBarePointer records that what needs a length — len, for, append —
+// cannot be done on a `[T]`, which is a bare pointer and carries none. It is
+// refused on every backend, so a program means the same on each; a Slice[T] is
+// what carries a length. written is the operation as the program wrote it, and
+// what the operand it applies to.
 func (tc *TypeChecker) refuseBarePointer(at ast.Position, written, what string, operand ast.Expr, typ ir.Type) {
 	where := ""
 	if tc.owner != "" {
@@ -809,9 +810,10 @@ func (tc *TypeChecker) refuseBarePointer(at ast.Position, written, what string, 
 	}
 	tc.cRefusals = append(tc.cRefusals, ir.Refusal{
 		File: at.File, Line: at.Line, Column: at.Column,
-		Message: fmt.Sprintf("%s%s: %s is %s, a dynamic array that is a bare pointer in C and carries no length, so %s cannot be done on a C target; "+
+		Message: fmt.Sprintf("%s%s: %s is %s, a bare pointer that carries no length, so %s cannot be done on it; "+
 			"use a Slice[T], which carries its length — a fixed-size array T[N] converts to one, and Slice.from_raw(p, n) gives a pointer one",
 			written, where, writtenExpr(operand), typeName(typ), what),
+		Everywhere: true,
 	})
 }
 
