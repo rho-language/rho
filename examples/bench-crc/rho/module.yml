@@ -6,7 +6,7 @@
 # platform-specific code.
 #
 # @project Rho Programming Language
-# @license Apache-2.0
+# @license Apache-2.0 WITH LLVM-exception
 #
 
 module:
@@ -18,7 +18,7 @@ module:
     against the same program written in C.
 
   maintainer: "Aurel Miron"
-  license: "Apache-2.0"
+  license: "Apache-2.0 WITH LLVM-exception"
   created: "2026-10-05"
 
 main: src/main.rho

@@ -14,7 +14,7 @@
  * Every string a function here returns comes from the string arena (arena.c),
  * never from `malloc`, and the compiler releases it.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 /* A string that is not there reads as the empty one, and the result is never

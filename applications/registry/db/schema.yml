@@ -10,7 +10,7 @@
 # tree it was unpacked into. Those are derived, they are many small files, and a
 # database holding them would be a cache.
 #
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 tables:
   # users are identities, named by whatever the credential said.

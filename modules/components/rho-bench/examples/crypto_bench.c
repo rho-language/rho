@@ -10,7 +10,7 @@
  *     cc -O2 -I../../include crypto_bench.c ../../src/rhobench.c -o crypto_bench
  *     rho bench --binary ./crypto_bench
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include "rho/bench.h"

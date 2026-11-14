@@ -8,7 +8,7 @@
  * compiles and does not link.
  *
  * @project Rho Programming Language
- * @license Apache-2.0
+ * @license Apache-2.0 WITH LLVM-exception
  */
 
 package codegen

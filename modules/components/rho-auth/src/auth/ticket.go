@@ -7,7 +7,7 @@
 // locally. The two halves are here so the keeper and a resource server cannot
 // disagree about what a ticket is.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package auth

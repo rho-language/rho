@@ -16,7 +16,7 @@
  * console of its own replaces it with one call; the default is the write hook the
  * platform already implements.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 /* The output sink. Weak: a platform that has a console of its own defines this,

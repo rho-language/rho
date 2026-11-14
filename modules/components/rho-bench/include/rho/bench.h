@@ -31,7 +31,7 @@
  *   - **Stack** from a fill, which is the only way to know how deep a call went
  *     after the fact.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #ifndef RHO_BENCH_H

@@ -23,7 +23,7 @@
  * gated on what the program calls would leave them out of a program that cannot
  * link without them.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 __attribute__((weak)) void _init(void);

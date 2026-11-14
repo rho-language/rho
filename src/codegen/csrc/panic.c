@@ -20,7 +20,7 @@
  * `exit` — which is a firmware that needs a C library's exit path, and a program
  * that stops somewhere no debugger is looking.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #if defined(RHO_PROGRAM_HALT)

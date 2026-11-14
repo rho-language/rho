@@ -12,7 +12,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package rhomem

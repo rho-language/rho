@@ -542,4 +542,10 @@ rho test examples/hello-rho
 
 ## License
 
-Rho is released under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+Rho is released under the Apache License, Version 2.0, with the LLVM
+exception (`Apache-2.0 WITH LLVM-exception`). See [LICENSE](LICENSE).
+
+The exception is what makes a program built with Rho entirely yours: the parts
+of the toolchain that end up inside it — the C and Go runtime and the standard
+library the compiler emits into a generated project — may be shipped in that
+program, as source or binary, without carrying Rho's licence or notices.

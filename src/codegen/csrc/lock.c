@@ -5,7 +5,7 @@
  * and its unlock, and both are nothing. They exist so a program that numbers
  * something under a lock means the same on either backend.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 void rho_lock(const char* name)

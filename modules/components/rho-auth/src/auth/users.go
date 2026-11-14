@@ -17,7 +17,7 @@
 // that is not there costs as much as a wrong password, so neither the time nor
 // the message says which names exist.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package auth

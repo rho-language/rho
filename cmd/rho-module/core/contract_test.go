@@ -8,7 +8,7 @@
 // platform is recognized, and a manifest of a type only the plugin names.
 //
 // @project Rho
-// @license Apache-2.0
+// @license Apache-2.0 WITH LLVM-exception
 //
 
 package core

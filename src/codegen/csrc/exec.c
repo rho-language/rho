@@ -11,7 +11,7 @@
  * space in it is one argument and not two; the program is run directly rather
  * than through a shell, so nothing in an argument can become a command.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <stdio.h>

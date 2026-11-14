@@ -7,7 +7,7 @@
  * time). A program that asked `date` and read its answer from a file could read
  * a file another caller was still writing.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <stdlib.h>

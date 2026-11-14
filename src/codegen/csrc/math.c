@@ -7,7 +7,7 @@
  * says so whenever this fragment is emitted. The Go backend gives the same
  * answers from its `math` package.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <math.h>

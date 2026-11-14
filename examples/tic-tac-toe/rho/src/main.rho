@@ -6,7 +6,7 @@
 // Cell values: 0=empty, 1=human(X), 2=computer(O)
 //
 // @project Rho Programming Language
-// @license Apache-2.0
+// @license Apache-2.0 WITH LLVM-exception
 
 module main
 

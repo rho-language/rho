@@ -33,7 +33,7 @@
  * iteration that built it is reported where it is read rather than read as
  * whatever the next iteration wrote there.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 /* A bare-metal part with no size from its target spec still gets a fixed arena:

@@ -7,7 +7,7 @@
 # binary, so `rho mem` and `rho bench` can measure it just like the Rho version.
 #
 # @project Rho Programming Language
-# @license Apache-2.0
+# @license Apache-2.0 WITH LLVM-exception
 #
 
 module:
@@ -19,7 +19,7 @@ module:
     against the same program written in Rho.
 
   maintainer: "Aurel Miron"
-  license: "Apache-2.0"
+  license: "Apache-2.0 WITH LLVM-exception"
   created: "2026-10-05"
 
 main: src/main.c

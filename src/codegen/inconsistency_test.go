@@ -2,7 +2,7 @@
 // @file inconsistency_test.go
 // @brief Tests for the C backend's ordering and Go's unused-local analysis.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package codegen

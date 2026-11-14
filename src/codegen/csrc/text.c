@@ -10,7 +10,7 @@
  * digits past the third decimal are dropped rather than rounded, and a text
  * that is not a number reads as 0 — milli_valid says which it was.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 static bool rho_text_space(char c)

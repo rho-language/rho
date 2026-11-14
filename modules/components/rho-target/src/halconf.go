@@ -33,7 +33,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package main
@@ -312,7 +312,7 @@ func deriveHalConf(template, name string, enabled, defines []string) string {
 	b.WriteString(" * build's target spec. Nothing here is written by hand, and editing it is\n")
 	b.WriteString(" * pointless: the next build writes it again.\n")
 	b.WriteString(" *\n")
-	b.WriteString(" * SPDX-License-Identifier: Apache-2.0\n")
+	b.WriteString(" * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n")
 	b.WriteString(" */\n\n")
 
 	clocks := clockValues(defines)

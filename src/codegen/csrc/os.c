@@ -6,7 +6,7 @@
  * else on every other architecture; the C library's wrappers mean the same
  * thing on each.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <fcntl.h>

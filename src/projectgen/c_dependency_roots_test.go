@@ -6,7 +6,7 @@
 // are a common shape once a platform and a driver both depend on the same
 // module, and adding its directory twice is two CMake targets of one name.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package projectgen

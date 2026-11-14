@@ -9,7 +9,7 @@
 // someone has opened the dashboard is a hover that mostly does not work.
 //
 // @project Rho
-// @license Apache-2.0
+// @license Apache-2.0 WITH LLVM-exception
 //
 
 import * as vscode from 'vscode';

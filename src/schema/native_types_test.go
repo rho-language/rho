@@ -9,7 +9,7 @@
 // and a native type declares no entry point.
 //
 // @project Rho Programming Language
-// @license Apache-2.0
+// @license Apache-2.0 WITH LLVM-exception
 //
 
 package schema

@@ -2,7 +2,7 @@
 // @file len_c_test.go
 // @brief The built-in len on a dynamic array is refused on a C target.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package rho

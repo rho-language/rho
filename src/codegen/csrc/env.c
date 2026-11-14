@@ -5,7 +5,7 @@
  * Separate from strings.c because a program that never asks about its environment
  * should not carry this one, and on a board there is no environment to ask about.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 const char* rho_env_or(const char* name, const char* fallback)

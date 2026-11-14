@@ -12,7 +12,7 @@
  * measure. It is therefore deliberately small: numbers, strings and arrays, and a
  * check on every value that could be nonsense.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include "rho/bench.h"

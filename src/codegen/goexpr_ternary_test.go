@@ -2,7 +2,7 @@
 // @file goexpr_ternary_test.go
 // @brief An if expression is a C conditional, which the Go backend rewrites.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package codegen

@@ -44,7 +44,7 @@
 # because a target's log format belongs to the target.
 #
 # @project Rho Programming Language
-# @license Apache-2.0
+# @license Apache-2.0 WITH LLVM-exception
 #
 
 module:

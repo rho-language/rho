@@ -13,7 +13,7 @@
 // @author Aurel Miron
 // @date 2026-11-12
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package scaffold

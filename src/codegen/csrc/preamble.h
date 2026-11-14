@@ -15,7 +15,7 @@
  * stopped being defined on one side of a two-file project and the link failed
  * naming a symbol rather than anything that pointed at the guard.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #define _POSIX_C_SOURCE 200809L

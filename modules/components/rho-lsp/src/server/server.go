@@ -4,7 +4,7 @@
 //
 // Implements the core JSON-RPC loop for the Rho Language Server.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 package server

@@ -6,7 +6,7 @@
  * bits they write, so the cast lives here as one function each way rather than
  * being spelled differently in every generated file.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 uint32_t rho_f32_to_bits(float value)

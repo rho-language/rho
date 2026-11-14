@@ -9,7 +9,7 @@
  * Measure:    rho bench --binary build/output/bench-crc-c
  *            rho mem --binary build/output/bench-crc-c
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <stdint.h>

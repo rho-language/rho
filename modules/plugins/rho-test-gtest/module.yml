@@ -20,7 +20,7 @@
 # run that guessed would report a test that does not exist.
 #
 # @project Rho Programming Language
-# @license Apache-2.0
+# @license Apache-2.0 WITH LLVM-exception
 #
 
 module:

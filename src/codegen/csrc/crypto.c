@@ -9,7 +9,7 @@
  * so the same code runs on a host and on a part. Random bytes come from the
  * operating system; a target with none answers "" and a caller refuses.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <stdint.h>

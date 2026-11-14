@@ -12,7 +12,7 @@
  * that belongs to it. A path that leaves the block it is in names nothing, and
  * a program is told so rather than given an empty answer it might use.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <stdio.h>

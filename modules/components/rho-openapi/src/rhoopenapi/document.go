@@ -24,7 +24,7 @@
 // @version 0.1
 // @date 2026
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 // Package rhoopenapi turns the route metadata a Rho service describes itself

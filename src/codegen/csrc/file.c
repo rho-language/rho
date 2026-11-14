@@ -7,7 +7,7 @@
  * gives for an open that cannot work: a value, and a failure the program can
  * see.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
 #include <stdio.h>
