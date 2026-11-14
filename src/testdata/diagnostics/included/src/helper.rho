@@ -1,0 +1,5 @@
+module helper
+
+fn helper() void {
+    let y: u32 = "no"
+}

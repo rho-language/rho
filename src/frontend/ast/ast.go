@@ -30,6 +30,13 @@ import "fmt"
 // something whose place was never known. Valid is what tells those apart — the
 // first byte of a file is at 0:1, and a node that was never placed is at 0:0.
 type Position struct {
+	// File is the source file the node was read from, as the loader named it.
+	// A program is one module made of several files — an include is merged
+	// into the module that includes it, an import into the program — so a
+	// node carries its file rather than inheriting the root's: a report about a
+	// line in helper.rho points at helper.rho. It is empty for a node read from
+	// text with no file behind it.
+	File string
 	// Offset is the byte offset into the source.
 	Offset int
 	// Line and Column are where the thing begins, counting from one. A column
@@ -45,6 +52,9 @@ func (p Position) Valid() bool { return p.Line > 0 }
 func (p Position) String() string {
 	if !p.Valid() {
 		return "unknown position"
+	}
+	if p.File != "" {
+		return fmt.Sprintf("%s:%d:%d", p.File, p.Line, p.Column)
 	}
 	return fmt.Sprintf("%d:%d", p.Line, p.Column)
 }

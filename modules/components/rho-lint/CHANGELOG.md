@@ -9,3 +9,7 @@ against that version.
 ## [0.1.0] - 2026-10-12
 
 Initial release.
+
+## [0.2.0] - 2026-11-14
+
+A new `rho-check` rule reports what the type checker refuses; `rho-parse` reports each broken declaration where it is.

@@ -52,7 +52,7 @@ func TestLenOfDynamicArrayIsRefusedOnC(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the C build to be refused")
 	}
-	for _, want := range []string{"len(bytes)", "line 5", "[u8]", "fixed-size array", "Slice[T]"} {
+	for _, want := range []string{"len(bytes)", ":5:", "[u8]", "fixed-size array", "Slice[T]"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal should mention %q, got:\n%v", want, err)
 		}

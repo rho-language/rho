@@ -202,11 +202,11 @@ func TestATokenSaysWhereItIs(t *testing.T) {
 	}{
 		{"module", 1, 1},
 		{"shop", 1, 8},
-		{"fn", 3, 2},
-		{"run", 3, 5},
-		{"let", 4, 6},
-		{"x", 4, 10},
-		{";", 4, 20},
+		{"fn", 3, 1},
+		{"run", 3, 4},
+		{"let", 4, 5},
+		{"x", 4, 9},
+		{";", 4, 19},
 	}
 	seen := 0
 	for _, token := range tokens {

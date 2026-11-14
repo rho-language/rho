@@ -76,6 +76,47 @@ builds it with CMake for the target. A project that declares a C connection runs
 `rho-cimport` first, and one that declares `config:` runs `rho-kconfig merge`.
 An unknown build type is refused before anything is generated.
 
+## Diagnostics
+
+A program that is wrong is reported the same way by every command that reads
+it — `rho build`, `rho run`, `rho lint` and the editor through `rho lsp` — one
+line per mistake, in the form compilers share, so a terminal and an editor's
+problem matcher read it alike:
+
+```text
+src/helper.rho:4:18: error: cannot use a string as u32 in `let y`; parse it with int_from_str(...) or i64_from_str(...) and convert the result, or change the declared type
+src/main.rho:18:22: error: area takes 1 argument, and this call passes 2; it is called with (Point)
+src/main.rho:8:1: note: area is declared here
+src/loop.rho:10:5: warning: loop.run: the loop at line 10 keeps a string it builds in "last", ...
+```
+
+- **The place is the mistake's.** The file is the one the mistake is written in —
+  an included file, an imported module, a file of the standard library — not the
+  file that brought it into the program. The column is that of the expression
+  that is wrong: the value of a `let`, the argument of a call, the name nothing
+  declares. Lines and columns count from one, and a column counts characters.
+- **Every independent mistake is reported.** The checker keeps going after an
+  error: each declaration is checked, and inside a function each statement is.
+  What follows from a mistake already reported is not reported again — a name
+  nothing declares is reported once in a function, and a `let` whose value is
+  wrong does not make every later use of its name an error. A parse error is
+  recovered from at the next declaration that begins a line.
+- **Twenty errors are shown**, then `and N more errors`. Warnings are always
+  shown.
+- **A note** is a second place worth seeing: where a function called wrongly is
+  declared (and, for a generic, what it was specialised with at that call), or
+  the line that includes or imports a file that does not parse.
+- **Refusals after the check** use the same form: a C build refusing `len` of a
+  `[T]`, a target that cannot supply an imported module or a built-in (at the
+  `import` or the call), a board refusing a loop that keeps its strings (at the
+  loop).
+
+The structure behind each line is `Diagnostic` in the compiler package
+(`File`, `Line`, `Column`, `EndLine`, `EndColumn`, `Severity`, `Code`, `Message`,
+`Notes`); `rho lint` writes the same findings as SARIF (rule `rho-check` for the
+checker, `rho-parse` for the parser), and `rho lsp` publishes them, counted from
+zero as the protocol counts, with the notes as related information.
+
 ## rho init and rho new
 
 `rho init <directory>` writes a new application: `module.yml`, `src/main.rho`, a

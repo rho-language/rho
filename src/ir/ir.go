@@ -126,7 +126,7 @@ type ModuleIR struct {
 	// while lowering because one lowering serves every backend: a program built
 	// only for Go is not refused for what it would mean in C. A build that
 	// emits C fails on the first of them.
-	CRefusals []string
+	CRefusals []Refusal
 	// BackendCalls are the built-ins the program calls that only some backends
 	// supply. Like CRefusals they are carried rather than raised, because one
 	// lowering serves every target; the build refuses each on a target that does
@@ -140,8 +140,18 @@ type BackendCall struct {
 	Name string
 	// Module is the module the first call is in; "" for the program's own.
 	Module string
-	// Line and Column are where the first call is, or zero when unknown.
+	// File, Line and Column are where the first call is, or empty when unknown.
+	File         string
 	Line, Column int
+}
+
+// Refusal is one thing a program does that a backend cannot emit, and where.
+type Refusal struct {
+	// File, Line and Column are where the program does it.
+	File         string
+	Line, Column int
+	// Message says what it is and what to write instead.
+	Message string
 }
 
 // AliasIR is one type alias a module declares.

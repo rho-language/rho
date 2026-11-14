@@ -68,7 +68,18 @@ type Range struct {
 type Diagnostic struct {
 	Range    Range  `json:"range"`
 	Severity int    `json:"severity,omitempty"`
+	Code     string `json:"code,omitempty"`
+	Source   string `json:"source,omitempty"`
 	Message  string `json:"message"`
+	// RelatedInformation are the diagnostic's notes: where a function called
+	// wrongly is declared, which line includes the file a mistake is in.
+	RelatedInformation []DiagnosticRelatedInformation `json:"relatedInformation,omitempty"`
+}
+
+// DiagnosticRelatedInformation is one further place a diagnostic points at.
+type DiagnosticRelatedInformation struct {
+	Location Location `json:"location"`
+	Message  string   `json:"message"`
 }
 
 type Location struct {

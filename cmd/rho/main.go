@@ -590,7 +590,7 @@ func runCLI(args []string) {
 	}
 
 	if err := RunFileWithDependencies(abs, dependencyRoots); err != nil {
-		fmt.Fprintln(os.Stderr, "rho run:", err)
+		reportError("rho run", err)
 		os.Exit(1)
 	}
 }
@@ -624,7 +624,7 @@ func runCProject(abs, projectRoot string) {
 	compile.Stdout = os.Stdout
 	compile.Stderr = os.Stderr
 	if err := compile.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "rho run:", err)
+		reportError("rho run", err)
 		os.Exit(1)
 	}
 
@@ -634,7 +634,7 @@ func runCProject(abs, projectRoot string) {
 	run.Stdout = os.Stdout
 	run.Stderr = os.Stderr
 	if err := run.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "rho run:", err)
+		reportError("rho run", err)
 		os.Exit(1)
 	}
 }
@@ -645,13 +645,13 @@ func runCProject(abs, projectRoot string) {
 func runGeneratedTarget(abs, projectRoot string, dependencyRoots, includePaths, sourceFiles []string, passthrough []string) bool {
 	descriptor, err := src.ResolveDescriptor(projectRoot)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "rho run:", err)
+		reportError("rho run", err)
 		os.Exit(1)
 	}
 
 	targets, err := src.GenerateAllTargetsDetailed(abs, "", includePaths, sourceFiles, dependencyRoots, "", "", "")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "rho run:", err)
+		reportError("rho run", err)
 		os.Exit(1)
 	}
 
@@ -664,7 +664,7 @@ func runGeneratedTarget(abs, projectRoot string, dependencyRoots, includePaths, 
 		buildDir := filepath.Join(projectRoot, descriptor.BuildRoot())
 		binary, err := src.BuildGoProject(target.Dir, buildDir, src.TargetOutputName(src.ProjectName(abs), target.ID))
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "rho run:", err)
+			reportError("rho run", err)
 			os.Exit(1)
 		}
 		runBinary(binary, buildDir, passthrough)
@@ -743,7 +743,7 @@ func runBinary(binary, dir string, args []string) {
 		if errors.As(err, &exit) {
 			os.Exit(exit.ExitCode())
 		}
-		fmt.Fprintln(os.Stderr, "rho run:", err)
+		reportError("rho run", err)
 		os.Exit(1)
 	}
 }
@@ -859,7 +859,7 @@ func buildCLI(args []string) int {
 
 	manifest, err := deps.LoadManifest(manifestPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		return 1
 	}
 
@@ -910,7 +910,7 @@ func buildCLI(args []string) int {
 		// resolver could not find, and it says so: a dependency that names a git
 		// URL that has not been fetched is a checkout that is incomplete, while a
 		// dependency whose sources are named and absent is a manifest that is wrong.
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		return exitCodeFor(err, exitCannotRunHere)
 	}
 
@@ -920,7 +920,7 @@ func buildCLI(args []string) int {
 
 	lockPath := filepath.Join(projectRoot, "rho.lock")
 	if err := lock.Save(lockPath); err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		return 1
 	}
 
@@ -986,7 +986,7 @@ func buildCLI(args []string) int {
 	// cannot wait until the generation step.
 	targetName, descriptorTarget, err := resolveBuildTarget(*target, manifest)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		return 2
 	}
 
@@ -994,7 +994,7 @@ func buildCLI(args []string) int {
 	// this step has yet to write cannot be parsed far enough to say what is
 	// missing.
 	if err := generateForeignInterface(projectRoot, targetName); err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		// Classified like the resolution failures above, and for the same reason.
 		// The commonest thing this step has to say is that a board's vendor tree is
 		// not fetched — cimport reports it as "nothing says where stm32f4-hal is" —
@@ -1096,7 +1096,7 @@ func buildCLI(args []string) int {
 
 	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, only, programLayout(projectRoot, targetName), boardFor(projectRoot, targetName), shimSources)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		return 1
 	}
 
@@ -1124,7 +1124,7 @@ func buildCLI(args []string) int {
 	}
 	built, err := src.BuildGeneratedTargets(targets, moduleName, filepath.Join(projectRoot, descriptor.BuildRoot()))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		return 1
 	}
 	for _, binary := range built {
@@ -1160,7 +1160,7 @@ func buildCLI(args []string) int {
 	if *out != "" && !nativeEntry {
 		outC, _ := filepath.Abs(*out)
 		if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
-			fmt.Fprintln(os.Stderr, "rho build:", err)
+			reportError("rho build", err)
 			return 1
 		}
 	}
@@ -1189,7 +1189,7 @@ func buildCLI(args []string) int {
 	}
 
 	if err := buildTarget(generatedDir, projectRoot, targetName, linkMap, *buildType); err != nil {
-		fmt.Fprintln(os.Stderr, "rho build:", err)
+		reportError("rho build", err)
 		return 1
 	}
 
@@ -1802,4 +1802,18 @@ func missingDeclaredSources(graph *deps.DependencyGraph) []string {
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+// reportError prints a failure. A program that is wrong prints its diagnostics
+// in the one form the compiler, the linter and the language server share —
+// `file:line:col: error: message`, with notes — and with paths relative to the
+// working directory, so a terminal and an editor's problem matcher both read
+// it. Anything else is the command and the error.
+func reportError(command string, err error) {
+	if diagnostics := src.DiagnosticsOf(err); diagnostics != nil {
+		base, _ := os.Getwd()
+		fmt.Fprintln(os.Stderr, src.RenderDiagnostics(diagnostics, base))
+		return
+	}
+	fmt.Fprintln(os.Stderr, command+":", err)
 }

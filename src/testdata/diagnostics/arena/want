@@ -1,0 +1,1 @@
+src/loop.rho:10:5: error: pico is a board, whose strings live in a fixed arena

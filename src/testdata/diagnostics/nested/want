@@ -1,0 +1,1 @@
+src/inner.rho:4:12: error: cannot return u32 from a function declared to return string; format it with int_to_str

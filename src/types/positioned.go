@@ -19,7 +19,11 @@
 
 package types
 
-import "rho/src/frontend/ast"
+import (
+	"errors"
+
+	"rho/src/frontend/ast"
+)
 
 // Error is a type error and where in the source it is.
 //
@@ -40,6 +44,12 @@ type Error struct {
 	Scope string
 	// Cause is the error as it was, when this wraps one.
 	Cause error
+	// Notes are other places worth seeing beside this one: where a function
+	// called wrongly is declared, or where a generic was specialised from.
+	Notes []Note
+	// undefined is the name, when the error is a name nothing declares, so a
+	// run reports it once rather than at every use.
+	undefined string
 }
 
 func (e *Error) Error() string {
@@ -72,10 +82,12 @@ func locate(err error, at ast.Position, scope string) error {
 	if !at.Valid() {
 		at = ast.Position{}
 	}
-	if scope == "" {
-		return &Error{Position: at, Message: err.Error()}
+	located := &Error{Position: at, Scope: scope, Message: err.Error()}
+	var undefined *undefinedName
+	if errors.As(err, &undefined) {
+		located.undefined = undefined.name
 	}
-	return &Error{Position: at, Scope: scope, Message: err.Error()}
+	return located
 }
 
 // asError unwraps to a positioned error, so that an error already carrying a

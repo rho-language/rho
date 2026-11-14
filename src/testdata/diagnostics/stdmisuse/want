@@ -1,0 +1,2 @@
+src/main.rho:5:30: error: argument 1 of vec2_length has type i32, want Vec2
+note: std/math/linear.rho:12:1: vec2_length is declared here

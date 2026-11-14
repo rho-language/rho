@@ -54,7 +54,7 @@ func TestAModuleOrBuiltinIsRefusedByNameOnABackendThatCannotSupplyIt(t *testing.
 		{
 			name: "std.embedded on Go", target: "go", language: "go",
 			source: "module app\n\nimport std.embedded.gpio\n\nfn main() void {\n    write(13, true)\n}\n",
-			want:   []string{"the go target", "std.embedded.gpio is for the c backend", "imported by"},
+			want:   []string{"the go target", "std.embedded.gpio is for the c backend", "main.rho:3:1: error: "},
 		},
 		{
 			name: "std.embedded through another module on Go", target: "go", language: "go",
@@ -89,7 +89,7 @@ func TestAModuleOrBuiltinIsRefusedByNameOnABackendThatCannotSupplyIt(t *testing.
 		{
 			name: "a Go runtime built-in on C", target: "c", language: "c",
 			source: "module app\n\nfn main() void {\n    print(get_args())\n}\n",
-			want:   []string{"the c target", "get_args is for the go backend", "called at 4:"},
+			want:   []string{"the c target", "get_args is for the go backend", "main.rho:4:11: error: "},
 		},
 		{
 			name: "a runtime function declared extern on C", target: "c", language: "c",

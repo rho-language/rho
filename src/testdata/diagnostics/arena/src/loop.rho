@@ -1,0 +1,16 @@
+module loop
+
+fn label(n: u32) string {
+    return "n=" + int_to_str(n)
+}
+
+fn run() void {
+    var i: u32 = 0
+    var last: string = ""
+    while true {
+        let line = label(i) + "."
+        last = line
+        i = i + 1
+        print(last)
+    }
+}

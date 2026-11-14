@@ -1,0 +1,6 @@
+module main
+include "outer.rho"
+
+fn main() void {
+    outer()
+}

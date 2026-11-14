@@ -20,10 +20,17 @@
 package state
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
+
 	"github.com/rho/rho-lsp/src/protocol"
 	"rho/src"
 	"rho/src/frontend/lexer"
-	"unicode/utf8"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -145,30 +152,121 @@ func offsetAt(text string, position protocol.Position) int {
 
 // compilerDiagnostics is what the compiler makes of this text, in the shape a
 // language server publishes.
+//
+// A file on disk is checked as `rho build` checks it: as part of the program
+// its project's module.yml names, with that project's dependencies, the buffer
+// standing in for what was last saved. So a name another file declares is known,
+// a type error is reported, and the place underlined is the place the build
+// prints. A buffer with no file behind it is read on its own.
 func compilerDiagnostics(uri, text string) []protocol.Diagnostic {
-	found := rho.ParseSource(uri, text)
-	out := make([]protocol.Diagnostic, 0, len(found.Diagnostics))
-	for _, diagnostic := range found.Diagnostics {
+	path := NormalizeURI(uri)
+	var found rho.DocumentDiagnostics
+	onDisk := false
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		onDisk = true
+		found = rho.DiagnoseInProgram(path, text)
+	} else {
+		found = rho.ParseSource(uri, text)
+	}
+	return publishable(found.Diagnostics, path, onDisk, text)
+}
+
+// publishable turns the compiler's diagnostics into the protocol's, keeping
+// the ones about this file.
+//
+// A mistake in another file belongs to that file and is published when it is
+// open; it is shown here only when one of its notes points into this file — the
+// include or import that brought the broken file in — and then at that line,
+// naming the file it is in.
+func publishable(diagnostics []rho.Diagnostic, path string, onDisk bool, text string) []protocol.Diagnostic {
+	out := make([]protocol.Diagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		message := diagnostic.Message
+		line, column := diagnostic.Line, diagnostic.Column
+		endLine, endColumn := diagnostic.EndLine, diagnostic.EndColumn
+		if onDisk && diagnostic.File != "" && filepath.ToSlash(diagnostic.File) != path {
+			placed := false
+			for _, note := range diagnostic.Notes {
+				if filepath.ToSlash(note.File) == path {
+					message = fmt.Sprintf("%s:%d:%d: %s", filepath.Base(diagnostic.File), diagnostic.Line, diagnostic.Column, diagnostic.Message)
+					line, column, endLine, endColumn = note.Line, note.Column, 0, 0
+					placed = true
+					break
+				}
+			}
+			if !placed {
+				continue
+			}
+		}
 		severity := 1
-		if diagnostic.Severity == "warning" {
+		if diagnostic.Severity == rho.SeverityWarning {
 			severity = 2
 		}
-		line, column := diagnostic.Line, diagnostic.Column
-		if !diagnostic.Positioned() {
-			// A finding with no place still has to be published; the first line is
-			// where an editor will show it, and a blank entry would be dropped.
-			line, column = 0, 0
+		// The compiler counts from one and the protocol from zero. A finding with
+		// no place still has to be published; the first line is where an editor
+		// will show it, and a blank entry would be dropped.
+		start := protocol.Position{Line: max(line-1, 0), Character: max(column-1, 0)}
+		end := protocol.Position{Line: start.Line, Character: start.Character + tokenLength(text, start)}
+		if endLine > 0 {
+			end = protocol.Position{Line: endLine - 1, Character: max(endColumn-1, 0)}
 		}
-		out = append(out, protocol.Diagnostic{
-			Range: protocol.Range{
-				Start: protocol.Position{Line: line, Character: column},
-				End:   protocol.Position{Line: line, Character: column + 1},
-			},
+		published := protocol.Diagnostic{
+			Range:    protocol.Range{Start: start, End: end},
 			Severity: severity,
-			Message:  diagnostic.Message,
-		})
+			Code:     diagnostic.Code,
+			Source:   "rho",
+			Message:  message,
+		}
+		for _, note := range diagnostic.Notes {
+			if note.File == "" || note.Line == 0 {
+				continue
+			}
+			at := protocol.Position{Line: note.Line - 1, Character: max(note.Column-1, 0)}
+			published.RelatedInformation = append(published.RelatedInformation, protocol.DiagnosticRelatedInformation{
+				Location: protocol.Location{URI: "file://" + filepath.ToSlash(note.File), Range: protocol.Range{Start: at, End: at}},
+				Message:  note.Message,
+			})
+		}
+		out = append(out, published)
 	}
 	return out
+}
+
+// tokenLength is how many characters the token at a position spans, so the
+// underline covers the name or literal the compiler pointed at rather than its
+// first character. It counts as the protocol does, in UTF-16 units.
+func tokenLength(text string, at protocol.Position) int {
+	lines := strings.Split(text, "\n")
+	if at.Line >= len(lines) {
+		return 1
+	}
+	runes := []rune(lines[at.Line])
+	if at.Character >= len(runes) {
+		return 1
+	}
+	isWord := func(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+	i := at.Character
+	switch {
+	case runes[i] == '"':
+		i++
+		for i < len(runes) && runes[i] != '"' {
+			if runes[i] == '\\' {
+				i++
+			}
+			i++
+		}
+		i++
+	case isWord(runes[i]):
+		for i < len(runes) && isWord(runes[i]) {
+			i++
+		}
+	default:
+		i++
+	}
+	if i > len(runes) {
+		i = len(runes)
+	}
+	return len(utf16.Encode(runes[at.Character:i]))
 }
 
 /* -------------------------------------------------------------------------- */

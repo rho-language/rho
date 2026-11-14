@@ -176,7 +176,8 @@ func checkBackendSupport(compiled *ast.Module, module ir.ModuleIR, target backen
 	if compiled == nil {
 		return nil
 	}
-	refusals := []string{}
+	refusals := Diagnostics{}
+	header := "cannot be built for " + target.describe() + ": "
 	tagged := map[string]bool{}
 	for _, tag := range stdBackendTags(compiled) {
 		tagged[tag.Module] = true
@@ -184,11 +185,12 @@ func checkBackendSupport(compiled *ast.Module, module ir.ModuleIR, target backen
 		if ok {
 			continue
 		}
-		line := tag.Module + " " + why
-		if importer := importerOf(compiled, tag.Module); importer != "" {
-			line += " (imported by " + importer + ")"
+		refusal := Diagnostic{Severity: SeverityError, Code: "backend", Message: header + tag.Module + " " + why}
+		if file, line, column := importSite(compiled, tag.Module); file != "" {
+			refusal.File, refusal.Line, refusal.Column = file, line, column
+			refusal.Message += " (imported here)"
 		}
-		refusals = append(refusals, line)
+		refusals = append(refusals, refusal)
 	}
 	for _, call := range module.BackendCalls {
 		// A call inside a module that says where it works is that module's
@@ -205,25 +207,51 @@ func checkBackendSupport(compiled *ast.Module, module ir.ModuleIR, target backen
 		if ok {
 			continue
 		}
-		refusals = append(refusals, call.Name+" "+why+" ("+callPlace(call)+")")
+		refusals = append(refusals, Diagnostic{
+			File: call.File, Line: call.Line, Column: call.Column,
+			Severity: SeverityError, Code: "backend",
+			Message: header + call.Name + " " + why + callPlace(call),
+		})
 	}
 	if len(refusals) == 0 {
 		return nil
 	}
-	return fmt.Errorf("this program cannot be built for %s:\n  %s", target.describe(), strings.Join(refusals, "\n  "))
+	return refusals
 }
 
 // callPlace says where a recorded call is: the module, when it is not the
-// program's own, and the line and column.
+// program's own. The file, line and column are the diagnostic's own.
 func callPlace(call ir.BackendCall) string {
-	place := "called"
+	place := ""
 	if call.Module != "" {
 		place += " in " + call.Module
 	}
-	if call.Line > 0 {
+	if call.Line > 0 && call.File == "" {
 		place += fmt.Sprintf(" at %d:%d", call.Line, call.Column)
 	}
-	return place
+	if place == "" {
+		return ""
+	}
+	return " (called" + place + ")"
+}
+
+// importSite is the first loaded file that imports a module, and the line and
+// column of the import, or "" when nothing names it (a module a feature or a
+// declared database brought in).
+func importSite(compiled *ast.Module, module string) (string, int, int) {
+	for _, file := range compiled.LoadedFiles {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		for index, line := range strings.Split(string(content), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "import" && fields[1] == module {
+				return file, index + 1, strings.Index(line, "import") + 1
+			}
+		}
+	}
+	return "", 0, 0
 }
 
 // stdBackendTags are the tagged std modules among the files a program was
@@ -241,28 +269,4 @@ func stdBackendTags(compiled *ast.Module) []stdBackendTag {
 		out = append(out, tag)
 	}
 	return out
-}
-
-// importerOf is the first loaded file that imports a module, as a path relative
-// to the working directory when it can be, or "" when nothing names it (a module
-// a feature or a declared database brought in).
-func importerOf(compiled *ast.Module, module string) string {
-	for _, file := range compiled.LoadedFiles {
-		content, err := os.ReadFile(file)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(content), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 && fields[0] == "import" && fields[1] == module {
-				if wd, err := os.Getwd(); err == nil {
-					if relative, err := filepath.Rel(wd, file); err == nil && !strings.HasPrefix(relative, "..") {
-						return relative
-					}
-				}
-				return file
-			}
-		}
-	}
-	return ""
 }

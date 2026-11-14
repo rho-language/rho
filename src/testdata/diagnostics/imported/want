@@ -1,0 +1,1 @@
+src/shapes.rho:4:20: error: undefined name "heigth": no local, parameter or constant of that name is in scope; did you mean height?

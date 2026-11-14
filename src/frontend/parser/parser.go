@@ -15,6 +15,14 @@ type Parser struct {
 	nextTok lexer.Token
 	tokens  []lexer.Token
 	tokenAt int
+	// file is the source file the tokens came from, which every position the
+	// parser makes carries, so a node merged into another file's module still
+	// says where it was written.
+	file string
+	// errors are the declarations that did not parse. A mistake in one
+	// declaration is recovered from at the next one, so a file with three
+	// broken functions is reported once with all three.
+	errors ErrorList
 
 	// valueNames are the names the module binds at the top level. A brace after
 	// one of them opens a block, not a struct literal: `while i < MAX {` is a
@@ -41,8 +49,16 @@ func New(lx *lexer.Lexer) *Parser {
 }
 
 func Parse(tokens []lexer.Token) (mod *ast.Module, err error) {
+	return ParseFile(tokens, "")
+}
+
+// ParseFile parses the tokens of a named file. Every position in the tree, and
+// every error, carries the file, which is what lets a report about a node from
+// an included file point at that file rather than at the one that included it.
+func ParseFile(tokens []lexer.Token, file string) (mod *ast.Module, err error) {
 	p := &Parser{
 		tokens:     tokens,
+		file:       file,
 		valueNames: collectValueNames(tokens),
 		applyNames: collectApplyNames(tokens),
 	}
@@ -109,15 +125,14 @@ func (p *Parser) Parse() (mod *ast.Module, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			mod = nil
-			if recoveredErr, ok := recovered.(error); ok {
-				err = recoveredErr
-				return
+			err = p.recovered(recovered)
+			if len(p.errors) > 0 {
+				err = append(p.errors, AsError(err))
 			}
-			err = fmt.Errorf("%v", recovered)
 		}
 	}()
 	if p.current.Kind == lexer.TokenEOF {
-		return nil, fmt.Errorf("expected module declaration")
+		return nil, &Error{Message: "the file is empty; a Rho source begins with `module <name>`", File: p.file, Line: 1, Column: 1}
 	}
 	mod = p.parseModuleDecl()
 	mod.Namespace = p.parseNamespace()
@@ -125,7 +140,68 @@ func (p *Parser) Parse() (mod *ast.Module, err error) {
 	mod.Imports = p.parseImports()
 	mod.Features = p.parseFeatures()
 	mod.Decls = p.parseTopLevelDecls()
+	if len(p.errors) == 1 {
+		return nil, p.errors[0]
+	}
+	if len(p.errors) > 0 {
+		return nil, p.errors
+	}
 	return mod, nil
+}
+
+// recovered turns what a parse function panicked with into a positioned error
+// in this file.
+func (p *Parser) recovered(value any) *Error {
+	err, ok := value.(error)
+	if !ok {
+		err = fmt.Errorf("%v", value)
+	}
+	parseErr := AsError(err)
+	if parseErr == nil {
+		parseErr = &Error{Message: err.Error(), Offset: p.current.Pos, Line: p.current.Line, Column: p.current.Column}
+	}
+	if parseErr.File == "" {
+		parseErr.File = p.file
+	}
+	return parseErr
+}
+
+// topLevelDecl parses one declaration, and on a mistake records it and moves to
+// the next place a declaration can begin: a declaration keyword at the start of
+// a line. A file is usually indented, so the keyword in the first column is
+// what tells the next declaration from a statement inside the broken one.
+func (p *Parser) topLevelDecl(parse func() ast.Decl) (decl ast.Decl, ok bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			p.errors = append(p.errors, p.recovered(recovered))
+			decl, ok = nil, false
+			p.skipToDeclaration()
+		}
+	}()
+	return parse(), true
+}
+
+// skipToDeclaration moves past the rest of a declaration that did not parse.
+func (p *Parser) skipToDeclaration() {
+	p.readToken()
+	for p.current.Kind != lexer.TokenEOF {
+		if p.current.Column == 1 && startsDeclaration(p.current) {
+			return
+		}
+		p.readToken()
+	}
+}
+
+// startsDeclaration reports whether a token can begin a top-level declaration.
+func startsDeclaration(token lexer.Token) bool {
+	switch token.Kind {
+	case lexer.TokenStruct, lexer.TokenEnum, lexer.TokenFn, lexer.TokenExtern, lexer.TokenType,
+		lexer.TokenRoute, lexer.TokenLet, lexer.TokenConst, lexer.TokenVar:
+		return true
+	case lexer.TokenIdent:
+		return token.Lex == "message" || token.Lex == "rpc"
+	}
+	return false
 }
 
 // parseNamespace reads an optional `namespace a.b.c;` after the module name. It
@@ -176,9 +252,12 @@ func (p *Parser) parseFeatures() []string {
 func (p *Parser) parseIncludes() []ast.Include {
 	includes := []ast.Include{}
 	for p.current.Kind == lexer.TokenInclude {
+		at := p.position()
 		p.readToken()
 		p.expect(lexer.TokenString)
-		includes = append(includes, ast.Include{Path: p.current.Lex})
+		include := ast.Include{Path: p.current.Lex}
+		include.Pos = at
+		includes = append(includes, include)
 		p.readToken()
 		if p.current.Kind == lexer.TokenSemicolon {
 			p.readToken()
@@ -203,8 +282,20 @@ func (p *Parser) readToken() {
 
 func (p *Parser) expect(kind lexer.Kind) {
 	if p.current.Kind != kind {
-		panic(NewErrorf(p.current, "expected %v, got %v (%q)", kind, p.current.Kind, p.current.Lex))
+		panic(NewErrorf(p.current, "expected %v, got %s", kind, describe(p.current)))
 	}
+}
+
+// describe is a token as a message names it: what was written, or the end of
+// the file.
+func describe(token lexer.Token) string {
+	if token.Kind == lexer.TokenEOF {
+		return "the end of the file"
+	}
+	if token.Kind == lexer.TokenString {
+		return fmt.Sprintf("the string %q", token.Lex)
+	}
+	return "`" + token.Lex + "`"
 }
 
 func isName(kind lexer.Kind) bool {
@@ -213,7 +304,7 @@ func isName(kind lexer.Kind) bool {
 
 func (p *Parser) name() string {
 	if !isName(p.current.Kind) {
-		panic(NewErrorf(p.current, "expected name, got %q", p.current.Lex))
+		panic(NewErrorf(p.current, "expected a name, got %s", describe(p.current)))
 	}
 	name := p.current.Lex
 	p.readToken()
@@ -223,24 +314,32 @@ func (p *Parser) name() string {
 func (p *Parser) parseModuleDecl() *ast.Module {
 	p.expect(lexer.TokenModule)
 	p.readToken()
+	// The module is where its name is written, which is what an editor
+	// points at when it names the module.
+	at := p.position()
 	parts := []string{p.name()}
 	for p.current.Kind == lexer.TokenDot {
 		p.readToken()
 		parts = append(parts, p.name())
 	}
-	return &ast.Module{Name: strings.Join(parts, ".")}
+	module := &ast.Module{Name: strings.Join(parts, ".")}
+	module.Pos = at
+	return module
 }
 
 func (p *Parser) parseImports() []ast.Import {
 	imports := []ast.Import{}
 	for p.current.Kind == lexer.TokenImport {
+		at := p.position()
 		p.readToken()
 		parts := []string{p.name()}
 		for p.current.Kind == lexer.TokenDot {
 			p.readToken()
 			parts = append(parts, p.name())
 		}
-		imports = append(imports, ast.Import{Name: strings.Join(parts, ".")})
+		imported := ast.Import{Name: strings.Join(parts, ".")}
+		imported.Pos = at
+		imports = append(imports, imported)
 	}
 	return imports
 }
@@ -255,7 +354,20 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 	decls := []ast.Decl{}
 	for p.current.Kind != lexer.TokenEOF {
 		start := p.position()
-		var decl ast.Decl
+		decl, ok := p.topLevelDecl(func() ast.Decl { return p.parseTopLevelDecl() })
+		if !ok {
+			continue
+		}
+		p.locate(&decl, start)
+		decls = append(decls, decl)
+	}
+	return decls
+}
+
+// parseTopLevelDecl reads the declaration the current token begins.
+func (p *Parser) parseTopLevelDecl() ast.Decl {
+	var decl ast.Decl
+	{
 		switch p.current.Kind {
 		case lexer.TokenStruct:
 			decl = p.parseStructDecl()
@@ -271,7 +383,7 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 			case "rpc":
 				decl = p.parseRpcDecl()
 			default:
-				panic(NewErrorf(p.current, "unexpected token in top-level: %q", p.current.Lex))
+				panic(NewErrorf(p.current, "unexpected %s at the top level: a file holds declarations (fn, struct, type, const, extern, route), and a statement belongs inside a function body", describe(p.current)))
 			}
 		case lexer.TokenFn:
 			decl = p.parseFuncDecl()
@@ -284,17 +396,15 @@ func (p *Parser) parseTopLevelDecls() []ast.Decl {
 		case lexer.TokenLet, lexer.TokenConst, lexer.TokenVar:
 			decl = p.parseConstDecl()
 		default:
-			panic(NewErrorf(p.current, "unexpected token in top-level: %q", p.current.Lex))
+			panic(NewErrorf(p.current, "unexpected %s at the top level: a file holds declarations (fn, struct, type, const, extern, route), and a statement belongs inside a function body", describe(p.current)))
 		}
-		p.locate(&decl, start)
-		decls = append(decls, decl)
 	}
-	return decls
+	return decl
 }
 
 // position is where the lexer currently is, in a form the tree can carry.
 func (p *Parser) position() ast.Position {
-	return ast.Position{Offset: p.current.Pos, Line: p.current.Line, Column: p.current.Column}
+	return ast.Position{File: p.file, Offset: p.current.Pos, Line: p.current.Line, Column: p.current.Column}
 }
 
 // locate puts a declaration at the place its keyword was.
@@ -774,7 +884,7 @@ func (p *Parser) parseBlock() []ast.Stmt {
 	body := []ast.Stmt{}
 	for p.current.Kind != lexer.TokenRBrace {
 		if p.current.Kind == lexer.TokenEOF {
-			panic(NewErrorf(p.current, "unterminated block"))
+			panic(NewErrorf(p.current, "a block is not closed before the end of the file: add the missing `}`"))
 		}
 		body = append(body, p.parseStmt())
 	}
@@ -981,7 +1091,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		condition := p.parseExpr(0)
 		then := p.parseBlock()
 		if p.current.Kind != lexer.TokenElse {
-			panic(NewErrorf(p.current, "if expression requires else"))
+			panic(NewErrorf(p.current, "an if used as a value needs an else, so it has a value on both paths"))
 		}
 		p.readToken()
 		var elseExpr ast.Expr
@@ -1030,7 +1140,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		expression = ast.IdentifierExpr{Name: p.current.Lex}
 		p.readToken()
 	default:
-		panic(NewErrorf(p.current, "expected expression, got %q", p.current.Lex))
+		panic(NewErrorf(p.current, "expected an expression, got %s", describe(p.current)))
 	}
 	// Postfix calls and field accesses extend what was read, so they are applied
 	// before the position is: `a.b()` is one expression that begins at `a`.

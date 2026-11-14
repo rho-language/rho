@@ -1,0 +1,2 @@
+src/helper.rho:5:1: error: expected `)`, got `}`
+note: src/main.rho:2:1: helper.rho is included here

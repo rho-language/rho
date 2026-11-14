@@ -418,7 +418,7 @@ fn main() void {
 	if err == nil {
 		t.Fatal("expected a continue outside a loop to be refused")
 	}
-	if !strings.Contains(err.Error(), "continue outside loop") {
+	if !strings.Contains(err.Error(), "continue outside a loop") {
 		t.Fatalf("expected the reason to be named, got %q", err)
 	}
 }

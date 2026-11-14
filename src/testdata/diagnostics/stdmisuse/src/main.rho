@@ -1,0 +1,6 @@
+module main
+import std.math.linear
+
+fn main() void {
+    let n: f64 = vec2_length(1)
+}

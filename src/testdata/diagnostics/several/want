@@ -1,0 +1,5 @@
+src/main.rho:9:18: error: unknown member "z": Point has no field of that name; its fields are x, y
+src/main.rho:14:25: error: cannot use a u32 as string in `let label`
+src/main.rho:15:8: error: an if condition must be bool, got u32
+src/main.rho:18:22: error: area takes 1 argument, and this call passes 2; it is called with (Point)
+note: src/main.rho:8:1: area is declared here

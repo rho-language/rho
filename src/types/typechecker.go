@@ -49,7 +49,7 @@ type TypeChecker struct {
 	owner string
 	// cRefusals are the calls lowered for every backend that C cannot emit
 	// (ModuleIR.CRefusals).
-	cRefusals []string
+	cRefusals []ir.Refusal
 	// backendCalls are the built-ins called that only some backends supply,
 	// each with where it was first called (ModuleIR.BackendCalls).
 	backendCalls     map[string]ir.BackendCall
@@ -128,6 +128,11 @@ type TypeChecker struct {
 	// the loops around the statement being lowered, the calls made, and the
 	// loops that cannot be released. See arena.go.
 	arena arenaState
+
+	// collect gathers every independent error while CheckModule validates the
+	// declarations, so one run reports them all (report.go). It is nil outside
+	// that pass, where an error is returned to the caller as it is found.
+	collect *collector
 }
 
 type functionType struct {
@@ -146,6 +151,9 @@ type functionType struct {
 	extern bool
 	// owner is the module that declared it.
 	owner string
+	// pos is where it is declared, which a report about a call to it notes
+	// beside the call: a call that is wrong is fixed at one of the two places.
+	pos ast.Position
 }
 
 /* -------------------------------------------------------------------------- */
@@ -318,6 +326,7 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				cName:  qualifiedCName(fn.Owner, fn.Name),
 				extern: fn.Extern,
 				owner:  fn.Owner,
+				pos:    fn.Pos,
 			}
 			if fn.Owner != "" {
 				tc.funcs[fn.Owner+"."+fn.Name] = entry
@@ -405,8 +414,27 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 		constScope[d.Name] = declared
 	}
 
-	// Second pass: validate declarations
+	// Second pass: validate declarations. Every declaration is checked, and
+	// every independent mistake in one is collected (report.go), so a run
+	// reports them all rather than the first.
+	tc.collect = &collector{}
+	defer func() { tc.collect = nil }()
 	for _, decl := range m.Decls {
+		tc.collect.beginDeclaration()
+		if err := tc.checkDecl(decl, constScope); err != nil {
+			tc.collect.add(err)
+		}
+	}
+	if tc.collect.omitted > 0 && len(tc.collect.errors) > 0 {
+		last := tc.collect.errors[len(tc.collect.errors)-1]
+		last.Notes = append(last.Notes, Note{Message: fmt.Sprintf("and %d more errors not listed", tc.collect.omitted)})
+	}
+	return tc.collect.result()
+}
+
+// checkDecl validates one top-level declaration.
+func (tc *TypeChecker) checkDecl(decl ast.Decl, constScope map[string]ir.Type) error {
+	{
 		switch d := decl.(type) {
 		case ast.StructDecl:
 			if err := tc.checkStruct(d); err != nil {
@@ -422,7 +450,7 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				return locate(err, d.Pos, "const "+d.Name)
 			}
 			if declared.Kind != ir.TypeInvalid && !assignable(declared, actual) {
-				return locate(fmt.Errorf("cannot assign %s to %s", typeName(actual), typeName(declared)), d.Pos, "const "+d.Name)
+				return locate(mismatch(actual, declared, "in `const "+d.Name+"`"), d.Value.Position(), "const "+d.Name)
 			}
 			// A written type stands: only a constant that inferred its type
 			// takes the value's, because `0` on its own is an i32 whatever the
@@ -465,7 +493,7 @@ func (tc *TypeChecker) checkStruct(s ast.StructDecl) error {
 	for _, f := range s.Fields {
 		fieldType, ok := tc.resolveType(f.Type)
 		if !ok {
-			return fmt.Errorf("unknown type %q in struct %q", f.Type, s.Name)
+			return locate(fmt.Errorf("unknown type %q in struct %q (field %s): no struct, alias or built-in type has that name; declare it, import the module that does, or check the spelling", f.Type, s.Name, f.Name), f.Pos, "")
 		}
 		if f.BitWidth == nil {
 			continue
@@ -579,14 +607,14 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 			return fmt.Errorf("parameter %q of function %q: %s", p.Name, fn.Name, backendReservedReason(p.Name))
 		}
 		if _, ok := tc.resolveType(p.Type); !ok {
-			return fmt.Errorf("unknown type %q in parameter %q of function %q",
-				p.Type, p.Name, fn.Name)
+			return locate(fmt.Errorf("unknown type %q in parameter %q of function %q: no struct, alias or built-in type has that name; declare it, import the module that does, or check the spelling",
+				p.Type, p.Name, fn.Name), p.Pos, "")
 		}
 	}
 
 	// Check return type
 	if _, ok := tc.resolveType(fn.ReturnType); !ok {
-		return fmt.Errorf("unknown return type %q in function %q", fn.ReturnType, fn.Name)
+		return fmt.Errorf("unknown return type %q in function %q: no struct, alias or built-in type has that name; declare it, import the module that does, or check the spelling", fn.ReturnType, fn.Name)
 	}
 
 	if fn.Extern {
@@ -602,12 +630,25 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	previousParams := tc.checkingTypeParams
 	tc.checkingTypeParams = fn.TypeParams
 	defer func() { tc.checkingTypeParams = previousParams }()
+	reported := 0
+	if tc.collect != nil {
+		reported = len(tc.collect.errors) + tc.collect.omitted
+	}
 	terminates, err := tc.checkStatements(fn.Body, scope, tc.typeFor(fn.ReturnType), false)
 	if err != nil {
 		return fmt.Errorf("function %s: %w", fn.Name, err)
 	}
+	// A body with a statement already reported may end in it, and whether it
+	// returns is not worth a second report.
+	if tc.collect != nil && len(tc.collect.errors)+tc.collect.omitted > reported {
+		return nil
+	}
 	if tc.typeFor(fn.ReturnType).Kind != ir.TypeVoid && len(fn.Body) > 0 && !terminates {
-		return fmt.Errorf("function %s: missing return", fn.Name)
+		end := fn.Pos
+		if last := fn.Body[len(fn.Body)-1]; last.Position().Valid() {
+			end = last.Position()
+		}
+		return locate(fmt.Errorf("function %s: missing return: it is declared to return %s, and the end of its body can be reached; end every path with `return <value>`", fn.Name, typeName(tc.typeFor(fn.ReturnType))), end, "")
 	}
 	return nil
 }
@@ -616,14 +657,40 @@ func (tc *TypeChecker) checkStatements(statements []ast.Stmt, scope map[string]i
 	terminates := false
 	for _, statement := range statements {
 		if terminates {
-			return true, fmt.Errorf("unreachable statement")
+			err := locate(fmt.Errorf("unreachable statement: the statement before it always leaves the block (return, break or continue), so this one can never run; remove it or move it before that statement"), statement.Position(), "")
+			if tc.collect == nil {
+				return true, err
+			}
+			tc.report(err)
+			return true, nil
+		}
+		if tc.collect != nil {
+			tc.collect.touchedPoison = false
 		}
 		statementTerminates, err := tc.checkStatement(statement, scope, result, inLoop)
 		if err != nil {
 			// The statement's own place, which is what a report points at. A
 			// check that knows better — one about an expression, or a name that
 			// resolved — carries its own position, and locate keeps that one.
-			return false, locate(err, statement.Position(), "")
+			err = locate(err, statement.Position(), "")
+			if tc.collect == nil {
+				return false, err
+			}
+			// While collecting, the statement is reported and the next one is
+			// checked. A binding that failed is still bound, to its written
+			// type or to the poison type, so the rest of the body does not
+			// report it again as undefined.
+			tc.report(err)
+			if let, ok := statement.(ast.LetStmt); ok {
+				if _, bound := scope[let.Name]; !bound {
+					if let.Type.String() != "" {
+						scope[let.Name] = tc.declaredType(let.Type.String())
+					} else {
+						scope[let.Name] = poisonType
+					}
+				}
+			}
+			continue
 		}
 		terminates = statementTerminates
 	}
@@ -660,6 +727,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 	switch value := expr.(type) {
 	case ast.IdentifierExpr:
 		if typ, ok := scope[value.Name]; ok {
+			if typ.Name == poisonName && tc.collect != nil {
+				tc.collect.touchedPoison = true
+			}
 			return typ, nil
 		}
 		// A module-level constant is visible in every function, because it is
@@ -683,7 +753,10 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				return ir.Type{Kind: ir.TypeU32, Name: "u32"}, nil
 			}
 		}
-		return ir.Type{}, fmt.Errorf("undefined name %q", value.Name)
+		if tc.collect != nil && tc.collect.undefined[value.Name] {
+			tc.collect.touchedPoison = true
+		}
+		return ir.Type{}, locate(undefinedNameError(value.Name, tc.undefinedNameMessage(value.Name, scope)), value.Pos, "")
 	case ast.NumberExpr:
 		if strings.Contains(value.Value, ".") {
 			return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
@@ -757,14 +830,14 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if value.Op == "==" || value.Op == "!=" || value.Op == "<" || value.Op == "<=" || value.Op == ">" || value.Op == ">=" {
 			if !comparable(left, right) {
 				return ir.Type{}, locate(
-					fmt.Errorf("incompatible comparison: %s %s %s", typeName(left), value.Op, typeName(right)),
+					fmt.Errorf("incompatible comparison: cannot compare %s with %s using %s; %s", article(typeName(left)), article(typeName(right)), value.Op, conversionHint(right, left)),
 					value.Position(), "")
 			}
 			return ir.Type{Kind: ir.TypeBool, Name: "bool"}, nil
 		}
 		if value.Op == "&&" || value.Op == "||" {
 			if left.Kind != ir.TypeBool || right.Kind != ir.TypeBool {
-				return ir.Type{}, fmt.Errorf("logical operator requires bool")
+				return ir.Type{}, fmt.Errorf("%s needs bool on both sides, got %s and %s; compare a number explicitly, for example `n != 0`", value.Op, typeName(left), typeName(right))
 			}
 			return left, nil
 		}
@@ -775,11 +848,15 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				}
 				return left, nil
 			}
-			return ir.Type{}, fmt.Errorf("bitwise operator %s requires integer values", value.Op)
+			return ir.Type{}, fmt.Errorf("bitwise operator %s needs integers on both sides, got %s and %s", value.Op, typeName(left), typeName(right))
 		}
 		if value.Op == "+" && (left.Kind == ir.TypeString || right.Kind == ir.TypeString) {
 			if left.Kind != ir.TypeString || right.Kind != ir.TypeString {
-				return ir.Type{}, fmt.Errorf("string concatenation requires strings")
+				other := right
+				if right.Kind == ir.TypeString {
+					other = left
+				}
+				return ir.Type{}, fmt.Errorf("+ joins two strings, and one side is %s; %s", article(typeName(other)), conversionHint(other, ir.Type{Kind: ir.TypeString, Name: "string"}))
 			}
 			return left, nil
 		}
@@ -789,7 +866,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			return left, nil
 		}
 		if !numeric(left) || !numeric(right) {
-			return ir.Type{}, fmt.Errorf("operator %s requires numeric values", value.Op)
+			return ir.Type{}, fmt.Errorf("operator %s requires numeric values, got %s and %s", value.Op, typeName(left), typeName(right))
 		}
 		if err := checkConstantOperands(value, left); err != nil {
 			return ir.Type{}, err
@@ -866,8 +943,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 							}
 						}
 					} else {
-						return ir.Type{}, fmt.Errorf("cannot deduce type arguments for %s; %s unresolved, supply them explicitly",
-							identifier.Name, strings.Join(tc.undeducedParams(decl.TypeParams, decl.TypeParamDefaults, subs), ", "))
+						return ir.Type{}, withNote(locate(fmt.Errorf("cannot deduce the type arguments of %s from this call (%s unresolved); write them explicitly, as in %s[%s](...)",
+							identifier.Name, strings.Join(tc.undeducedParams(decl.TypeParams, decl.TypeParamDefaults, subs), ", "), identifier.Name, strings.Join(decl.TypeParams, ", ")), identifier.Pos, ""),
+							identifier.Pos, declaredAt("generic function "+identifier.Name, decl.Pos))
 					}
 				} else {
 					subs = tc.buildSubstitution(decl.TypeParams, decl.TypeParamDefaults, args)
@@ -910,7 +988,10 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				// missing: `SqlDb(0)` builds a value of that type, and a program
 				// that writes one is spelling a type rather than calling a
 				// function that was never declared.
-				return ir.Type{}, fmt.Errorf("undefined function %q", identifier.Name)
+				if tc.collect != nil && tc.collect.undefined[identifier.Name] {
+					tc.collect.touchedPoison = true
+				}
+				return ir.Type{}, locate(undefinedNameError(identifier.Name, tc.undefinedFunctionMessage(identifier.Name)), identifier.Pos, "")
 			}
 			// A function-style conversion names its result: `u32(x)` is a u32.
 			// It has to say so here, because arithmetic operands are required to
@@ -1041,7 +1122,12 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			return ir.Type{}, fmt.Errorf("unsupported call target")
 		}
 		if len(value.Args) != len(signature.params) {
-			return ir.Type{}, fmt.Errorf("wrong argument count")
+			err := locate(fmt.Errorf("%s takes %s, and this call passes %d; %s",
+				writtenCallee(value.Callee), plural(len(signature.params), "argument"), len(value.Args), signatureHint(signature)), value.Pos, "")
+			if signature.pos.Valid() {
+				err = withNote(err, value.Pos, declaredAt(writtenCallee(value.Callee), signature.pos))
+			}
+			return ir.Type{}, err
 		}
 		for i, arg := range value.Args {
 			actual, err := tc.exprType(arg, scope)
@@ -1053,9 +1139,17 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				want = tc.substituteType(want, subs)
 			}
 			if !assignable(want, actual) && !(foreign && stringToC(actual, want)) {
-				return ir.Type{}, locate(
-					fmt.Errorf("argument %d has type %s, want %s", i+1, typeName(actual), typeName(want)),
+				err := locate(
+					fmt.Errorf("argument %d of %s has type %s, want %s; %s", i+1, writtenCallee(value.Callee), typeName(actual), typeName(want), conversionHint(actual, want)),
 					arg.Position(), "")
+				if signature.pos.Valid() {
+					note := declaredAt(writtenCallee(value.Callee), signature.pos)
+					if subs != nil {
+						note.Message = fmt.Sprintf("%s is declared here, and specialised at this call as %s", writtenCallee(value.Callee), substitutionText(subs))
+					}
+					err = withNote(err, arg.Position(), note)
+				}
+				return ir.Type{}, err
 			}
 			if err := checkConstantFits(arg, want); err != nil {
 				return ir.Type{}, err
@@ -1080,7 +1174,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		typ, ok := tc.resolveType(value.Type.String())
 		if !ok {
-			return ir.Type{}, fmt.Errorf("unknown struct %q", value.Type.String())
+			return ir.Type{}, fmt.Errorf("unknown struct %q: a literal `Name { ... }` needs a struct of that name; declare it, import the module that does, or check the spelling", value.Type.String())
 		}
 		return typ, nil
 	case ast.ArrayLiteralExpr:
@@ -1155,7 +1249,7 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 
 func (tc *TypeChecker) memberType(object ir.Type, name string) (ir.Type, error) {
 	if object.Kind != ir.TypeStruct {
-		return ir.Type{}, fmt.Errorf("member access requires a struct")
+		return ir.Type{}, fmt.Errorf("member access requires a struct: `.%s` reads a field, and %s has none", name, article(typeName(object)))
 	}
 	// An optional pointer has no fields, because it is a pointer. It answers the
 	// two fields the Option interface is written in terms of anyway, so that code
@@ -1174,11 +1268,11 @@ func (tc *TypeChecker) memberType(object ir.Type, name string) (ir.Type, error) 
 		if _, builtin := tc.types[baseTypeName(object.Name)]; builtin {
 			return ir.Type{Kind: ir.TypeI32, Name: "i32"}, nil
 		}
-		return ir.Type{}, fmt.Errorf("unknown member %q", name)
+		return ir.Type{}, fmt.Errorf("unknown member %q: %s is not a struct this program declares", name, typeName(object))
 	}
 	field, ok := fields[name]
 	if !ok {
-		return ir.Type{}, fmt.Errorf("unknown member %q", name)
+		return ir.Type{}, fmt.Errorf("unknown member %q: %s has no field of that name; %s", name, typeName(object), fieldsHint(name, fields))
 	}
 	params := tc.genericParams[baseTypeName(object.Name)]
 	args := typeArguments(object.Name)
@@ -1708,8 +1802,9 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 	// What C cannot emit, once each: a body may be lowered more than once.
 	seen := map[string]bool{}
 	for _, refusal := range tc.cRefusals {
-		if !seen[refusal] {
-			seen[refusal] = true
+		key := fmt.Sprintf("%s:%d:%d:%s", refusal.File, refusal.Line, refusal.Column, refusal.Message)
+		if !seen[key] {
+			seen[key] = true
 			out.CRefusals = append(out.CRefusals, refusal)
 		}
 	}
@@ -3186,14 +3281,16 @@ func (tc *TypeChecker) lowerLen(call ast.CallExpr, scope map[string]ir.Type) (st
 		if identifier, ok := arg.(ast.IdentifierExpr); ok {
 			written = "len(" + identifier.Name + ")"
 		}
-		where := fmt.Sprintf("line %d", call.Pos.Line)
+		where := ""
 		if tc.owner != "" {
-			where = tc.owner + ", " + where
+			where = " (in " + tc.owner + ")"
 		}
-		tc.cRefusals = append(tc.cRefusals, fmt.Sprintf(
-			"%s (%s): a dynamic array %s is a bare pointer in C and carries no length, so len cannot measure it on a C target; "+
+		tc.cRefusals = append(tc.cRefusals, ir.Refusal{
+			File: call.Pos.File, Line: call.Pos.Line, Column: call.Pos.Column,
+			Message: fmt.Sprintf("%s%s: a dynamic array %s is a bare pointer in C and carries no length, so len cannot measure it on a C target; "+
 				"use a fixed-size array (T[N]), whose length is part of its type, or a Slice[T] from std.core.slice, which carries its own",
-			written, where, typeName(typ)))
+				written, where, typeName(typ)),
+		})
 		return "len(" + tc.lowerExpr(arg, scope) + ")", true
 	}
 	return "", false
@@ -3764,7 +3861,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 	switch stmt := statement.(type) {
 	case ast.LetStmt:
 		if _, exists := scope[stmt.Name]; exists {
-			return false, fmt.Errorf("duplicate local %q", stmt.Name)
+			return false, fmt.Errorf("%q is already declared in this scope; choose another name, or assign to the existing one with `%s = ...`", stmt.Name, stmt.Name)
 		}
 		if backendReservedName(stmt.Name) {
 			return false, fmt.Errorf("local %q: %s", stmt.Name, backendReservedReason(stmt.Name))
@@ -3772,7 +3869,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		if stmt.Type.Name == "" && stmt.Type.String() == "" {
 			// A type-less binding takes its type from the value.
 			if stmt.Value == nil {
-				return false, fmt.Errorf("cannot infer a type for %q without a value", stmt.Name)
+				return false, fmt.Errorf("cannot infer a type for %q without a value; write its type, as in `let %s: u32`, or give it a value", stmt.Name, stmt.Name)
 			}
 			inferred, err := tc.exprType(stmt.Value, scope)
 			if err != nil {
@@ -3790,10 +3887,10 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 				return false, err
 			}
 			if !assignable(declared, actual) {
-				return false, fmt.Errorf("cannot assign %s to %s", typeName(actual), typeName(declared))
+				return false, locate(mismatch(actual, declared, "in `let "+stmt.Name+"`"), stmt.Value.Position(), "")
 			}
 			if err := checkConstantFits(stmt.Value, declared); err != nil {
-				return false, err
+				return false, locate(err, stmt.Value.Position(), "")
 			}
 		}
 		scope[stmt.Name] = declared
@@ -3817,7 +3914,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 			return false, err
 		}
 		if !assignable(actual, value) {
-			return false, fmt.Errorf("cannot assign %s to %s", typeName(value), typeName(actual))
+			return false, locate(mismatch(value, actual, "in this assignment"), stmt.Value.Position(), "")
 		}
 		if stmt.Op == "=" {
 			if err := checkConstantFits(stmt.Value, actual); err != nil {
@@ -3838,7 +3935,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 	case ast.ReturnStmt:
 		if stmt.Value == nil {
 			if result.Kind != ir.TypeVoid {
-				return false, fmt.Errorf("missing return value")
+				return false, fmt.Errorf("missing return value: the function returns %s, so `return` needs a value of that type", typeName(result))
 			}
 		} else {
 			// The declared return type is the deduction hint, so
@@ -3848,7 +3945,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 				return false, err
 			}
 			if !assignable(result, actual) {
-				return false, fmt.Errorf("returning %s from %s function", typeName(actual), typeName(result))
+				return false, locate(fmt.Errorf("cannot return %s from a function declared to return %s; %s", typeName(actual), typeName(result), conversionHint(actual, result)), stmt.Value.Position(), "")
 			}
 			if err := checkConstantFits(stmt.Value, result); err != nil {
 				return false, err
@@ -3857,11 +3954,16 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		statementTerminates = true
 	case ast.IfStmt:
 		condition, err := tc.exprType(stmt.Condition, scope)
-		if err != nil {
-			return false, err
+		if err == nil && condition.Kind != ir.TypeBool {
+			err = locate(fmt.Errorf("an if condition must be bool, got %s; compare it explicitly (for example `x != 0`)", typeName(condition)), stmt.Condition.Position(), "")
 		}
-		if condition.Kind != ir.TypeBool {
-			return false, fmt.Errorf("if condition must be bool")
+		if err != nil {
+			if tc.collect == nil {
+				return false, err
+			}
+			// The bodies are still checked: a wrong condition says nothing
+			// about the statements it guards.
+			tc.report(locate(err, stmt.Condition.Position(), ""))
 		}
 		thenScope := cloneScope(scope)
 		thenEnds, err := tc.checkStatements(stmt.Then, thenScope, result, inLoop)
@@ -3883,7 +3985,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 			return false, err
 		}
 		if condition.Kind != ir.TypeBool {
-			return false, fmt.Errorf("while condition must be bool")
+			return false, locate(fmt.Errorf("a while condition must be bool, got %s; compare it explicitly (for example `n > 0`)", typeName(condition)), stmt.Condition.Position(), "")
 		}
 		if _, err := tc.checkStatements(stmt.Body, cloneScope(scope), result, true); err != nil {
 			return false, err
@@ -3895,7 +3997,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		element, ok := arrayElementOf(collection)
 		if !ok {
-			return false, fmt.Errorf("for iterates an array, got %s", typeName(collection))
+			return false, locate(fmt.Errorf("for iterates an array, got %s; loop over a fixed array (T[N]), a [T] or a Slice[T], or count with `while`", typeName(collection)), stmt.Collection.Position(), "")
 		}
 		if stmt.Step != nil {
 			step, stepErr := tc.exprType(stmt.Step, scope)
@@ -3932,12 +4034,12 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 	case ast.BreakStmt:
 		if !inLoop {
-			return false, fmt.Errorf("break outside loop")
+			return false, fmt.Errorf("break outside a loop: break leaves a while or for loop, and there is none around it")
 		}
 		statementTerminates = true
 	case ast.ContinueStmt:
 		if !inLoop {
-			return false, fmt.Errorf("continue outside loop")
+			return false, fmt.Errorf("continue outside a loop: continue starts the next iteration of a while or for loop, and there is none around it")
 		}
 	default:
 		return false, fmt.Errorf("unsupported statement %T", statement)

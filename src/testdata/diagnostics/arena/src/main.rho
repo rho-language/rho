@@ -1,0 +1,6 @@
+module main
+include "loop.rho"
+
+fn main() void {
+    run()
+}

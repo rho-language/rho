@@ -427,7 +427,7 @@ func readSource(path string) string {
 	if err != nil {
 		return ""
 	}
-	data, err := os.ReadFile(abs)
+	data, err := readSourceFile(abs)
 	if err != nil {
 		return ""
 	}
@@ -466,7 +466,15 @@ func checkCRefusals(module ir.ModuleIR) error {
 	if len(module.CRefusals) == 0 {
 		return nil
 	}
-	return fmt.Errorf("this program cannot be built for C:\n  %s", strings.Join(module.CRefusals, "\n  "))
+	out := Diagnostics{}
+	for _, refusal := range module.CRefusals {
+		out = append(out, Diagnostic{
+			File: refusal.File, Line: refusal.Line, Column: refusal.Column,
+			Severity: SeverityError, Code: "backend",
+			Message: "this program cannot be built for C: " + refusal.Message,
+		})
+	}
+	return out
 }
 
 // checkArenaEscapes says what a loop that cannot release its strings costs.
@@ -481,16 +489,25 @@ func checkArenaEscapes(escapes []types.ArenaEscape, board string) error {
 		return nil
 	}
 	if board != "" {
-		lines := make([]string, 0, len(escapes))
+		out := Diagnostics{}
 		for _, escape := range escapes {
-			lines = append(lines, "  "+escape.String())
+			out = append(out, Diagnostic{
+				File: escape.File, Line: escape.Line, Column: escape.Column,
+				Severity: SeverityError, Code: "arena",
+				Message: board + " is a board, whose strings live in a fixed arena, and a loop that keeps every string it builds would run it out: " +
+					escape.String() + "; build the string in the iteration that uses it, or keep it in a variable declared inside the loop",
+			})
 		}
-		return fmt.Errorf("%s is a board, whose strings live in a fixed arena, and a loop that keeps every string it builds would run it out:\n%s\n"+
-			"build the string in the iteration that uses it, or keep it in a variable declared inside the loop",
-			board, strings.Join(lines, "\n"))
+		return out
 	}
+	base, _ := os.Getwd()
 	for _, escape := range escapes {
-		fmt.Fprintf(os.Stderr, "warning: %s; on a host its memory grows for as long as the loop runs\n", escape.String())
+		warning := Diagnostic{
+			File: escape.File, Line: escape.Line, Column: escape.Column,
+			Severity: SeverityWarning, Code: "arena",
+			Message: escape.String() + "; on a host its memory grows for as long as the loop runs",
+		}
+		fmt.Fprintln(os.Stderr, warning.Render(base))
 	}
 	return nil
 }
@@ -1237,7 +1254,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 	}
 	visited[abs] = true
 
-	source, err := os.ReadFile(abs)
+	source, err := readSourceFile(abs)
 	if err != nil {
 		return nil, fmt.Errorf("read source %q: %w", abs, err)
 	}
@@ -1245,7 +1262,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 	if err != nil {
 		return nil, sourceDiagnostic(abs, string(source), "lexing", err)
 	}
-	mod, err := parser.Parse(toks)
+	mod, err := parser.ParseFile(toks, abs)
 	if err != nil {
 		return nil, sourceDiagnostic(abs, string(source), "parsing", err)
 	}
@@ -1267,7 +1284,8 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 	for _, include := range mod.Includes {
 		includePath, ok := resolveInclude(abs, include.Path, dependencyRoots...)
 		if !ok {
-			return nil, fmt.Errorf("include %q from %q: no file at the direct path or the module tree", include.Path, abs)
+			return nil, Diagnostics{{File: abs, Line: include.Pos.Line, Column: include.Pos.Column, Severity: SeverityError, Code: "load",
+				Message: fmt.Sprintf("include %q: no file at that path relative to this file, or in the module tree; check the path, or add the module that has it to deps", include.Path)}}
 		}
 		// A module that includes another module has to declare it as a
 		// dependency: the include says where the code comes from, and the
@@ -1277,11 +1295,17 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		// symbol later.
 		if included := includedModuleName(includePath); included != "" {
 			if err := checkModuleDependency(abs, included); err != nil {
-				return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
+				return nil, Diagnostics{{File: abs, Line: include.Pos.Line, Column: include.Pos.Column, Severity: SeverityError, Code: "load",
+					Message: fmt.Sprintf("include %q: %v", include.Path, err)}}
 			}
 		}
 		included, err := loadModuleFile(includePath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
+			// A mistake inside the included file is reported at its own place,
+			// and the include that brought the file in is a note beside it.
+			if noted := withIncludeNote(err, Note{File: abs, Line: include.Pos.Line, Column: include.Pos.Column, Message: fmt.Sprintf("%s is included here", filepath.Base(includePath))}); noted != nil {
+				return nil, noted
+			}
 			return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
 		}
 		merged.Decls = append(merged.Decls, included.Decls...)
@@ -1293,7 +1317,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		// its manifest says what it is imported as and what it exports.
 		entry, providerManifest, exports, provided, err := providedModule(imp.Name, abs, dependencyRoots)
 		if err != nil {
-			return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
+			return nil, importDiagnostic(abs, imp, err)
 		}
 		owner := ""
 		importPath := entry
@@ -1302,7 +1326,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		} else {
 			importPath, err = resolveImport(imp.Name, abs, projectRoot, dependencyRoots, components)
 			if err != nil {
-				return nil, fmt.Errorf("import %q from %q: %w", imp.Name, abs, err)
+				return nil, importDiagnostic(abs, imp, err)
 			}
 		}
 		// A module imported a second time — by the application and by a module
@@ -1311,6 +1335,9 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		alreadyLoaded := visited[absolute]
 		imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
+			if noted := withIncludeNote(err, Note{File: abs, Line: imp.Pos.Line, Column: imp.Pos.Column, Message: fmt.Sprintf("%s is imported here", imp.Name)}); noted != nil {
+				return nil, noted
+			}
 			return nil, err
 		}
 		if owner == "" {
@@ -1354,6 +1381,15 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		return nil, err
 	}
 	return merged, nil
+}
+
+// importDiagnostic is an import that could not be resolved, at the import.
+func importDiagnostic(file string, imp ast.Import, err error) error {
+	if DiagnosticsOf(err) != nil {
+		return err
+	}
+	return Diagnostics{{File: file, Line: imp.Pos.Line, Column: imp.Pos.Column, Severity: SeverityError, Code: "load",
+		Message: fmt.Sprintf("import %q: %v", imp.Name, err)}}
 }
 
 // loadBinding generates and loads the half of an interface the application
@@ -1668,40 +1704,11 @@ func declaredDependencies(sourceFile string) (string, string, []deps.DepSpec) {
 // quietly — a report with no line rather than a wrong one, and no way to tell
 // which it was.
 func sourceDiagnostic(path, source, phase string, err error) error {
-	if parseErr := parser.AsError(err); parseErr != nil {
-		if parseErr.Line > 0 && parseErr.Column > 0 {
-			return fmt.Errorf("%s %s:%d:%d: %w", phase, path, parseErr.Line, parseErr.Column, err)
-		}
-		if parseErr.Offset >= 0 {
-			line, column := compilerLineColumnAt(source, parseErr.Offset)
-			return fmt.Errorf("%s %s:%d:%d: %w", phase, path, line, column, err)
-		}
-		return fmt.Errorf("%s %s: %w", phase, path, err)
+	code := map[string]string{"lexing": "lex", "parsing": "parse", "typechecking": "type"}[phase]
+	if code == "" {
+		code = phase
 	}
-
-	// A type error is looked for through whatever is wrapped around it: an
-	// error that has been through a `%w` on the way here is still the error a
-	// position belongs to, and asserting the outermost type misses it.
-	if positioned := types.AsError(err); positioned != nil {
-		if !positioned.Position.Valid() {
-			// A check that could not place its own failure. The declaration it was
-			// checking is still worth naming, and a report without a line is
-			// honest where a guessed one is not.
-			if positioned.Scope != "" {
-				return fmt.Errorf("%s %s: %s: %w", phase, path, positioned.Scope, positioned)
-			}
-			return fmt.Errorf("%s %s: %w", phase, path, positioned)
-		}
-		return fmt.Errorf("%s %s:%d:%d: %w",
-			phase, path, positioned.Position.Line, positioned.Position.Column, positioned)
-	}
-
-	if byteOffset := compilerByteOffsetInMessage(err.Error()); byteOffset >= 0 {
-		line, column := compilerLineColumnAt(source, byteOffset)
-		return fmt.Errorf("%s %s:%d:%d: %w", phase, path, line, column, err)
-	}
-
-	return fmt.Errorf("%s %s: %w", phase, path, err)
+	return sourceDiagnostics(path, source, code, err)
 }
 
 func compilerLineColumnAt(source string, byteOffset int) (line, column int) {

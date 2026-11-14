@@ -19,14 +19,34 @@ rho lsp     # waits for the client's `initialize`; it prints no banner
 | Request | What it gives |
 |---|---|
 | `textDocument/didOpen`, `didChange`, `didClose` | The open documents, kept in step as you type |
-| `textDocument/publishDiagnostics` | What the compiler found, sent after each change |
+| `textDocument/publishDiagnostics` | What `rho build` would report about the file, sent after each change |
 | `textDocument/completion` | The symbols the workspace's symbol tables know |
 | `textDocument/hover` | What the syntax node under the cursor is |
 | `textDocument/definition` | Where it is declared |
 | `textDocument/references` | Where it is used |
 | `textDocument/semanticTokens/full` (and `/delta`) | Token types for highlighting |
 
-## VS Code
+## Diagnostics
+
+A file on disk is checked as `rho build` checks it: as part of the program its
+project's `module.yml` names (`main:`), with the project's resolved dependencies,
+the editor's unsaved text standing in for the file. So a name declared in
+another file of the program is known, type errors are published as well as
+parse errors, and every diagnostic is the build's — same message, same place —
+in the protocol's coordinates (lines and characters from zero, the underline
+covering the name or literal the compiler points at). A file the program does
+not load is checked as an entry of its own; a buffer with no file behind it is
+read on its own, and checked only when it imports nothing.
+
+Each file is given the diagnostics about it. A mistake in an included file is
+published for that file when it is open, not for the file including it; when an
+included file does not parse, the file including it is told at its `include`
+line, the message naming the file and line of the mistake. A diagnostic's notes
+— where a function called wrongly is declared — are its related information. The
+format and the rules behind it (every independent error, no cascades) are in
+{ref}`tools/cli`.
+
+## VS Code## VS Code
 
 The extension in `editors/rho-language` is the client: syntax highlighting, the
 language server, and commands for building, running, testing and debugging. Its

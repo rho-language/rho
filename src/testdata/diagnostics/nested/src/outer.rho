@@ -1,0 +1,6 @@
+module outer
+include "inner.rho"
+
+fn outer() void {
+    print(inner(2))
+}

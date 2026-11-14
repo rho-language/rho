@@ -37,6 +37,13 @@ compilation database, so one engine reads both — and for a Rho project the `rh
 engine reads the program *before* it became C, which is where a finding about a line
 somebody wrote comes from.
 
+Two of its rules are the compiler's own reading. `rho-parse` reports each place the
+parser stops — it recovers at the next declaration, so two broken functions are two
+findings — and `rho-check` runs the checker `rho build` runs, over the program the
+file belongs to, and reports every error it finds in that file. Both report at the
+line and column the build prints, with the build's message, so a lint run and a
+build cannot disagree about a Rho file (the format is in {ref}`tools/cli`).
+
 ## The analyzers are plugins
 
 Which analyzer a project runs is a fact about the project rather than about the

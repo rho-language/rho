@@ -1,0 +1,1 @@
+src/helper.rho:4:18: error: cannot use a string as u32 in `let y`; parse it with int_from_str

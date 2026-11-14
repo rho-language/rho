@@ -130,13 +130,47 @@ type Token struct {
 }
 
 // Lex tokenizes a complete source string and returns the first lexical error.
+// Error is a character the lexer could not read, and where it is.
+type Error struct {
+	Message string
+	Offset  int
+	Line    int
+	Column  int
+}
+
+func (e *Error) Error() string { return e.Message }
+
+// AsError returns the lexer Error in an error chain, if there is one.
+func AsError(err error) *Error {
+	for err != nil {
+		if lexErr, ok := err.(*Error); ok {
+			return lexErr
+		}
+		unwrapped, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return nil
+		}
+		err = unwrapped.Unwrap()
+	}
+	return nil
+}
+
 func Lex(source string) ([]Token, error) {
 	l := New(source)
 	tokens := []Token{}
 	for {
 		token := l.Next()
 		if token.Kind == TokenIllegal {
-			return nil, fmt.Errorf("invalid token at byte %d: %s", token.Pos, token.Lex)
+			message := token.Lex
+			if utf8.RuneCountInString(token.Lex) == 1 {
+				message = fmt.Sprintf("invalid character %q: it is not part of any Rho token; remove it, or put it inside a string literal", token.Lex)
+			}
+			return nil, &Error{
+				Message: message,
+				Offset:  token.Pos,
+				Line:    token.Line,
+				Column:  token.Column,
+			}
 		}
 		tokens = append(tokens, token)
 		if token.Kind == TokenEOF {
@@ -406,9 +440,11 @@ func (l *Lexer) readChar() {
 	// A newline ends the line and starts a column; every other character is one
 	// further along. The position recorded is that of the character being read,
 	// so the first character of a file is at one, one.
+	// The newline itself is column zero of the next line, so the first
+	// character after it is at one, as the first character of the file is.
 	if r == '\n' {
 		l.line++
-		l.column = 1
+		l.column = 0
 	} else {
 		l.column++
 	}
@@ -688,4 +724,34 @@ func lookupKeyword(ident string) Kind {
 	default:
 		return TokenIdent
 	}
+}
+
+// kindNames are the token kinds as a message shows them: a symbol as it is
+// written, a keyword as the word.
+var kindNames = map[Kind]string{
+	TokenEOF: "end of file", TokenIllegal: "an invalid character",
+	TokenIdent: "a name", TokenNumber: "a number", TokenString: "a string",
+	TokenModule: "`module`", TokenImport: "`import`", TokenInclude: "`include`",
+	TokenStruct: "`struct`", TokenEnum: "`enum`", TokenFn: "`fn`", TokenConfig: "`config`",
+	TokenExtern: "`extern`", TokenIf: "`if`", TokenFor: "`for`", TokenMatch: "`match`",
+	TokenReturn: "`return`", TokenReverse: "`reverse`", TokenStep: "`step`",
+	TokenLet: "`let`", TokenConst: "`const`", TokenVar: "`var`", TokenWhile: "`while`",
+	TokenElse: "`else`", TokenBreak: "`break`", TokenContinue: "`continue`",
+	TokenTrue: "`true`", TokenFalse: "`false`", TokenType: "`type`", TokenRoute: "`route`",
+	TokenLBrace: "`{`", TokenRBrace: "`}`", TokenLParen: "`(`", TokenRParen: "`)`",
+	TokenColon: "`:`", TokenSemicolon: "`;`", TokenComma: "`,`", TokenDot: "`.`",
+	TokenAssign: "`=`", TokenArrow: "`->`", TokenRange: "`..`", TokenLBracket: "`[`",
+	TokenRBracket: "`]`", TokenPlus: "`+`", TokenMinus: "`-`", TokenStar: "`*`",
+	TokenSlash: "`/`", TokenPercent: "`%`", TokenEqual: "`==`", TokenNotEqual: "`!=`",
+	TokenLess: "`<`", TokenLessEqual: "`<=`", TokenGreater: "`>`", TokenGreaterEqual: "`>=`",
+	TokenAnd: "`&&`", TokenOr: "`||`", TokenNot: "`!`", TokenBitNot: "`~`",
+	TokenCaret: "`^`", TokenBitAnd: "`&`", TokenBitOr: "`|`", TokenFatArrow: "`=>`",
+}
+
+// String is the kind as a message names it.
+func (k Kind) String() string {
+	if name, ok := kindNames[k]; ok {
+		return name
+	}
+	return fmt.Sprintf("token %d", int(k))
 }

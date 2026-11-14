@@ -143,7 +143,7 @@ func (tc *TypeChecker) noteBackendCall(name string, at ast.Position) {
 	if _, seen := tc.backendCalls[name]; !seen {
 		call := ir.BackendCall{Name: name, Module: tc.owner}
 		if at.Valid() {
-			call.Line, call.Column = at.Line, at.Column
+			call.File, call.Line, call.Column = at.File, at.Line, at.Column
 		}
 		tc.backendCalls[name] = call
 		tc.backendCallOrder = append(tc.backendCallOrder, name)

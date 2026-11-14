@@ -1,0 +1,19 @@
+module main
+
+struct Point {
+    x: u32
+    y: u32
+}
+
+fn area(p: Point) u32 {
+    return p.x * p.z
+}
+
+fn main() void {
+    let count: u32 = 0
+    let label: string = count
+    if count {
+        print("never")
+    }
+    print(int_to_str(area(Point{ 1, 2 }, 3)))
+}

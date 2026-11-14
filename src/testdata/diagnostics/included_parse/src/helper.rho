@@ -1,0 +1,5 @@
+module helper
+
+fn helper() void {
+    let a: u32 = (1 + 2
+}

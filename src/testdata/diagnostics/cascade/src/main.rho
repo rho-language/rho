@@ -1,0 +1,9 @@
+module main
+
+fn main() void {
+    let total = missing + 1
+    print(int_to_str(total))
+    let again: u32 = missing
+    print(int_to_str(missing))
+    let s: string = 5
+}

@@ -34,9 +34,11 @@ package rholint
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
+	rho "rho/src"
 	"rho/src/frontend/ast"
 	"rho/src/frontend/lexer"
 	"rho/src/frontend/parser"
@@ -55,6 +57,11 @@ const (
 	// other rule here would find nothing in it, and reporting a clean file because
 	// the analyzer could not read it is the one outcome a lint tool must not produce.
 	RhoParse = "rho-parse"
+	// RhoCheck is a mistake the compiler's checker refuses: a type error, a name
+	// nothing declares. It is the same check `rho build` runs, over the program
+	// the file belongs to, so lint and build report the same mistakes at the same
+	// places.
+	RhoCheck = "rho-check"
 	// RhoModuleName is a module whose declared name is not its file's name.
 	RhoModuleName = "rho-module-name"
 	// RhoShadowedBinding is a `let` whose name is already bound outside it.
@@ -86,6 +93,12 @@ func RhoRules() RuleSet {
 				Severity:    SeverityError,
 				Description: "A source the compiler cannot read, which the build cannot compile either",
 				Apply:       rhoParse,
+			},
+			{
+				ID:          RhoCheck,
+				Severity:    SeverityError,
+				Description: "A mistake the compiler's checker refuses, which the build refuses at the same place",
+				Apply:       rhoCheck,
 			},
 			{
 				ID:          RhoModuleName,
@@ -163,17 +176,64 @@ func parseRho(source Source) (*ast.Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parser.Parse(tokens)
+	return parser.ParseFile(tokens, source.Path)
 }
 
+// rhoParse reports every place the compiler's parser stops, each where it is.
+// The parser recovers at the next declaration, so a file with two broken
+// functions is two findings, as it is two errors in a build.
 func rhoParse(source Source) []Diagnostic {
 	set := RhoRules()
 	rule, _ := set.Find(RhoParse)
-	if _, err := parseRho(source); err != nil {
-		return []Diagnostic{set.Report(rule, source, 0, 0,
-			"the compiler cannot read this file: "+err.Error())}
+	_, err := parseRho(source)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if lexErr := lexer.AsError(err); lexErr != nil {
+		return []Diagnostic{set.Report(rule, source, lexErr.Line, lexErr.Column,
+			"the compiler cannot read this file: "+lexErr.Message)}
+	}
+	out := []Diagnostic{}
+	for _, parseErr := range parser.Errors(err) {
+		out = append(out, set.Report(rule, source, parseErr.Line, parseErr.Column,
+			"the compiler cannot read this file: "+parseErr.Message))
+	}
+	if len(out) == 0 {
+		out = append(out, set.Report(rule, source, 0, 0, "the compiler cannot read this file: "+err.Error()))
+	}
+	return out
+}
+
+// rhoCheck reports what the compiler's checker refuses in this file.
+//
+// It is rho.DiagnoseInProgram, the reading `rho lsp` publishes: the file is
+// checked as part of the program its project names, so a name another file
+// declares is known. A mistake found in another file belongs to that file's
+// run. A file that does not parse is the parse rule's, and is left to it.
+func rhoCheck(source Source) []Diagnostic {
+	if tree(source) == nil || source.Path == "" {
+		return nil
+	}
+	// The program is read from disk, its imports with it; a source with no file
+	// behind it has no program to be checked in.
+	if info, err := os.Stat(source.Path); err != nil || info.IsDir() {
+		return nil
+	}
+	set := RhoRules()
+	rule, _ := set.Find(RhoCheck)
+	found := rho.DiagnoseInProgram(source.Path, source.Text)
+	out := []Diagnostic{}
+	for _, diagnostic := range found.Diagnostics {
+		if diagnostic.File != "" && diagnostic.File != found.Path {
+			continue
+		}
+		finding := set.Report(rule, source, diagnostic.Line, diagnostic.Column, diagnostic.Message)
+		if diagnostic.Severity == rho.SeverityWarning {
+			finding.Severity = SeverityWarning
+		}
+		out = append(out, finding)
+	}
+	return out
 }
 
 // tree is a source parsed once, shared by the rules that need it.

@@ -1,0 +1,12 @@
+module main
+
+fn first() void {
+    let a: u32 = = 1
+}
+
+fn second( void {
+}
+
+fn main() void {
+    print("ok")
+}

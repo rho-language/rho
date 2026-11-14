@@ -1,0 +1,6 @@
+module main
+include "helper.rho"
+
+fn main() void {
+    helper()
+}

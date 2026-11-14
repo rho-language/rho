@@ -1,0 +1,6 @@
+module bytes
+
+fn count() u32 {
+    let data: [u8] = [1, 2, 3]
+    return len(data)
+}

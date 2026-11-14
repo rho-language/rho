@@ -94,7 +94,21 @@ func boundaryOf(root string) *moduleBoundary {
 
 // calledNames are the plain function names a file's own declarations call.
 func calledNames(decls []ast.Decl) []string {
+	names, _ := calledPlaces(decls)
+	return names
+}
+
+// calledPlaces are the plain function names a file's own declarations call, and
+// where each is first called.
+func calledPlaces(decls []ast.Decl) ([]string, map[string]ast.Position) {
 	seen := map[string]bool{}
+	first := map[string]ast.Position{}
+	note := func(name string, at ast.Position) {
+		seen[name] = true
+		if previous, ok := first[name]; !ok || !previous.Valid() {
+			first[name] = at
+		}
+	}
 	var walk func(v reflect.Value)
 	walk = func(v reflect.Value) {
 		switch v.Kind() {
@@ -109,9 +123,9 @@ func calledNames(decls []ast.Decl) []string {
 		case reflect.Struct:
 			if call, ok := v.Interface().(ast.CallExpr); ok {
 				if id, isIdent := call.Callee.(*ast.IdentifierExpr); isIdent {
-					seen[id.Name] = true
+					note(id.Name, id.Pos)
 				} else if id, isIdent := call.Callee.(ast.IdentifierExpr); isIdent {
-					seen[id.Name] = true
+					note(id.Name, id.Pos)
 				}
 			}
 			for i := 0; i < v.NumField(); i++ {
@@ -129,7 +143,7 @@ func calledNames(decls []ast.Decl) []string {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names
+	return names, first
 }
 
 // fileCalls is one loaded file: the module it belongs to and what it calls.
@@ -137,6 +151,8 @@ type fileCalls struct {
 	file  string
 	own   string
 	calls []string
+	// at is where each name is first called.
+	at map[string]ast.Position
 }
 
 // exportsLoads are the files of each program being loaded, keyed by the load's
@@ -146,7 +162,8 @@ var exportsLoads = map[uintptr][]fileCalls{}
 // recordFileCalls notes what a loaded file calls, for checkProgramExports.
 func recordFileCalls(visited map[string]bool, file string, decls []ast.Decl) {
 	key := reflect.ValueOf(visited).Pointer()
-	entry := fileCalls{file: file, own: moduleRootOf(file), calls: calledNames(decls)}
+	calls, at := calledPlaces(decls)
+	entry := fileCalls{file: file, own: moduleRootOf(file), calls: calls, at: at}
 	exportsMu.Lock()
 	exportsLoads[key] = append(exportsLoads[key], entry)
 	exportsMu.Unlock()
@@ -195,8 +212,15 @@ func checkProgramExports(visited map[string]bool) {
 				exportsWarned[warnKey] = true
 				exportsMu.Unlock()
 				if !warned {
-					fmt.Fprintf(os.Stderr, "warning: %s calls %s, which the %s module does not export (provides.exports)\n",
-						strings.TrimPrefix(f.file, filepath.Dir(f.own)+string(filepath.Separator)), name, b.name)
+					at := f.at[name]
+					warning := Diagnostic{
+						File: f.file, Line: at.Line, Column: at.Column,
+						Severity: SeverityWarning, Code: "exports",
+						Message: fmt.Sprintf("%s calls %s, which the %s module does not export (provides.exports); call a function it exports, or add %s to its provides.exports",
+							strings.TrimPrefix(f.file, filepath.Dir(f.own)+string(filepath.Separator)), name, b.name, name),
+					}
+					base, _ := os.Getwd()
+					fmt.Fprintln(os.Stderr, warning.Render(base))
 				}
 			}
 		}

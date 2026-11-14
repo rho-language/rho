@@ -1,0 +1,6 @@
+module main
+include "bytes.rho"
+
+fn main() void {
+    print(int_to_str(count()))
+}

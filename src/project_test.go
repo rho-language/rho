@@ -307,14 +307,14 @@ func TestCompilerDiagnosticIncludesSourceLocation(t *testing.T) {
 		t.Fatal("expected a type error")
 	}
 	message := err.Error()
-	if !strings.Contains(message, "cannot assign i32 to bool") {
+	if !strings.Contains(message, "cannot use an i32 as bool in `let value`") {
 		t.Errorf("the error does not say what is wrong: %v", err)
 	}
-	// Line four, column four: the `let` that begins the statement, and not the
-	// function that contains it. A report that names the line a person has to
-	// change is a place to start; one that names the function is a search, and
-	// one that names nothing at all is what this replaced.
-	if !strings.Contains(message, ":4:4") {
+	// Line four, column twenty-one: the value that has the wrong type, and not
+	// the function that contains it. A report that names the place a person has
+	// to change is a place to start; one that names the function is a search,
+	// and one that names nothing at all is what this replaced.
+	if !strings.Contains(message, "<source>:4:21: error: ") {
 		t.Errorf("the error does not point at the statement: %v", err)
 	}
 }

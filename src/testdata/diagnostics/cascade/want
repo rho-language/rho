@@ -1,0 +1,2 @@
+src/main.rho:4:17: error: undefined name "missing"
+src/main.rho:8:21: error: cannot use an i32 as string in `let s`

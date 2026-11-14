@@ -55,7 +55,8 @@ type ArenaEscape struct {
 	// Module and Function are where the loop is.
 	Module   string
 	Function string
-	// Line and Column are where the loop begins.
+	// File, Line and Column are where the loop begins.
+	File   string
 	Line   int
 	Column int
 	// Variable is what the string is kept in, as the program names it.
@@ -271,6 +272,7 @@ func (tc *TypeChecker) lowerLoop(at ast.Position, kind string, body []ast.Stmt, 
 				escape: ArenaEscape{
 					Module:   tc.arenaModule(),
 					Function: tc.arena.name,
+					File:     at.File,
 					Line:     at.Line,
 					Column:   at.Column,
 					Variable: escape,

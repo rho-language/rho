@@ -1,0 +1,5 @@
+module inner
+
+fn inner(n: u32) string {
+    return n + 1
+}

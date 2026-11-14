@@ -39,6 +39,10 @@ appears below as open.
 | 22 | type checker | The standard library's function bodies were never type-checked (`checkFunc` skipped `std.*`). Checking them found `std.sql.ok`, which passed the message string as the caller's error type `E`. | Std bodies are checked when their module is loaded. `ok` is `ok[T](value, code, message) Result[T, string]`. **API change** (nothing in the tree called it). | `TestEveryStandardLibraryBodyTypeChecks`, `TestAStandardLibraryBodyIsTypeChecked` |
 | 23 | C backend | A program's own `extern fn` got no prototype, so without a header each call was an implicit declaration, which GCC 14 refuses. | Its prototype is emitted unless a connected library's headers or the rho-cimport shim declare the program's externs; one the C library or the runtime declares is left to that declaration. | `TestAProgramsOwnExternIsDeclaredForTheCCompiler`, `TestAProgramsOwnForeignFunctionIsDeclaredWhenNoHeaderDoes` |
 | 24 | runtime | `abort()` stopped C with SIGABRT (status 134) and Go with status 1. | `abort()` is `panic("aborted")` on both: `rho: aborted` on standard error and status 1 (a board's platform stop). | parity: "abort stops with the same status and message…", and every failing case, which now compares status and standard error |
+| 25 | compiler: diagnostics | A mistake in an included file was reported against the file that included it: `let y: u32 = "no"` on line 4 of `helper.rho`, included from `main.rho`, printed `main.rho:…: cannot assign string to u32`. A node did not keep the file it came from once included files were merged into one module, and a report used the file being built. | A position carries its file (`ast.Position.File`, set by `parser.ParseFile`); every diagnostic prints the file, line and column of the expression that is wrong, through includes (nested), imports, the standard library and the refusals made after lowering. | `TestBrokenProgramsAreReportedWhereTheMistakeIs` (`included`, `nested`, `imported`, `stdmisuse`, `crefusal`, `arena`, `included_parse`) |
+| 26 | lexer | Every column on a line after the first was one too far: the newline was counted as column 1 of the next line, so `fn` at the start of line 3 was at 3:2. | The newline is column 0, and the first character of every line is at 1. | `TestATokenSaysWhereItIs`, `TestParseErrorCarriesPosition` |
+| 27 | rho-lsp | Diagnostics were published one line low (the compiler's lines count from one, the protocol's from zero), and a file was checked on its own, so a file that imported anything was not type-checked as the build checks it. | The server checks the file as part of its program (`rho.DiagnoseInProgram`) and converts to the protocol's coordinates. | `TestTheEditorPublishesWhatTheBuildReports`, `TestAnIncludedFilesErrorIsPublishedForThatFile` |
+| 28 | parser | A token kind was printed as a number: `expected 34, got 30 ("{")`. | Kinds have names: ``expected `:`, got `{` ``. | `TestBrokenProgramsAreReportedWhereTheMistakeIs` (`parse`) |
 
 ## Open
 
@@ -53,3 +57,12 @@ are tagged for C and a Go build is refused; there are no `<<=`, `>>=` or `%=`
 operators; a compound assignment evaluates its target twice, which matters only
 for a target with a call in it; an index into a `[T]` or a `Ptr[T]` is not
 checked.
+
+Diagnostics, recorded so they are not mistaken for bugs: a diagnostic carries
+where the mistake begins and not where it ends, so the editor underlines the
+token at that place; the refusals made after lowering (a C build, a target that
+cannot supply a module, a board's string arena) are reported only for a program
+the checker accepts; the language server publishes a file's diagnostics when
+that file is opened or changed, so an included file's error is not shown until
+it is open (unless the file does not parse, which the including file is told
+at its `include` line).

@@ -1,0 +1,17 @@
+module main
+
+fn pick[T](a: T, b: T, first: bool) T {
+    if first {
+        return a
+    }
+    return c
+}
+
+fn pair[T](a: T, b: T) bool {
+    return true
+}
+
+fn main() void {
+    let x: u32 = pick[u32](1, 2, true)
+    let ok: bool = pair[u32](1, "two")
+}
