@@ -65,3 +65,7 @@ that field; the toggle enables the selected version, switches to it when another
 is selected, or turns the module off when the active version is selected. The
 separate version-enable button is gone. The detail page also reports the enabled
 version rather than always showing the newest installed one.
+
+## [0.1.8] - 2026-11-14
+
+`sync`, `fix` and `install` install packages with apt: a manifest names the manager `apt`, which the keeper matched against the host's `apt-get` and found nothing to install with. The elevated command is worded right (`sudo apt-get install -y <package>`, and the same for pacman and zypper), where it repeated the elevating program and dropped the arguments.

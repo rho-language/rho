@@ -419,11 +419,13 @@ type elevation struct {
 }
 
 // useAs is the arguments of a command run with privileges.
+// The elevating program itself (sudo, doas) is what the step runs, so it is not
+// part of its own arguments: they are its flags, then the command and the
+// command's arguments.
 func (e elevation) useAs(command string, args []string) []string {
-	if e.command == "" {
-		return args
-	}
-	return append(append([]string{e.command}, e.args...), command)
+	out := append([]string{}, e.args...)
+	out = append(out, command)
+	return append(out, args...)
 }
 
 // detectHost is what this machine is and how it installs things.
@@ -505,6 +507,11 @@ func recipeFor(current host, result sysdep.CheckResult) (Recipe, bool) {
 // Nothing is run and nothing is checked for the package: this is how a step would
 // be *worded*, and a host without the manager has no wording for it.
 func (h host) installCommand(manager string, pkg string) (string, []string, bool) {
+	// A manifest names Debian's package manager `apt`, which is what a person
+	// types; the program this host runs it through is apt-get.
+	if manager == "apt" {
+		manager = "apt-get"
+	}
 	if h.Manager == "" || manager != h.Manager {
 		return "", nil, false
 	}

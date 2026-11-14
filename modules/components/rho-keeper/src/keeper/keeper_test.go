@@ -1145,3 +1145,17 @@ func TestUninstallSaysWhenThereIsNothingToRemove(t *testing.T) {
 		t.Errorf("the answer should say nothing is installed, got %q", action.Error)
 	}
 }
+
+// A manifest names Debian's manager `apt`; a host with apt-get installs it, and
+// the step is worded through the host's elevation.
+func TestAnAptPackageIsInstalledThroughAptGet(t *testing.T) {
+	current := host{OS: "linux", Distro: "ubuntu", Manager: "apt-get", elevation: elevation{command: "sudo"}}
+	result := sysdep.CheckResult{Install: map[string]string{"apt": "gcc-arm-none-eabi", "brew": "arm-none-eabi-gcc", "manual": "https://example.com"}}
+	recipe, ok := recipeFor(current, result)
+	if !ok {
+		t.Fatal("an apt package found no recipe on a host with apt-get")
+	}
+	if recipe.Manager != "apt" || recipe.Package != "gcc-arm-none-eabi" || !strings.Contains(recipe.Command, "apt-get install -y gcc-arm-none-eabi") {
+		t.Fatalf("recipe: %+v", recipe)
+	}
+}
