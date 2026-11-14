@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rho/rho-doc/src/rhodoc"
@@ -45,11 +46,13 @@ func fragmentSite(root, title, home, homeTitle string) (*rhodoc.Site, []rhodoc.P
 	if rhodocHome := deps.RhoHome(); rhodocHome != "" {
 		found = rhodoc.Source{RhoHome: rhodocHome}.Discover(rhodoc.ComponentName)
 	}
-	site := rhodoc.BuildSiteWithPlugins(modules, rhodoc.ReadApiSet(root, "api"), rhodoc.SiteOptions{
+	config, _ := rhodoc.ReadSiteConfig(root)
+	site := rhodoc.BuildSiteWithPlugins(modules, rhodoc.ReadApiSet(apiRoot(root, config), "api"), rhodoc.SiteOptions{
 		Title:     title,
 		Root:      root,
 		Home:      home,
 		HomeTitle: homeTitle,
+		Sections:  config.Sections,
 	}, found)
 	if len(found) > 0 {
 		// A build that writes a site runs the plugin pass before it writes, so
@@ -63,6 +66,18 @@ func fragmentSite(root, title, home, homeTitle string) (*rhodoc.Site, []rhodoc.P
 		}
 	}
 	return site, found
+}
+
+// apiRoot is where a tree's API reference is read from: what its docs/site.yml
+// names (an empty reference for "none"), or the whole tree.
+func apiRoot(root string, config rhodoc.SiteConfig) string {
+	switch config.API {
+	case "":
+		return root
+	case "none":
+		return os.DevNull
+	}
+	return filepath.Join(root, config.API)
 }
 
 // homeAddress reads the address a site is published under from a fragment's
@@ -137,7 +152,8 @@ func runFragment(args []string) int {
 			fmt.Fprintln(os.Stderr, "rho doc --fragment api <root>")
 			return 2
 		}
-		set := rhodoc.ReadApiSet(args[1], "api")
+		config, _ := rhodoc.ReadSiteConfig(args[1])
+		set := rhodoc.ReadApiSet(apiRoot(args[1], config), "api")
 		fmt.Print(rhodoc.ApiListing(set))
 		return 0
 	case "diagnostics":
@@ -146,7 +162,8 @@ func runFragment(args []string) int {
 			return 2
 		}
 		modules, unreadable := rhodoc.DiscoverModules(args[1])
-		site := rhodoc.BuildSite(modules, rhodoc.ReadApiSet(args[1], "api"), rhodoc.SiteOptions{})
+		config, _ := rhodoc.ReadSiteConfig(args[1])
+		site := rhodoc.BuildSite(modules, rhodoc.ReadApiSet(apiRoot(args[1], config), "api"), rhodoc.SiteOptions{Sections: config.Sections})
 		fmt.Print(rhodoc.DiagnosticListing(site, unreadable))
 		return 0
 	case "publish-docs":
