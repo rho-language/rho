@@ -73,10 +73,22 @@ func Load(projectRoot string) (*schema.ModuleContract, []plugins.Diagnostic) {
 		return nil, nil
 	}
 
+	// The modules the project is built from, and those its platform is: a board
+	// depends on nothing and lives inside its platform, whose own dependencies
+	// are where an ecosystem keeps its contract.
+	platformRoot := deps.PlatformRoot(projectRoot)
+	roots := moduleRoots(projectRoot)
+	if platformRoot != "" {
+		for _, root := range moduleRoots(platformRoot) {
+			if !containsRoot(roots, root) {
+				roots = append(roots, root)
+			}
+		}
+	}
 	request := Request{
 		ProjectRoot:  absolute(projectRoot),
-		PlatformRoot: absolute(deps.PlatformRoot(projectRoot)),
-		ModuleRoots:  moduleRoots(projectRoot),
+		PlatformRoot: absolute(platformRoot),
+		ModuleRoots:  roots,
 	}
 	result := plugins.RunHooks(found, Component, Hook, request)
 
@@ -169,4 +181,13 @@ func absolute(path string) string {
 		return abs
 	}
 	return path
+}
+
+func containsRoot(roots []string, root string) bool {
+	for _, existing := range roots {
+		if existing == root {
+			return true
+		}
+	}
+	return false
 }

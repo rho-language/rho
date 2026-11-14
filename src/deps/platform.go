@@ -91,7 +91,31 @@ func platformModule(projectRoot string) (string, *Manifest) {
 		}
 		return "", nil
 	}
-	return walk(projectRoot, 0)
+	if root, manifest := walk(projectRoot, 0); root != "" {
+		return root, manifest
+	}
+	// A board's manifest lives inside the platform module that carries it
+	// (`<platform>/boards/<board>/module.yml`) and depends on nothing: the module
+	// that encloses it is its platform.
+	dir, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", nil
+	}
+	for level := 0; level < 4; level++ {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+		manifest, err := LoadManifest(ManifestPath(dir))
+		if err != nil || manifest == nil {
+			continue
+		}
+		if strings.TrimSpace(manifest.Platform) != "" {
+			return dir, manifest
+		}
+	}
+	return "", nil
 }
 
 // resolveFrom resolves a path a manifest declared relative to itself.
