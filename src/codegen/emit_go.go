@@ -48,7 +48,7 @@ const AppInitName = "AppInit"
 // which Go it is for. It is a constant rather than a literal in each emitter
 // because the module, the workspace and the server's module all have to agree:
 // a go.work that asks for less than a module it lists is rejected.
-const GoModuleVersion = "1.26.10"
+const GoModuleVersion = "1.26.11"
 
 // EmitGo generates the implementation file (app.go) for an IR module.
 func EmitGo(m ir.ModuleIR) string {

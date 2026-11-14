@@ -1,3 +1,3 @@
 module github.com/rho/rho-robohub/ports
 
-go 1.26.10
+go 1.26.11

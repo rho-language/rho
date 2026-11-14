@@ -4,7 +4,7 @@ From an empty machine to a program of your own, in a few minutes.
 
 ## 1. Install Rho
 
-Rho is built from source. You need Go 1.26.10 or newer and a C compiler:
+Rho is built from source. You need Go 1.26.11 or newer and a C compiler:
 
 ```sh
 git clone https://github.com/rho-language/rho

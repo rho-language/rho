@@ -150,17 +150,6 @@ func TestGatewayPortHonoursUplinkBind(t *testing.T) {
 	}
 }
 
-// A board that moves to another mesh keeps its history: the telemetry port
-// moves a source's rows between projects in every table that holds them.
-func TestTelemetryPortMovesASource(t *testing.T) {
-	port := readPort(t, "telemetry")
-	for _, part := range []string{"func telemetryMoveSource(", "telemetry_reading", "telemetry_rollup_1h", "telemetry_source"} {
-		if !strings.Contains(port, part) {
-			t.Errorf("telemetry port missing %q", part)
-		}
-	}
-}
-
 // readPort reads a port this plugin ships: a complete Go file in package main,
 // which a project's generator merges into the port file it writes.
 func readPort(t *testing.T, name string) string {
@@ -175,7 +164,7 @@ func readPort(t *testing.T, name string) string {
 // A port is Go that parses, in package main: that is what the generator needs
 // to split it into imports and declarations.
 func TestShippedPortsParseAsGo(t *testing.T) {
-	for _, name := range []string{"gateway", "telemetry"} {
+	for _, name := range []string{"gateway", "mqtt"} {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, name, readPort(t, name), parser.ParseComments)
 		if err != nil {
@@ -183,29 +172,6 @@ func TestShippedPortsParseAsGo(t *testing.T) {
 		}
 		if file.Name.Name != "main" {
 			t.Errorf("%s is in package %s", name, file.Name.Name)
-		}
-	}
-}
-
-func TestTelemetryPortMaintenanceAndFaultsAreShipped(t *testing.T) {
-	body := readPort(t, "telemetry")
-	for _, want := range []string{
-		"func telemetryCheckpoint(mode string) string",
-		"PRAGMA wal_checkpoint(",
-		"LIMIT 5000",
-		"func telemetryVacuum(mode string) string",
-		"PRAGMA incremental_vacuum",
-		"func telemetryStorageStatus(project string) string",
-		"telemetry_fault",
-		"func telemetryFaultMaxId(project string) uint32",
-		"func telemetryFaultNew(project string, afterID uint32, limit uint32) string",
-		"func telemetryFaultList(project string, sinceText string, limit uint32) string",
-		"func telemetryFaultClear(project string, id uint32) string",
-		"func telemetryFaultPrune(project string, days uint32) string",
-		"func telemetryFaultRows(project string, limit uint32) string",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the telemetry port does not contain %q", want)
 		}
 	}
 }

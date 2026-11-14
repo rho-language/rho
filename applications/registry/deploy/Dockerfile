@@ -9,7 +9,7 @@
 # for that build. A distroless image would be smaller but could not run the
 # build, so this uses a slim Debian base.
 
-FROM golang:1.26.10-bookworm
+FROM golang:1.26.11-bookworm
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc ca-certificates \

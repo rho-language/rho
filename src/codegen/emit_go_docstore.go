@@ -346,6 +346,30 @@ func docsRootPage() string {
 	return base + page
 }
 
+// releaseInline turns the code spans of an escaped release note (a name between
+// two backticks) into <code>, the one inline mark a release note uses; an
+// unpaired backtick stays.
+func releaseInline(text string) string {
+	parts := strings.Split(text, "\x60")
+	if len(parts) < 3 {
+		return text
+	}
+	var b strings.Builder
+	for i, part := range parts {
+		switch {
+		case i == 0:
+			b.WriteString(part)
+		case i%2 == 1 && i < len(parts)-1:
+			b.WriteString("<code>" + part + "</code>")
+		case i%2 == 1:
+			b.WriteString("\x60" + part)
+		default:
+			b.WriteString(part)
+		}
+	}
+	return b.String()
+}
+
 // docsReleases reads a changelog and returns one line per release: the version,
 // the date, and the note flattened onto one line. A Rho handler cannot parse a
 // document, so the parsing happens here and the answer is lines it can render.
@@ -366,7 +390,7 @@ func docsReleases(path string) string {
 		for _, paragraph := range strings.Split(strings.Join(body, "\n"), "\n\n") {
 			text := strings.Join(strings.Fields(paragraph), " ")
 			if text != "" {
-				paragraphs = append(paragraphs, html.EscapeString(text))
+				paragraphs = append(paragraphs, releaseInline(html.EscapeString(text)))
 			}
 		}
 		note := strings.Join(paragraphs, "<br><br>")

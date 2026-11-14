@@ -72,10 +72,10 @@ fn card(href: string, title: string) string {
 // the generator wrote and not to a second copy of it.
 fn start_cards() string {
     return card("/docs/documentation/getting-started.html", "Getting started") +
-        card("/docs/handbook/index.html", "The handbook") +
         card("/docs/language/index.html", "The language") +
-        card("/docs/documentation/cli.html", "The rho command") +
-        card("/docs/documentation/components.html", "Components and plugins") +
+        card("/docs/building/targets.html", "Building") +
+        card("/docs/modules/modules.html", "Modules") +
+        card("/docs/tools/cli.html", "The rho command") +
         card("/docs/api.html", "API reference")
 }
 

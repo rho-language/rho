@@ -1,8 +1,8 @@
 module github.com/rho/rho-monitor
 
-go 1.26.10
+go 1.26.11
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 // A run logs through the shared logger, so a monitor's own output — which
 // transport it chose, what it could not open, when it stopped — is identifiable in

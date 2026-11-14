@@ -5,7 +5,7 @@
 # carries only the same pages, menu and layout the live service serves, without
 # a compiler, source tree or cache.
 
-FROM golang:1.26.10-bookworm AS build
+FROM golang:1.26.11-bookworm AS build
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc ca-certificates wget \

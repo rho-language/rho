@@ -16,9 +16,9 @@
 
 module github.com/rho/rho-keeper
 
-go 1.26.10
+go 1.26.11
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	// The documentation is rendered by the generator's own reader rather than a

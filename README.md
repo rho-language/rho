@@ -37,7 +37,7 @@ not.
 
 ## Quick start
 
-Requirements: Go 1.26.10 or newer and a C compiler; CMake for C targets.
+Requirements: Go 1.26.11 or newer and a C compiler; CMake for C targets.
 
 ```sh
 go build -o ./bin/rho ./cmd/rho

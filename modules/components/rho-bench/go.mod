@@ -1,8 +1,8 @@
 module github.com/rho/rho-bench
 
-go 1.26.10
+go 1.26.11
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 // A benchmark run orchestrates other components rather than reimplementing them:
 // the static footprint comes from rho-mem, a hardware run comes from rho-test, and

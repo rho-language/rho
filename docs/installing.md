@@ -8,13 +8,13 @@ and puts it under the Rho home, `~/.rho` (or `$RHO_HOME` when that is set).
 
 | | Why | Needed for |
 |---|---|---|
-| **Go 1.26.10 or newer** | The toolchain is written in Go, and Rho compiles to Go | everything |
+| **Go 1.26.11 or newer** | The toolchain is written in Go, and Rho compiles to Go | everything |
 | A checkout of the repository | `rho install` builds what is checked out | installing |
 | A C compiler (`gcc`, and `cc` for tests) | `rho run` compiles a single file or a C project with `gcc`; `rho test` with `cc` | C targets, `rho run file.rho`, `rho test` |
 | CMake | Building a generated C project | C targets |
 | `git` | Fetching a dependency that declares a `git:` source | only those dependencies |
 
-Go 1.26.10 is what the tree's `go.mod` asks for and what CI builds with. The
+Go 1.26.11 is what the tree's `go.mod` asks for and what CI builds with. The
 `go` line names a minimum, so an older Go refuses the tree rather than building it
 against something it was not written for; the `toolchain` line names the release
 the tree is tested with, and a newer `go` that finds itself older than that
@@ -134,7 +134,7 @@ kept under the Rho home, and the fetched cross toolchains (`toolchains/`).
 the shortest description of what one takes:
 
 ```dockerfile
-FROM golang:1.26.10-bookworm
+FROM golang:1.26.11-bookworm
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc ca-certificates \
  && rm -rf /var/lib/apt/lists/*

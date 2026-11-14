@@ -1,8 +1,8 @@
 module github.com/rho/rho-deploy
 
-go 1.26.10
+go 1.26.11
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 // The deployer reads what rho-target resolved and carries it out. It asks the
 // toolchain for that answer by invoking it rather than importing it, so a spec

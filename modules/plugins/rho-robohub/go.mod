@@ -1,8 +1,8 @@
 module github.com/rho/rho-robohub
 
-go 1.26.10
+go 1.26.11
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 // The plugin speaks four components' protocols, which are pairs of JSON
 // documents rather than libraries, so it depends on nothing at all. That is
