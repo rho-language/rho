@@ -810,6 +810,28 @@ func EmitGoRuntime(implementation string) string {
 	body.WriteString("func panicf(msg string) {\n\tprintln(\"rho: \" + msg)\n\tos.Exit(1)\n}\n\n")
 	imports = addGoImport(imports, "os")
 
+	// The checked integer operations (types/checked.go) Go's operators do not
+	// already mean: a zero divisor and an index out of range stop the program
+	// with the words the C runtime uses, rather than with a Go runtime panic.
+	usesDiv := strings.Contains(implementation, "rhoDiv[") || strings.Contains(implementation, "rhoMod[")
+	usesIndex := strings.Contains(implementation, "rhoIndex(")
+	if usesDiv || usesIndex {
+		body.WriteString("// rhoInteger is every integer type a checked operation takes.\n")
+		body.WriteString("type rhoInteger interface {\n\t~int8 | ~int16 | ~int32 | ~int64 | ~int | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uint | ~uintptr\n}\n\n")
+	}
+	if usesDiv {
+		body.WriteString("// rhoDiv divides, and stops the program on a zero divisor.\n")
+		body.WriteString("func rhoDiv[T rhoInteger](a, b T) T {\n\tif b == 0 {\n\t\tpanicf(\"division by zero\")\n\t}\n\treturn a / b\n}\n\n")
+		body.WriteString("// rhoMod is the remainder, and stops the program on a zero divisor.\n")
+		body.WriteString("func rhoMod[T rhoInteger](a, b T) T {\n\tif b == 0 {\n\t\tpanicf(\"division by zero\")\n\t}\n\treturn a % b\n}\n\n")
+	}
+	if usesIndex {
+		body.WriteString("// rhoIndex is an index checked against a length, which stops the program\n// when it is outside it.\n")
+		body.WriteString("func rhoIndex[I, N rhoInteger](i I, n N) I {\n\tif int64(i) < 0 || int64(i) >= int64(n) {\n")
+		body.WriteString("\t\tpanicf(\"index \" + strconv.FormatInt(int64(i), 10) + \" out of range [0,\" + strconv.FormatInt(int64(n), 10) + \")\")\n\t}\n\treturn i\n}\n\n")
+		imports = addGoImport(imports, "strconv")
+	}
+
 	// String and environment intrinsics, so the same Rho code builds and
 	// behaves the same for every Go target.
 	body.WriteString("// rhoStrlen returns the length of s in bytes.\n")

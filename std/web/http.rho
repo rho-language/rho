@@ -1,3 +1,21 @@
+//
+// @file http.rho
+// @brief The responses an HTTP handler returns.
+//
+// Backend: the Go server target (`go-server`). `Response` is the type the server
+// backend generates, and `sse_file`, `sse_events` and `response_header` are the
+// server's own; a C or Go command-line build that imports this module is refused,
+// naming it.
+//
+// @backends go-server
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
 module std.web.http
 
 // Response is what an HTTP handler returns. The Go backend generates the

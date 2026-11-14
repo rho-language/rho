@@ -1,3 +1,23 @@
+//
+// @file i2c.rho
+// @brief An I2C bus: write and read bytes at a device address.
+//
+// Backend: C. The `*_hw_*` functions it declares are `extern fn` that a board's
+// platform implements in C, so a program using it builds for any board whose
+// platform provides them. No Go target has a platform that supplies them, so a
+// Go build that imports it is refused, naming the module, rather than failing
+// with "undefined". On a host the externs can be supplied by the program's own C
+// (the toolchain's tests do that, with stubs).
+//
+// @backends c
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
 module std.embedded.i2c
 
 import std.core.slice

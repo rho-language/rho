@@ -64,6 +64,28 @@ var lockSource string
 //go:embed csrc/panic.c
 var panicSource string
 
+// The integer operations Rho defines and C does not: the inline checks, emitted
+// beside the program, and how a failed one stops it.
+//
+//go:embed csrc/checks.h
+var checksHeader string
+
+//go:embed csrc/checks.c
+var checksSource string
+
+// checkedHelperNames are the helpers checks.h defines, which a program calls
+// where the type checker lowered an operation to one (types/checked.go).
+func checkedHelperNames() []string {
+	names := []string{"rho_index"}
+	for _, suffix := range []string{"i8", "i16", "i32", "i64", "u8", "u16"} {
+		names = append(names, "rho_add_"+suffix, "rho_sub_"+suffix, "rho_mul_"+suffix, "rho_neg_"+suffix)
+	}
+	for _, suffix := range []string{"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"} {
+		names = append(names, "rho_shl_"+suffix, "rho_shr_"+suffix, "rho_div_"+suffix, "rho_mod_"+suffix)
+	}
+	return names
+}
+
 //go:embed csrc/env.c
 var envSource string
 
@@ -176,6 +198,17 @@ var runtimeFragments = []RuntimeFragment{
 		Provides: []string{"panicf"},
 		Needs:    []string{"rho_print"},
 		Decls:    []string{"void panicf(const char* msg);"},
+	},
+	{
+		// The one fragment whose Decls define rather than declare: the checks
+		// are `static inline`, so each program that calls one has its own copy
+		// beside the call, where a constant operand folds it away. Only the two
+		// panics are in the runtime's translation unit.
+		Name:     "checks",
+		Source:   checksSource,
+		Provides: checkedHelperNames(),
+		Needs:    []string{"panicf"},
+		Decls:    []string{strings.TrimSpace(checksHeader)},
 	},
 	{
 		// After the panic, because running out of a board's arena is one, and

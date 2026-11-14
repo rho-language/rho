@@ -35,6 +35,11 @@ or a web service.
   fixture.
 - **The host is declared, not assumed.** What only a host can do is a function
   the runtime supplies, declared with `extern fn`, or a port the target asks for.
+- **One meaning on every backend.** Integer overflow wraps, an over-wide shift
+  gives 0, and a division by zero or an index out of range stops the program
+  with the same message on C and on Go. None of these is left to undefined
+  behaviour in the C a program compiles to ({ref}`language/types`); a bare
+  pointer carries no length and its index is not checked.
 
 ```rho
 module counter
@@ -177,7 +182,9 @@ Stated plainly, because a reference that implies otherwise is worse than none:
 - No maps in the language. `std.collections.map` is a fixed-capacity table
   written in Rho.
 - No reflection.
-- On C, no length for a `[T]`. `len`, `for` and `append` over one are Go-only.
+- On C, no length for a `[T]`. `len`, `for` and `append` over one are Go-only,
+  and an index into one is not checked; an index into a fixed array or a
+  `Slice[T]` is ({ref}`language/types`).
 
 ## Where to go next
 

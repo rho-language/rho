@@ -440,7 +440,10 @@ func generateTemplates(ctx Context, target Target) error {
 	if err := checkTemplateNames(ctx.IR, templates); err != nil {
 		return fmt.Errorf("target %q: %w", target.ID, err)
 	}
-	if len(templates) == 0 {
+	// A server has the template functions whether or not it carries a template
+	// file: a handler may render markup it built, and escape a value, without
+	// one. Any other target has them only with templates to render.
+	if len(templates) == 0 && !(target.Emitter == "go" && target.TargetKind() == "server") {
 		return nil
 	}
 	contents := map[string]string{}
@@ -451,7 +454,7 @@ func generateTemplates(ctx Context, target Target) error {
 		}
 		contents[template.Name] = string(data)
 	}
-	rendered := codegen.EmitGoTemplates(contents)
+	rendered := codegen.EmitGoTemplateRenderer(contents)
 	if rendered == "" {
 		return nil
 	}
@@ -576,7 +579,11 @@ func generateLocales(ctx Context, target Target) error {
 	for _, entry := range target.Locales {
 		entries = append(entries, moduleLocale{Code: entry.Code, Path: filepath.Join(ctx.ProjectRoot, filepath.FromSlash(entry.File)), File: entry.File})
 	}
-	if len(target.Templates) == 0 && len(entries) == 0 {
+	// A server always has the template renderer (generateTemplates), and the
+	// renderer translates `{{t "key"}}`, so a server has the catalog functions
+	// too, with no catalogs when it declares none.
+	server := target.Emitter == "go" && target.TargetKind() == "server"
+	if len(target.Templates) == 0 && len(entries) == 0 && !server {
 		return nil
 	}
 	catalogs := map[string]map[string]string{}
@@ -630,6 +637,18 @@ func generateLocales(ctx Context, target Target) error {
 // generatePorts writes the port implementations a target asked for. A port is
 // supplied by the backend, so a Rho project needs no hand-written host code.
 func generatePorts(ctx Context, target Target) error {
+	ports := RenderedPorts(ctx, target)
+	if len(ports) == 0 {
+		return nil
+	}
+	return renderPorts(ctx, target, ports)
+}
+
+// RenderedPorts are the ports a target's generated project gets: the ones it
+// declared, the ones its modules ask for, and the sql port when the project
+// declared a database. The build asks before generating, so a program that
+// calls what a port supplies is refused by name on a target without it.
+func RenderedPorts(ctx Context, target Target) []string {
 	ports := target.EffectivePorts()
 	// The ports a module asks for are host code, which only a Go target has; a
 	// C program's foreign functions come from its platform.
@@ -648,9 +667,10 @@ func generatePorts(ctx Context, target Target) error {
 	if ctx.SQL.Configured() && !containsString(ports, SQLPortName) {
 		ports = append(append([]string{}, ports...), SQLPortName)
 	}
-	if len(ports) == 0 {
-		return nil
-	}
+	return ports
+}
+
+func renderPorts(ctx Context, target Target, ports []string) error {
 	shipped := map[string]string{}
 	if target.Emitter == "go" {
 		shipped = platformPorts(ctx.ProjectRoot)

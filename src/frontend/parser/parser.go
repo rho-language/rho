@@ -1111,6 +1111,17 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			}
 			args := []ast.TypeExpr{}
 			for p.current.Kind != lexer.TokenRBracket {
+				// A number after the first argument is a value argument, as it
+				// is in a type: `Array[u32, 4]{ ... }` is the literal of the
+				// type written `Array[u32, 4]`.
+				if p.current.Kind == lexer.TokenNumber && len(args) > 0 {
+					args = append(args, ast.TypeExpr{Name: p.current.Lex})
+					p.readToken()
+					if p.current.Kind == lexer.TokenComma {
+						p.readToken()
+					}
+					continue
+				}
 				args = append(args, p.parseType())
 				if p.current.Kind == lexer.TokenComma {
 					p.readToken()

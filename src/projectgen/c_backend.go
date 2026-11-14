@@ -54,7 +54,9 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 	// generated project is made of. Taking them apart here rather than cutting one
 	// emitted file in half is what keeps a runtime change from silently moving the
 	// boundary.
-	compiled := codegen.Emit(ctx.IR)
+	module := ctx.IR
+	module.ForeignHeaders = ctx.Connection != nil || ctx.ShimHeader != ""
+	compiled := codegen.Emit(module)
 	appC := compiled.Program
 	appC = strings.ReplaceAll(appC, "int main(", "int app_main(")
 	appC = cBanner(ctx.ModuleName, "app.c", "Generated Rho application implementation.") +
@@ -927,7 +929,10 @@ func cmakeProjectName(name string) string {
 
 func hasRhoInit(m ir.ModuleIR) bool {
 	for _, fn := range m.Funcs {
-		if fn.Name == "init" && !fn.Extern && len(fn.Params) == 0 {
+		// The program's own init, not a module's: std.embedded.uart's `init`
+		// is `std_embedded_uart_init` in C, and calling a bare `init()` for it
+		// named a function nothing defines.
+		if fn.Name == "init" && !fn.Extern && len(fn.Params) == 0 && (fn.CName == "" || fn.CName == "init") {
 			return true
 		}
 	}

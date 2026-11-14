@@ -1,23 +1,64 @@
+//
+// @file bitset.rho
+// @brief A set of small integers, one bit each, over words the caller owns.
+//
+// A BitSet is a pointer to 64-bit words and how many there are, so passing one
+// passes the set rather than a copy of it: `set(b, 3)` changes the words the
+// caller holds. Bit `i` is bit `i % 64` of word `i / 64`. An index past the last
+// word is outside the set: `set` and `clear` leave the words alone and `get`
+// answers false, so a stray index never writes past the caller's array.
+//
+// Pure Rho, the same on every backend.
+//
+// @project Rho Programming Language
+// @version 0.2
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
 module std.collections.bitset
 
-struct BitSet[N] {
-    data: u64[N]   // N * 64 bits
+import std.core.ptr
+
+struct BitSet {
+    data: Ptr[u64]
+    words: u32
 }
 
-fn set[N](b: BitSet[N], idx: u32) void {
-    let word: u32 = idx / 64
-    let bit: u32 = idx % 64
-    b.data[word] = b.data[word] | (1u64 << bit)
+// bitset is the set over `words` words starting at `data`.
+fn bitset(data: Ptr[u64], words: u32) BitSet {
+    return BitSet{ data, words }
 }
 
-fn clear[N](b: BitSet[N], idx: u32) void {
-    let word: u32 = idx / 64
-    let bit: u32 = idx % 64
-    b.data[word] = b.data[word] & ~(1u64 << bit)
+// capacity is how many bits the set holds.
+fn capacity(b: BitSet) u32 {
+    return b.words * 64
 }
 
-fn get[N](b: BitSet[N], idx: u32) bool {
+fn set(b: BitSet, idx: u32) void {
     let word: u32 = idx / 64
+    if word >= b.words {
+        return
+    }
     let bit: u32 = idx % 64
-    return (b.data[word] & (1u64 << bit)) != 0
+    b.data[word] = b.data[word] | (u64(1) << bit)
+}
+
+fn clear(b: BitSet, idx: u32) void {
+    let word: u32 = idx / 64
+    if word >= b.words {
+        return
+    }
+    let bit: u32 = idx % 64
+    b.data[word] = b.data[word] & ~(u64(1) << bit)
+}
+
+fn get(b: BitSet, idx: u32) bool {
+    let word: u32 = idx / 64
+    if word >= b.words {
+        return false
+    }
+    let bit: u32 = idx % 64
+    return (b.data[word] & (u64(1) << bit)) != 0
 }

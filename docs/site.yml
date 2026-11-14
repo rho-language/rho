@@ -21,7 +21,7 @@ sections:
     pages: [modules, registries, plugins, interfaces, integrations]
   - name: tools
     title: Tools
-    pages: [cli, components, testing, documentation]
+    pages: [cli, components, testing, documentation, known-bugs]
   - name: components
     title: Components
   - name: plugins

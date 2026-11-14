@@ -26,6 +26,7 @@ package types
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"rho/src/frontend/ast"
@@ -86,6 +87,13 @@ func (tc *TypeChecker) declaredType(name string) ir.Type {
 // declaredTypeWith is declaredType with an explicit substitution, used while
 // emitting a specialisation where the parameters are known.
 func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir.Type {
+	if element, n, ok := arrayOfApplication(name); ok {
+		typ := tc.declaredTypeWith(element, subs)
+		if typ.ArrayLen == 0 && !strings.Contains(typ.Name, "[") {
+			typ.ArrayLen = n
+			return typ
+		}
+	}
 	open := strings.IndexByte(name, '[')
 	if open < 0 {
 		return tc.substituteType(tc.typeFor(name), subs)
@@ -193,6 +201,9 @@ func (tc *TypeChecker) registerSpecialisationFields(base string, args []ir.Type)
 // cTypeForTypeName returns the C spelling of a written type name, mangling a
 // generic application to the name its specialisation is emitted under.
 func (tc *TypeChecker) cTypeForTypeName(name string) string {
+	if element, n, ok := arrayOfApplication(name); ok {
+		return tc.cTypeForTypeName(element) + "[" + strconv.Itoa(n) + "]"
+	}
 	open := strings.IndexByte(name, '[')
 	if open < 0 {
 		return cTypeForName(name)
@@ -282,6 +293,27 @@ func unify(param, actual ir.Type, params []string, subs map[string]ir.Type) bool
 	}
 
 	return assignable(param, actual)
+}
+
+// arrayOfApplication splits `Entry[u32, u32][4]` into the application and the
+// length: an array whose element is a generic application, which a split at the
+// first bracket would read as an application with a third argument.
+func arrayOfApplication(name string) (string, int, bool) {
+	open := strings.LastIndexByte(name, '[')
+	if open <= 0 || !strings.HasSuffix(name, "]") || !strings.HasSuffix(name[:open], "]") {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(name[open+1 : len(name)-1])
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	// `u32[2][2]` is an array of arrays, not of an application.
+	element := name[:open]
+	first := strings.IndexByte(element, '[')
+	if _, err := strconv.Atoi(element[first+1 : len(element)-1]); err == nil {
+		return "", 0, false
+	}
+	return element, n, true
 }
 
 // splitApplication separates "Result[u32, E]" into its base name and argument
@@ -738,6 +770,13 @@ func (tc *TypeChecker) structToSpecialisation(s ast.StructDecl, subs map[string]
 			// kind and the element, so `ptr: Ptr[T]` became a field of a type
 			// called `Ptr` that no backend can name.
 			fieldType = tc.substituteType(fieldType, subs)
+			// An element that is itself a generic application — the
+			// `Entry[K, V]` of `Ptr[Entry[K, V]]` — is its specialisation,
+			// named as the functions over the struct name it.
+			if len(fieldType.Args) == 1 && fieldType.Args[0].Kind == ir.TypeStruct && strings.Contains(fieldType.Args[0].Name, "[") {
+				element := tc.declaredTypeWith(fieldType.Args[0].Name, subs)
+				fieldType.Args = []ir.Type{element}
+			}
 			fields[i] = ir.FieldIR{Name: f.Name, Type: fieldType}
 			continue
 		}
@@ -1084,6 +1123,9 @@ func (tc *TypeChecker) scanExpr(expr ast.Expr) {
 
 // scanTypeApplication records `Result[u32, u32]` appearing in a type position.
 func (tc *TypeChecker) scanTypeApplication(typeName string) {
+	if element, _, ok := arrayOfApplication(typeName); ok {
+		typeName = element
+	}
 	open := strings.IndexByte(typeName, '[')
 	if open < 0 {
 		return

@@ -16,7 +16,7 @@
 
 package rho
 
-var parityCases = []parityCase{
+var coreParityCases = []parityCase{
 	{
 		name: "unsigned arithmetic stays in its width",
 		source: `module app
@@ -119,67 +119,6 @@ fn main() void {
     print(b)
     print("tab\there")
     print(int_to_str(u32(strlen(b))))
-}
-`,
-	},
-	{
-		name: "a constant conversion that does not fit is a Go build error",
-		// C wraps the constant at run time; Go refuses it at compile time. Neither
-		// is wrong in isolation, but one program that builds on one backend and
-		// not on the other is two languages. The fix is for the type checker to
-		// refuse it on both.
-		diverges: "Go rejects `u32(7 / -2)` at compile time (constant -3 overflows uint32); C accepts it",
-		source: `module app
-
-fn main() void {
-    print(int_to_str(u32(7 / -2)))
-}
-`,
-	},
-	{
-		name:     "a shift by the width of the type",
-		diverges: "C is undefined behaviour (UBSan: shift exponent 32 is too large for 32-bit type); Go yields 0",
-		source: `module app
-
-fn main() void {
-    var s: u32 = 32
-    let v: u32 = 1
-    print(int_to_str(v << s))
-}
-`,
-	},
-	{
-		name:     "signed overflow",
-		diverges: "C is undefined behaviour (UBSan: signed integer overflow); Go wraps two's-complement",
-		source: `module app
-
-fn main() void {
-    var a: i32 = 2147483647
-    a = a + 1
-    print(int_to_str(u32(a)))
-}
-`,
-	},
-	{
-		name:     "an index past the end of a fixed array",
-		diverges: "Go panics with a bounds error; the generated C emits no bounds check, and only UBSan notices — without it the C program reads whatever follows the array",
-		source: `module app
-
-fn main() void {
-    let v: u32[4] = [1, 2, 3, 4]
-    var i: u32 = 4
-    print(int_to_str(v[i]))
-}
-`,
-	},
-	{
-		name:     "division by zero",
-		diverges: "Go panics; C is undefined behaviour (a SIGFPE on x86, and nothing guaranteed elsewhere — an embedded target may return garbage)",
-		source: `module app
-
-fn main() void {
-    var z: u32 = 0
-    print(int_to_str(10 / z))
 }
 `,
 	},

@@ -1,3 +1,23 @@
+//
+// @file sql.rho
+// @brief The database surface a Rho program uses.
+//
+// Backend: Go, through the `sql` port. The generated Go project implements the
+// `extern fn` below over `database/sql` when it renders the port, which a project
+// gets by declaring `sql:` in its manifest or by listing `sql` in a target's
+// `ports`. The toolchain has no C implementation, so a C build that imports this
+// module is refused, naming it, and so is a Go target without the port.
+//
+// @backends go
+// @port sql
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
 module std.sql
 
 // The database surface a Rho program uses, and nothing about how it reaches one.
@@ -176,10 +196,11 @@ extern fn sql_exec_many(db: SqlDb, name: string, sql: string, columns: u32, valu
 
 // sql_prepare compiles a statement and answers a handle to it.
 //
-// Preparing is separate from running because it is the only way to read a
-// statement's shape: `sql_column_count` and `sql_column_name` answer what it
-// returns, which is how a caller types a result rather than guessing at one from
-// the select list.
+// Preparing is separate from running so a caller can bind every value before
+// the first row exists. A statement's shape — `sql_column_count`,
+// `sql_column_name`, `sql_column_type` — is known once it has run: `database/sql`
+// reads it from the rows a query produced, so before the first `sql_run` the
+// count is 0 and a name is "".
 extern fn sql_prepare(db: SqlDb, sql: string, stmt: Ptr[SqlStmt]) u32
 
 // sql_run steps a prepared statement once and answers whether it has another
@@ -194,7 +215,7 @@ extern fn sql_reset(stmt: SqlStmt) u32
 // sql_finalize releases a prepared statement.
 extern fn sql_finalize(stmt: SqlStmt) void
 
-// sql_column_count is how many columns a prepared statement returns.
+// sql_column_count is how many columns a statement returns, once it has run.
 extern fn sql_column_count(stmt: SqlStmt) u32
 
 // sql_column_name is the name of one column, which is how a row is read by the
@@ -260,9 +281,12 @@ fn is_null(v: SqlValue) bool {
 // ok turns a status into a result, which is the whole of the error path a
 // generated query has: a non-zero status becomes the engine's own message, and
 // a zero status becomes a count.
-fn ok[T = Unit, E = Unit](value: T, code: i32, message: string) Result[T, E] {
+//
+// The error is the engine's message, so it is a string: an error type chosen
+// by the caller could not hold it.
+fn ok[T = Unit](value: T, code: i32, message: string) Result[T, string] {
     if code == 0 {
-        return Ok[T, E](value)
+        return Ok[T, string](value)
     }
-    return Err[T, E](message)
+    return Err[T, string](message)
 }

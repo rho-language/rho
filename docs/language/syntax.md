@@ -393,6 +393,13 @@ Literals, and the operators, from loosest to tightest:
 Unary `-`, `!`, `~`, `*` (indirection) and `&` (address) apply to the
 expression after them.
 
+Integer arithmetic wraps, a shift by a count too large for the type gives 0 (or
+the sign), and a division by zero or an index out of range stops the program,
+on both backends alike; a constant that makes one of these certain is refused.
+{ref}`What an integer operation means <language/types>` has the whole of it.
+`x += v`, `x -= v`, `x *= v` and `x /= v` are `x = x + v` and the rest, with the
+same meaning.
+
 ```rho
 let mask: u32 = (a | b) & ~c
 let shifted: u32 = value << 3

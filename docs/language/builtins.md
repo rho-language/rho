@@ -22,6 +22,13 @@ the link (C) or the Go build, naming the symbol.
 A runtime fragment is emitted only when a program calls something in it, so a
 firmware that never touches a file does not carry the file code.
 
+A built-in whose C or Go column below says `no` (or `service`, for the Go server
+target only) is refused at build time on a target that does not supply it, with
+the function, the backend and the line of the call named, rather than left to a
+C link error or a Go "undefined". A built-in a port supplies (`store_*` and the
+`registry_*` settings from `fsstore`, `openapi_document` from `openapiemit`) is
+refused the same way on a Go target that does not render the port.
+
 A call to an undeclared name that begins with `c_` is accepted and typed `i32`.
 Declare it with `extern fn` to give it its real type.
 
@@ -122,8 +129,8 @@ first occurrence of a key at any depth.
 | Signature | What it does | C | Go |
 |---|---|---|---|
 | `print(s: string)` | Writes to standard output with no newline added | yes | yes |
-| `panic(msg: string)` | Writes the message and stops. On a hosted C build that is exit status 1; on a board it is the platform's stop (`RHO_PROGRAM_HALT`, or a breakpoint and `wfi` on Cortex-M and RISC-V). Go writes `rho: <msg>` to standard error and exits 1 | yes | yes |
-| `abort()` | Stops with a non-zero status | yes | yes |
+| `panic(msg: string)` | Writes `rho: <msg>` to standard error and exits with status 1, on a hosted C build and on Go alike. On a board the message goes to the console and the program stops where the platform says (`RHO_PROGRAM_HALT`, or a breakpoint and `wfi` on Cortex-M and RISC-V) | yes | yes |
+| `abort()` | A `panic("aborted")`: writes `rho: aborted` to standard error and exits with status 1 on a hosted C build and on Go alike (the C library's `abort`, which raised SIGABRT and exited 134, is not called). On a board, the platform's stop | yes | yes |
 | `sizeof(T) u32` | The size of a type in bytes, decided at compile time | yes | yes |
 
 ## Files

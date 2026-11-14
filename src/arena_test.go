@@ -151,8 +151,9 @@ func TestALoopThatKeepsItsStringsWarnsOnAHostAndIsRefusedForABoard(t *testing.T)
 		t.Errorf("expected a warning naming the loop and the variable, got:\n%s", warnings)
 	}
 	result := runBinary(binary)
-	// A panic is printed where everything else is, on standard output.
-	if result.failed == "" || !strings.Contains(result.stdout, "string arena exhausted") {
+	// A hosted panic goes to standard error, as it does on Go (a board prints it
+	// on its console); runBinary keeps standard error in the failure.
+	if result.failed == "" || !strings.Contains(result.failed, "string arena exhausted") {
 		t.Fatalf("expected the loop to run out of the arena, got failed=%q stdout=%q", result.failed, result.stdout)
 	}
 

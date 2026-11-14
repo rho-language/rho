@@ -137,6 +137,9 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 		ModuleRoots:    moduleRootsOf(compiled, ProjectRoot(path)),
 	}
 	for _, target := range targets {
+		if err := checkBackendSupport(compiled, irModule, backendTargetOf(target, projectgen.RenderedPorts(ctx, target))); err != nil {
+			return err
+		}
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return err
 		}
@@ -303,6 +306,9 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 			Variant:        variants[target.ID],
 			LayoutDir:      layoutDir,
 			ModuleRoots:    moduleRootsOf(compiled, projectRoot),
+		}
+		if err := checkBackendSupport(compiled, irModule, backendTargetOf(target, projectgen.RenderedPorts(ctx, target))); err != nil {
+			return written, err
 		}
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err
@@ -894,6 +900,9 @@ func compileModule(mod ast.Module, outPath string, from ...string) error {
 	}
 	lowered := tc.ToIR(mod)
 	if err := checkCRefusals(lowered); err != nil {
+		return err
+	}
+	if err := checkBackendSupport(&mod, lowered, backendTarget{ID: "c", Emitter: "c", Kind: "cli"}); err != nil {
 		return err
 	}
 	if err := checkArenaEscapes(tc.ArenaEscapes(), ""); err != nil {

@@ -39,6 +39,8 @@ type Codegen struct {
 	// what removed the child generator that used to re-indent a nested block by
 	// splitting what it had written and prefixing every line.
 	b *Emitter
+	// foreignHeaders is ir.ModuleIR.ForeignHeaders for the module being emitted.
+	foreignHeaders bool
 	// foreign maps a qualified function name to the symbol its C header declares.
 	// A call site is lowered once for every backend and says the qualified name;
 	// this is where C reads it as the name that exists.
@@ -85,6 +87,7 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	m.Funcs = cg.renameForeignInFuncs(m.Funcs)
 
 	cg.emitTypes(m.Structs, m.Aliases)
+	cg.foreignHeaders = m.ForeignHeaders
 	cg.emitFuncPrototypes(m.Funcs)
 	cg.emitFuncs(m.Funcs)
 
@@ -122,7 +125,19 @@ func (cg *Codegen) emitFuncPrototypes(funcs []ir.FuncIR) {
 		// written in the types Rho mapped the C ones to. Any C type spelled
 		// differently in the two, which is every enum and every typedef, makes
 		// the pair a compile error over a signature that was already correct.
-		if fn.Extern {
+		//
+		// The standard library's own foreign functions are the exception: no
+		// header declares them, because the library is where their signature is
+		// written, and a platform implements them to it. Without a prototype the
+		// call was an implicit declaration — an error in C99 and in GCC 14, and a
+		// wrong return type for anything that is not an int.
+		//
+		// A program's own extern is the same case when nothing declares it: no
+		// connected library and no rho-cimport shim. One the C library or the
+		// runtime already declares is left to that declaration, which spells the
+		// C types (`size_t`, `void*`) a prototype written in Rho's would
+		// contradict.
+		if fn.Extern && !stdForeignFunction(fn) && !(!cg.foreignHeaders && ownForeignFunction(fn)) {
 			continue
 		}
 		cg.emitFunctionSignature(fn)
@@ -834,6 +849,59 @@ func foreignCallNames(funcs []ir.FuncIR) map[string]string {
 		return nil
 	}
 	return names
+}
+
+// stdForeignFunction reports whether an extern is one the standard library
+// declares for a platform to implement — `gpio_hw_init` of std.embedded.gpio —
+// rather than one a C header or the runtime already declares. The runtime's own
+// (`rho_*`) are declared by its preamble.
+// ownForeignFunction reports whether an extern is the program's own: not the
+// runtime's (`rho_*` and every symbol a runtime fragment provides) and not the C
+// library's, both of which are declared before the program.
+func ownForeignFunction(fn ir.FuncIR) bool {
+	name := fn.CName
+	if name == "" {
+		name = fn.Name
+	}
+	if strings.HasPrefix(name, "rho_") || strings.HasPrefix(fn.Name, "rho_") || cLibraryFunctions[name] || runtimeSymbol(name) {
+		return false
+	}
+	return true
+}
+
+// runtimeSymbol reports whether a runtime fragment provides a symbol.
+func runtimeSymbol(name string) bool {
+	for _, fragment := range runtimeFragments {
+		for _, provided := range fragment.Provides {
+			if provided == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cLibraryFunctions are the C library functions the generated C's own includes
+// (stdio.h, stdlib.h, string.h, and math.h in the runtime) declare, which a
+// program may name as an extern.
+var cLibraryFunctions = map[string]bool{
+	"abort": true, "exit": true, "_Exit": true, "atexit": true, "malloc": true, "calloc": true, "realloc": true, "free": true,
+	"printf": true, "fprintf": true, "sprintf": true, "snprintf": true, "vprintf": true, "puts": true, "putchar": true,
+	"getchar": true, "fputs": true, "fputc": true, "fgets": true, "fgetc": true, "fflush": true, "fopen": true, "fclose": true,
+	"fread": true, "fwrite": true, "fseek": true, "ftell": true, "remove": true, "rename": true, "perror": true,
+	"strlen": true, "strcmp": true, "strncmp": true, "strcpy": true, "strncpy": true, "strcat": true, "strncat": true,
+	"strchr": true, "strrchr": true, "strstr": true, "strdup": true, "strerror": true, "strtok": true,
+	"memcpy": true, "memmove": true, "memset": true, "memcmp": true, "memchr": true,
+	"atoi": true, "atol": true, "atof": true, "strtol": true, "strtoul": true, "strtoll": true, "strtoull": true, "strtod": true,
+	"rand": true, "srand": true, "abs": true, "labs": true, "llabs": true, "qsort": true, "bsearch": true, "getenv": true, "system": true,
+	"sqrt": true, "sin": true, "cos": true, "tan": true, "atan": true, "atan2": true, "floor": true, "ceil": true, "pow": true,
+	"fabs": true, "exp": true, "log": true, "log10": true, "fmod": true, "round": true, "trunc": true,
+	"sqrtf": true, "sinf": true, "cosf": true, "floorf": true, "fabsf": true, "powf": true,
+	"time": true, "clock": true,
+}
+
+func stdForeignFunction(fn ir.FuncIR) bool {
+	return fn.Extern && strings.HasPrefix(fn.CName, "std_") && !strings.HasPrefix(fn.Name, "rho_")
 }
 
 // cSymbolFor is the name a function has in C.

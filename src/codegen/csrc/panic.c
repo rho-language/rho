@@ -32,7 +32,10 @@ extern void RHO_PROGRAM_HALT(void);
 
 void panicf(const char* msg)
 {
+#if defined(RHO_PROGRAM_HALT) || defined(__arm__) || defined(__thumb__) || defined(__riscv)
+    /* A board's console is the one place a message can go. */
     rho_print(msg != NULL ? msg : "rho: panic\n");
+#endif
 #if defined(RHO_PROGRAM_HALT)
     /* The platform owns the stop, and the function it names does not return. */
     RHO_PROGRAM_HALT();
@@ -53,6 +56,26 @@ void panicf(const char* msg)
      * place this runtime still uses stdio is the one place a hosted build can
      * afford it. */
     fflush(stdout);
+    /* The message goes where the Go build sends it — standard error, as
+     * `rho: <message>` on a line of its own — so a program's output is the same
+     * on both backends when it stops, and a panic is not mistaken for something
+     * the program printed. */
+    if (msg == NULL) {
+        msg = "panic";
+    }
+    if (!(msg[0] == 'r' && msg[1] == 'h' && msg[2] == 'o' && msg[3] == ':' && msg[4] == ' ')) {
+        fputs("rho: ", stderr);
+    }
+    fputs(msg, stderr);
+    {
+        const char* end = msg;
+        while (*end != '\0') {
+            end++;
+        }
+        if (end == msg || end[-1] != '\n') {
+            fputc('\n', stderr);
+        }
+    }
     exit(1);
 #endif
 }

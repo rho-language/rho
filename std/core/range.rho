@@ -1,4 +1,27 @@
+//
+// @file range.rho
+// @brief A half-open range of u32, walked with next.
+//
+// `range(start, end)` is the values from start up to, not including, end.
+// `next(r, i)` answers `Some(i)` while i is inside it and `None` once it is not,
+// so a loop is written over the index it keeps itself:
+//
+//	var i: u32 = r.start
+//	var n: Option[u32] = next(r, i)
+//	while n.is_some { ...; i = i + 1; n = next(r, i) }
+//
+// Pure Rho, the same on every backend.
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
 module std.core.range
+
+import std.core.option
 
 struct Range {
     start: u32
@@ -9,9 +32,9 @@ fn range(start: u32, end: u32) Range {
     return Range{ start, end }
 }
 
-fn next(r: Range, i: u32) Option<u32> {
-    if i < r.end {
-        return Some(i)
+fn next(r: Range, i: u32) Option[u32] {
+    if i >= r.start && i < r.end {
+        return Some[u32](i)
     }
-    return None()
+    return None[u32]()
 }

@@ -50,6 +50,17 @@ type TypeChecker struct {
 	// cRefusals are the calls lowered for every backend that C cannot emit
 	// (ModuleIR.CRefusals).
 	cRefusals []string
+	// backendCalls are the built-ins called that only some backends supply,
+	// each with where it was first called (ModuleIR.BackendCalls).
+	backendCalls     map[string]ir.BackendCall
+	backendCallOrder []string
+	// rhoFuncNames are the functions the program declares with a body, which
+	// are its own whatever a built-in of the same name would be.
+	rhoFuncNames map[string]bool
+	// checkingTypeParams are the type parameters of the generic function whose
+	// body is being checked, so a value parameter (the N of `Array[T, N]`)
+	// named in it is a u32.
+	checkingTypeParams []string
 	// moduleAliases maps the name code uses for an imported module — the last
 	// segment of its name, `log` for `rho.log` — to the module, for a call
 	// written `log.info(...)`. A name two modules share maps to "" and is
@@ -192,7 +203,7 @@ func New() *TypeChecker {
 
 // CheckModule validates all declarations inside a module.
 func (tc *TypeChecker) CheckModule(m ast.Module) error {
-	standaloneStdlib := strings.HasPrefix(m.Name, "std.")
+
 	if len(m.Exports) > 0 {
 		tc.exports = map[string]map[string]bool{}
 		for module, names := range m.Exports {
@@ -216,6 +227,9 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			// meaning for the same spelling, and nothing would ever resolve to it.
 			if s.Name == "Ptr" {
 				return fmt.Errorf("Ptr is the language's pointer type and cannot be declared as a struct")
+			}
+			if primitiveTypeName(s.Name) {
+				return locate(fmt.Errorf("struct %s redeclares the built-in type %s; choose another name", s.Name, s.Name), s.Pos, "struct "+s.Name)
 			}
 			// A generic struct is also a template. Its field types are recorded
 			// with the parameters unresolved, because memberType substitutes
@@ -247,6 +261,13 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	// callers build.
 	for _, decl := range m.Decls {
 		if d, ok := decl.(ast.TypeDecl); ok {
+			// A primitive is the compiler's own, spelled by each backend. A
+			// declaration of the same name replaced it with an opaque type that
+			// prints the same, so `u32(n)` passed where a u32 is wanted was
+			// refused as "has type u32, want u32".
+			if primitiveTypeName(d.Name) {
+				return locate(fmt.Errorf("type %s redeclares the built-in type %s; the primitive types are the compiler's and need no declaration", d.Name, d.Name), d.Pos, "type "+d.Name)
+			}
 			// An alias is a name for another type, not a new type of its own.
 			// Registering it as a struct would make the backend define a struct
 			// whose name is the written spelling — `SqlDb` becoming a type called
@@ -306,6 +327,12 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			// so a rule that asks whether a call crosses into C has to know by
 			// then — and the declarations it asks about are the ones sitting in
 			// this module, which is where they have just been read.
+			if !fn.Extern {
+				if tc.rhoFuncNames == nil {
+					tc.rhoFuncNames = map[string]bool{}
+				}
+				tc.rhoFuncNames[fn.Name] = true
+			}
 			if fn.Extern {
 				tc.externNames[fn.Name] = true
 				if fn.Owner != "" {
@@ -404,9 +431,6 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 				tc.moduleConstTypes[d.Name] = actual
 			}
 		case ast.FuncDecl:
-			if standaloneStdlib || strings.HasPrefix(d.Owner, "std.") {
-				continue
-			}
 			if err := tc.checkFunc(d); err != nil {
 				return locate(err, d.Pos, "function "+d.Name)
 			}
@@ -575,6 +599,9 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	for _, param := range fn.Params {
 		scope[param.Name] = tc.typeFor(param.Type)
 	}
+	previousParams := tc.checkingTypeParams
+	tc.checkingTypeParams = fn.TypeParams
+	defer func() { tc.checkingTypeParams = previousParams }()
 	terminates, err := tc.checkStatements(fn.Body, scope, tc.typeFor(fn.ReturnType), false)
 	if err != nil {
 		return fmt.Errorf("function %s: %w", fn.Name, err)
@@ -643,6 +670,19 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if _, ok := tc.lookupFunc(value.Name); ok {
 			return ir.Type{Kind: ir.TypeStruct, Name: "function"}, nil
 		}
+		// A value parameter of the generic being specialised — the N of
+		// `Array[T, N]` — is a count, and a count is a u32.
+		if _, ok := tc.valueTypeArg(value.Name); ok {
+			return ir.Type{Kind: ir.TypeU32, Name: "u32"}, nil
+		}
+		// The same parameter while the generic body is checked, before
+		// anything is substituted for it: a type parameter named where a value
+		// goes can only be a value parameter.
+		for _, param := range tc.checkingTypeParams {
+			if param == value.Name {
+				return ir.Type{Kind: ir.TypeU32, Name: "u32"}, nil
+			}
+		}
 		return ir.Type{}, fmt.Errorf("undefined name %q", value.Name)
 	case ast.NumberExpr:
 		if strings.Contains(value.Value, ".") {
@@ -700,6 +740,20 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if err != nil {
 			return ir.Type{}, err
 		}
+		// A constant meeting a typed integer becomes that type, so it has to
+		// fit it: `b + 300` for a u8 b is refused by Go and computed in int by
+		// C. The count of a shift is not converted, and is checked apart.
+		if value.Op != "<<" && value.Op != ">>" && value.Op != "&&" && value.Op != "||" {
+			if isUntypedConstant(value.Left) && !isUntypedConstant(value.Right) {
+				if err := checkConstantFits(value.Left, right); err != nil {
+					return ir.Type{}, err
+				}
+			} else if isUntypedConstant(value.Right) && !isUntypedConstant(value.Left) {
+				if err := checkConstantFits(value.Right, left); err != nil {
+					return ir.Type{}, err
+				}
+			}
+		}
 		if value.Op == "==" || value.Op == "!=" || value.Op == "<" || value.Op == "<=" || value.Op == ">" || value.Op == ">=" {
 			if !comparable(left, right) {
 				return ir.Type{}, locate(
@@ -716,6 +770,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		if value.Op == "&" || value.Op == "|" || value.Op == "^" || value.Op == "<<" || value.Op == ">>" {
 			if (numeric(left) || left.Kind == ir.TypeInvalid) && (numeric(right) || right.Kind == ir.TypeInvalid) {
+				if err := checkConstantOperands(value, left); err != nil {
+					return ir.Type{}, err
+				}
 				return left, nil
 			}
 			return ir.Type{}, fmt.Errorf("bitwise operator %s requires integer values", value.Op)
@@ -733,6 +790,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		if !numeric(left) || !numeric(right) {
 			return ir.Type{}, fmt.Errorf("operator %s requires numeric values", value.Op)
+		}
+		if err := checkConstantOperands(value, left); err != nil {
+			return ir.Type{}, err
 		}
 		if left.Kind == ir.TypeF64 || right.Kind == ir.TypeF64 {
 			return ir.Type{Kind: ir.TypeF64, Name: "f64"}, nil
@@ -765,6 +825,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if _, err := tc.exprType(value.Index, scope); err != nil {
 			return ir.Type{}, err
 		}
+		if err := checkConstantIndex(value, object); err != nil {
+			return ir.Type{}, err
+		}
 		return elementType(object), nil
 	case ast.CastExpr:
 		if _, err := tc.exprType(value.Value, scope); err != nil {
@@ -773,6 +836,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		converted, ok := tc.resolveType(value.Type.String())
 		if !ok {
 			return ir.Type{}, fmt.Errorf("unknown cast type %q", value.Type.String())
+		}
+		if err := checkConstantFits(value.Value, converted); err != nil {
+			return ir.Type{}, err
 		}
 		return converted, nil
 	case ast.CallExpr:
@@ -865,6 +931,14 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				}
 				if converted, isType := tc.resolveType(written); isType {
 					converted = tc.substituteType(converted, tc.currentTypeArgs)
+					if len(value.Args) == 1 && integerBits(converted.Kind) > 0 {
+						if _, err := tc.exprType(value.Args[0], scope); err != nil {
+							return ir.Type{}, err
+						}
+						if err := checkConstantFits(value.Args[0], converted); err != nil {
+							return ir.Type{}, err
+						}
+					}
 					// A pointer is made from an address — a whole number — or
 					// from another pointer, and from nothing else.
 					if converted.Kind == ir.TypePtr && len(value.Args) == 1 {
@@ -982,6 +1056,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				return ir.Type{}, locate(
 					fmt.Errorf("argument %d has type %s, want %s", i+1, typeName(actual), typeName(want)),
 					arg.Position(), "")
+			}
+			if err := checkConstantFits(arg, want); err != nil {
+				return ir.Type{}, err
 			}
 		}
 		result := signature.result
@@ -1283,6 +1360,23 @@ func substituteGeneric(value ir.Type, params []string, args []ir.Type) ir.Type {
 		element := substituteGeneric(value.Args[0], params, args)
 		return ir.Type{Kind: ir.TypePtr, Name: "Ptr[" + typeName(element) + "]", Args: []ir.Type{element}}
 	}
+	// An application written out — `Pair[T, T]`, the element of a field
+	// `Ptr[Pair[T, T]]` — has its arguments substituted where they are.
+	if open := strings.IndexByte(value.Name, '['); open > 0 && strings.HasSuffix(value.Name, "]") {
+		parts := splitTypeArgs(value.Name[open+1 : len(value.Name)-1])
+		changed := false
+		for i, part := range parts {
+			substituted := substituteGeneric(ir.Type{Kind: ir.TypeStruct, Name: part}, params, args)
+			if substituted.Name != part {
+				parts[i] = substituted.Name
+				changed = true
+			}
+		}
+		if changed {
+			value.Name = value.Name[:open] + "[" + strings.Join(parts, ", ") + "]"
+		}
+		return value
+	}
 	// A type parameter nested inside a field's type is folded into the mangled
 	// name: `Box[T]` is stored as `Box_T`. Substitution has to rewrite the
 	// segment the parameter occupies, or the field comes back naming the
@@ -1369,6 +1463,13 @@ var mathBuiltinLowering = map[string]string{
 
 // declaresFunc is whether a function of this name is declared where the module
 // being checked can call it.
+// declaresOwnFunc reports whether a function of that name is declared with a
+// body, rather than as an extern the backend supplies.
+func (tc *TypeChecker) declaresOwnFunc(name string) bool {
+	signature, found := tc.lookupFunc(name)
+	return found && !signature.extern
+}
+
 func (tc *TypeChecker) declaresFunc(name string) bool {
 	_, found := tc.lookupFunc(name)
 	return found
@@ -1612,6 +1713,7 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 			out.CRefusals = append(out.CRefusals, refusal)
 		}
 	}
+	out.BackendCalls = tc.backendCallsIR()
 
 	return out
 }
@@ -1835,6 +1937,15 @@ func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
 			return ir.Type{Kind: ir.TypeSlice, Name: name, Args: []ir.Type{elem}}, true
 		}
 	}
+	// An array of a generic application: `Entry[u32, u32][4]` is four of the
+	// specialisation, not an application with a third argument "4]".
+	if applied, n, ok := arrayOfApplication(name); ok {
+		element := tc.declaredType(applied)
+		if element.Kind != ir.TypeInvalid && element.ArrayLen == 0 && !strings.Contains(element.Name, "[") {
+			element.ArrayLen = n
+			return element, true
+		}
+	}
 	base := name
 	element := ""
 	arrayLen := 0
@@ -1951,6 +2062,18 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		wrap := wrapNone
 		target, targetErr := tc.exprType(stmt.Target, scope)
+		// `x op= v` on an integer is `x = x op v`, so the operation is the one
+		// a written `x op v` lowers to: C's `+=` on an i32 overflows as `+`
+		// does, and its `<<=` shifts as far as it is told.
+		if targetErr == nil && integerBits(target.Kind) > 0 {
+			switch stmt.Op {
+			case "+=", "-=", "*=", "/=", "%=", "<<=", ">>=":
+				combined := ast.BinaryExpr{Left: stmt.Target, Op: strings.TrimSuffix(stmt.Op, "="), Right: stmt.Value}
+				combined.Pos = stmt.Pos
+				value := tc.converted(tc.lowerExpr(combined, scope), combined, scope, target)
+				return []ir.Instr{{Op: ir.OpAssign, Dest: tc.lowerExpr(stmt.Target, scope) + " =", Args: []string{value}}}
+			}
+		}
 		if targetErr == nil && stmt.Op == "=" {
 			wrap = tc.arenaWrapFor(stmt.Value, target, scope)
 		}
@@ -2308,6 +2431,10 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			if decl, ok := tc.moduleConsts[expr.Name]; ok && decl.Value != nil {
 				return tc.lowerExpr(decl.Value, map[string]ir.Type{})
 			}
+			// A value parameter is the number it was specialised with.
+			if digits, ok := tc.valueTypeArg(expr.Name); ok {
+				return digits
+			}
 		}
 		return expr.Name
 	case ast.NumberExpr:
@@ -2329,7 +2456,24 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		// The operand is parenthesised: `-(-b)` written as `--b` is C's
 		// pre-decrement, which compiles and changes b.
-		return expr.Op + "(" + tc.lowerExpr(expr.Value, scope) + ")"
+		operand := tc.lowerExpr(expr.Value, scope)
+		if !isUntypedConstant(expr.Value) {
+			if typ, err := tc.exprType(expr.Value, scope); err == nil {
+				bits := integerBits(typ.Kind)
+				switch {
+				// A negated signed value wraps, so `-i32::MIN` is itself;
+				// C computes a narrow unsigned one in int, where it is not
+				// the type's own negation.
+				case expr.Op == "-" && bits > 0 && (signedKind(typ.Kind) || bits < 32):
+					return "rho_neg_" + integerSuffix(typ.Kind) + "(" + operand + ")"
+				// C complements a narrow value in int; the result is put
+				// back in the type, as Go's `^` leaves it.
+				case expr.Op == "~" && bits > 0 && bits < 32:
+					return "((" + cTypeForKind(typ.Kind) + ")(~(" + operand + ")))"
+				}
+			}
+		}
+		return expr.Op + "(" + operand + ")"
 	case ast.BinaryExpr:
 		// `+` means different things per operand type. Strings need the
 		// runtime helper because C has no string concatenation operator, while
@@ -2351,7 +2495,10 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		// adapts to the other operand in C and in Go alike.
 		leftType, leftErr := tc.exprType(expr.Left, scope)
 		rightType, rightErr := tc.exprType(expr.Right, scope)
-		promote := leftErr == nil && rightErr == nil &&
+		// A shift is not an operation on two values of one type: its result is
+		// the left operand's type and its count is only a count, so neither is
+		// widened to the other.
+		promote := leftErr == nil && rightErr == nil && expr.Op != "<<" && expr.Op != ">>" &&
 			numeric(leftType) && numeric(rightType) &&
 			leftType.Kind != rightType.Kind &&
 			!isUntypedConstant(expr.Left) && !isUntypedConstant(expr.Right)
@@ -2362,6 +2509,19 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			left = "(" + cTypeForKind(target) + ")(" + left + ")"
 			right = "(" + cTypeForKind(target) + ")(" + right + ")"
 		}
+		// A literal with a fraction meeting an integer is not an untyped constant
+		// that adapts: C converts the integer to double, and Go converts the
+		// constant to the integer's type, truncating `x / 65536.0` to an integer
+		// division (or refusing `x * 0.5`). The integer is converted to the
+		// float explicitly, which is what the type checker already says the
+		// expression is, so both backends compute in floating point.
+		if !promote && leftErr == nil && rightErr == nil {
+			if isFloatConstant(expr.Left) && isIntegerKind(rightType.Kind) && rightType.Kind != ir.TypeBool && !isUntypedConstant(expr.Right) {
+				right = "(" + cTypeForKind(ir.TypeF64) + ")(" + right + ")"
+			} else if isFloatConstant(expr.Right) && isIntegerKind(leftType.Kind) && leftType.Kind != ir.TypeBool && !isUntypedConstant(expr.Left) {
+				left = "(" + cTypeForKind(ir.TypeF64) + ")(" + left + ")"
+			}
+		}
 
 		// String comparison: s == t becomes rho_str_eq(s, t) for C.
 		if (expr.Op == "==" || expr.Op == "!=") && (tc.isStringExpr(expr.Left, scope) || tc.isStringExpr(expr.Right, scope)) {
@@ -2369,6 +2529,21 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				return "rho_str_eq(" + left + ", " + right + ")"
 			}
 			return "!rho_str_eq(" + left + ", " + right + ")"
+		}
+		// An integer operation whose C operator does not mean what Rho means
+		// is lowered to the helper that does (checked.go). Two constants are
+		// one constant, folded by both compilers, and refused when it
+		// overflows the type it becomes.
+		if leftErr == nil && rightErr == nil && !(isUntypedConstant(expr.Left) && isUntypedConstant(expr.Right)) {
+			kind := ir.TypeInvalid
+			if promote {
+				kind = promotedKind(leftType.Kind, rightType.Kind)
+			} else if result, err := tc.exprType(expr, scope); err == nil {
+				kind = result.Kind
+			}
+			if helper := checkedHelper(expr.Op, kind); helper != "" {
+				return helper + "(" + left + ", " + right + ")"
+			}
 		}
 		return "(" + left + " " + expr.Op + " " + right + ")"
 	case ast.MemberExpr:
@@ -2412,11 +2587,19 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return tc.lowerExpr(expr.Object, scope) + "." + expr.Name
 	case ast.IndexExpr:
-		if object, err := tc.exprType(expr.Object, scope); err == nil && object.Kind == ir.TypePtr && len(object.Args) == 1 {
-			return tc.pointerElementAt(object, tc.lowerExpr(expr.Object, scope), tc.lowerExpr(expr.Index, scope))
+		object, objectErr := tc.exprType(expr.Object, scope)
+		index := tc.lowerExpr(expr.Index, scope)
+		if objectErr == nil {
+			index = tc.checkedIndex(expr, object, index, scope)
 		}
-		return tc.lowerExpr(expr.Object, scope) + "[" + tc.lowerExpr(expr.Index, scope) + "]"
+		if objectErr == nil && object.Kind == ir.TypePtr && len(object.Args) == 1 {
+			return tc.pointerElementAt(object, tc.lowerExpr(expr.Object, scope), index)
+		}
+		return tc.lowerExpr(expr.Object, scope) + "[" + index + "]"
 	case ast.CallExpr:
+		if ident, ok := expr.Callee.(ast.IdentifierExpr); ok {
+			tc.noteBackendCall(ident.Name, expr.Pos)
+		}
 		// sizeof(T) is the size of a type, decided here rather than emitted:
 		// the number is the same on both backends, and a C `sizeof` and a Go
 		// computation of one would be two answers to a question with one.
@@ -2503,6 +2686,12 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			case identifier.Name == "panic":
 				// The intrinsic the backends supply for a message abort.
 				callee = "panicf"
+			case identifier.Name == "abort" && len(expr.Args) == 0 && !tc.declaresOwnFunc("abort"):
+				// abort is a panic with a fixed message, so it ends the
+				// program the same way on both backends: `rho: aborted` on
+				// standard error and status 1 on a host, the platform's stop
+				// on a board. The C library's abort raised SIGABRT (134).
+				return "panicf(\"aborted\")"
 			case mathBuiltinLowering[identifier.Name] != "" && !tc.declaresFunc(identifier.Name):
 				// A bare `sqrt` and its kin are the runtime's floating-point
 				// functions, unless the program or a module it imports declares
@@ -2780,6 +2969,58 @@ func isUntypedConstant(expr ast.Expr) bool {
 		case "+", "-", "*", "/", "%", "<<", ">>", "&", "|", "^":
 			return isUntypedConstant(e.Left) && isUntypedConstant(e.Right)
 		}
+	}
+	return false
+}
+
+// primitiveTypeName reports whether a name is one of the language's primitive
+// types, which a program cannot declare again.
+func primitiveTypeName(name string) bool {
+	switch name {
+	case "bool", "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f32", "f64", "string", "void":
+		return true
+	}
+	return false
+}
+
+// valueTypeArg answers the number a value parameter of the generic being
+// specialised stands for: inside `fn get[T, N](a: Array[T, N], ...)` specialised
+// at `Array[u32, 4]`, N is 4.
+func (tc *TypeChecker) valueTypeArg(name string) (string, bool) {
+	bound, ok := tc.currentTypeArgs[name]
+	if !ok || !isValueArgument(bound.Name) {
+		return "", false
+	}
+	return bound.Name, true
+}
+
+// isValueArgument reports whether a type argument is a number rather than a
+// type: the 4 of `Array[u32, 4]`.
+func isValueArgument(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isFloatConstant reports whether an untyped constant has a fraction in it, so
+// that it is a floating-point value whatever it meets.
+func isFloatConstant(expr ast.Expr) bool {
+	if !isUntypedConstant(expr) {
+		return false
+	}
+	switch e := expr.(type) {
+	case ast.NumberExpr:
+		return strings.Contains(e.Value, ".")
+	case ast.UnaryExpr:
+		return isFloatConstant(e.Value)
+	case ast.BinaryExpr:
+		return isFloatConstant(e.Left) || isFloatConstant(e.Right)
 	}
 	return false
 }
@@ -3551,6 +3792,9 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 			if !assignable(declared, actual) {
 				return false, fmt.Errorf("cannot assign %s to %s", typeName(actual), typeName(declared))
 			}
+			if err := checkConstantFits(stmt.Value, declared); err != nil {
+				return false, err
+			}
 		}
 		scope[stmt.Name] = declared
 	case ast.AssignStmt:
@@ -3575,6 +3819,18 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		if !assignable(actual, value) {
 			return false, fmt.Errorf("cannot assign %s to %s", typeName(value), typeName(actual))
 		}
+		if stmt.Op == "=" {
+			if err := checkConstantFits(stmt.Value, actual); err != nil {
+				return false, err
+			}
+		} else if integerBits(actual.Kind) > 0 {
+			// `x op= v` is checked as the `x op v` it is lowered to.
+			combined := ast.BinaryExpr{Left: stmt.Target, Op: strings.TrimSuffix(stmt.Op, "="), Right: stmt.Value}
+			combined.Pos = stmt.Pos
+			if _, err := tc.exprType(combined, scope); err != nil {
+				return false, err
+			}
+		}
 	case ast.ExprStmt:
 		if _, err := tc.exprType(stmt.Expr, scope); err != nil {
 			return false, err
@@ -3593,6 +3849,9 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 			}
 			if !assignable(result, actual) {
 				return false, fmt.Errorf("returning %s from %s function", typeName(actual), typeName(result))
+			}
+			if err := checkConstantFits(stmt.Value, result); err != nil {
+				return false, err
 			}
 		}
 		statementTerminates = true

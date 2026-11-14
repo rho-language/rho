@@ -27,6 +27,32 @@ There is no enum, sum type or map among a program's types. `enum` belongs to a
 Integers do not widen implicitly. A `u8` is not a `u32`; the conversion is
 written, so a narrowing is always visible in the source.
 
+## What an integer operation means
+
+An integer operation means the same on every backend, including where C would
+leave it undefined:
+
+| Operation | What it gives |
+|---|---|
+| `+`, `-`, `*`, unary `-` | The result wraps, two's complement, at the type's width: `i32` 2147483647 `+ 1` is -2147483648, `u8` 200 `+ 100` is 44, and the negation of the most negative `i32` is itself (so `abs_i32` of it is too) |
+| `<<`, `>>` by a count the type is not wide enough for | 0, and for a signed `>>` the sign (-1 for a negative value). A right shift of a signed value is arithmetic. A count is not converted to the shifted type and a shift's type is its left operand's; a negative count is treated as its unsigned value, which is too large |
+| `/`, `%` by zero | The program stops: `rho: division by zero` on standard error and status 1 on a host, the platform's stop on a board |
+| The most negative value `/ -1` | Itself, with `% -1` giving 0 |
+| `a[i]` on a fixed array `T[N]`, or `s.ptr[i]` on a `Slice[T]` | The program stops when `i` is outside `[0, N)` or `[0, s.len)`: `rho: index 7 out of range [0,4)` |
+
+A constant that makes one of these certain is refused at compile time: a shift
+by a constant count of at least the width (`shift count 32 overflows type u32`),
+a division by a constant zero, a constant index outside a fixed array, and a
+constant that does not fit the integer type it becomes (`u32(7 / -2)`,
+`let b: u8 = 300`, `b + 300` for a `u8` b: `constant -3 overflows u32`).
+
+The checks are cheap. On C each is an inline function beside the call, so with a
+constant operand in range it folds to the plain operator, and arithmetic is done
+in an unsigned type and converted back, so nothing relies on `-fwrapv` or on a
+compiler flag a target might not pass. A bare pointer — `[T]`, or a `Ptr[T]`
+indexed directly — carries no length and is not checked, and neither is a
+`Slice[T]` read through a `ptr` taken out of it first.
+
 ## Option and Result
 
 A value that may be absent is an `Option[T]`, and it is asked about rather than
@@ -112,7 +138,9 @@ C build with the call named. `len` of a fixed-size array `T[N]` is `N` on both.
 
 `Slice[T]` from `std.core.slice` is a struct of a `Ptr[T]` and a `len`. A
 function that has to know how many elements it was given on both backends takes
-one.
+one. Reading or writing `s.ptr[i]` checks `i` against `s.len`, and an index
+into a fixed array against its length; an index into a `[T]` is not checked,
+because a `[T]` on C has no length to check it against.
 
 ## Structs
 

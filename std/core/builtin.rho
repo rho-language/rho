@@ -1,124 +1,38 @@
 //
 // @file builtin.rho
-// @brief Core builtin definitions for Rho - Enterprise v1.
+// @brief What the compiler supplies without an import, written down.
 //
-// Provides:
-//   - Primitive types
-//   - Basic operators
-//   - Builtin functions (print, abort)
-//   - Memory primitives (ptr, load, store)
-//   - Intrinsics required by codegen C
+// This module declares nothing. The primitive types and the built-in functions
+// are the compiler's own: each backend spells them (C through the runtime it
+// writes beside the program, Go through its own types and the generated
+// helpers), so a declaration here could only be a second, competing meaning for
+// a name the compiler already knows. An earlier version declared them — `type
+// u32`, `extern fn print` — and importing it replaced the primitives with
+// opaque types of the same name, so `int_to_str(u32(n))` was refused with
+// "argument 1 has type u32, want u32".
 //
-// Notes:
-//   - No heap allocation
-//   - No GC
-//   - No hidden runtime
-//   - Everything is explicit and deterministic
+// Importing it is allowed and changes nothing, on every backend.
+//
+// The primitive types:
+//
+//	bool
+//	u8 u16 u32 u64       unsigned integers of that many bits
+//	i8 i16 i32 i64       signed integers, two's complement
+//	f32 f64              IEEE 754 floating point
+//	string               the language's text, a literal or a runtime string
+//	Ptr[T]               the language's pointer (functions over it: std.core.ptr)
+//	T[N]                 N values of T, the length part of the type
+//
+// The built-in functions — `print`, `abort`, `panic`, `strlen`, `str_eq`,
+// `int_to_str`, `sqrt` and the rest — are listed with their signatures and the
+// backends that supply them on the built-in functions page of the language
+// reference (docs/language/builtins.md).
 //
 // @project Rho Programming Language
-// @version 0.1
+// @version 0.2
 // @date 2026
 //
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
 module std.core.builtin
-
-/* -------------------------------------------------------------------------- */
-/*  Primitive Types                                                            */
-/* -------------------------------------------------------------------------- */
-
-type bool
-type u8
-type u16
-type u32
-type u64
-
-type i8
-type i16
-type i32
-type i64
-
-type f32
-type f64
-
-type string
-type ptr[T]
-
-/* -------------------------------------------------------------------------- */
-/*  Builtin Constants                                                          */
-/* -------------------------------------------------------------------------- */
-
-/* -------------------------------------------------------------------------- */
-/*  Builtin Functions                                                          */
-/* -------------------------------------------------------------------------- */
-
-extern fn print(msg: string)
-extern fn abort()
-extern fn assert(condition: bool)
-
-/* -------------------------------------------------------------------------- */
-/*  Pointer Operations                                                         */
-/* -------------------------------------------------------------------------- */
-
-fn ptr_null[T]() ptr[T] {
-    return 0 as ptr[T]
-}
-
-fn ptr_add[T](p: ptr[T], offset: u64) ptr[T] {
-    return (p as u64 + offset * sizeof(T)) as ptr[T]
-}
-
-fn ptr_eq[T](a: ptr[T], b: ptr[T]) bool {
-    return (a as u64) == (b as u64)
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Memory Access                                                              */
-/* -------------------------------------------------------------------------- */
-
-extern fn load_u8(p: ptr[u8]) u8
-extern fn store_u8(p: ptr[u8], v: u8)
-
-extern fn load_u32(p: ptr[u32]) u32
-extern fn store_u32(p: ptr[u32], v: u32)
-
-/* -------------------------------------------------------------------------- */
-/*  Arithmetic Intrinsics                                                      */
-/* -------------------------------------------------------------------------- */
-
-extern fn add_i32(a: i32, b: i32) i32
-extern fn sub_i32(a: i32, b: i32) i32
-extern fn mul_i32(a: i32, b: i32) i32
-extern fn div_i32(a: i32, b: i32) i32
-
-extern fn add_f64(a: f64, b: f64) f64
-extern fn sub_f64(a: f64, b: f64) f64
-extern fn mul_f64(a: f64, b: f64) f64
-extern fn div_f64(a: f64, b: f64) f64
-
-/* -------------------------------------------------------------------------- */
-/*  Comparison Intrinsics                                                      */
-/* -------------------------------------------------------------------------- */
-
-extern fn eq_i32(a: i32, b: i32) bool
-extern fn lt_i32(a: i32, b: i32) bool
-extern fn gt_i32(a: i32, b: i32) bool
-
-extern fn eq_f64(a: f64, b: f64) bool
-extern fn lt_f64(a: f64, b: f64) bool
-extern fn gt_f64(a: f64, b: f64) bool
-
-/* -------------------------------------------------------------------------- */
-/*  String Builtins                                                            */
-/* -------------------------------------------------------------------------- */
-
-extern fn strlen(s: string) u64
-extern fn str_eq(a: string, b: string) bool
-extern fn str_concat(a: string, b: string) string
-
-/* -------------------------------------------------------------------------- */
-/*  Control Flow Builtins                                                      */
-/* -------------------------------------------------------------------------- */
-
-extern fn panic(msg: string)

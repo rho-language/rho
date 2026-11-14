@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"rho/src/deps"
+	"rho/src/types"
 )
 
 func TestCompileProjectResolvesImportAndInclude(t *testing.T) {
@@ -264,6 +265,13 @@ func TestStandardLibraryImportGraphsCompile(t *testing.T) {
 		}
 		if info.IsDir() || filepath.Ext(path) != ".rho" {
 			return nil
+		}
+		// A module that says it is not for C is refused for C by name
+		// (backends_test.go) and tested where it runs.
+		if tag, ok := readStdBackendTag(path); ok {
+			if allowed, _ := (backendTarget{Emitter: "c", Kind: "cli"}).allows(tag.Backends, tag.Port); !allowed {
+				return nil
+			}
 		}
 		if compileErr := CompileProjectTo(path, filepath.Join(t.TempDir(), "module.c")); compileErr != nil {
 			t.Errorf("%s: %v", path, compileErr)
@@ -536,5 +544,31 @@ func TestComponentImportStopsAtTheRepository(t *testing.T) {
 	err := CompileProjectTo(filepath.Join(project, "src", "main.rho"), filepath.Join(t.TempDir(), "app.c"))
 	if err == nil || !strings.Contains(err.Error(), "rho.log") {
 		t.Fatalf("expected the component search to stop at the repository, got %v", err)
+	}
+}
+
+// Every function body in the standard library type-checks with its imports
+// loaded, whichever backend the module is for: a body is checked when its
+// module is loaded, not only when a program calls the function.
+func TestEveryStandardLibraryBodyTypeChecks(t *testing.T) {
+	err := filepath.Walk("../std", func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() || filepath.Ext(path) != ".rho" {
+			return nil
+		}
+		module, loadErr := loadModuleGraph(path)
+		if loadErr != nil {
+			t.Errorf("%s: load: %v", path, loadErr)
+			return nil
+		}
+		if checkErr := types.New().CheckModule(*module); checkErr != nil {
+			t.Errorf("%s: %v", path, checkErr)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

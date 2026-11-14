@@ -48,7 +48,9 @@ func TestServicePrimitivesCarryAnIdentity(t *testing.T) {
 	root := t.TempDir()
 	entry := filepath.Join(root, "src", "main.rho")
 	os.MkdirAll(filepath.Dir(entry), 0o755)
-	os.WriteFile(filepath.Join(root, "module.yml"), []byte(parityManifest), 0o644)
+	// The HTTP client is the Go runtime's, so the program is built for Go only:
+	// built for C as well, it is refused by name.
+	os.WriteFile(filepath.Join(root, "module.yml"), []byte(strings.Replace(parityManifest, "    - c\n", "", 1)), 0o644)
 	os.WriteFile(entry, []byte(fmt.Sprintf(`module app
 
 extern fn rho_http_request(method: string, url: string, body: string, content_type: string, audience: string, scopes: string, output_path: string) u32
@@ -81,7 +83,7 @@ fn main() void {
 	}
 	binary := filepath.Join(t.TempDir(), "svc")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = dirs[1]
+	build.Dir = dirs[0]
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("Go build: %v\n%s", err, out)
 	}

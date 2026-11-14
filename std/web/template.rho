@@ -1,3 +1,21 @@
+//
+// @file template.rho
+// @brief The template engine's interface: vars, fill and escape.
+//
+// Backend: the Go server target (`go-server`), whose generated project carries
+// the renderer (`template_fill`, `escape_html`) whether or not the target
+// declares template files. A C or Go command-line build that imports this module
+// is refused, naming it.
+//
+// @backends go-server
+//
+// @project Rho Programming Language
+// @version 0.1
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
 module std.web.template
 
 // A small template engine for generated Go services.

@@ -76,7 +76,9 @@ func TestAnOptionalPointerIsDeclaredAsThePointer(t *testing.T) {
 // the two — every enum, every typedef — makes that a compile error over a
 // signature that was already correct.
 func TestAForeignFunctionIsNotRedeclared(t *testing.T) {
-	out := EmitC(optionalPointerModule())
+	module := optionalPointerModule()
+	module.ForeignHeaders = true
+	out := EmitC(module)
 
 	if strings.Contains(out, "find(") {
 		t.Errorf("a foreign function is declared by its header, not here:\n%s", firstLines(out, 40))
@@ -85,6 +87,30 @@ func TestAForeignFunctionIsNotRedeclared(t *testing.T) {
 	// is what the value is represented as.
 	if !strings.Contains(out, "typedef Handle* Option_Ptr_Handle;") {
 		t.Error("the optional pointer should still be declared")
+	}
+}
+
+// With no header to declare it — no connected library, no rho-cimport shim — a
+// program's own extern gets a prototype, so a call is not an implicit
+// declaration (an error in C99 and GCC 14). One the C library or the runtime
+// declares does not: its declaration spells C's own types.
+func TestAProgramsOwnForeignFunctionIsDeclaredWhenNoHeaderDoes(t *testing.T) {
+	module := optionalPointerModule()
+	u32 := ir.Type{Kind: ir.TypeU32, Name: "u32"}
+	module.Funcs = append(module.Funcs,
+		ir.FuncIR{Name: "board_twice", CName: "board_twice", Params: []ir.ParamIR{{Name: "x", Type: u32}}, ReturnType: u32, Extern: true},
+		ir.FuncIR{Name: "malloc", CName: "malloc", Params: []ir.ParamIR{{Name: "n", Type: u32}}, ReturnType: u32, Extern: true},
+		ir.FuncIR{Name: "rho_read_text", CName: "rho_read_text", Params: []ir.ParamIR{{Name: "n", Type: u32}}, ReturnType: u32, Extern: true},
+	)
+	out := EmitC(module)
+	if !strings.Contains(out, "uint32_t board_twice(uint32_t x);") {
+		t.Errorf("the program's own extern should be declared:\n%s", firstLines(out, 60))
+	}
+	if !strings.Contains(out, "find(") {
+		t.Errorf("an extern no header declares should be declared")
+	}
+	if strings.Contains(out, "malloc(uint32_t") || strings.Contains(out, "rho_read_text(uint32_t") {
+		t.Errorf("a C library or runtime function is declared by its own header:\n%s", firstLines(out, 60))
 	}
 }
 

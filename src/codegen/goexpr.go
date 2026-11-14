@@ -244,7 +244,7 @@ func ToGoExpr(expr string) string {
 			word := string(src[i:end])
 			// A call that is rewritten as a whole must be consumed here,
 			// while the name is still visible, not at its parenthesis.
-			if goPassThroughWords[word] {
+			if goPassThroughWords[word] || isCheckedHelper(word) {
 				if consumed, replacement, ok := translateKnownCall(src, i, end, word); ok {
 					out.WriteString(replacement)
 					i = consumed
@@ -281,7 +281,7 @@ func translateWord(word string) string {
 	}
 	// rho_concat is rewritten as a whole call by translateParen, so the name
 	// has to survive long enough to be matched there.
-	if goPassThroughWords[word] {
+	if goPassThroughWords[word] || isCheckedHelper(word) {
 		return word
 	}
 	if mapped, ok := cLibraryCalls[word]; ok {
@@ -337,7 +337,79 @@ func translateKnownCall(src []byte, start, nameEnd int, name string) (int, strin
 	if goName, ok := goBuiltinCalls[name]; ok {
 		return close + 1, goName + "(" + strings.Join(parts, ", ") + ")", true
 	}
+	if replacement, ok := translateCheckedHelper(name, parts); ok {
+		return close + 1, replacement, true
+	}
 	return 0, "", false
+}
+
+// checkedGoTypes are the Go types of the suffixes a checked helper carries.
+var checkedGoTypes = map[string]string{
+	"i8": "int8", "i16": "int16", "i32": "int32", "i64": "int64",
+	"u8": "uint8", "u16": "uint16", "u32": "uint32", "u64": "uint64",
+}
+
+// isCheckedHelper reports whether a name is one of the integer helpers the type
+// checker lowers an operation to (types/checked.go): `rho_add_i32`,
+// `rho_shl_u8`, `rho_div_u64`, `rho_index`.
+func isCheckedHelper(name string) bool {
+	if name == "rho_index" {
+		return true
+	}
+	parts := strings.Split(name, "_")
+	if len(parts) != 3 || parts[0] != "rho" {
+		return false
+	}
+	switch parts[1] {
+	case "add", "sub", "mul", "neg", "shl", "shr", "div", "mod":
+		_, ok := checkedGoTypes[parts[2]]
+		return ok
+	}
+	return false
+}
+
+// translateCheckedHelper is a checked helper in Go. Go's own operators already
+// wrap signed arithmetic and give 0 (or the sign) for an over-wide shift, so
+// those are the operator; a shift count is converted to uint64, which is what
+// the C helper takes, so a negative count is an over-wide one on both. A
+// division and an index go through the runtime, which stops with the message
+// the C runtime gives.
+func translateCheckedHelper(name string, parts []string) (string, bool) {
+	if name == "rho_index" {
+		if len(parts) != 2 {
+			return "", false
+		}
+		return "rhoIndex(" + parts[0] + ", " + parts[1] + ")", true
+	}
+	pieces := strings.Split(name, "_")
+	goType := checkedGoTypes[pieces[2]]
+	switch pieces[1] {
+	case "neg":
+		if len(parts) != 1 {
+			return "", false
+		}
+		return "(-" + parts[0] + ")", true
+	}
+	if len(parts) != 2 {
+		return "", false
+	}
+	switch pieces[1] {
+	case "add":
+		return "(" + parts[0] + " + " + parts[1] + ")", true
+	case "sub":
+		return "(" + parts[0] + " - " + parts[1] + ")", true
+	case "mul":
+		return "(" + parts[0] + " * " + parts[1] + ")", true
+	case "shl":
+		return "(" + goType + "(" + parts[0] + ") << uint64(" + parts[1] + "))", true
+	case "shr":
+		return "(" + goType + "(" + parts[0] + ") >> uint64(" + parts[1] + "))", true
+	case "div":
+		return "rhoDiv[" + goType + "](" + parts[0] + ", " + parts[1] + ")", true
+	case "mod":
+		return "rhoMod[" + goType + "](" + parts[0] + ", " + parts[1] + ")", true
+	}
+	return "", false
 }
 
 // translateParen inspects a '(' and decides whether it opens a C cast, a

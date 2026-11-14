@@ -52,6 +52,19 @@ func EmitGoTemplates(contents map[string]string) string {
 	if len(contents) == 0 {
 		return ""
 	}
+	return emitGoTemplates(contents)
+}
+
+// EmitGoTemplateRenderer is the renderer with whatever templates a target
+// carries, none included. A server's handlers may call `template_fill` and
+// `escape_html` — std.web.template's `fill` and `escape` — on markup they built
+// themselves, and a service that carried no template files used to be
+// generated without the functions those calls name.
+func EmitGoTemplateRenderer(contents map[string]string) string {
+	return emitGoTemplates(contents)
+}
+
+func emitGoTemplates(contents map[string]string) string {
 
 	names := make([]string, 0, len(contents))
 	for name := range contents {

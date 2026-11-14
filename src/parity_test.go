@@ -72,6 +72,10 @@ type outcome struct {
 	// failed is the text of a failure: a non-zero exit, a sanitizer report, a build
 	// error. Empty when the program ran cleanly.
 	failed string
+	// stderr is what the program wrote to standard error, and status the status
+	// it exited with (-1 when it did not run or was killed by a signal).
+	stderr string
+	status int
 }
 
 // runBothBackends builds a Rho program for C and for Go and runs each.
@@ -130,10 +134,10 @@ func runBinary(path string) outcome {
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	err := command.Run()
-	result := outcome{stdout: stdout.String()}
+	result := outcome{stdout: stdout.String(), stderr: stderr.String(), status: command.ProcessState.ExitCode()}
 	if err != nil {
 		result.failed = err.Error() + "\n" + stderr.String()
-	} else if strings.Contains(stderr.String(), "runtime error:") || strings.Contains(stderr.String(), "AddressSanitizer") {
+	} else if sanitizerReport(stderr.String()) {
 		result.failed = stderr.String()
 	}
 	return result
@@ -150,6 +154,26 @@ type parityCase struct {
 	// want, when set, is what both backends must print: agreeing on a wrong
 	// answer is still a wrong answer.
 	want string
+	// wantFailure says the program is meant to stop with a non-zero status — a
+	// failed assertion, an unwrap of nothing — on both backends, having printed
+	// the same thing first. A sanitizer report is still a failure of the case.
+	// Both must exit with the same status and write the same to standard error.
+	wantFailure bool
+	// wantStderr, when set, is what a failing program writes to standard error
+	// on both backends.
+	wantStderr string
+}
+
+// parityCases are the programs the backends are compared on. The general ones
+// are in parity_cases_test.go; each parity_std_*_test.go adds those for a part
+// of the standard library from its init, so a group of cases lives beside what
+// it is about.
+var parityCases = append([]parityCase{}, coreParityCases...)
+
+// sanitizerReport reports whether a failure is a sanitizer's finding rather than
+// the program's own decision to stop.
+func sanitizerReport(failed string) bool {
+	return strings.Contains(failed, "runtime error:") || strings.Contains(failed, "AddressSanitizer")
 }
 
 func TestBackendsAgree(t *testing.T) {
@@ -174,6 +198,29 @@ func TestBackendsAgree(t *testing.T) {
 				}
 				t.Logf("known divergence (%s):\nC  = %q failed=%q\nGo = %q failed=%q",
 					c.diverges, cOut.stdout, cOut.failed, gOut.stdout, gOut.failed)
+				return
+			}
+			if c.wantFailure {
+				if cOut.failed == "" || gOut.failed == "" {
+					t.Fatalf("both backends should stop with a failure:\nC  = %q failed=%q\nGo = %q failed=%q",
+						cOut.stdout, cOut.failed, gOut.stdout, gOut.failed)
+				}
+				if sanitizerReport(cOut.failed) || strings.HasPrefix(cOut.failed, "C build failed") || strings.HasPrefix(gOut.failed, "Go build failed") {
+					t.Fatalf("the failure is not the program's own:\nC  = %s\nGo = %s", cOut.failed, gOut.failed)
+				}
+				if cOut.stdout != gOut.stdout {
+					t.Fatalf("backends disagree before failing:\nC  = %q\nGo = %q", cOut.stdout, gOut.stdout)
+				}
+				if cOut.status != gOut.status || cOut.stderr != gOut.stderr {
+					t.Fatalf("backends stop differently:\nC  = status %d, stderr %q\nGo = status %d, stderr %q",
+						cOut.status, cOut.stderr, gOut.status, gOut.stderr)
+				}
+				if c.wantStderr != "" && cOut.stderr != c.wantStderr {
+					t.Fatalf("both backends write %q to standard error, want %q", cOut.stderr, c.wantStderr)
+				}
+				if c.want != "" && cOut.stdout != c.want {
+					t.Fatalf("both backends print\n%s\nwant\n%s", cOut.stdout, c.want)
+				}
 				return
 			}
 			if cOut.failed != "" {

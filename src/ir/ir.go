@@ -102,6 +102,11 @@ func SameType(a, b Type) bool {
 // ModuleIR is the IR representation of a Rho module.
 type ModuleIR struct {
 	Name string
+	// ForeignHeaders says the program's own externs are declared by headers the
+	// generated C includes — a connected library's, or the shim rho-cimport
+	// wrote — so the C backend writes no prototype of its own for them. Without
+	// them it does, and a call is not an implicit declaration.
+	ForeignHeaders bool
 	// Version is the manifest version, so a generated service can report it.
 	Version  string
 	Features []string
@@ -122,6 +127,21 @@ type ModuleIR struct {
 	// only for Go is not refused for what it would mean in C. A build that
 	// emits C fails on the first of them.
 	CRefusals []string
+	// BackendCalls are the built-ins the program calls that only some backends
+	// supply. Like CRefusals they are carried rather than raised, because one
+	// lowering serves every target; the build refuses each on a target that does
+	// not supply it.
+	BackendCalls []BackendCall
+}
+
+// BackendCall is one call to a built-in that only some backends supply.
+type BackendCall struct {
+	// Name is the built-in, as the program wrote it.
+	Name string
+	// Module is the module the first call is in; "" for the program's own.
+	Module string
+	// Line and Column are where the first call is, or zero when unknown.
+	Line, Column int
 }
 
 // AliasIR is one type alias a module declares.
