@@ -45,6 +45,34 @@ module_named() {
   return 1
 }
 
+# module_deps prints the toolchain modules a module depends on (its `deps:`
+# entries this tree carries), one per line.
+module_deps() {
+  local module="$1"
+  awk '/^deps:/{d=1;next} /^[^ #]/{d=0} d && /^  [a-z0-9-]+:/{sub(":","",$1); print $1}' "${module}module.yml" |
+    while read -r dep; do module_named "${dep}" >/dev/null && printf '%s\n' "${dep}"; done
+}
+
+# with_deps prints the named modules and everything they depend on in this tree,
+# dependencies first and each once: publishing rho-log alone would leave the
+# rho-fmt it depends on missing, and a project depending on rho-log then fails
+# to resolve it.
+with_deps() {
+  local seen="" order=""
+  visit() {
+    local name="$1" dep
+    case " ${seen} " in *" ${name} "*) return 0 ;; esac
+    seen="${seen} ${name}"
+    local module
+    module="$(module_named "${name}")" || { order="${order} ${name}"; return 0; }
+    for dep in $(module_deps "${module}"); do visit "${dep}"; done
+    order="${order} ${name}"
+  }
+  local wanted
+  for wanted in "$@"; do visit "${wanted}"; done
+  printf '%s\n' ${order}
+}
+
 # build_module builds one module's binary, named by `main:` in its manifest.
 #
 # Not `go build ./...`: that writes a binary per main package named after the
@@ -100,8 +128,8 @@ if [ "${1:-}" = "publish" ]; then
   # that has not needs it here.
   "${BIN}/rho" install --update
 
-  echo "==> Building and publishing the named components..."
-  for wanted in "$@"; do
+  echo "==> Building and publishing the named components and what they depend on..."
+  for wanted in $(with_deps "$@"); do
     module="$(module_named "${wanted}")" || {
       echo "check.sh: this tree carries no module named ${wanted}" >&2
       exit 2
