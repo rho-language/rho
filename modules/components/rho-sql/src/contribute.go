@@ -102,6 +102,7 @@ func mergeContributions(own rhosql.Schema, ownDDL string, contributions []Contri
 		Tables: []rhosql.Table{}, Queries: []rhosql.Query{}}
 	tableFrom := map[string]string{}
 	queryFrom := map[string]string{}
+	querySQL := map[string]string{}
 	var diagnostics []rhosql.Diagnostic
 	var ddl strings.Builder
 	for _, c := range contributions {
@@ -109,7 +110,12 @@ func mergeContributions(own rhosql.Schema, ownDDL string, contributions []Contri
 			parsed, found := rhosql.ParseSchema(c.Module+"/"+filepath.Base(c.Schema), text)
 			diagnostics = append(diagnostics, found...)
 			for _, table := range parsed.Tables {
-				if _, seen := tableFrom[table.Name]; seen {
+				if other, seen := tableFrom[table.Name]; seen {
+					// Two modules owning one table would write each other's rows;
+					// the application is told which two, rather than one winning.
+					diagnostics = append(diagnostics, rhosql.Diagnostic{Level: "error",
+						File:    c.Module + "/" + filepath.Base(c.Schema),
+						Message: fmt.Sprintf("table %s is declared by both %s and %s", table.Name, other, c.Module)})
 					continue
 				}
 				tableFrom[table.Name] = c.Module
@@ -129,6 +135,7 @@ func mergeContributions(own rhosql.Schema, ownDDL string, contributions []Contri
 					continue
 				}
 				queryFrom[query.Name] = c.Module
+				querySQL[query.Name] = query.SQL
 				merged.Queries = append(merged.Queries, query)
 			}
 		}
@@ -143,6 +150,13 @@ func mergeContributions(own rhosql.Schema, ownDDL string, contributions []Contri
 	}
 	for _, query := range own.Queries {
 		if module, seen := queryFrom[query.Name]; seen {
+			// A copy of the module's statement — even an older one that
+			// differs — is passed over for the module's; one that differs is
+			// said apart, because the project may have meant its own.
+			if strings.Join(strings.Fields(query.SQL), " ") != strings.Join(strings.Fields(querySQL[query.Name]), " ") {
+				repeated[module] = append(repeated[module], query.Name+" (the project's differs: rename it if it is its own)")
+				continue
+			}
 			repeated[module] = append(repeated[module], query.Name)
 			continue
 		}

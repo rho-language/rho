@@ -123,3 +123,28 @@ func readOwn(t *testing.T, paths SQLPaths) (rhosql.Schema, string, []rhosql.Diag
 	paths.Root = ""
 	return readDeclared(paths)
 }
+
+// Two modules declaring one table would write each other's rows: the build names
+// them both.
+func TestTwoModulesWithOneTableAreRefused(t *testing.T) {
+	a := writeProject(t, map[string]string{
+		"module.yml": "module:\n  name: a\n  type: module\n  version: 0.1.0\nsql:\n  schema: s.sql\n",
+		"s.sql":      "CREATE TABLE IF NOT EXISTS things (id INTEGER PRIMARY KEY);\n",
+	})
+	b := writeProject(t, map[string]string{
+		"module.yml": "module:\n  name: b\n  type: module\n  version: 0.1.0\nsql:\n  schema: s.sql\n",
+		"s.sql":      "CREATE TABLE IF NOT EXISTS things (id INTEGER PRIMARY KEY);\n",
+	})
+	app := writeProject(t, map[string]string{"module.yml": "module:\n  name: app\n  type: rho\n  version: 0.1.0\nsql:\n  driver: rho-sql-sqlite\n  schema: db/schema.sql\n"})
+	lockOf(t, app, map[string]string{"a": a, "b": b})
+	_, _, found := mergeContributions(emptySchema(), "", Contributions(app), func(string) {})
+	refused := false
+	for _, d := range found {
+		if d.Level == "error" && strings.Contains(d.Message, "table things") && strings.Contains(d.Message, " a ") && strings.Contains(d.Message, " b") {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatalf("two modules with one table were not refused: %v", found)
+	}
+}

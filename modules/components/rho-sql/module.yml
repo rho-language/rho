@@ -1,7 +1,7 @@
 module:
   name: rho-sql
   type: component
-  version: 0.2.1
+  version: 0.2.2
   description: SQL a service declares, and the engine that runs it
   author: Aurel Miron
   maintainer: Aurel Miron

@@ -37,3 +37,7 @@ Each positional `?` is a value of its own: `UPDATE items SET qty = ? WHERE id = 
 takes two, each typed by the column beside it, where before every `?` was one
 parameter, the generated function took a single argument, and every marker was
 given the first one's type. A `?` inside a `--` or `/* */` comment is text.
+
+## [0.2.2] - 2026-11-14
+
+Two modules declaring one table is refused, naming both, where the first silently won. A project statement that shares a module statement's name but differs from it is still passed over for the module's, and the warning says it differs so the project can rename it if it meant its own.
