@@ -1,7 +1,7 @@
 module:
   name: rho-doc
   type: component
-  version: 0.1.4
+  version: 0.2.0
   author: Aurel Miron
   description: Documentation generator
   command: doc

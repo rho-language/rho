@@ -22,7 +22,7 @@ declaration ends the preamble.
 | Form | What it does |
 |---|---|
 | `module a.b.c` | names the module; required, first |
-| `namespace acme.telemetry.v1` | names a protocol schema's wire namespace (schema files) |
+| `namespace acme.sensor.v1` | names a protocol schema's wire namespace (schema files) |
 | `feature "math"` | turns on a manifest feature; may repeat |
 | `include "path.rho"` | splices another file's declarations into this module |
 | `import std.core.ptr` | brings in a module, keeping its names separate |
@@ -129,10 +129,12 @@ fn first[T](items: [T]) T {
 ```
 
 `extern fn` declares a function the host supplies rather than one the program
-writes. Its body is absent; a [port](#storage-and-ports) implements it:
+writes. Its body is absent. The runtime implements the `rho_*` functions
+({ref}`built-in functions <language/builtins>`); a port
+({ref}`building/ports`) or the platform implements the rest:
 
 ```rho
-extern fn read_all(path: string) string
+extern fn rho_read_text(path: string) string
 ```
 
 `main` is the entry point. A `main` declared `void` is emitted as one that hands
@@ -311,6 +313,24 @@ fn count_to(limit: u32) u32 {
 }
 ```
 
+`continue` goes on with the next iteration of the innermost loop. Outside a loop,
+`break` and `continue` are refused:
+
+```rho
+fn count_odd(limit: u32) u32 {
+    var i: u32 = 0
+    var odd: u32 = 0
+    while i < limit {
+        i = i + 1
+        if i % 2 == 0 {
+            continue
+        }
+        odd = odd + 1
+    }
+    return odd
+}
+```
+
 `for` walks the elements of an array, binding each one:
 
 ```rho
@@ -326,6 +346,12 @@ fn total(values: u32[4]) u32 {
 `reverse` walks it from the end, and `step` visits every Nth element:
 
 ```rho
+fn last_first(values: u32[4]) void {
+    for value in reverse values {
+        print(int_to_str(value) + " ")
+    }
+}
+
 fn every_other(values: u32[6]) u32 {
     var sum: u32 = 0
     for value in values step 2 {
@@ -336,7 +362,9 @@ fn every_other(values: u32[6]) u32 {
 ```
 
 `match` runs the first arm whose pattern equals the value; `_` matches anything,
-and an arm's body is an expression or a block:
+and an arm's body is an expression or a block. `return` is a statement, so an
+arm that returns is a block: `1 => { return "one" }`. A pattern may be a
+literal or a constant, and a `match` is not checked for exhaustiveness:
 
 ```rho
 fn describe(n: u32) void {
@@ -400,6 +428,9 @@ let byte: u8 = wide as u8
 let again: u32 = u32(byte)
 ```
 
+Inside an index, write the `as` form. `values[u32(i)]` does not parse, because
+a type name after `[` begins a generic application. `values[i as u32]` does.
+
 `sizeof(T)` is how many bytes a type occupies, decided when the program is
 compiled so both backends agree on the number:
 
@@ -445,17 +476,11 @@ declare one.
 foreign operators: they are used to pass addresses to `extern fn` calls and to
 read what such a call leaves behind.
 
-`Ptr[T]` is the handle a program holds: it is a struct with a `raw` address, so
-it can be named, passed, stored and returned. `std.core.ptr` carries it:
-
-```rho
-import std.core.ptr
-
-fn main() void {
-    let p: Ptr[u32] = from_u64[u32](0)
-    print(int_to_str(u32(to_u64(p))))
-}
-```
+`Ptr[T]` is the handle a program holds: a struct with a `raw` address, so it can
+be named, stored and returned. `Ptr[T](&value)` makes one from a variable's
+address, and `std.core.ptr` declares `from_u64`, `to_u64` and `index` over it.
+The handle is not finished on either backend. See the
+[known limitations](#known-limitations).
 
 The same spelling `Ptr[T]` is a **C pointer** in an `extern fn` signature —
 there it is the pointer the foreign declaration names, and an argument reaches
@@ -470,28 +495,28 @@ fn send(buf: u8[4]) void {
 ```
 
 Which one `Ptr[T]` is depends on where it is written: a foreign signature is
-the C pointer, and every other type position is the handle struct.
+the C pointer, and every other type position is meant to be the handle struct.
 
 ## Protocol declarations
 
 A schema file, read by `rho protocol` rather than by a Rho program, declares the
-messages on a wire. The typechecker does not use these; a Rho program does not
-contain them.
+messages on a wire. The type checker refuses `enum`, `message` and `rpc` in a
+program, with the reason.
 
 ```rho
-module telemetry
+module sensor
 
-namespace acme.telemetry.v1
+namespace acme.sensor.v1
 
-enum NodeStatus {
+enum Health {
     OK = 0
     FAULT = 1
 }
 
-message Telemetry {
-    node_id: u16
+message Reading {
+    sensor_id: u16
     temperature_c: f32
-    status: NodeStatus
+    health: Health
 }
 
 rpc SetSamplingRate {
@@ -504,8 +529,8 @@ rpc SetSamplingRate {
 }
 ```
 
-`rho protocol generate --target c|go|rho` turns these into the payload codecs,
-and for Rho also into the transport that carries them.
+`rho protocol generate --target c|go|rho` turns these into the payload codecs.
+{ref}`protocol <language/protocol>` describes what each target gets.
 
 ## Comments and layout
 
@@ -523,11 +548,31 @@ literal from an index.
 
 ## Known limitations
 
+- **Names the backends cannot write.** A local or parameter named after a C type
+  word (`int`, `char`, `float`, `double`, `long`, `signed`, `size_t`,
+  `uint32_t` …) or a Go keyword that Rho does not have (`func`, `go`, `chan`,
+  `defer`, `range`, `select`, `switch`, `case`, `default`, `interface`,
+  `package`, `goto`, `fallthrough`) is refused, with the reason. Choose
+  another name.
 - **The length of a dynamic array in C.** A `[T]` is a Go slice and a C
   pointer. Declaration, a literal, indexing and passing one work on both; what
-  a bare pointer does not carry is its length, so `len` and `for` over a `[T]`
-  are Go-only. A slice that carries its length is `std.core.slice`'s
-  `Slice[T]`, which has a pointer and a length and works on both.
+  a bare pointer does not carry is its length, so `len`, `for` and `append`
+  over a `[T]` are Go-only. On C, `len` of a string fails at the link too; use
+  `strlen`. `std.core.slice`'s `Slice[T]` carries a pointer and a length.
+- **The pointer handle.** `std.core.ptr`'s generic functions do not type-check
+  at a call: `from_u64[u32](0)` is reported as a `Ptr_T` that cannot be assigned
+  to a `Ptr[u32]`. The C backend spells a `Ptr[T]` parameter of a Rho function as
+  a C pointer, so reading `.raw` through it does not compile. The Go backend
+  does not import `unsafe` for `Ptr[T](&value)`. A `Ptr[T]` in an `extern fn`
+  signature, reached with `&`, is the form that works.
+- **No casts as an index.** `values[u32(i)]` does not parse; `values[i as u32]`
+  does.
+- **`test fn` is not syntax.** A `_test.rho` file marks its cases `test fn`,
+  and {ref}`rho-test <tools/testing>` removes the marker before compiling. The
+  compiler itself does not accept `test fn`.
+- **A generic literal is written with brackets.** A type may be spelled
+  `Box<u32>`, but a struct literal may not: `Box<u32> { 3 }` does not parse.
+  Write `Box[u32] { 3 }`.
 - **Bit fields store as integers.** A struct with bit fields is laid out as the
   storage integers it packs into — the layout is the language's, not the C
   compiler's — so a `struct`-shaped ABI a C header expects would have to be
@@ -536,4 +581,6 @@ literal from an index.
 ## Where to go next
 
 - {ref}`types <language/types>` — the types and the shapes built out of them.
+- {ref}`built-in functions <language/builtins>` — what a program calls without
+  writing it.
 - {ref}`stdlib <language/stdlib>` — what the standard library carries.

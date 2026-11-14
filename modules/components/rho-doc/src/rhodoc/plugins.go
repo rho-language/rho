@@ -186,6 +186,9 @@ func relink(site *Site) {
 	sort.SliceStable(site.Pages, func(i, j int) bool {
 		left, right := site.Pages[i], site.Pages[j]
 		if left.Section != right.Section {
+			if l, r := sectionRank(site.sectionSpecs, left.Section), sectionRank(site.sectionSpecs, right.Section); l != r {
+				return l < r
+			}
 			return left.Section < right.Section
 		}
 		return rank[left] < rank[right]

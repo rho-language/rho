@@ -93,7 +93,8 @@ func (site *Site) renderHeader(root string) string {
 			html.EscapeString(label) + "</a>\n")
 	}
 	b.WriteString("<a class=\"site-title\" href=\"" + root + "index.html\">" + html.EscapeString(site.Title) + "</a>\n")
-	if site.Project != "" {
+	// A project named like the site says nothing the title has not.
+	if site.Project != "" && site.Project != site.Title {
 		b.WriteString("<span class=\"site-project\">" + html.EscapeString(site.Project))
 		if site.Version != "" {
 			b.WriteString(" <span class=\"version\">" + html.EscapeString(site.Version) + "</span>")
@@ -146,7 +147,7 @@ func (site *Site) renderSidebar(current *SitePage, root string) string {
 		if group.Name == "" {
 			continue
 		}
-		label := humanise(group.Name)
+		label := site.sectionLabel(group.Name)
 		b.WriteString("<div class=\"nav-group\">\n")
 		// The section the page belongs to is the one opened; with no page — the
 		// site index — none is, and every section is a link.
@@ -200,7 +201,9 @@ func (site *Site) renderRail(current *SitePage) string {
 	b.WriteString("<nav class=\"rail\" aria-label=\"On this page\">\n")
 	b.WriteString("<p class=\"rail-title\">On this page</p>\n<ul>\n")
 	for _, section := range current.Sections {
-		if section.Level < 2 {
+		// The rail is the page's outline: its sections and their parts, not
+		// every small heading below them.
+		if section.Level < 2 || section.Level > 3 {
 			continue
 		}
 		class := "rail-link"
@@ -248,6 +251,20 @@ func (site *Site) renderNeighbours(page *SitePage, root string) string {
 // A site of one module is a module's own documentation, so the front page leads
 // with that module: what it is, and the pages it has.
 func (site *Site) renderIndexHTML() string {
+	// A site that names its front page opens on it: the page a person wrote to
+	// introduce the site, rather than a list of every page.
+	if site.front != "" {
+		for _, page := range site.Pages {
+			if page.Target == site.front {
+				href := html.EscapeString(page.Href)
+				return "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\" />\n" +
+					"<title>" + html.EscapeString(site.Title) + "</title>\n" +
+					"<meta http-equiv=\"refresh\" content=\"0; url=" + href + "\" />\n" +
+					"<link rel=\"canonical\" href=\"" + href + "\" />\n</head>\n<body>\n" +
+					"<p><a href=\"" + href + "\">" + html.EscapeString(page.Title) + "</a></p>\n</body>\n</html>\n"
+			}
+		}
+	}
 	var b strings.Builder
 	b.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
 	b.WriteString("<meta charset=\"utf-8\" />\n")
@@ -270,7 +287,7 @@ func (site *Site) renderIndexHTML() string {
 	b.WriteString("<p class=\"page-count\">" + itoa(len(site.Pages)) + " pages.</p>\n")
 	for _, group := range site.Sections {
 		b.WriteString("<section class=\"index-section\">\n")
-		b.WriteString("<h2>" + html.EscapeString(humanise(group.Name)) + "</h2>\n<ul class=\"index-list\">\n")
+		b.WriteString("<h2>" + html.EscapeString(site.sectionLabel(group.Name)) + "</h2>\n<ul class=\"index-list\">\n")
 		for _, page := range group.Pages {
 			b.WriteString("<li><a href=\"" + html.EscapeString(page.Href) + "\">" +
 				html.EscapeString(page.Title) + "</a>")

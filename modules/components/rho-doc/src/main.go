@@ -124,12 +124,36 @@ func runCommand(args []string) int {
 		return 0
 	}
 
+	config, err := rhodoc.ReadSiteConfig(absolute)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rho doc: docs/site.yml:", err)
+		return 1
+	}
+	if *title == "" {
+		*title = config.Title
+	}
+	// The site says where its reference is read from; "none" is a site with
+	// none, and a flag on the command line wins over both.
+	if *apiDir == "" && config.API != "" {
+		if config.API == "none" {
+			*apiDir = os.DevNull
+		} else {
+			*apiDir = filepath.Join(absolute, config.API)
+		}
+	}
 	options := rhodoc.SiteOptions{
-		Title:   *title,
-		Out:     *out,
-		Project: projectName(absolute),
-		Root:    absolute,
-		Version: projectVersion(absolute),
+		Sections: config.Sections,
+		Front:    config.Front,
+		Title:    *title,
+		Out:      *out,
+		Project:  projectName(absolute),
+		Root:     absolute,
+		Version:  projectVersion(absolute),
+	}
+	// A repository has no manifest to name it; its site file does, rather than
+	// the name of whatever folder it was assembled in.
+	if config.Title != "" && !fileExists(filepath.Join(absolute, "module.yml")) {
+		options.Project = config.Title
 	}
 	if options.Out == "" {
 		options.Out = filepath.Join(absolute, "build", "docs")
@@ -274,6 +298,11 @@ func projectName(root string) string {
 		return filepath.Base(root)
 	}
 	return manifest.ModuleName
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // projectVersion is the version of the root module of a tree.

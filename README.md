@@ -1,94 +1,112 @@
 # Rho
 
-**Version 0.6.0** · [rho-lang.org](https://rho-lang.org)
+[rho-lang.org](https://rho-lang.org) · [documentation](docs/index.md) · [changelog](CHANGELOG.md)
 
 Rho is a small systems programming language. It compiles to C and to Go: C for
-host tooling and embedded targets, Go for services that speak HTTP.
+host tools and embedded targets, Go for command-line programs and HTTP services.
 
 This repository holds the compiler, the standard library, the toolchain's
-components and plugins, the official module registry, and these docs. The
-version lives in [`cmd/rho/VERSION`](cmd/rho/VERSION), beside the command it
-describes, so the number here, the number `rho --version` prints, and the number
-a released binary carries are one number rather than three that have to agree.
+components and plugins, the official module registry, the documentation site and
+the documentation itself. The version lives in [`cmd/rho/VERSION`](cmd/rho/VERSION),
+beside the command it describes, and `rho version` prints it — one number rather
+than several that have to agree.
 
 ## Overview
 
-Rho currently focuses on a narrow, explicit subset of language features suited
-for early experimentation and simple toolchain integration. The compiler is
-written in Go and emits C and Go for host execution, embedded targets and HTTP
-services.
+Rho is deliberately narrow and explicit. There is no `new`, no objects and no
+hidden I/O: what only a host can do, a program declares as an `extern fn`
+and a project asks the backend for a **port** that implements it. The compiler is
+written in Go.
 
-## Current Scope
+Supported today:
 
-Supported features include:
-
-- `module`, `fn`, `struct`, `enum`, `type`, generics and `match`
+- `module`, `fn`, `struct`, `enum`, `type`, generics with deduction and default
+  type parameters, and `match`
 - the integer types `u8`–`u64` and `i8`–`i64`, `f32`/`f64`, `bool` and `string`
 - `if`, `while`, `for` (with `step` and `reverse`), `break` and `continue`
+- modules with declared exports and dependencies, and interfaces bound to
+  providers in the manifest
 - YAML loading with dotted paths, and reading and writing a text file
-- C and Go backends, and Go web services through routes and ports
-- structured logging through the `logemit` port: levels, text or JSON, and a
-  rotating per-service file
+- C and Go backends, and Go web services through routes, middleware and ports
 
-The language is intentionally small and the runtime is still early. The two
-backends differ in a few places where C leaves behaviour undefined — signed
-overflow, division by zero, an over-wide shift, an index past the end of an
-array. They are listed, with what differs, in `src/parity_cases_test.go`.
-See [`SECURITY.md`](SECURITY.md) for what the toolchain trusts and what it does not.
+The two backends differ in a few places where C leaves behaviour undefined —
+signed overflow, division by zero, an over-wide shift, an index past the end of
+an array. They are listed, with what differs, in `src/parity_cases_test.go`.
+See [`SECURITY.md`](SECURITY.md) for what the toolchain trusts and what it does
+not.
 
-## Build
+## Quick start
 
-Requirements:
-
-- Go 1.26.10 or newer
-- CMake 3.16 or newer for the optional wrapper build
-- A C compiler for generated C output
-
-From the project root:
-
-```sh
-go test ./...
-go build ./...
-```
-
-The CLI can compile the example project to `build/main.c` and run it natively
-on x86:
+Requirements: Go 1.26.10 or newer and a C compiler; CMake for C targets.
 
 ```sh
 go build -o ./bin/rho ./cmd/rho
-./bin/rho build examples/hello-rho
-./bin/rho run examples/hello-rho
-./bin/rho test examples/hello-rho
+./bin/rho install                   # build the toolchain into ~/.rho, add it to PATH
+./scripts/check.sh                  # build and install every component, then run the tests
+
+rho init my-app && cd my-app
+rho run .
 ```
 
-For a project, `rho.mod` marks the project root. Imports resolve from
-`src/`, while `include "file.rho"` resolves relative to the source file that
-contains the directive. Generated C output is written to `build/`.
+[`docs/installing.md`](docs/installing.md) and
+[`docs/getting-started.md`](docs/getting-started.md) go through it step by step.
 
 ## Installation
 
-Install Rho to `~/.rho` (or `$RHO_HOME` if set) with all tools, registry, cache,
-and PATH integration:
+`rho install`, run from the root of a checkout, installs into `~/.rho` (or
+`$RHO_HOME`):
+
+- creates the Rho home: `bin`, `modules`, `registry`, `cache`, `config`, `auth`, `pkg`;
+- copies the standard library and the documentation into it;
+- builds `rho`, `rho-deps` and the language server `rho-lsp`, installs them in
+  `~/.rho/bin`, and registers and enables `rho-lsp` as a component;
+- creates the local registry, the package cache and the configuration;
+- adds `~/.rho/bin` to your shell's `PATH` (bash, zsh, fish, or `.profile`).
 
 ```sh
-./bin/rho install            # interactive install
-./bin/rho install --force    # reinstall (removes existing ~/.rho)
+./bin/rho install            # first install
+./bin/rho install --update   # rebuild the toolchain in place; nothing else is touched
+./bin/rho install --force    # remove the toolchain and install it again
 ```
 
-The install command:
-- Creates `~/.rho/{bin,modules,registry,cache,config}` directories
-- Builds and installs `rho` and `rho-deps`; the formatter, the test runner, the
-  logger and the documentation generator are components, installed as modules
-- Initializes local registry and package cache
-- Adds `~/.rho/bin` to your shell PATH (bash, zsh, fish, or generic)
+`--force` removes only `bin`, `cache`, `docs`, `modules`, `pkg`, `plugins`,
+`registry`, `std` and `targets` under the Rho home — so every installed component
+and plugin goes and has to be installed again — and keeps the credentials, the
+configuration, application state and the fetched cross toolchains.
 
-After install, restart your shell or run the suggested `source` command, then
-`rho` is available globally:
+The other tools — `rho test`, `rho doc`, `rho fmt`, `rho target` and the rest —
+are components. A first install does not have them; `./scripts/check.sh` builds
+and installs all of them from the checkout, or, one at a time:
 
 ```sh
-rho help
-rho pkg init my-project
+cd modules/components/rho-test && go build -o rho-test ./src && cd -
+./bin/rho module publish --local modules/components/rho-test
+./bin/rho module enable rho-test
 ```
+
+A C build needs the `rho-target` component, which configures and builds the
+generated CMake project.
+
+## A project
+
+A project is a directory with a `module.yml`, which marks its root and is the file
+every tool reads. `rho init` writes one:
+
+```sh
+rho init my-app
+```
+
+```
+my-app/
+  module.yml      what it is, what it depends on, which targets it builds
+  src/main.rho    the program
+  README.md
+  .gitignore
+```
+
+Imports resolve from `src/` and from the declared dependencies, while
+`include "file.rho"` resolves relative to the file that contains it. Generated
+projects are written under `build/generated/<target>/`.
 
 ## Language Notes
 
@@ -140,7 +158,7 @@ the expected type at the use site:
 
 ```rho
 let a: Box[i32] = Box{ 1 }          // T from the field value
-let b: Box[u32> = wrap(7)          // T from the argument
+let b: Box[u32] = wrap(7)          // T from the argument
 let ok: Result[u32, u32] = Ok(7)    // E only from the declared type
 ```
 
@@ -228,53 +246,14 @@ targets:
       - fsstore
 ```
 
-The built-in `fsstore` port supplies a filesystem-backed module store. This
-keeps a Rho project pure Rho: nothing outside `src/` is hand-written host code.
-A new port is a new generator, registered in `portGenerators`.
+The built-in ports are `fsstore` (a filesystem-backed module store), `logemit`
+(structured logging), `docemit` and `docstore` (the documentation generator),
+`sql` (a database), `httproute` and `openapiemit` (routing and API
+descriptions). This keeps a Rho project pure Rho: nothing outside `src/` is
+hand-written host code. A new built-in port is a new generator registered in
+`portGenerators`; a plugin in the project's own tree may provide more.
 
-The built-in `telemetry` port does the same for a service that keeps a series:
-it polls a gateway's sequenced outbox, writes a page in one SQL transaction,
-serves latest and time-range queries, and rolls completed minutes and hours up
-before retention. `sql_exec_many` is the batch primitive underneath it: one
-prepared statement, many rows, one commit.
-
-## Applications
-
-| Application | Description |
-|-------------|-------------|
-| [`applications/registry`](applications/registry) | Remote module registry for Rho, written in Rho and compiled to a Go HTTP service |
-| [`applications/docsite`](applications/docsite) | Serves the Rho documentation as a site — an index, a menu, the pages, and the release notes |
-
-The registry speaks the endpoints the Rho module client already uses, so
-`rho module publish`, `download` and `search` work against it. Rho's official
-registry runs this application at **https://registry.rho-lang.org**. See its
-[README](applications/registry/README.md) for the endpoints and configuration,
-and [docs/deployment.md](applications/registry/docs/deployment.md) for the
-deployment options.
-
-## CLI Tools
-
-The main `rho` command provides `build`, `run`, `test`, `lsp`, `install`, `pkg`, `module`, and `help`:
-
-```sh
-./bin/rho build <project-dir>
-./bin/rho run <project-dir>
-./bin/rho test [--tag unit] [--kind gtest] [--suite NAME] [--list] [<project-dir>]
-./bin/rho lsp
-./bin/rho install [--force]
-./bin/rho pkg <command> [args]
-./bin/rho module <command> [args]
-./bin/rho help
-```
-
-The language server can also be built as a standalone executable:
-
-```sh
-go build -o ./bin/rho-lsp ./cmd/rho-lsp
-./bin/rho-lsp
-```
-
-### Multi-Target Generation
+## Multi-target generation
 
 A Rho application can be generated as C, as a Go command, or as a Go web
 service. Declare the backends in `module.yml`:
@@ -300,25 +279,23 @@ Each generated directory is a self-contained project:
 
 ```sh
 cd build/generated/go && go run .
-cd build/generated/c   && cmake -B out && cmake --build out
+cd build/generated/c  && cmake -B out && cmake --build out
 ```
 
 `build.targets` defaults to `c` when omitted.
 
-**Target kinds.** `go` is a command line program (`func main` calls the Rho
-entry point). `go-server` starts an `net/http` service with a `/healthz`
-route, a `static/` asset folder, request logging and graceful shutdown, for web
-APIs and REST backends. Add project routes in `registerRoutes` in the generated
-`server.go`.
+**Target kinds.** `go` is a command-line program. `go-server` starts a `net/http`
+service with a `/healthz` route, a `static/` asset folder, request logging and
+graceful shutdown. It listens on `127.0.0.1` at the port the manifest names
+(`module.port`, else `deploy.port`, else 8080) unless `RHO_HTTP_ADDR` says
+otherwise.
 
-**Project descriptors.** The file layout of every target is data, not code,
-held in `src/projectgen/descriptor.default.yml`. A project writes its targets
-out in `module.yml`, under `build.targets`: an entry is a name that selects a
-descriptor target, or a map that defines one (which replaces a target of the
-same id in the default). A project that keeps its descriptor apart can still
-put one in `project.yml`, which is read over the built-in descriptor: it writes
-only what differs, and a target with a built-in id keeps every setting it does
-not write.
+**Project descriptors.** The file layout of every target is data, not code, held
+in `src/projectgen/descriptor.default.yml`. A project writes its targets in
+`module.yml` under `build.targets`: an entry is a name that selects a descriptor
+target, or a map that defines one (replacing a target of the same id). A project
+that keeps its descriptor apart puts it in `project.yml`, which says only what
+differs from the built-in descriptor:
 
 ```yaml
 # project.yml
@@ -329,293 +306,195 @@ targets:
     default_locale: en
     locales:                    # listed, so an unfinished translation stays out
       - {locale: en, file: locales/en.json}
-      - {locale: ro, file: locales/ro.json}
+      - {locale: de, file: locales/de.json}
 ```
 
-Every template a program asks for by a literal name, `template_get("page")`,
-has to be carried by the target, or the build stops and names it.
+Every template a program asks for by a literal name, `template_get("page")`, has
+to be carried by the target, or the build stops and names it.
 
-An `auth` wrapper takes what follows from the application where the descriptor
-leaves it out: the audience is the service it deploys as (`deploy.service`, or
-the module name), the public key is `~/.rho/auth/public.pem`, where `rho auth
-keygen` puts it, and the login route is `/auth/login?audience=<audience>`. A
-descriptor writes who issues the session and which paths are public.
-
-Where the issuer is, is told to the application when it starts rather than
-written into it. `RHO_AUTH_URL` names the issuer: a person without a session is
-sent to its login, and an application that has no key file fetches the issuer's
-published key from `<RHO_AUTH_URL>/auth/public-key` and keeps a copy, so an
-issuer that is briefly down does not lock anyone out. `RHO_AUTH_STANDALONE=1`
-runs an application without an issuer: it answers requests from its own machine
-only, and refuses any that a proxy forwarded.
-
-```yaml
-# module.yml
-build:
-  language: go
-  targets:
-    - id: api
-      emitter: go
-      kind: server               # cli or server
-      module_path: example.com/org/api
-      requires:
-        - github.com/go-chi/chi/v5
-      output_dir: dist/api       # overrides the descriptor default
-      files:
-        - path: app.go
-          role: implementation
-        - path: server.go
-          role: server
-        - path: static
-          kind: dir              # creates a folder
-```
+An `auth` middleware takes what it is not told from the application: the
+audience is the service it deploys as (`deploy.service`, or the module name), the
+public key is `~/.rho/auth/public.pem`, where `rho auth keygen` puts it, and the
+login route is `/auth/login?audience=<audience>`. `RHO_AUTH_URL` names the issuer
+when the application starts; an application with no key file fetches the
+issuer's published key from `<RHO_AUTH_URL>/auth/public-key` and keeps a copy.
+`RHO_AUTH_STANDALONE=1` runs an application without an issuer: it answers
+requests from its own machine only.
 
 Roles are `implementation`, `interface`, `runtime`, `entrypoint`, `server` and
 `build`. A new backend needs a descriptor entry and an emitter registered with
 `projectgen.RegisterBackend`; the generator itself is unchanged.
-For VS Code, install the `Rho` extension (includes built-in LSP client):
+
+## Applications
+
+| Application | Description |
+|-------------|-------------|
+| [`applications/registry`](applications/registry) | The remote module registry, written in Rho and compiled to a Go HTTP service |
+| [`applications/docsite`](applications/docsite) | Serves the Rho documentation as a site — an index, a menu, the pages and the release notes |
+
+The registry speaks the endpoints the module client uses, so `rho module
+publish`, `download` and `search` work against it. Rho's official registry runs
+this application at **https://registry.rho-lang.org**. See its
+[README](applications/registry/README.md) for the endpoints and configuration,
+and [docs/deployment.md](applications/registry/docs/deployment.md) for the
+deployment options.
+
+## The CLI
+
+`rho` itself answers `run`, `build`, `init`, `new`, `install`, `pkg`, `module`,
+`plugin`, `config`, `ide`, `protocol`, `env`, `version` and `help`. Every other
+command is a component's, reached once the component is installed and enabled;
+`rho help` lists both. [`docs/tools/cli.md`](docs/tools/cli.md) is the full
+reference.
+
+```sh
+rho build [<project-dir>] [--target c|go|<board>] [--build-type Debug]
+rho run [<project-dir>|<file.rho>]
+rho init <directory>
+rho new src/storage/cache.rho --description "What the cache keeps."
+rho module publish [--local] <dir>
+rho module install <name>
+rho module enable <name>
+rho config set remote.url https://registry.rho-lang.org
+```
+
+Installing and enabling are separate decisions: a module can be on the machine
+because something depended on it, and running it is something a person says yes
+to.
+
+### Components and plugins
+
+| Group | Components |
+|---|---|
+| Building for a target | `rho-target`, `rho-cimport`, `rho-kconfig` |
+| Putting a program somewhere | `rho-flash`, `rho-deploy`, `rho-artifact`, `rho-bootstrap` |
+| Running and debugging | `rho-test`, `rho-dbg`, `rho-monitor` |
+| Measuring and checking | `rho-mem`, `rho-bench`, `rho-lint` |
+| Writing code | `rho-fmt`, `rho-lsp`, `rho-doc`, `rho-log` |
+| The machine and the installation | `rho-doctor`, `rho-keeper`, `rho-auth` |
+| Services | `rho-router`, `rho-sql`, `rho-openapi` |
+
+Plugins: `rho-doc-api` and `rho-doc-toc` (documentation), `rho-test-gtest`,
+`rho-test-ctest` and `rho-test-junit` (testing), `rho-sql-sqlite` (a SQL engine),
+and `rho-robohub`, an example integration plugin that maps one ecosystem's
+platform onto the toolchain's contracts.
+[`docs/tools/components.md`](docs/tools/components.md) has one line and a link
+for each.
+
+### Editors
+
+For VS Code, package and install the extension in `editors/rho-language`; the
+version is the one in its `package.json`, currently 0.4.0:
 
 ```sh
 cd editors/rho-language
 ./package.sh
-code --install-extension rho-0.2.0.vsix
+code --install-extension rho-0.4.0.vsix
 ```
 
-The extension automatically launches `bin/rho lsp` from your workspace root. Configure the server path in VS Code settings if needed:
-
-```json
-{
-  "rho.lsp.serverPath": "bin/rho"
-}
-```
-
-No separate Generic LSP Client extension is required.
-
-The server intentionally prints no startup banner. It waits for the client's
-LSP `initialize` request. To smoke-test the integrated command manually:
-
-If Generic LSP Client reports `activation (enabled: false)`, set the open
-file's language mode to `Rho` in the bottom-right status bar, run
-`Developer: Reload Window`, then run `Generic LSP Client: Restart server`.
-Use `View: Toggle Output` and select `Generic LSP Client`; a successful launch
-logs `Started language server`.
-
-```sh
-go build -o ./bin/rho ./cmd/rho
-python3 -c 'import json,subprocess; p=json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///"}}).encode(); print(subprocess.run(["./bin/rho","lsp"], input=(f"Content-Length: {len(p)}\\r\\n\\r\\n".encode()+p), stdout=subprocess.PIPE, check=True).stdout.decode())'
-```
-
-The repository also contains standalone tools. Build each tool from the
-project root with `go build`.
+It starts the language server as `rho lsp`, finding `rho` through the
+`rho.lsp.serverPath` setting, `$RHO_BIN`, the Rho home or `PATH`, so nothing needs
+configuring after `rho install`. `rho ide vscode .` (or `rho ide neovim .`)
+writes the launch configurations, the tasks and a workspace file from what the
+project declares, so a debug session and the board's target spec cannot
+disagree.
 
 ### Documentation
 
 `rho doc` builds a documentation site from the tree: the doc-as-code sources each
-module ships, an API reference generated from the Rho sources, and whatever the
+module ships, an API reference generated from the Rho sources, and what the
 installed plugins add. The output is static HTML.
 
 ```sh
-cd modules/components/rho-doc && go build -o rho-doc ./src   # the component
-./bin/rho module publish modules/components/rho-doc            # install it
-./bin/rho doc . -out build/docs                                # build the site
+rho doc . -out build/docs
 ```
 
-The sources are MyST-style Markdown: headings with explicit targets, admonitions,
-directives and cross-references. A module documents itself with a `docs:` section
-in its `module.yml`, or by shipping a `docs/` directory; a repository documents
-itself with `docs/`. See `docs/handbook/documentation.md` for the format and the
-plugin protocol.
+The sources are MyST-style Markdown. A module documents itself with a `docs:`
+section in its `module.yml` or a `docs/` directory; a repository documents itself
+with `docs/`, and `docs/site.yml` gives the site its title, front page and
+sections. See [`docs/tools/documentation.md`](docs/tools/documentation.md).
 
-### Formatting
-
-`rho-fmt` prints canonical formatting by default. Use `-w` to write the
-formatted source back to the input file:
+### Packages and modules
 
 ```sh
-go build -o ./rho-fmt ./cmd/rho-fmt
-./rho-fmt examples/hello-rho/main.rho
-./rho-fmt -w examples/hello-rho/main.rho
+rho pkg pack [directory]                 # a .rho-pkg archive of a project
+rho pkg inspect <file.rho-pkg>           # name, type, version, main, features
+rho pkg unpack <file.rho-pkg> [dest]
+
+rho module validate [directory]          # check a manifest
+rho module info [directory]              # what a manifest says
+rho module check [directory]             # compare exports with the previous release
+rho module list [query]                  # what is installed here
+rho module search [query]                # here, and on the remote registry
+rho module activate <name>@<version>     # the version a project resolves against
+rho module uninstall <name>[@version]    # remove an installed module
+rho module unpublish <name>@<version>    # withdraw a version from the remote registry
 ```
 
-The formatter currently covers the syntax represented by the parser AST. Full
-statement and expression formatting will expand as the language does.
+Several versions of a module can be installed at once; `enable` picks the one a
+command runs and `activate` the one a project resolves against. Publishing checks
+the module's exports against its previous release and refuses a breaking change
+without a new major version.
 
-### Package Management
-
-`rho pkg` manages Rho project scaffolding and `.rho-pkg` archives:
-
-```sh
-# Create a new project with module.yml, src/main.rho, README.md
-rho pkg init [directory]
-
-# Create a .rho-pkg archive from a project directory
-rho pkg pack [directory]
-
-# Inspect a .rho-pkg archive (shows name, type, version, main, features)
-rho pkg inspect <file.rho-pkg>
-
-# Unpack a .rho-pkg archive
-rho pkg unpack <file.rho-pkg> [destination]
-```
-
-The `rho pkg` commands are built into the main `rho` binary - no separate
-build step required.
-
-### Module Management
-
-`rho module` manages Rho module dependencies and publishing:
-
-```sh
-# Create a new module (library) or plugin
-rho module init <name> <type>     # type: rho, module, or plugin
-
-# Validate a module structure
-rho module validate [directory]
-
-# Show module metadata
-rho module info [directory]
-
-# Publish a module to local registry
-rho module publish [directory]
-
-# Unpublish a module version from registry
-rho module unpublish <name@version>
-rho module uninstall <name@version>   # alias for unpublish
-
-# Activate a specific version (only one active at a time per module)
-rho module activate <name@version>
-
-# Download a module from registry
-rho module download <name>[@version]
-
-# Install all dependencies from module.yml
-rho module install [directory]
-
-# Remove a dependency
-rho module remove <name>[@version]
-
-# Update dependencies to latest compatible versions
-rho module update [directory]
-
-# Search registry for modules (shows active status)
-rho module search [query]
-rho module list [query]   # alias for search
-```
-
-**Module Versioning & Active Versions:**
-- Multiple versions of the same module can be installed simultaneously
-- Only one version per module is active at a time
-- Publishing the first version of a module auto-activates it
-- `rho module search` / `rho module list` shows `[ACTIVE]` marker for active versions
-- `rho module unpublish` fails if trying to unpublish an active version that has other versions available (must switch active version first)
-- If unpublishing the only version (even if active), it succeeds and clears from active list
-
-**Remote registry** — the official one is **https://registry.rho-lang.org**:
+**The remote registry** — the official one is **https://registry.rho-lang.org**:
 
 - `rho config set remote.url https://registry.rho-lang.org`
 - `rho auth login` obtains a token; publishing needs one, reading does not
-- `rho module publish` uploads; `rho module search`, `install` and `download` fetch
-- Remote results are reported apart from what is installed, so the two are never
-  confused
+- `rho module publish` uploads when you are logged in; `--local` never uploads
+- `rho module search`, `install` and `download` fetch, and report remote results
+  apart from what is installed
 
-The `rho module` commands are built into the main `rho` binary - no separate
-build step required.
+### Flashing and deploying
 
-### Device Flashing
-
-`rho flash` puts a built binary on a board. It is a component like the formatter
-and the documentation generator, dispatched to by name:
+`rho flash` writes a built binary to a board, with the tool and command its target
+spec declares — OpenOCD, `st-flash`, `picotool`, `dfu-util`. `rho deploy` copies a
+program or a container image to a host over SSH, from the spec's `deploy` block.
 
 ```sh
-rho module publish modules/components/rho-flash
-rho flash -target nucleo-h753zi build/output/hello_world
+rho flash  -target pico build/output/blink
+rho deploy -target my-sbc -run build/output/sensor-api
 ```
 
-`-target` names the board, and the board's own target spec says which tool
-writes to it — OpenOCD for an ST-LINK, `st-flash` for an ST-LINK utility,
-`picotool` for a Pico, `dfu-util` for a part in DFU mode. So the tool and its
-invocation come from the platform rather than from this program, and supporting
-another programmer is a change to a board spec. The external tool and the probe
-have to be installed and connected; see `rho target show <board>` for what a
-given board expects.
-
-### Signed artifacts
-
-`rho artifact` packs and verifies a signed rollout artifact: a manifest, a
-SHA-256 payload and an Ed25519 signature. Keeper and the deploy tools verify it
-before staging or flashing anything.
+`rho artifact` packs and verifies signed artifacts — a manifest, a SHA-256 payload
+and an Ed25519 signature — and `rho flash -artifact` and `rho deploy -artifact`
+verify one before touching a board or a host:
 
 ```sh
-rho artifact pack -name aquarium -version 0.4.0 -kind service \
-  -target host-linux-amd64 -entrypoint aquarium -service aquarium \
-  -key build.key -out aquarium-0.4.0.tar.gz build/
-rho artifact verify -pub build.pub aquarium-0.4.0.tar.gz
+rho artifact pack -name sensor-api -version 1.2.0 -kind service \
+  -target linux-arm64 -entrypoint sensor-api -service sensor-api \
+  -key release.key build/output/
+rho artifact verify -pub release.pub sensor-api-1.2.0.tar.gz
 ```
 
-`rho flash -artifact ...` and `rho deploy -artifact ...` verify the artifact
-first. Keeper can deploy a host service from a signed artifact with an atomic
-swap, health check and rollback.
-
-### Provisioning
-
-`rho bootstrap` reads a local provisioning contract, generates an instance UUID
-and Ed25519 identity, stores them `0600`, and optionally enrolls the instance
-with Keeper using a one-time token.
-
-```sh
-rho bootstrap token -device garden-01 -project default -area 1 -node 7
-rho bootstrap init -config /etc/rho/provisioning.json -token <token>
-rho bootstrap status
-```
-
-Keeper keeps the enrolled node registry and answers credential verification
-before a gateway accepts node frames.
+`rho bootstrap` gives a machine its own identity from a provisioning contract —
+an instance UUID and an Ed25519 key, kept owner-only — and can enroll it with an
+enrollment server using a one-time token.
 
 ### Debugging
 
-`rho dbg` is a debug adapter. It speaks the Debug Adapter Protocol to an editor —
-VS Code, Neovim, anything with a debug client — and the GDB Machine Interface to a
-debugger, and it starts the probe that sits between the two:
+`rho dbg` is a debug adapter: the Debug Adapter Protocol to an editor, the GDB
+Machine Interface to a debugger, and the probe in between.
 
 ```sh
-rho module publish modules/components/rho-dbg
-
-# What a machine can debug a board with, and which of it is installed
-rho dbg engines
-rho dbg check -target nucleo-h753zi
-
-# A session, which an editor starts for you
-rho dbg --dap --program build/output/hello_world --target nucleo-h753zi
-
-# The chip's register map, for a peripheral view
-rho dbg registers -target nucleo-h753zi
-
-# Put a board's register map in the machine's cache, now
-rho dbg svd --target nucleo-h753zi
+rho dbg engines                                   # what this machine can debug with
+rho dbg check -target pico                        # which of it is installed
+rho dbg --dap --program build/output/blink --target pico
+rho dbg registers -target pico                    # the chip's register map, as JSON
+rho dbg svd --target pico                         # put that map in the machine's cache
 ```
 
-The register map a session shows comes from the project first — `debug.svd` in the
-application's manifest, a path per board — then from what the project or a platform
-vendors, and only then from the vendor's published set, worked out from the part
-number against what that set actually publishes. A part nothing publishes stops the
-session rather than showing registers it guessed at.
-
-The board decides the rest: its target spec says which debugger reaches it, which
-probe holds the connection and which register map describes its peripherals. A spec
-that declares no `debug:` block still says how to reach the board in its `flash:`
-command, and that is read for the probe — which is why every board spec written
-before anything needed a debugger is debuggable without being edited.
-
-GDB is the debugger this component carries. Another one is a plugin: a module in
-`modules/plugins` declaring `extends: rho-dbg` names the debugger's own adapter,
-and this runs it and relays to it. See `modules/components/rho-dbg/README.md`.
+The register map comes from the project first — `debug.svd` in the application's
+manifest, a path per board — then from what the project or a platform vendors,
+and only then from the vendor's published set. A part nothing publishes stops the
+session rather than showing registers it guessed at. Another debugger is a plugin
+declaring `extends: rho-dbg`; see `modules/components/rho-dbg/README.md`.
 
 ### What this machine needs
 
 A module says what it needs from the machine in `system_deps` — a different kind
-of requirement from `deps`, and declared apart from it. Everything in `deps` is
-another module of this toolchain and `rho-deps` resolves it; everything in
-`system_deps` is a program or a permission that somebody installs.
+of requirement from `deps`, declared apart from it. Everything in `deps` is
+another module and `rho-deps` resolves it; everything in `system_deps` is a
+program or a permission somebody installs.
 
 ```yaml
 system_deps:
@@ -624,9 +503,6 @@ system_deps:
       version: ">=10.0"          # the same constraint grammar `deps` uses
       version_flag: "--version"
       version_pattern: '[^\n]*?\)\s*([0-9][^\s(]*)'
-      # Put under the Rho home, preferred over a package manager: no privileges, it
-      # belongs to the person rather than to the machine, and it comes away with the
-      # directory it was put in.
       fetch:
         url: https://developer.arm.com/-/media/.../arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
         archive: tar.xz
@@ -639,52 +515,29 @@ system_deps:
       source: probe/60-rho-probes.rules
 ```
 
-`rho doctor` reads those blocks and reports what the machine has — five answers
-(`OK`, `MISSING`, `OUTDATED`, `WARNING`, `UNKNOWN`), because "installed but too
-old" and "installed and right" want different things done about them. It changes
-nothing.
-
-`rho keeper` acts on the report:
+`rho doctor` reads those blocks and reports what the machine has (`OK`,
+`MISSING`, `OUTDATED`, `WARNING`, `UNKNOWN`); it changes nothing. `rho keeper`
+acts on the report:
 
 ```sh
-rho keeper doctor            # the same report, through the same reading
-rho keeper sync --dry-run   # what it would do, and nothing of it
+rho keeper sync --dry-run    # what it would do, and none of it
 rho keeper sync              # do it, after showing it and asking
 rho keeper fix               # one thing at a time, asking about each
 rho keeper install rho-dbg arm-none-eabi-gdb
 ```
 
-A fetch is preferred over a package manager, and root is asked for exactly twice:
-for one udev rule, and only for that file, with the file named before the prompt
-appears. The dashboard shows the same report and every fix as the command that
-would do it, because a page is a good place to read a command and a poor place to
-be the only way to run one.
-
-## Configuring an editor
-
-`rho ide` writes what an editor reads, from what a project declares: the launch
-configurations, the tasks, and a workspace file that carries the compiler settings
-and the recommended extensions with them.
-
-```sh
-rho ide vscode .
-```
-
-Which produces `.vscode/launch.json` and `.vscode/tasks.json`, plus
-`<project>.code-workspace` — with a session for this toolchain's own adapter, one
-for the adapter the board's spec names, and an attach for a program already
-running. A file that is already there is updated rather than replaced, so a
-configuration a person has added to is kept.
+A fetch into `~/.rho/toolchains/` is preferred over a package manager, and root
+is asked for only to install a udev rule, for that one file.
 
 ## Examples
 
-The repository includes a minimal project in `examples/hello-rho` that loads a
-name from `config/app.yml` and prints a greeting on the command line. Build and
-run it with:
+`examples/` holds small projects. `examples/hello-rho` loads a name from
+`config/app.yml` and prints a greeting:
 
 ```sh
-./bin/rho build examples/hello-rho
-./bin/rho run examples/hello-rho
+rho build examples/hello-rho
+rho run examples/hello-rho
+rho test examples/hello-rho
 ```
 
 ## License

@@ -102,7 +102,7 @@ in a sentence rather than shown as an empty list.
 ## The commands
 
 ```
-rho keeper serve     serve the dashboard on a port (default 127.0.0.1:8477)
+rho keeper start     serve the dashboard on a port (default 127.0.0.1:8477)
 rho keeper status    what is installed and enabled, on one line per module
 ```
 

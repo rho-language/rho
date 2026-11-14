@@ -1,0 +1,32 @@
+# The shape of the Rho documentation site: its title, the page it opens on,
+# where the API reference is read from, and the order and names of its sections.
+# A section is a directory of docs/ (the pages directly in docs/ are
+# `documentation`) or the `section` a module's manifest declares. rho-doc reads
+# this file; see the documentation tool's page for every key.
+title: Rho
+front: documentation/index
+api: std
+sections:
+  - name: documentation
+    title: Start
+    pages: [index, installing, getting-started, generating]
+  - name: language
+    title: Language
+    pages: [index, syntax, types, builtins, stdlib, protocol]
+  - name: building
+    title: Building
+    pages: [targets, services, ports, platforms]
+  - name: modules
+    title: Modules
+    pages: [modules, registries, plugins, interfaces, integrations]
+  - name: tools
+    title: Tools
+    pages: [cli, components, testing, documentation]
+  - name: components
+    title: Components
+  - name: plugins
+    title: Plugins
+  - name: applications
+    title: Applications
+  - name: api
+    title: API reference

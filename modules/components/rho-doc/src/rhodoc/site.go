@@ -56,6 +56,11 @@ type SiteOptions struct {
 	// publishes it needs a way back, and a generator cannot invent that address.
 	Home      string
 	HomeTitle string
+	// Sections orders and names the sidebar sections and their pages, and
+	// Front is the target of the page the site opens on; both come from a
+	// repository's docs/site.yml and are empty without one.
+	Sections []SectionSpec
+	Front    string
 }
 
 // Site is a whole documentation set: the pages, grouped the way a sidebar
@@ -85,6 +90,9 @@ type Site struct {
 	// plugins are the plugins this build runs, remembered so a hook pass does
 	// not have to be handed them again.
 	plugins []Plugin
+	// sectionSpecs name the sections, and front is the page index.html opens.
+	sectionSpecs []SectionSpec
+	front        string
 }
 
 // PluginResult is what the plugins answered one hook with, in the terms a site
@@ -192,6 +200,9 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 		Version:   options.Version,
 		Home:      options.Home,
 		HomeTitle: options.HomeTitle,
+
+		sectionSpecs: options.Sections,
+		front:        options.Front,
 	}
 	if site.Title == "" {
 		site.Title = site.Project
@@ -244,7 +255,7 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 			documents = append(documents, page)
 		}
 	}
-	sortParsedPages(documents, modules)
+	sortParsedPages(documents, modules, options.Sections)
 
 	// Targets are resolved before anything is rendered, because a page is
 	// written to the path its own target asks for.
@@ -456,7 +467,7 @@ func pageHref(page *parsedPage) string {
 
 // sortParsedPages orders the pages the way a reader walks them: by section, by
 // the order the module declared, then by the title, so a build is repeatable.
-func sortParsedPages(pages []*parsedPage, modules []ModuleDoc) {
+func sortParsedPages(pages []*parsedPage, modules []ModuleDoc, specs []SectionSpec) {
 	order := map[string]int{}
 	for index, module := range modules {
 		if _, seen := order[module.Name]; !seen {
@@ -466,7 +477,13 @@ func sortParsedPages(pages []*parsedPage, modules []ModuleDoc) {
 	sort.SliceStable(pages, func(i, j int) bool {
 		left, right := pages[i], pages[j]
 		if left.section != right.section {
+			if l, r := sectionRank(specs, left.section), sectionRank(specs, right.section); l != r {
+				return l < r
+			}
 			return left.section < right.section
+		}
+		if l, r := pageRank(specs, left), pageRank(specs, right); l != r {
+			return l < r
 		}
 		if left.module != right.module {
 			return order[left.module] < order[right.module]

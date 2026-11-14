@@ -25,7 +25,7 @@ working when none of them change.
 
 It is a component like any other: published, installed and dispatched to by the
 command its manifest publishes, rather than compiled into the CLI. See the
-handbook in `docs/handbook/modules.md` for what that means.
+handbook in `docs/modules/modules.md` for what that means.
 
 ## What it reads
 

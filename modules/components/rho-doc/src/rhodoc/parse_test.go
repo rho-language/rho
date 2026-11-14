@@ -437,3 +437,16 @@ func TestARoleNameMayCarryDigitsAndDashes(t *testing.T) {
 		}
 	}
 }
+
+// A block opened with four backticks holds a three-backtick block as text and
+// names its language without the fourth backtick.
+func TestAFourBacktickFenceHoldsAThreeBacktickOne(t *testing.T) {
+	document := Parse("page.md", "# Page\n\n````markdown\n```rho\nfn main() void {}\n```\n````\n\nAfter.\n")
+	html := RenderPage(document).Body
+	if !strings.Contains(html, "language-markdown\"") || strings.Contains(html, "language-`") {
+		t.Fatalf("the language is wrong:\n%s", html)
+	}
+	if !strings.Contains(html, "```rho") || !strings.Contains(html, "After.") {
+		t.Fatalf("the inner fence ended the block:\n%s", html)
+	}
+}

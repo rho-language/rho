@@ -1,41 +1,53 @@
-# rho-fmt
+# The source formatter
 
-The source formatter. It re-parses a file and prints it in canonical form: one
-statement per line, one declaration per block, includes and imports kept with
-the module they belong to.
+`rho fmt` parses Rho source with the compiler's own parser and prints it back in
+canonical form: one statement per line, one declaration per block, includes and
+imports kept with the module they belong to.
 
 ```sh
-rho fmt src/main.rho
-rho fmt -check src/main.rho
+rho fmt src/main.rho              # print the canonical form, if it differs
+rho fmt -w src/*.rho              # rewrite the files in place
+rho fmt -l src/*.rho              # list the files that are not canonical
+rho fmt -l -check src/*.rho       # the same, and exit 1 if there are any
 ```
+
+## Flags
+
+| Flag | What it does |
+|---|---|
+| `-w` | Write the result back to each file that differs |
+| `-l` | Print the name of each file that differs |
+| `-check` | Exit 1 when any file differs |
+
+Without `-w` or `-l`, the canonical form of each file that differs is printed to
+standard output, and a file that is already canonical prints nothing. `-check`
+does not stop the printing, so a check in CI is written `-l -check`: the names of
+the files to fix, and a failing exit code.
+
+A file that cannot be read or parsed stops the run with exit 1 and the parser's
+message; no file names at all is a usage error, exit 2.
 
 ## Round-trip safety
 
 Formatting a file and parsing the result yields the same tree the file started
-from. That is checked over every source in the repository, because a formatter
-that loses code is worse than no formatter.
+from. That is checked over every Rho source in the repository, because a
+formatter that loses code is worse than no formatter.
 
 Anything the printer does not understand is emitted as a visible marker rather
-than dropped. A comment the formatter cannot place, a construct it does not
-know: it is left visible, so the alternative — a file that compiles and is not
-what was written — never happens quietly.
+than dropped, so a file that compiles and is not what was written never happens
+quietly. Among the constructs it keeps are `const` declarations, fixed array
+lengths and dimensions, `[value; count]`, `Ptr[T](&x)`, local `var`, `continue`,
+`for … in` with `reverse` and `step`, and `match`.
 
-## What canonical form means
+## The log record format
 
-- One statement per line.
-- One declaration per block, with its body indented.
-- Imports and includes grouped where the module declares them.
-- No trailing whitespace, and a final newline.
+The formatter also owns the shape of a log record, in its `logfmt` package:
 
-## Checking rather than writing
+```
+[2026-09-27T05:44:31.412Z] [info] [registry] started port=8080 attempt=1
+```
 
-`-check` formats to nothing and reports whether the file was already canonical,
-which is what a build asks for: a repository that is not formatted fails, and
-nothing is rewritten behind the reader's back.
-
-## The record format
-
-The formatter also owns the shape of a log record, which is why the logger
-depends on it: a record written by a device and a record written by a service
-are formatted by the same code, so the two cannot drift apart. See
-{ref}`rho-log/index` for the record format itself.
+a bracketed stamp, level and subject, the message, then the fields as
+`key=value`. {ref}`rho-log <rho-log/index>` depends on it, so a record written by
+a board and one written by a service are formatted by the same code and cannot
+drift apart.

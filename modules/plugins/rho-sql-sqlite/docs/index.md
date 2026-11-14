@@ -1,6 +1,6 @@
 # The sqlite engine
 
-The sqlite engine for [`rho-sql`](../../components/rho-sql/README.md). A service
+The sqlite engine for {ref}`rho-sql <rho-sql/index>`. A service
 names it; the component reaches it as a session over the plugin protocol, so the
 connection is opened once and held.
 

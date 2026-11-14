@@ -2,18 +2,18 @@
 
 Notable changes to the Rho toolchain, one section per release. The section for
 the version being published is what a registry shows against that version, so
-this is the file the handbook's overview reads.
+this is the file the documentation site's overview reads.
 
 ## [0.1.0] - 2026-10-12
 
 First release of the Rho toolchain: the compiler, the C and Go backends, the
 standard library, the module and package tools, and the component set — the
 formatter, linter, documentation generator, test runner, debugger, target specs
-and the keeper dashboard.
+and the `rho keeper` dashboard.
 
 Added the module registry and its official deployment at
 https://registry.rho-lang.org, where components and plugins are published and
-installed from, and the handbook service that serves the documentation.
+installed from, and the documentation site service that serves these pages.
 
 Modules gained a release history: a `CHANGELOG.md` beside the manifest, carried
 in the package, whose section for a published version is recorded against that
@@ -97,8 +97,9 @@ being written. The generated Go server keeps the connection open for the length
 of the action and sends keepalives; a long build or flash no longer trips a
 write deadline, and the read deadline no longer closes a stream after a minute.
 
-The `gateway` port gains `gateway_wall_time_ms`, the host's Unix time in
-milliseconds. A node's `timestamp_ms` is its own uptime; a gateway can now also
+The `gateway` port — serial, UDP and clock access for a program that relays a
+device's frames — gains `gateway_wall_time_ms`, the host's Unix time in
+milliseconds. A device's `timestamp_ms` is its own uptime; the host can now also
 record when it received the frame, which is what places a reading on a calendar.
 
 Module manifests may declare `capabilities` and `deployment`. A board says which
@@ -107,7 +108,7 @@ roles it can take (`gateway`, `relay`, `node`, `edge`, `host`), what it has
 reaches it (`method`, `arch`, `kconfig`, `apps_dir`). A driver says it is a
 sensor, its bus and what it measures, and names the example, image, Kconfig and
 boards a deployment builds. The module schema validates these blocks, including
-`board.summary`; the keeper's deployment wizard has a schema of its own.
+`board.summary`, and a deployment wizard's description has a schema of its own.
 
 A generated Go runtime emitted `rhoGetenv` twice when a program read an
 environment variable, which was a redeclaration in the generated runtime. It is
@@ -134,7 +135,7 @@ than a word, and `config` is a map whose keys belong to the plugin. The schema
 says what an application asks for; the plugin registry and its manager are the
 application's own.
 
-The Go backend also learned two shapes the expenses module needs: a fixed-size
+The Go backend also learned two shapes an application needed: a fixed-size
 array parameter is emitted with one dimension rather than two, and a `Ptr[T]`
 built from a reference carries the address in the field the generated struct
 has. Both have tests in `src/codegen/goexpr_test.go`.
@@ -147,8 +148,8 @@ same source.
 The documentation site lists the newest release first, so its overview shows the
 current version rather than the first four releases ever written.
 
-The gateway port provides `gateway_http_get` and `gateway_http_post`, the HTTP
-requests a gateway needs to poll and switch a network device.
+The `gateway` port provides `gateway_http_get` and `gateway_http_post`, the HTTP
+requests a program needs to poll and switch a device on the network.
 
 ## [0.1.5] - 2026-11-04
 
@@ -168,62 +169,61 @@ lets a login set a cookie and redirect.
 
 ## [0.2.0] - 2026-11-05
 
-Telemetry is now a toolchain feature rather than an application convention.
+Time series are now a toolchain feature rather than an application convention.
 
 - `sql_exec_many` runs one prepared statement once per row in a single
   transaction, so a service can write a batch instead of committing every row.
   The sql port now writes its affected count through the out-parameter instead
   of into a copy, and no longer takes the handle-table lock twice in a statement.
-- The `telemetry` port ingests a gateway's sequenced outbox into a project's
+- A `telemetry` port ingests a sequenced outbox of readings into a project's
   store: it polls the outbox, writes a page in one transaction, serves latest
   and time-range queries, and rolls completed minutes and hours up before
-  retention. A service can serve latest and series over the schema its project
-  declares.
-- The gateway port lists the generic sensor fields a firmware publishes, so a
+  retention. A service can serve latest values and series over the schema its
+  project declares.
+- The `gateway` port lists the generic sensor fields a firmware publishes, so a
   listing carries every `m<index>.<field>` a board reports, and records sensor
   frames in its history.
-- The telemetry port excludes fault readings from latest values, rollups and
+- The `telemetry` port excludes fault readings from latest values, rollups and
   series, walks a JSON path for HTTP device descriptors, applies the
   descriptor's scale before storing the value, and records a reading a service
   read itself.
-- The gateway port also sends a gateway bearer token when the deployment names
-  one.
+- The `gateway` port sends a bearer token when the deployment names one.
 
 ## [0.3.0] - 2026-11-06
 
-Security hardening across the telemetry chain.
+Security hardening across the services and ports that carry device readings.
 
 - `rho auth` now mints scoped tokens and tickets (`--scopes`), and can revoke a
   ticket by id into a list the generated middleware reads locally.
 - The generated auth middleware enforces required scopes, injects the verified
   subject, scopes and audience into request headers, and refuses revoked tokens.
 - Generated servers serve TLS when `RHO_TLS_CERT` and `RHO_TLS_KEY` are set.
-- The gateway uplink honours `UPLINK_BIND` so a relay listener can be confined
-  to one interface.
+- The `gateway` port's uplink honours `UPLINK_BIND`, so a relay listener can be
+  confined to one interface.
 - `sql_exec_many` and the `telemetry` port (outbox ingestion, latest, series,
   rollups, retention) shipped in 0.2.0 are documented here as released.
 
 ## [0.4.0] - 2026-11-08
 
-A web, telemetry, rollout and provisioning release.
+A web, time-series, rollout and provisioning release.
 
 - The template engine nests blocks of the same kind, supports `{{else}}`,
   `{{#each}}`, `{{#with}}`, whitespace control and `{{t "key"}}` translation.
-  Flat JSON locale catalogs are embedded at build time, with English and
-  Romanian catalogs and a build-time coverage report.
-- HTMX and Server-Sent Events are available as shared modules. Pages answer
-  fragments when `HX-Request` is set, and named SSE streams carry HTML
-  fragments; the template renderer gained the tests that keep these contracts
-  from drifting.
-- The telemetry port bounds the WAL, batches retention, supports incremental
+  Flat JSON locale catalogs are embedded at build time, with a build-time
+  report of the keys a catalog lacks.
+- HTMX and Server-Sent Events are supported: pages answer fragments when
+  `HX-Request` is set, and named SSE streams carry HTML fragments; the template
+  renderer gained the tests that keep these contracts from drifting.
+- The `telemetry` port bounds the WAL, batches retention, supports incremental
   and full vacuum, reports storage status, and stores actionable faults in a
   dedicated table with list, clear, prune and live-event paths.
 - Added `rho-artifact` for signed host and firmware artifacts and `rho-bootstrap`
-  for first-boot identity, permissions and Keeper enrollment. Both are published
-  to the remote registry.
+  for first-boot identity, permissions and enrollment with an enrollment server.
+  Both are published to the remote registry.
 - Flash and deploy verify signed artifacts before touching a board or target.
-- Cross-entity includes use bare names resolved by the compiler; RoboHub
-  dependencies are declared once under `deps.robohub` and checked at build time.
+- Includes across modules use bare names resolved by the compiler; an
+  ecosystem's dependencies are declared once, as a named group under `deps`, and
+  checked at build time.
 - `scripts/check.sh` is idempotent when a version is already published.
 
 ## [0.5.0] - 2026-11-09
@@ -248,7 +248,7 @@ Security fix for archive extraction.
   by their exact names and write the payload under the constant payload name;
   the payload extractor uses `os.Root` and refuses absolute, parent and volume
   paths before writing.
-- The keeper's tar and zip unpackers use `os.Root` and validate every entry
+- `rho keeper`'s tar and zip unpackers use `os.Root` and validate every entry
   before writing. The host-tar fallback validates the archive listing before
   extraction instead of extracting first.
 - Removed the post-extraction “cleanup” that could delete any path named in a
@@ -303,8 +303,8 @@ answers the clock and a program's output as values.
 
 **Auth**
 
-- Client credentials and service tokens, issuer discovery and key fetch, the
-  keeper-provided key, and a fix to whom a relying party trusts.
+- Client credentials and service tokens, issuer discovery and key fetch, a key
+  provided by the issuer, and a fix to whom a relying party trusts.
 
 **Code generation**
 
@@ -331,8 +331,8 @@ answers the clock and a program's output as values.
 - `rho new` writes the file header; an application can be published;
   `rho deploy` builds and pushes images; `rho test` runs C host tests;
   `rho module publish --local` installs without uploading.
-- The ecosystem's names are out of the core: platform ports are a plugin module
-  and transport framing is out of the generator.
+- An ecosystem's names are out of the core: platform ports are provided by an
+  integration plugin, and transport framing is out of the generator.
 
 **Security**
 
@@ -348,8 +348,8 @@ toolchain's, the same on both backends: `str_trim`, `str_url_encode`,
 `milli_valid`, `milli_parse`, `milli_format` and `milli_round(milli, places)`.
 A decimal is read with a dot or a comma, digits past the third decimal are
 dropped, and a text that is not a number is 0, which `milli_valid` tells apart
-from a real 0. Every RoboHub module carried its own copy of each, and the copies
-had drifted: some read a comma, some a sign, some neither.
+from a real 0. Applications carried their own copy of each, and the copies had
+drifted: some read a comma, some a sign, some neither.
 
 A parity case can say what both backends must print, not only that they agree.
 
@@ -357,17 +357,17 @@ A parity case can say what both backends must print, not only that they agree.
 
 Safer defaults and fixes from a security and usability review.
 
-- A generated service listens on 127.0.0.1:8080 when `RHO_HTTP_ADDR` does not say otherwise, where it listened on every interface; a service meant for the network says `RHO_HTTP_ADDR=:<port>`, as the keeper and Mesh already do for what they deploy.
+- A generated service listens on 127.0.0.1:8080 when `RHO_HTTP_ADDR` does not say otherwise, where it listened on every interface; a service meant for the network says `RHO_HTTP_ADDR=:<port>`, as a supervisor that deploys services already does for them.
 - `redirect()` refuses a location with a line break (it would add a header of its own), and the sign-in callback returns only to a path on its own service: no `/\\host`, no control characters.
 - A program's report file (`rho_exec`, `rho_exec_args`) is written owner-only, in an owner-only folder: a program's output may carry a secret.
-- `rho install --force` removes the toolchain — programs, standard library, components, plugins, local registry, caches — and keeps the credentials, the configuration, the keeper's and Mesh's state and the fetched toolchains, where it removed all of `~/.rho`.
+- `rho install --force` removes the toolchain — programs, standard library, components, plugins, local registry, caches — and keeps the credentials, the configuration, application state and the fetched toolchains, where it removed all of `~/.rho`.
 - `rho init` works in the folder it is run in (the default `--project .` was refused).
 
 ## [0.7.2] - 2026-11-14
 
 Usability.
 
-- A generated service started by hand listens on loopback at the port its manifest names (`module.port`, else `deploy.port`), so the keeper comes up on 127.0.0.1:19090 and Mesh on 127.0.0.1:8478 as their documentation says.
+- A generated service started by hand listens on loopback at the port its manifest names (`module.port`, else `deploy.port`), so a service comes up where its documentation says it does.
 - `rho help <command>` shows that command's help; `rho build -h` says what it builds; the command list describes `build`, `run`, `install`, `protocol` and `env` as they are.
 - `rho pkg … --help` prints help instead of creating a directory named `--help`.
 - A folder with no `module.yml` is told so, and how to start one, instead of naming the legacy `rho.mod`.
@@ -380,9 +380,9 @@ backends: `i64_to_str` and `i64_from_str` (whole numbers of any width — `int_t
 takes a u32), `str_lower` and `str_upper` (ASCII), `str_field(s, sep, index)` (one
 field of a separated line), `json_str_field` and `json_num_field` (the first value
 of a key in a flat JSON document), and `app_workspace()` — where an application
-keeps its data: `RHO_APP_WORKSPACE`, else `ROBOHUB_APP_WORKSPACE`, else
-`~/.rho/apps/<RHO_APP_NAME or the program's name>`, one rule instead of one per
-module.
+keeps its data: `RHO_APP_WORKSPACE`, else an ecosystem's own application
+workspace variable, else `~/.rho/apps/<RHO_APP_NAME or the program's name>`, one
+rule instead of one per module.
 
 ## [0.8.1] - 2026-11-14
 
@@ -406,8 +406,8 @@ A project's own tree may carry the ports it is built with: a plugin in it that
 integrates its platform and provides ports (`serves:` and `integration.provides.ports`,
 no `extends:` needed) is read when the project is generated. A port is Go source
 compiled into the project, as its sources are, so an application can keep one
-beside its code and version it with it — Mesh's telemetry store moved out of the
-RoboHub platform plugin this way.
+beside its code and version it with it, rather than in a platform plugin it shares
+with every other application of that platform.
 
 ## [0.8.3] - 2026-11-14
 

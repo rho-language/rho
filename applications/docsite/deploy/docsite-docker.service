@@ -18,7 +18,7 @@ Requires=docker.service
 Type=simple
 
 # The image to run. Replace with the published image and tag.
-Environment=IMAGE=miraur/rho-docsite:latest
+Environment=IMAGE=<dockerhub-user>/rho-docsite:latest
 
 # The public address the site is served at: the generated pages link back to it,
 # and it is the address a reader is shown. Point it at the hostname the ISPConfig

@@ -21,13 +21,17 @@ generator a build uses, so cross-references resolve the same way in both.
 
 | Variable              | Default             | What it is                           |
 |-----------------------|---------------------|--------------------------------------|
-| `RHO_HTTP_ADDR`       | `:8080`             | where it listens                     |
+| `RHO_HTTP_ADDR`       | `127.0.0.1:8080`   | where it listens; `:8080` for every interface |
 | `RHO_DOCS_ROOT`       | `.`                 | the project the site is built from   |
 | `RHO_DOCS_TREE`       | `docs`              | the documentation directory the menu lists |
 | `RHO_SITE_TITLE`      | `Rho documentation` | what the site calls itself           |
 | `RHO_SITE_RELEASES`   | `CHANGELOG.md`      | the release notes the overview reads |
 | `RHO_SITE_REPOSITORY` | *(unset)*           | the project the pages belong to      |
 | `RHO_SITE_VERSION`    | *(unset)*           | the version the footer and index show; falls back to `VERSION` beside the service |
+
+A generated service listens on loopback unless told otherwise: on the port its
+manifest names (`module.port`, else `deploy.port`), and on 8080 when it names
+none, as this one does. `RHO_HTTP_ADDR=:8080` puts it on every interface.
 
 ## Deployment
 

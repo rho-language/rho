@@ -1,58 +1,69 @@
 # rho-test
 
-The test runner. A test is an ordinary Rho program, so it runs on one backend:
-whatever the project generates.
+The test runner, reached as `rho test`. {ref}`tools/testing` is the full
+reference; this page is the short version.
 
 ```sh
-rho test <project-dir>
-rho test --target go <project-dir>
+rho test                    # the project in this directory
+rho test path/to/project
+rho test tests/math_test.rho
+rho test --list             # what the project declares, and stop
 ```
 
-## What it does
+## What it runs
 
-1. Discovers the tests under `tests/`.
-2. Builds the project.
-3. Runs the generated binary for each one.
-4. Reports each test, with the file and the line a failure is on.
+A project declares its suites in `tests/tests.yml` (or `tests.yml` at its root,
+never both), and the runner runs what that file declares and nothing else. A
+project with no suite manifest still runs: every `*_test.rho` under it, outside
+`build/`, is a suite.
+
+```yaml
+name: acme-sensors
+suites:
+  - name: tests/option          # tests/option_test.rho
+    kind: rho
+    tags: [unit]
+  - name: smoke
+    kind: command
+    command: python3 tests/smoke.py
+```
+
+A Rho test file declares its tests with `test fn` and calls them from `main`:
 
 ```rho
-module tests.option_test
+module option_test
 
-import std.core.option
+import std.assert.assert
 
-test "Some holds a value" {
-    let value = Some(7)
-    assert(is_some(value))
+test fn some_holds_a_value() void {
+    assert_true(true)
+}
+
+fn main() void {
+    some_holds_a_value()
 }
 ```
 
-A failure reports the file, the line and what it expected. A test that says only
-"failed" is a test nobody acts on.
+The runner strips the `test` marker, builds the file to C, compiles it with `cc`
+and runs it. The exit status is the verdict, and the cases a report lists are
+the `test fn` declarations with their lines.
 
-## Targets
-
-| Target | What it runs |
-|--------|--------------|
-| `c` | The native build, which is the default |
-| `go` | The Go backend, which is what most projects generate |
+The built-in kinds are `rho`, `command` and `build`. Any other kind is resolved
+by a plugin, and a kind that no installed plugin resolves is reported as skipped
+with a reason rather than dropped.
 
 ## Plugins
 
-A test run is read by machines. A CI system wants a document it can parse rather
-than a line it has to read, and none of that belongs in a runner that knows how
-to run a test. So the runner offers two hooks and lets a plugin answer them:
+The runner offers two hooks, declared as two contracts in its manifest:
 
-| Hook | When it runs | What a plugin answers with |
-|------|--------------|---------------------------|
-| `discover` | Once, over the test files the run found | Files to add, so a plugin that knows a project's own test layout takes part in the run |
-| `run` | Once, over the results of a finished run | A report to write and notes to print |
-
-A plugin is attached to the runner rather than free-floating: it names the
-component it extends and the hooks of it it answers, and validation checks that
-relation before it is published.
+| Contract | Hook | When it runs | What a plugin answers with |
+|----------|------|--------------|----------------------------|
+| `discover` | `discover` | Once, over the declared suites and the test files found | Suites of a kind it knows, with the steps that build and run them, or test files to add |
+| `report` | `run` | Once, over the results of a finished run | A report to write and notes to print |
 
 ```yaml
 extends: rho-test
+implements: [report]
 hooks: [run]
 commands:
   - name: junit
@@ -61,23 +72,22 @@ commands:
 ```
 
 ```sh
-rho test --list-plugins <project>   # what a run would answer to
-rho test --no-plugins <project>     # a run with no extensions
+rho test --list-plugins     # the plugins a run would answer to
+rho test --no-plugins       # a run with none
 ```
 
-`modules/plugins/rho-test-junit` is the worked example: it writes a JUnit report,
-which is what a CI system reads. A plugin that fails is reported on standard
-error and the run carries on, because one broken extension must not cost a
-project its tests.
+{ref}`rho-test-gtest <rho-test-gtest/index>` answers `discover` for suites of
+kind `gtest`; {ref}`rho-test-junit <rho-test-junit/index>` answers `run` with a
+JUnit report. A plugin that fails is reported on standard error and the run
+carries on.
 
 ## Reports
 
-A plugin's report is written to a file and its notes are printed, because a
-report is a document a system reads and a note is a line a person reads:
+A plugin's report is written to a file and its notes are printed. The files are
+`report-1.txt`, `report-2.txt` and so on, one per plugin that answered, in
+`build/test-reports/` under the project unless `--report-dir` names another
+directory. The run prints the path of each.
 
 ```sh
-rho test <project> --report-dir build/test-reports
+rho test --report-dir build/test-reports
 ```
-
-The default is `build/test-reports` beside the project, which is where a build
-already keeps what a run produced.

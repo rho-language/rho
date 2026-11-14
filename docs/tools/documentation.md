@@ -27,8 +27,8 @@ docs:
 | `title` | The one-line summary a page shows, when the manifest does not already say it |
 
 A `docs` directory beside the manifest is picked up without being declared, so a
-module that drops a file into `docs/` gets it documented. The section says is
-the one thing worth declaring, because it is what places the pages in a site.
+module that drops a file into `docs/` gets it documented. The section is the one
+thing worth declaring even then, because it is what places the pages in a site.
 
 ## The format
 
@@ -66,8 +66,8 @@ block rather than as prose, because a reference written for this page would
 otherwise be one the generator tries to resolve:
 
 :::{code-block} markdown
-See {ref}`handbook/ports` for what a port is.
-See :ref:`the same page <handbook/ports>` in the classic spelling.
+See {ref}`building/ports` for what a port is.
+See :ref:`the same page <building/ports>` in the classic spelling.
 
 ## A section {#a-section}
 
@@ -121,10 +121,61 @@ serves files, and it keeps working when nothing serves it.
 | `-api DIR` | Generate the reference from this tree rather than the one given |
 | `-api-section NAME` | Where the reference appears in the sidebar |
 | `-section NAME` | Put the pages of this path in a section |
-| `-title TITLE` | The site title |
-| `-no-plugins` | Build without extensions |
-| `-list-plugins` | List the extensions that are available |
-| `-strict` | Fail when a source reports a problem |
+| `-title TITLE` | The site title; overrides `docs/site.yml` |
+| `-plugins` | Run the installed plugins that extend the build (on by default) |
+| `-no-plugins` | Build without plugins; the same as `-plugins=false` |
+| `-tree-plugins` | Also run the plugins the documented tree carries, not only the installed ones |
+| `-list-plugins` | List the plugins that would run, and the others found, and stop |
+| `-strict` | Fail, writing nothing, when a source reports a problem |
+
+Flags may come before or after the path. Without `-out` the site is written to
+`build/docs` under the documented tree.
+
+`-tree-plugins` is off by default because a plugin is a program: the tree being
+documented may come from someone you do not know, and running the programs it
+carries is a decision for whoever runs the build, not a default. This
+repository's own plugins under `modules/plugins/` run without being installed
+only when it is given.
+
+## The shape of a site: `docs/site.yml`
+
+A module describes its pages in its manifest. A repository has no manifest of its
+own, so the shape of the site its `docs/` becomes is written in `docs/site.yml`:
+its title, the page a reader lands on, where the API reference is read from, and
+the order and names of its sections. This site is built from one:
+
+```yaml
+title: Rho
+front: documentation/index
+api: std
+sections:
+  - name: documentation
+    title: Start
+    pages: [index, installing, getting-started, generating]
+  - name: language
+    title: Language
+    pages: [index, syntax, types, builtins, stdlib, protocol]
+  - name: components
+    title: Components
+  - name: api
+    title: API reference
+```
+
+| Key | What it means |
+|---|---|
+| `title` | The site's title. `-title` overrides it |
+| `front` | The page `index.html` opens, as a target such as `documentation/index` |
+| `api` | The directory, relative to the tree, the API reference is generated from; `none` builds a site with no reference. `-api` overrides it |
+| `sections` | The sections, in the order the menu shows them |
+| `sections[].name` | The section: a directory of `docs/` (the pages directly in `docs/` are `documentation`), or the `section` a module's `docs:` declares |
+| `sections[].title` | What the menu calls it; without one, the name in words |
+| `sections[].pages` | The order of its pages, each named by file name without the extension, by target, or by the module it belongs to |
+
+A section the file does not name comes after the named ones, alphabetically; a
+page a section does not list comes after the listed ones. A section of
+components is ordered by naming the modules. A tree without `docs/site.yml` is
+built as before: sections and pages in their default order, and the title from
+`-title` or the project's name.
 
 ## The API reference
 
@@ -141,7 +192,7 @@ notice to every generated page — which is what `rho-doc-toc` does.
 A plugin is attached to this generator: it names `rho-doc` in its manifest and
 declares the hooks of this component it answers. A run of the generator is the
 only thing that ever calls it, and it loads the plugins that name it. See
-{ref}`handbook/modules` for the contract and what is checked.
+{ref}`modules/plugins` for the contract and what is checked.
 
 A hook is run at most once per plugin, and only if the plugin declared it. The
 answer arrives as a process: the generator writes a request to the plugin's
@@ -203,4 +254,4 @@ targets:
 
 The port supplies the same implementation the command uses, so a page rendered by
 a service and a page written by a build are produced by one generator. See
-{ref}`handbook/ports` for what a port is.
+{ref}`building/ports` for what a port is.

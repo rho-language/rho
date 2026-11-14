@@ -124,7 +124,7 @@ func ReadApiSources(root string) ([]ApiModule, []Diagnostic) {
 		}
 		if info.IsDir() {
 			switch info.Name() {
-			case ".git", ".kilo", "node_modules", "build", "vendor", "tests":
+			case ".git", ".kilo", "node_modules", "build", "vendor", "tests", "testdata":
 				return filepath.SkipDir
 			}
 			return nil

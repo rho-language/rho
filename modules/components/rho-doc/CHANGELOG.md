@@ -38,3 +38,7 @@ so a tree's provider modules were left out of its documentation.
 ## [0.1.4] - 2026-11-14
 
 Built against rho 0.7.1, whose manifest reader knows a module's `sql:` block: the six RoboHub modules that declare one (appapi, inventory, journal, rules, scheduler, widgets) are documented again instead of skipped as unreadable.
+
+## [0.2.0] - 2026-11-14
+
+A repository describes its site in `docs/site.yml`: the title, the page `index.html` opens on (`front`), where the API reference is read from (`api`, or `none`), and the order and names of the sections and of the pages within them. A tree without the file is built as before. A fenced block opened with four backticks holds a three-backtick block and names its language without the extra backtick. The API scan skips `testdata` folders, whose sources are fixtures rather than an interface. A tree with no root manifest is named by its site file's title rather than by its folder, and a project named like the site is not repeated beside the title. The "On this page" rail lists a page's sections and their parts (levels 2 and 3), not every small heading under them.

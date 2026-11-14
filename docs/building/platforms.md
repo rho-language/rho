@@ -7,7 +7,7 @@ that drives the part's peripherals.
 Two things make a platform, and they are separate:
 
 - A **target spec**, which says what the part is and how a program is laid out
-  and flashed. That is {ref}`rho-target <documentation/components>`'s business,
+  and flashed. That is {ref}`rho-target/index`'s business,
   and the spec is data.
 - The **platform's own code**, which is the library a program links and the
   board support package that registers the board's peripherals.
@@ -20,29 +20,39 @@ program does not change.
 
 A spec is JSON, and it refers to another: a board names the chip it carries, and
 a chip names the architecture it is built as. Each says what it knows and leaves
-the rest to what it refers to.
+the rest to what it refers to. The RP2040, as `rho-target` carries it:
 
 ```json
 {
   "kind": "mcu",
-  "name": "atmega328p",
-  "arch": "avr",
-  "toolchain": { "compiler": "avr-gcc", "objcopy": "avr-objcopy" },
+  "name": "rp2040",
+  "arch": "arm-cortex-m",
+  "core": "cortex-m0plus",
+  "toolchain": { "flags": ["-mcpu=cortex-m0plus", "-mthumb", "-mfloat-abi=soft"] },
   "memory": {
-    "flash": { "origin": "0x00000000", "length": "0x8000" },
-    "ram":   { "origin": "0x00800100", "length": "0x800" }
-  }
+    "flash": { "origin": "0x10000000", "length": "0x200000" },
+    "ram":   { "origin": "0x20000000", "length": "0x42000" }
+  },
+  "flash": { "tool": "picotool", "command": "picotool load -f -x {binary}" }
 }
 ```
 
-A board adds the facts a board has and a chip does not: the pin map, the
-peripherals, the flash command, and the library that implements the contracts.
+A board adds the facts a board has and a chip does not: the pin map and the
+peripherals. The Pico names `"mcu": "rp2040"` and adds its pins, so the compiler
+comes from the architecture, the memory and the flash command from the chip, and
+the LED's pin from the board.
 
 ```sh
-rho target list                 # what is known
-rho target show atmega328p      # one resolved target
-rho target generate . --target atmega328p   # the CMake for a build
+rho target list                        # what is known
+rho target show pico                   # one resolved target
+rho target generate . --target pico    # the CMake for a build
 ```
+
+The toolchain itself knows a small set — `rho target list` shows `arm-cortex-m`,
+`esp32c3`, `native`, `pico` and `rp2040`. Every other part and board comes from a
+platform module: an AVR board, an STM32 Nucleo or an Arduino UNO Q is known to
+`rho target` only in a project that depends on the platform that carries its
+spec.
 
 ### The linker script
 
@@ -97,7 +107,8 @@ void rho_avr_halt(void);
 
 ## Reaching the board
 
-A board says how it is written to, and that is a command:
+A part or a board says how it is written to, and that is a command. An AVR
+board from a platform module, for example:
 
 ```json
 "flash": {
@@ -116,7 +127,7 @@ which probe it is behind — without the spec being wrong on every machine but t
 one it was written on:
 
 ```sh
-AVRDUDE_PORT=/dev/ttyUSB1 rho flash -target uno-r3 build/output/main
+AVRDUDE_PORT=/dev/ttyUSB1 rho flash -target uno-r3 build/output/main   # uno-r3 from the AVR platform
 ```
 
 A reference with no default and no value is an error rather than a hole: a
@@ -130,32 +141,6 @@ The reference is spelled `{env:…}` rather than `${…}` because the command
 travels into a CMake file, and CMake reads `${…}` as its own: a reference
 written that way is a configure error rather than a placeholder.
 
-## What the board says about itself
-
-A board manifest can carry a one-line `board.summary` and a `capabilities` block
-so a deployment planner can offer it without a list written into the planner:
-
-```yaml
-board:
-  designation: PICO_2W
-  summary: A Pico 2W with WiFi, a 1-Wire bus, and USB serial.
-capabilities:
-  gateway: true
-  relay: true
-  node: true
-  edge: true
-  host: false
-  wireless: true
-  links: "uart console usb wifi socket"
-  buses: "uart i2c spi onewire gpio adc pwm"
-  deploy: "flash"
-```
-
-A host board also names how a gateway is deployed to it (`deployment.method`,
-`arch`, `apps_dir`, `user`, `path`). The schema validates both blocks; a new
-board is found by scanning the platform's `boards/` directory, not by editing a
-consumer.
-
 ## The platform's code
 
 The library a program links, and the board support package that registers the
@@ -164,7 +149,12 @@ for a peripheral by name — `user_led`, `system_timer` — and the board says w
 pins those are.
 
 A platform is a module like any other: it has a manifest, it is depended on by
-path or by git, and a project says which preset it is written for.
+path or by git, and a project says which boards (`build.presets`) it is written
+for. The module says it is a platform with `platform: <identity>` in its own
+manifest, and a project whose module graph reaches it is built for that
+platform: the plugins that serve it are offered to the build, and its boards are
+known to `rho target`. A project with no platform in its graph is built the
+standard way. Here `acme-avr` is an AVR platform that carries the `uno-r3` board:
 
 ```yaml
 # my-app/module.yml

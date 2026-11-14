@@ -14,6 +14,16 @@ rho init my-app
 cd my-app && rho run .
 ```
 
+| Flag | Default | What it does |
+|---|---|---|
+| `--name NAME` | the directory's name | The module name |
+| `--description TEXT` | `A Rho application.` | The manifest's one-line description |
+| `--language go\|c` | `go` | The build language |
+| `--target a,b` | the language | The build targets, comma-separated (`c`, `go`, `go-server`) |
+
+A directory that already holds a `module.yml` is refused rather than written
+over. The manifest it writes, without its header comment:
+
 ```yaml
 # my-app/module.yml
 module:

@@ -75,7 +75,7 @@ publish_module() {
   # A check run on a machine that already published this version must still
   # reach the tests; the version is a release identity, not a build counter.
   local output
-  if ! output="$("${BIN}/rho" module publish "${module}" 2>&1)"; then
+  if ! output="$("${BIN}/rho" module publish --local "${module}" 2>&1)"; then
     case "$output" in
       *"version already published"*) echo "    ${name} is already published" ;;
       *) echo "$output"; return 1 ;;

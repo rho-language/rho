@@ -14,21 +14,27 @@ rather than copied here.
   expressions.
 - {ref}`types <language/types>` — the types, generics, and the shapes a program
   builds values out of.
-- {ref}`protocol <language/protocol>` — schemas, and the C and Go generated from
-  one of them.
+- {ref}`built-in functions <language/builtins>` — what a program calls without
+  writing it: text, numbers, files, processes, time, and the service functions,
+  with which backend has each.
 - {ref}`stdlib <language/stdlib>` — what the standard library carries.
+- {ref}`protocol <language/protocol>` — schemas, and the C, Go and Rho generated
+  from one of them.
 
 ## What Rho is
 
 Rho is a systems language with the shape of C and the ergonomics of a modern
-one:
+one. One program compiles to C, for a board or a host, and to Go, for a command
+or a web service.
 
-- **No hidden allocation.** There is no heap and no garbage collector. A value
-  lives where it is bound, and a pointer is a pointer.
-- **No mutable global state to speak of.** Top-level bindings exist, but state
-  belongs to a value, which is what makes a function testable without a fixture.
-- **The host is declared, not assumed.** A program that needs storage, logging
-  or documentation declares `extern fn` and asks for a port.
+- **No allocator in the language.** There is no `new` and no pointer a program
+  allocates or frees. A value lives where it is bound, and a struct is passed
+  whole.
+- **State belongs to a value.** A module's top-level bindings are constants, so
+  a function's state is its arguments, which is what makes it testable without a
+  fixture.
+- **The host is declared, not assumed.** What only a host can do is a function
+  the runtime supplies, declared with `extern fn`, or a port the target asks for.
 
 ```rho
 module counter
@@ -43,42 +49,75 @@ fn increment(c: Counter) Counter {
 }
 ```
 
+## Memory
+
+A program allocates nothing it can see. Scalars, structs and fixed arrays are
+values. On C, a dynamic array literal is storage in the function that declares
+it, and a `[T]` passed on is a view of it.
+
+Text is the exception. A string the program builds — a `+`, `int_to_str`,
+`str_replace`, a file read with `rho_read_text` — is new memory. The C runtime
+takes it from `malloc` and never frees it. The Go backend uses Go strings,
+which its garbage collector frees. A firmware loop that builds strings for ever
+therefore grows on C. A firmware that only compares and slices what it was given
+does not.
+
+## What a program can reach
+
+A program reaches the machine through the runtime functions in
+{ref}`built-in functions <language/builtins>`. Both backends have these:
+
+- **Files:** `rho_read_text`, `rho_write_text`, `rho_append_text` and
+  `rho_write_secret` read, write or append a whole text file. A secret is written
+  only its owner can read. `yaml.value`, `yaml.kind` and `yaml.keys` read a
+  YAML document by a dotted path.
+- **Processes:** `rho_exec(program, arguments, report)` splits its arguments on
+  spaces and double quotes. `rho_exec_args` takes one argument per line and
+  interprets nothing. `rho_exec_capture` returns the output instead of writing
+  it to a file. A value that came from a request, a file or a user goes through
+  the last two, which pass it as exactly one argument. No program is run through
+  a shell.
+- **Time:** `rho_now_s`, `rho_local_date`, `rho_local_clock`,
+  `rho_utc_offset_at`, and `rho_sleep_ms` for a task that waits between ticks.
+- **The environment:** `getenv`, `env_or`, `app_workspace`.
+- **Cryptography:** `rho_hmac_sha256_hex` and `rho_random_hex`.
+
+Only the Go backend has these:
+
+- **Other services:** `rho_service_token(audience, scopes)` is a short-lived
+  token fetched with the identity the supervisor gave the program
+  (`RHO_CLIENT_ID`, `RHO_CLIENT_SECRET_FILE`, `RHO_AUTH_URL`) and cached.
+  `rho_http_request` and `rho_http_body` send a request carrying one.
+  `rho_sse_follow` follows another service's event stream into a file. No token
+  is put on a command line or in a URL.
+- **The file system beyond one file:** `rho_path_exists`, `rho_list_dir`,
+  `read_file` and `write_file` for bytes, and `get_args` and `rho_arg` for the
+  command line.
+
+Anything else, such as a network socket, a serial line, a database or logging,
+is a port ({ref}`building/ports`) or an `extern fn` the platform implements.
+
 ## What the language does not have yet
 
 Stated plainly, because a reference that implies otherwise is worse than none:
 
-- No heap allocation, and no `new`. A slice is a view over memory someone else
-  owns.
-- No mutable global state to speak of: a module may declare a `const`, `let` or
-  `var` at the top level, but state belongs to a value that is passed or reached
-  through a struct field.
-- No time and no network, unless a port supplies it; a background task waits
-  between ticks with `rho_sleep_ms(milliseconds)`. File I/O is `rho_read_text`
-  and `rho_write_text`, which read and write a whole text file, and
-  `rho_write_secret`, which writes one only its owner can read (mode 0600, and an
-  existing file is narrowed to it) for a token, a key or a credential; anything
-  beyond that is a port.
-- A program runs another with `rho_exec(program, arguments, report)`, whose
-  arguments are split on spaces and double quotes, or with
-  `rho_exec_args(program, arguments, report)`, which takes one argument per line
-  and interprets nothing in it. A value that came from a request, a file or a
-  user goes through `rho_exec_args`: it reaches the program as exactly one
-  argument, and cannot become a second one or a command.
-- A Go program that is a service calls other services with an identity its
-  supervisor gave it (`RHO_CLIENT_ID`, `RHO_CLIENT_SECRET_FILE`, `RHO_AUTH_URL`):
-  `rho_service_token(audience, scopes)` is a short-lived token for one audience,
-  fetched and cached; `rho_http_request(method, url, body, content_type,
-  audience, scopes, report)` sends a request carrying one; and
-  `rho_sse_follow(url, audience, scopes, file)` follows another service's event
-  stream into a file that `sse_events` serves, reconnecting with a fresh token.
-  No token is put on a command line or in a URL.
-- No closures, and no higher-order functions.
-- No statement-level reflection.
+- No `new`, and no way to free what the runtime allocated for a string.
+- No mutable module state. A top-level `const`, `let` or `var` is a constant,
+  and assigning to one is refused.
+- No enums in a program. `enum`, `message` and `rpc` belong to protocol schemas.
+  A program names its numbers with `const`.
+- No sum types. A value that may be absent is an `Option[T]`, and one that may
+  fail is a `Result[T, E]`, both structs.
+- No closures, no function values, and no higher-order functions.
+- No maps in the language. `std.collections.map` is a fixed-capacity table
+  written in Rho.
+- No reflection.
+- On C, no length for a `[T]`. `len`, `for` and `append` over one are Go-only.
 
 ## Where to go next
 
-- {ref}`handbook/modules` — how a module, component or plugin is declared.
-- {ref}`handbook/ports` — how a program asks for what only a host can do.
-- {ref}`handbook/documentation` — how this documentation is produced, including
+- {ref}`modules/modules` — how a module, component or plugin is declared.
+- {ref}`building/ports` — how a program asks for what only a host can do.
+- {ref}`tools/documentation` — how this documentation is produced, including
   how a module documents itself.
 - The **API reference** in the sidebar for the exact interface of each module.

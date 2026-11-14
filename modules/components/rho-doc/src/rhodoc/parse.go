@@ -379,15 +379,21 @@ func isFence(line string) bool {
 func (p *parser) parseCode(indent int) *Node {
 	trimmed := strings.TrimSpace(p.lines[p.line-1])
 	line := p.line
-	marker := trimmed[:3]
-	language := strings.TrimSpace(trimmed[3:])
+	// The fence is the whole run of its character, so a block that shows a
+	// fenced block of its own is opened with four and closed by four.
+	width := 0
+	for width < len(trimmed) && trimmed[width] == trimmed[0] {
+		width++
+	}
+	marker := trimmed[:width]
+	language := strings.TrimSpace(trimmed[width:])
 	language = strings.Trim(language, "{}")
 	p.line++
 
 	body := []string{}
 	for p.line <= len(p.lines) {
 		current := strings.TrimSpace(p.lines[p.line-1])
-		if strings.HasPrefix(current, marker) {
+		if strings.HasPrefix(current, marker) && strings.Trim(current, marker[:1]) == "" {
 			p.line++
 			break
 		}

@@ -42,15 +42,20 @@ by hand.
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-auth`, `rho-cimport`, `rho-dbg`, `rho-deploy`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-lint`, `rho-log`, `rho-lsp`, `rho-target`, `rho-test`
+- `modules/components/` - Components: `rho-artifact`, `rho-auth`, `rho-bench`, `rho-bootstrap`, `rho-cimport`, `rho-dbg`, `rho-deploy`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-lint`, `rho-log`, `rho-lsp`, `rho-mem`, `rho-monitor`, `rho-openapi`, `rho-router`, `rho-sql`, `rho-target`, `rho-test`
 - `src/ide/` - What an editor reads, rendered from what a project declares (`rho ide`)
 - `src/sysdep/` - What a module needs from the machine: `system_deps`, versions, the fetched-toolchain layout
 - `src/privilege/` - Saying something when a run has more authority than it needs
-- `modules/plugins/` - Plugins: `rho-doc-toc`, `rho-test-ctest`, `rho-test-gtest`, `rho-test-junit`
+- `modules/plugins/` - Plugins: `rho-doc-api`, `rho-doc-toc`, `rho-robohub` (an example integration plugin), `rho-sql-sqlite`, `rho-test-ctest`, `rho-test-gtest`, `rho-test-junit`
+- `applications/` - Applications written in Rho: `registry` (the module registry) and `docsite` (the documentation site)
+- `std/` - The standard library, as Rho sources
+- `editors/rho-language/` - The VS Code extension
 
 The core toolchain is only `rho` and `rho-deps`. Everything else in
 `modules/components/` is a component: published, installed and dispatched to by
 the command its manifest publishes, rather than compiled into the CLI.
+`rho-lsp` is the one exception in how it arrives: `rho install` builds it,
+registers it and enables it, so a fresh install has a language server.
 
 ## Components
 
@@ -131,8 +136,10 @@ cd <project-dir>/build/generated/c && cmake -B out && cmake --build out
 ```
 
 A target may ask for a port, which is how a project gets what only a host can
-supply: `logemit` for logging, `fsstore` for a module store, `docemit` for the
-documentation generator, `kconfig` for a resolved configuration.
+supply: `logemit` for logging, `fsstore` for a module store, `docemit` and
+`docstore` for the documentation generator, `sql` for a database, `httproute` and
+`openapiemit` for routing and API descriptions. A plugin in the project's own tree
+may provide further ports (`integration.provides.ports`).
 
 ## Debugging
 

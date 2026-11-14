@@ -44,12 +44,13 @@ The runner writes a request to the plugin's standard input as JSON:
   "component": "rho-test",
   "payload": {
     "root": "/project",
-    "target": "go",
+    "target": "c",
     "passed": 3,
     "total": 4,
     "results": [
-      {"case": {"name": "Some holds a value", "file": "/project/tests/option.rho", "line": 7},
-       "passed": true, "output": ""}
+      {"suite": "tests/option",
+       "case": {"name": "some_holds_a_value", "file": "/project/tests/option_test.rho", "line": 7},
+       "status": "pass", "output": ""}
     ]
   }
 }
@@ -72,25 +73,28 @@ plugins, so a plugin is written the same way whether it extends a test run or a
 documentation build. The payload is the component's own, which is why this
 plugin reads `results` and a documentation plugin reads `pages`.
 
-The runner writes `report` to a file and prints `notes`, because a report is a
+The runner writes `report` to a file — `report-<n>.txt` in `build/test-reports/`,
+or in the directory `--report-dir` names — and prints `notes`, because a report is a
 document a system reads and a note is a line a person reads.
 
 ## What it writes
 
 ```xml
 <testsuites>
-  <testsuite name="option.rho" package="tests/option.rho" tests="2" failures="1">
-    <testcase name="Some holds a value" classname="tests/option.rho" time="0"/>
-    <testcase name="None holds nothing" classname="tests/option.rho" time="0">
+  <testsuite name="option_test.rho" tests="2" failures="1" errors="0" skipped="0" time="0" package="tests/option_test.rho">
+    <testcase name="some_holds_a_value" classname="tests/option_test.rho" time="0"></testcase>
+    <testcase name="none_holds_nothing" classname="tests/option_test.rho" time="0">
       <failure message="test failed" type="failure">…the output…</failure>
     </testcase>
   </testsuite>
 </testsuites>
 ```
 
-A suite is a test file and a class is the test function, because that is the
-shape a reader of the format expects. Paths are relative to the project, with
-forward slashes, so a report means the same thing wherever it is read.
+A suite is a source file and a case is a test in it, named after the test and
+classed under its file, because that is the shape a reader of the format
+expects. A result the run skipped is a `<skipped>` element with its reason.
+Paths are relative to the project, with forward slashes, so a report means the
+same thing wherever it is read.
 
 ## Building it
 

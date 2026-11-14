@@ -93,6 +93,6 @@ library.
 
 ## Where to go next
 
-- {ref}`handbook/documentation` — how this page and the one beside it are
+- {ref}`tools/documentation` — how this page and the one beside it are
   produced, and how a module documents itself the same way.
 - The deployment note beside this page, for running it.
