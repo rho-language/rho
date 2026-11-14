@@ -103,6 +103,12 @@ func ValidateModule(dir string) error {
 // cheaper than discovering it from a build log.
 func validatePlugin(dir string, manifest *deps.Manifest) error {
 	extension := manifest.Extends
+	// A plugin that only integrates a platform's data (ports, bindings) for the
+	// platforms it serves plugs into no component; its integration is checked
+	// by the integration contract.
+	if manifest.Integration != nil && extension != nil && len(extension.Platforms) > 0 && len(extension.All()) == 0 {
+		return nil
+	}
 	if extension == nil || len(extension.All()) == 0 {
 		return fmt.Errorf("plugin must declare `extends:` naming the component it plugs into")
 	}

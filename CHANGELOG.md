@@ -399,3 +399,12 @@ The auth middleware builds its return address and callback from
 `X-Forwarded-Prefix` and `X-Forwarded-Host` when they come from the loopback,
 where such a proxy connects from, so an application signs in through the
 supervisor's origin as well as on its own port.
+
+## [0.8.2] - 2026-11-14
+
+A project's own tree may carry the ports it is built with: a plugin in it that
+integrates its platform and provides ports (`serves:` and `integration.provides.ports`,
+no `extends:` needed) is read when the project is generated. A port is Go source
+compiled into the project, as its sources are, so an application can keep one
+beside its code and version it with it — Mesh's telemetry store moved out of the
+RoboHub platform plugin this way.

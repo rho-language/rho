@@ -110,3 +110,6 @@ is the first type this makes possible: it is a `device`, not a `driver`.
 
 Initial release.
 
+## [0.5.2] - 2026-11-14
+
+The telemetry port is gone from here: Mesh's telemetry store is Mesh's, and lives in its repository (`plugins/mesh-telemetry`), versioned with Mesh. Needs rho 0.8.2, which reads a project's own plugins for ports.

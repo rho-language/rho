@@ -1919,7 +1919,14 @@ func parseContracts(node yaml.Value) []Contract {
 // Both are read into the same shape; the first is the second with one entry.
 func parseExtends(doc yaml.Value) *Extends {
 	node := doc.Map["extends"]
-	if node.Kind == yaml.KindNull {
+	// An absent key reads as an empty string.
+	absent := node.Kind != yaml.KindList && (node.Kind != yaml.KindString || yamlUnquote(node.Str) == "")
+	if absent {
+		// A plugin that only integrates a platform's data — ports, bindings —
+		// serves platforms without extending any component.
+		if serves := yamlStrings(doc.Map["serves"]); len(serves) > 0 {
+			return &Extends{Platforms: serves}
+		}
 		return nil
 	}
 	extension := &Extends{Platforms: yamlStrings(doc.Map["serves"])}

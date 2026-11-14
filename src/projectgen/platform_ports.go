@@ -16,7 +16,11 @@ func platformPorts(projectRoot string) map[string]string {
 	if platform == "" {
 		return nil
 	}
-	return integration.Ports(plugins.Source{Tree: projectRoot, RhoHome: deps.RhoHome(), Platform: platform})
+	// A port is Go source compiled into the project, as its own sources are, so
+	// the plugins the project's own tree carries provide ports too: an
+	// application can keep a port of its own beside its code and version it
+	// with it, rather than in the platform's plugin.
+	return integration.Ports(plugins.Source{Tree: projectRoot, RhoHome: deps.RhoHome(), Platform: platform, TrustTree: true})
 }
 
 func sortedPortNames(ports map[string]string) []string {

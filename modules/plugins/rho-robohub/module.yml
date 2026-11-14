@@ -21,7 +21,7 @@
 module:
   name: rho-robohub
   type: plugin
-  version: 0.5.1
+  version: 0.5.2
   author: Aurel Miron
   description: Maps the RoboHub platform's target, configuration, C and flashing conventions onto this toolchain's contracts
 
@@ -58,7 +58,8 @@ integration:
       protocol-bus-c: bindings/c-bus.yml
       # The framing generated Rho carries: robohub-transport's.
       protocol-transport-rho: bindings/rho-transport.rho
-    # The Go ports a RoboHub project may ask for by name (gateway, telemetry).
+    # The Go ports a RoboHub project may ask for by name (gateway, mqtt). Mesh's
+    # telemetry store is Mesh's own, in its repository (plugins/mesh-telemetry).
     ports: ports/
 
 # The components this plugin plugs into, one entry per component, and the

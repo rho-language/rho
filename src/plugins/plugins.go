@@ -430,7 +430,10 @@ func readPlugin(root string, seen map[string]bool) (Plugin, bool) {
 		return Plugin{}, false
 	}
 	extension := manifest.Extends
-	if extension == nil || len(extension.All()) == 0 || seen[manifest.ModuleName] {
+	// A plugin extends a component, or integrates an ecosystem's data (ports,
+	// bindings) for the platforms it serves without extending any: both are read.
+	integrates := manifest.Integration != nil && extension != nil && len(extension.Platforms) > 0
+	if extension == nil || (len(extension.All()) == 0 && !integrates) || seen[manifest.ModuleName] {
 		return Plugin{}, false
 	}
 	seen[manifest.ModuleName] = true
