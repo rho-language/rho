@@ -70,6 +70,11 @@ type Type struct {
 	Name     string // for structs or user-defined types
 	Args     []Type
 	ArrayLen int
+	// Enum says the type is a plain enum: an integer of Kind's width, named
+	// Name, whose values are its variants. It is an integer to every backend
+	// and a type of its own to the checker, which keeps one enum from standing
+	// in for another or for a number without a conversion.
+	Enum bool
 }
 
 // SameType reports whether two types are the same one.
@@ -81,7 +86,7 @@ func SameType(a, b Type) bool {
 	if a.Kind == TypePtr && b.Kind == TypePtr && len(a.Args) == 1 && len(b.Args) == 1 {
 		return a.ArrayLen == b.ArrayLen && SameType(a.Args[0], b.Args[0])
 	}
-	if a.Kind != b.Kind || a.Name != b.Name || a.ArrayLen != b.ArrayLen {
+	if a.Kind != b.Kind || a.Name != b.Name || a.ArrayLen != b.ArrayLen || a.Enum != b.Enum {
 		return false
 	}
 	if len(a.Args) != len(b.Args) {
@@ -192,6 +197,18 @@ type FieldIR struct {
 	// there. Both are empty and 0 for an ordinary field.
 	Unit  string
 	Shift int
+	// Variant is the variant of an enum the field belongs to, empty for a
+	// field of a struct. An enum is laid out as its tag and then the values of
+	// every variant; the fields of one variant share storage with the others'
+	// in C (a union) and sit beside them in Go, and each backend reads Variant
+	// to group them. A field of a variant is reached as `as.<Variant>.<Name>`.
+	Variant string
+	// Shared says the field is the one value of a variant, stored by its own
+	// name in storage the variants share: an anonymous union in C, a field of
+	// its own in Go, reached as `<Name>` either way. It is how the standard
+	// Option and Result keep the layout they had as structs (`value`, `ok`,
+	// `err`), which Go code written against them reads.
+	Shared bool
 }
 
 /* -------------------------------------------------------------------------- */

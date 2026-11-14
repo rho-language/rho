@@ -133,6 +133,14 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 
 	case ast.MemberExpr:
 		printExpr(b, x.Object, 7)
+		// `Option[u32].None`: the type arguments the variant is named with.
+		if len(x.TypeArgs) > 0 {
+			args := make([]string, len(x.TypeArgs))
+			for i, arg := range x.TypeArgs {
+				args[i] = typeWithArgs(arg)
+			}
+			b.WriteString("[" + strings.Join(args, ", ") + "]")
+		}
 		b.WriteString(".")
 		b.WriteString(x.Name)
 

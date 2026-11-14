@@ -194,6 +194,30 @@ func printDecl(b *strings.Builder, decl ast.Decl) {
 		}
 		b.WriteString("}\n")
 
+	case ast.EnumDecl:
+		b.WriteString("enum " + x.Name + typeParams(x.TypeParams, x.TypeParamDefaults) + " {\n")
+		for _, variant := range x.Variants {
+			b.WriteString(indent + variant.Name)
+			switch {
+			case variant.Named:
+				parts := make([]string, len(variant.Fields))
+				for i, f := range variant.Fields {
+					parts[i] = f.Name + ": " + fieldType(f)
+				}
+				b.WriteString(" { " + strings.Join(parts, ", ") + " }")
+			case len(variant.Fields) > 0:
+				parts := make([]string, len(variant.Fields))
+				for i, f := range variant.Fields {
+					parts[i] = fieldType(f)
+				}
+				b.WriteString("(" + strings.Join(parts, ", ") + ")")
+			case variant.Explicit:
+				b.WriteString(fmt.Sprintf(" = %d", variant.Value))
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("}\n")
+
 	case ast.FuncDecl:
 		if x.Extern {
 			b.WriteString("extern fn " + x.Name + typeParams(x.TypeParams, x.TypeParamDefaults))

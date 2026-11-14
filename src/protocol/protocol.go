@@ -47,7 +47,29 @@ func Parse(source string) (*Schema, error) {
 	if err != nil {
 		return nil, err
 	}
-	return FromModule(mod), nil
+	schema := FromModule(mod)
+	if err := checkWireEnums(schema); err != nil {
+		return nil, err
+	}
+	return schema, nil
+}
+
+// checkWireEnums refuses an enum a wire cannot carry. A field of an enum type
+// is the variant's number on the wire, so an enum is in a schema only when its
+// variants are numbers: one whose variants carry data, or that is generic, is
+// a Rho program's and not a schema's.
+func checkWireEnums(schema *Schema) error {
+	for _, e := range schema.Enums {
+		if len(e.TypeParams) > 0 {
+			return fmt.Errorf("enum %s is generic, and a schema's enum is a number on the wire; declare a plain enum, or carry the value in a message field", e.Name)
+		}
+		for _, variant := range e.Variants {
+			if len(variant.Fields) > 0 {
+				return fmt.Errorf("enum %s carries data in %s, and a schema's enum is a number on the wire; keep the enum plain and put the data in message fields beside it", e.Name, variant.Name)
+			}
+		}
+	}
+	return nil
 }
 
 // FromModule collects the schema declarations of a parsed module. A file with no

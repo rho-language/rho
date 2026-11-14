@@ -321,8 +321,23 @@ func (names *moduleNames) declaration(decl ast.Decl) (ast.Decl, error) {
 		}
 		return declaration, nil
 	case ast.EnumDecl:
+		at := scope{owner: declaration.Owner, typeParams: setOf(declaration.TypeParams)}
 		if compiled, mine := names.types[declaration.Owner][declaration.Name]; mine {
 			declaration.Name = compiled
+		}
+		variants := make([]ast.EnumVariant, len(declaration.Variants))
+		for i, variant := range declaration.Variants {
+			fields, err := names.fields(variant.Fields, at)
+			if err != nil {
+				return decl, wrap(declaration.Name, declaration.Owner, err)
+			}
+			variant.Fields = fields
+			variants[i] = variant
+		}
+		declaration.Variants = variants
+		var err error
+		if declaration.TypeParamDefaults, err = names.defaults(declaration.TypeParamDefaults, at); err != nil {
+			return decl, wrap(declaration.Name, declaration.Owner, err)
 		}
 		return declaration, nil
 	case ast.TypeDecl:
@@ -460,6 +475,7 @@ func localNames(fn ast.FuncDecl) map[string]bool {
 				walk(stmt.Stmts)
 			case ast.MatchStmt:
 				for _, arm := range stmt.Arms {
+					patternNames(arm.Pattern, locals)
 					walk(arm.Body)
 				}
 			}
@@ -467,6 +483,29 @@ func localNames(fn ast.FuncDecl) map[string]bool {
 	}
 	walk(fn.Body)
 	return locals
+}
+
+// patternNames adds the names a pattern binds: the names written for the
+// values a variant carries, at any depth.
+func patternNames(pattern ast.Expr, into map[string]bool) {
+	var values []ast.Expr
+	switch p := pattern.(type) {
+	case ast.CallExpr:
+		values = p.Args
+	case ast.StructLiteralExpr:
+		values = p.Values
+	default:
+		return
+	}
+	for _, value := range values {
+		if ident, ok := value.(ast.IdentifierExpr); ok {
+			if ident.Name != "_" {
+				into[ident.Name] = true
+			}
+			continue
+		}
+		patternNames(value, into)
+	}
 }
 
 func (names *moduleNames) stmts(stmts []ast.Stmt, at scope) ([]ast.Stmt, error) {
@@ -620,6 +659,15 @@ func (names *moduleNames) expr(expression ast.Expr, at scope) (ast.Expr, error) 
 		if expr.Object, err = names.expr(expr.Object, at); err != nil {
 			return nil, err
 		}
+		if len(expr.TypeArgs) > 0 {
+			args := make([]ast.TypeExpr, len(expr.TypeArgs))
+			for i, arg := range expr.TypeArgs {
+				if args[i], err = names.typeExpr(arg, at); err != nil {
+					return nil, err
+				}
+			}
+			expr.TypeArgs = args
+		}
 		return expr, nil
 	case ast.CallExpr:
 		// The callee is a function, unless it is a member of something that is
@@ -672,6 +720,15 @@ func (names *moduleNames) expr(expression ast.Expr, at scope) (ast.Expr, error) 
 		}
 		return expr, nil
 	case ast.StructLiteralExpr:
+		// `Shape.Rect { ... }` and `geo.Shape.Rect { ... }`: a variant of an
+		// enum, whose enum is the type to rewrite.
+		if variant, ok := names.enumVariantLiteral(expr.Type.Name, at); ok {
+			expr.Type.Name = variant
+			if expr.Values, err = names.exprs(expr.Values, at); err != nil {
+				return nil, err
+			}
+			return expr, nil
+		}
 		if expr.Type, err = names.typeExpr(expr.Type, at); err != nil {
 			return nil, err
 		}
@@ -704,6 +761,30 @@ func (names *moduleNames) expr(expression ast.Expr, at scope) (ast.Expr, error) 
 		return expr, nil
 	}
 	return expression, nil
+}
+
+// enumVariantLiteral rewrites the enum in `Enum.Variant` or
+// `module.Enum.Variant` written as a literal's type, when that is what it is.
+func (names *moduleNames) enumVariantLiteral(written string, at scope) (string, bool) {
+	dot := strings.LastIndexByte(written, '.')
+	if dot <= 0 {
+		return "", false
+	}
+	prefix, variant := written[:dot], written[dot+1:]
+	if !strings.Contains(prefix, ".") {
+		if _, isModule := names.aliases[prefix]; isModule {
+			// `module.Type { ... }`: a struct of another module.
+			return "", false
+		}
+	}
+	resolved, err := names.typeName(prefix, at)
+	if err != nil {
+		return "", false
+	}
+	if resolved == prefix && len(names.typeOwners[prefix]) == 0 && !names.globalTypes[prefix] && names.types[at.owner][prefix] == "" {
+		return "", false
+	}
+	return resolved + "." + variant, true
 }
 
 func (names *moduleNames) exprs(list []ast.Expr, at scope) ([]ast.Expr, error) {

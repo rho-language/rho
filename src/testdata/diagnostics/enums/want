@@ -1,0 +1,7 @@
+src/main.rho:12:5: error: this match does not handle every variant of Shape: Shape.Rect and Shape.Empty are missing
+src/main.rho:19:20: error: Shape.Circle carries 1 value (i32), and this passes 2
+src/main.rho:22:9: error: Shape.Circle carries 1 value (i32), and this pattern takes it apart into 2
+src/main.rho:25:8: error: cannot compare Shape values with ==: Shape carries data
+src/main.rho:28:18: error: operator + does not apply to Color
+src/main.rho:29:20: error: cannot use an i32 as Color in `let n`; a number is not a Color
+src/main.rho:30:26: error: 9 is not a value of Color

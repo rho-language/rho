@@ -918,6 +918,18 @@ func (tc *TypeChecker) containsString(typ ir.Type, depth int) bool {
 	if typ.Kind != ir.TypeStruct {
 		return false
 	}
+	// An enum holds a string when a variant carries one, at the arguments it
+	// is specialised at.
+	if info, args := tc.enumOf(typ); info != nil && !info.Plain {
+		for i := range info.Variants {
+			for _, payload := range tc.payloadTypes(info, args, &info.Variants[i], false) {
+				if tc.containsString(payload, depth+1) {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	for _, field := range tc.structFields(typ.Name) {
 		if tc.containsString(field, depth+1) {
 			return true
@@ -1017,8 +1029,24 @@ func (tc *TypeChecker) walkStatements(body []ast.Stmt, scope map[string]ir.Type,
 			names[stmt.Name] = true
 			tc.walkStatements(stmt.Body, inner, names, visit)
 		case ast.MatchStmt:
+			valueType, _ := tc.exprType(stmt.Value, scope)
+			// A name an arm binds is a part of the matched value: a string the
+			// iteration built when the value is one, and one from before the
+			// loop when the value is.
+			fresh := !tc.olderValue(stmt.Value, declared)
 			for _, arm := range stmt.Arms {
-				tc.walkStatements(arm.Body, cloneScope(scope), cloneNames(declared), visit)
+				armScope, armNames := cloneScope(scope), cloneNames(declared)
+				if !arm.Wildcard {
+					for _, binding := range tc.patternBindings(arm.Pattern, valueType, scope) {
+						armScope[binding.name] = binding.typ
+						if fresh {
+							armNames[binding.name] = true
+						} else {
+							delete(armNames, binding.name)
+						}
+					}
+				}
+				tc.walkStatements(arm.Body, armScope, armNames, visit)
 			}
 		case ast.BlockStmt:
 			tc.walkStatements(stmt.Stmts, cloneScope(scope), cloneNames(declared), visit)
@@ -1061,10 +1089,9 @@ func statementExprs(statement ast.Stmt) []ast.Expr {
 		add(stmt.Collection)
 		add(stmt.Step)
 	case ast.MatchStmt:
+		// A pattern is a shape the value is tested against, not an expression
+		// evaluated: `Shape.Circle(r)` builds nothing.
 		add(stmt.Value)
-		for _, arm := range stmt.Arms {
-			add(arm.Pattern)
-		}
 	}
 	return out
 }

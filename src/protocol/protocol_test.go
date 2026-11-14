@@ -409,3 +409,19 @@ func TestEmitRhoWithoutFramingSaysNothingAboutTransport(t *testing.T) {
 		t.Error("the payloads are generated with or without a framing")
 	}
 }
+
+// A schema's enum is a number on the wire, so one whose variants carry data,
+// or that is generic, is refused with the reason.
+func TestASchemaRefusesAnEnumThatCarriesData(t *testing.T) {
+	for _, source := range []string{
+		"module s\nenum Reading { Temperature(i32), Missing }\n",
+		"module s\nenum Box[T] { Empty, Full }\n",
+	} {
+		if _, err := Parse(source); err == nil || !strings.Contains(err.Error(), "a number on the wire") {
+			t.Errorf("%q: got %v, want a refusal saying a schema's enum is a number on the wire", source, err)
+		}
+	}
+	if _, err := Parse("module s\nenum Mode { Off, On = 4, Auto }\n"); err != nil {
+		t.Errorf("a plain enum is refused: %v", err)
+	}
+}

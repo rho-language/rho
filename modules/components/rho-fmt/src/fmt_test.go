@@ -15,6 +15,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -208,5 +209,52 @@ fn f(values: u32[4]) void {
 	}
 	if out != expected {
 		t.Fatalf("unexpected formatting:\n--- got ---\n%s\n--- want ---\n%s", out, expected)
+	}
+}
+
+// An enum, a pattern and `if let` survive formatting as they were written:
+// every variant form, a generic enum's defaults, and a variant named with its
+// type arguments.
+func TestFormatKeepsEnumsAndPatterns(t *testing.T) {
+	source := `module app
+
+enum Level { Low = -2, Mid, High = 10 }
+
+enum Shape[T = u32] {
+    Circle(T)
+    Rect { w: T, h: T }
+    Empty
+}
+
+fn area(s: Shape) u32 {
+    match s {
+        Shape.Circle(r) => { return r }
+        Shape.Rect { w, h } => { return w * h }
+        _ => { return 0 }
+    }
+}
+
+fn main() void {
+    let none = Option[u32].None
+    if let Some(x) = none {
+        print("some")
+    } else {
+        print("none")
+    }
+}
+`
+	once, err := FormatSource(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"enum Level {\n    Low = -2\n    Mid\n    High = 10\n}", "enum Shape[T = u32] {", "    Circle(T)\n", "    Rect { w: T, h: T }\n", "    Empty\n",
+		"Shape.Rect{ w, h } => {", "Option[u32].None", "if let Some(x) = none {", "} else {"} {
+		if !strings.Contains(once, want) {
+			t.Errorf("the formatted source has no %q:\n%s", want, once)
+		}
+	}
+	twice, err := FormatSource(once)
+	if err != nil || twice != once {
+		t.Errorf("formatting is not stable (%v):\n%s\n---\n%s", err, once, twice)
 	}
 }

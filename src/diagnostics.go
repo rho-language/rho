@@ -268,6 +268,19 @@ func fromTypeError(path string, err *types.Error) Diagnostic {
 	return diagnostic
 }
 
+// typeWarnings are what the checker found worth saying about a program that
+// does not stop it compiling — an arm of a match that never runs — as
+// warnings, each in the file it is about.
+func typeWarnings(path string, tc *types.TypeChecker) Diagnostics {
+	out := Diagnostics{}
+	for _, warning := range tc.Warnings() {
+		diagnostic := fromTypeError(path, warning)
+		diagnostic.Severity = SeverityWarning
+		out = append(out, diagnostic)
+	}
+	return out
+}
+
 // withIncludeNote says which file brought a file with mistakes into the
 // program, so a reader who only knows the file they built can follow the chain.
 func withIncludeNote(err error, note Note) error {
@@ -338,6 +351,7 @@ func DiagnoseSource(path, text string, overlay bool) DocumentDiagnostics {
 	if err := tc.CheckModule(*module); err != nil {
 		out.Diagnostics = append(out.Diagnostics, sourceDiagnostics(path, readSource(path), "type", err)...)
 	}
+	out.Diagnostics = append(out.Diagnostics, typeWarnings(path, tc)...)
 	return out
 }
 
@@ -379,6 +393,7 @@ func DiagnoseInProgram(path, text string) DocumentDiagnostics {
 	if err := tc.CheckModule(*module); err != nil {
 		out.Diagnostics = append(out.Diagnostics, sourceDiagnostics(entry, readSource(entry), "type", err)...)
 	}
+	out.Diagnostics = append(out.Diagnostics, typeWarnings(entry, tc)...)
 	return out
 }
 
@@ -479,6 +494,7 @@ func ParseSource(path, source string) DocumentDiagnostics {
 	if err := tc.CheckModule(*module); err != nil {
 		out.Diagnostics = append(out.Diagnostics, sourceDiagnostics(path, source, "type", err)...)
 	}
+	out.Diagnostics = append(out.Diagnostics, typeWarnings(path, tc)...)
 	return out
 }
 

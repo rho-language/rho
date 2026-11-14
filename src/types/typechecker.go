@@ -133,6 +133,16 @@ type TypeChecker struct {
 	// declarations, so one run reports them all (report.go). It is nil outside
 	// that pass, where an error is returned to the caller as it is found.
 	collect *collector
+
+	// enums are the enums the program declares, by name (enums.go).
+	enums map[string]*enumInfo
+	// enumHelpers are the functions lowering an enum calls — a constructor
+	// per variant, an accessor, a checked conversion — by name, emitted once
+	// each after everything else, in the order they were first used.
+	enumHelpers     map[string]ir.FuncIR
+	enumHelperOrder []string
+	// warnings are what checking found that does not stop a build.
+	warnings []*Error
 }
 
 type functionType struct {
@@ -211,6 +221,9 @@ func New() *TypeChecker {
 
 // CheckModule validates all declarations inside a module.
 func (tc *TypeChecker) CheckModule(m ast.Module) error {
+	// An enum that carries data is checked as the struct it is laid out as,
+	// beside the declaration that says what it is (enums.go).
+	m = tc.expandEnums(m)
 
 	if len(m.Exports) > 0 {
 		tc.exports = map[string]map[string]bool{}
@@ -437,6 +450,10 @@ func (tc *TypeChecker) checkDecl(decl ast.Decl, constScope map[string]ir.Type) e
 	{
 		switch d := decl.(type) {
 		case ast.StructDecl:
+			// An enum's layout is checked as the enum (EnumDecl below).
+			if d.Enum {
+				return nil
+			}
 			if err := tc.checkStruct(d); err != nil {
 				return locate(err, d.Pos, "struct "+d.Name)
 			}
@@ -472,7 +489,9 @@ func (tc *TypeChecker) checkDecl(decl ast.Decl, constScope map[string]ir.Type) e
 			// wherever it is named, and a name that resolves to nothing becomes
 			// an error at the use rather than at the declaration.
 		case ast.EnumDecl:
-			return locate(fmt.Errorf("an enum belongs to a protocol schema, which `rho protocol` reads; a Rho program names a number with const instead"), d.Pos, "enum "+d.Name)
+			if err := tc.checkEnum(d); err != nil {
+				return locate(err, d.Pos, "enum "+d.Name)
+			}
 		case ast.MessageDecl:
 			return locate(fmt.Errorf("a message belongs to a protocol schema, which `rho protocol` reads, not to a Rho program"), d.Pos, "message "+d.Name)
 		case ast.RpcDecl:
@@ -813,6 +832,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if err != nil {
 			return ir.Type{}, err
 		}
+		if err := tc.enumOperands(value, left, right); err != nil {
+			return ir.Type{}, err
+		}
 		// A constant meeting a typed integer becomes that type, so it has to
 		// fit it: `b + 300` for a u8 b is refused by Go and computed in int by
 		// C. The count of a shift is not converted, and is checked apart.
@@ -886,6 +908,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		return left, nil
 	case ast.MemberExpr:
+		// `Shape.Empty`, `Color.Red`, `Option[u32].None`: a variant written as
+		// a value.
+		if construct, ok := tc.enumConstruction(value, scope); ok {
+			return tc.enumConstructionType(construct, scope, expected)
+		}
 		if object, ok := value.Object.(ast.IdentifierExpr); ok && ((object.Name == "yaml" && (value.Name == "load" || value.Name == "value" || value.Name == "kind" || value.Name == "keys")) || (object.Name == "string" && value.Name == "from_i32")) {
 			return ir.Type{Kind: ir.TypeStruct, Name: "function"}, nil
 		}
@@ -914,11 +941,23 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if !ok {
 			return ir.Type{}, fmt.Errorf("unknown cast type %q", value.Type.String())
 		}
+		if err := tc.checkEnumConversion(value.Value, scope, converted, true); err != nil {
+			return ir.Type{}, err
+		}
 		if err := checkConstantFits(value.Value, converted); err != nil {
 			return ir.Type{}, err
 		}
 		return converted, nil
 	case ast.CallExpr:
+		// `Shape.Circle(3)`: a variant built from its values.
+		if construct, ok := tc.enumConstruction(value, scope); ok {
+			return tc.enumConstructionType(construct, scope, expected)
+		}
+		// `Color(n)`: a number made into a plain enum, checked to be one of
+		// its values.
+		if typ, handled, err := tc.enumConversionType(value, scope); handled {
+			return typ, err
+		}
 		var signature functionType
 		// A generic call is checked against the signature with its type
 		// arguments substituted, which is what makes Ok[u32, u32](7) work.
@@ -1012,6 +1051,11 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				}
 				if converted, isType := tc.resolveType(written); isType {
 					converted = tc.substituteType(converted, tc.currentTypeArgs)
+					if len(value.Args) == 1 {
+						if err := tc.checkEnumConversion(value.Args[0], scope, converted, false); err != nil {
+							return ir.Type{}, err
+						}
+					}
 					if len(value.Args) == 1 && integerBits(converted.Kind) > 0 {
 						if _, err := tc.exprType(value.Args[0], scope); err != nil {
 							return ir.Type{}, err
@@ -1130,13 +1174,13 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			return ir.Type{}, err
 		}
 		for i, arg := range value.Args {
-			actual, err := tc.exprType(arg, scope)
-			if err != nil {
-				return ir.Type{}, err
-			}
 			want := signature.params[i]
 			if subs != nil {
 				want = tc.substituteType(want, subs)
+			}
+			actual, err := tc.exprTypeFor(arg, scope, want)
+			if err != nil {
+				return ir.Type{}, err
 			}
 			if !assignable(want, actual) && !(foreign && stringToC(actual, want)) {
 				err := locate(
@@ -1161,6 +1205,20 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		return result, nil
 	case ast.StructLiteralExpr:
+		// `Shape.Rect { 2, 3 }`: a variant built from its named values.
+		if construct, ok := tc.enumConstruction(value, scope); ok {
+			return tc.enumConstructionType(construct, scope, expected)
+		}
+		if typ, handled, err := tc.enumLiteralType(value, scope, expected); handled {
+			return typ, err
+		}
+		for _, field := range value.Values {
+			if tc.isEnumConstruction(field, scope) {
+				if _, err := tc.exprType(field, scope); err != nil {
+					return ir.Type{}, err
+				}
+			}
+		}
 		// A generic struct literal written without type arguments is deduced
 		// from the field values, preferring the expected type.
 		if len(value.Type.Args) == 0 {
@@ -1260,8 +1318,15 @@ func (tc *TypeChecker) memberType(object ir.Type, name string) (ir.Type, error) 
 		case "is_some":
 			return ir.Type{Kind: ir.TypeBool, Name: "bool"}, nil
 		case "value":
+			// The pointer it holds, when the Option says what it points at.
+			if info, args := tc.enumOf(object); info != nil && len(args) == 1 && args[0].Kind == ir.TypePtr {
+				return args[0], nil
+			}
 			return ir.Type{Kind: ir.TypePtr, Name: "Ptr[u8]", Args: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}}}, nil
 		}
+	}
+	if info, args := tc.enumOf(object); info != nil && !info.Plain {
+		return tc.enumMemberType(object, info, args, name)
 	}
 	fields, ok := tc.fields[baseTypeName(object.Name)]
 	if !ok {
@@ -1640,6 +1705,12 @@ func assignable(want, got ir.Type) bool {
 	if want.Kind == ir.TypeInvalid || got.Kind == ir.TypeInvalid {
 		return true
 	}
+	// A plain enum is an integer to a backend and a type of its own here: one
+	// enum does not stand in for another, nor a number for an enum or an enum
+	// for a number, without a conversion that says so.
+	if want.Enum || got.Enum {
+		return want.Enum && got.Enum && baseTypeName(want.Name) == baseTypeName(got.Name) && want.ArrayLen == got.ArrayLen
+	}
 	// A pointer is usable where an optional pointer is wanted. They are the same
 	// representation, so the conversion is the identity; what it means is that a
 	// value returned by a C library can be held in an `Option[Ptr[T]]` without
@@ -1710,6 +1781,7 @@ func typeName(value ir.Type) string {
 
 // ToIR converts a validated AST module into IR.
 func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
+	m = tc.expandEnums(m)
 	tc.arenaRegister(m)
 	out := ir.NewModuleIR(m.Name)
 	out.Features = append(out.Features, "math")
@@ -1765,6 +1837,17 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 		}
 	}
 
+	// A plain enum is the integer it is, under its own name in each backend, so
+	// a value declared as one is declared as that name.
+	for _, decl := range m.Decls {
+		if d, ok := decl.(ast.EnumDecl); ok {
+			if info := tc.enums[d.Name]; info != nil && info.Plain {
+				cType := cTypeForKind(info.Kind)
+				out.Aliases = append(out.Aliases, ir.AliasIR{Name: d.Name, Target: cType, CTarget: cType})
+			}
+		}
+	}
+
 	// Aliases are carried so a backend can define them: a program may declare a
 	// value under the name it gave a type, and a file that emitted only the type
 	// being named would leave that declaration referring to nothing.
@@ -1798,6 +1881,9 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 
 	// Expand every generic application the program asks for.
 	tc.monomorphise(m, &out)
+
+	// The functions building and reading enums, which the bodies above call.
+	out.Funcs = append(out.Funcs, tc.enumHelperFuncs()...)
 
 	// What C cannot emit, once each: a body may be lowered more than once.
 	seen := map[string]bool{}
@@ -1841,7 +1927,8 @@ func (tc *TypeChecker) structToIR(s ast.StructDecl) ir.StructIR {
 		if f.TypeExpr.Name == "" {
 			fieldType = tc.typeFor(f.Type)
 		}
-		field := ir.FieldIR{Name: f.Name, Type: fieldType}
+		field := ir.FieldIR{Name: f.Name, Type: fieldType, Shared: f.Shared}
+		field.Name, field.Variant = storedField(f)
 
 		if f.BitWidth == nil {
 			flush()
@@ -2172,7 +2259,7 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		if targetErr == nil && stmt.Op == "=" {
 			wrap = tc.arenaWrapFor(stmt.Value, target, scope)
 		}
-		value := tc.arenaReleasing(wrap, func() string { return tc.lowerExpr(stmt.Value, scope) })
+		value := tc.arenaReleasing(wrap, func() string { return tc.lowerExprFor(stmt.Value, scope, target) })
 		if targetErr == nil {
 			value = tc.converted(value, stmt.Value, scope, target)
 		}
@@ -2326,6 +2413,9 @@ func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir
 // the value to each pattern, in order, with the wildcard as the fallthrough.
 func (tc *TypeChecker) lowerMatch(stmt ast.MatchStmt, scope map[string]ir.Type) []ir.Instr {
 	valueType, _ := tc.exprType(stmt.Value, scope)
+	if info, _ := tc.enumOf(valueType); info != nil {
+		return tc.lowerEnumMatch(stmt, info, valueType, scope)
+	}
 	tc.lowerSeq++
 	valueName := "rho_match_value_" + strconv.Itoa(tc.lowerSeq)
 
@@ -2642,6 +2732,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return "(" + left + " " + expr.Op + " " + right + ")"
 	case ast.MemberExpr:
+		if construct, ok := tc.enumConstruction(expr, scope); ok {
+			return tc.lowerEnumConstruction(construct, scope, expected)
+		}
 		object, isIdentifier := expr.Object.(ast.IdentifierExpr)
 		if isIdentifier && object.Name == "yaml" && expr.Name == "load" {
 			return "rho_yaml_load"
@@ -2672,6 +2765,15 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				return "(" + receiver + ")"
 			}
 		}
+		// An Option or a Result read the way its struct was: the test of a
+		// variant, or that variant's value.
+		if receiverType, typeErr := tc.exprType(expr.Object, scope); typeErr == nil {
+			if info, args := tc.enumOf(receiverType); info != nil && !info.Plain {
+				if lowered, ok := tc.lowerEnumMember(expr.Object, receiverType, info, args, expr.Name, scope); ok {
+					return lowered
+				}
+			}
+		}
 		// A bit field is a run of bits inside a storage integer, so reading it is
 		// a shift and a mask — the same in C and Go, which is why the field is
 		// not emitted as a C bit field.
@@ -2692,6 +2794,12 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		return tc.lowerExpr(expr.Object, scope) + "[" + index + "]"
 	case ast.CallExpr:
+		if construct, ok := tc.enumConstruction(expr, scope); ok {
+			return tc.lowerEnumConstruction(construct, scope, expected)
+		}
+		if lowered, ok := tc.lowerEnumConversion(expr, scope); ok {
+			return lowered
+		}
 		if ident, ok := expr.Callee.(ast.IdentifierExpr); ok {
 			tc.noteBackendCall(ident.Name, expr.Pos)
 		}
@@ -2895,7 +3003,11 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		params := tc.calleeParams(expr.Callee, expr.Args, scope)
 		args := []string{}
 		for i, arg := range expr.Args {
-			lowered := tc.lowerExpr(arg, scope)
+			want := ir.Type{}
+			if i < len(params) {
+				want = params[i]
+			}
+			lowered := tc.lowerExprFor(arg, scope, want)
 			if i < len(params) {
 				lowered = tc.converted(lowered, arg, scope, params[i])
 			}
@@ -2904,6 +3016,12 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		tc.arenaRecordCall(callee)
 		return callee + "(" + strings.Join(args, ", ") + ")"
 	case ast.StructLiteralExpr:
+		if construct, ok := tc.enumConstruction(expr, scope); ok {
+			return tc.lowerEnumConstruction(construct, scope, expected)
+		}
+		if lowered, ok := tc.lowerEnumLiteral(expr, scope, expected); ok {
+			return lowered
+		}
 		values := []string{}
 		// A generic struct literal names a specialisation, so record the
 		// application for monomorphisation and emit the mangled name. The type
@@ -3895,6 +4013,14 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		}
 		scope[stmt.Name] = declared
 	case ast.AssignStmt:
+		// An Option's or a Result's fields are read from the enum; there is
+		// nothing to write them to.
+		if member, ok := stmt.Target.(ast.MemberExpr); ok {
+			if objectType, err := tc.exprType(member.Object, scope); err == nil && tc.isDataEnum(objectType) {
+				return false, locate(fmt.Errorf("cannot assign to %s.%s: %s is an enum, and a value of one is replaced whole; assign a new value, as in `%s = %s`",
+					writtenCallee(member.Object), member.Name, typeName(objectType), writtenCallee(member.Object), tc.exampleConstruction(objectType)), stmt.Target.Position(), "")
+			}
+		}
 		// A module-level binding is a constant whichever keyword introduced it,
 		// and is inlined where it is named, so there is nothing to assign to: a
 		// write to one would reach the backend as `0 = value`.
@@ -3909,7 +4035,7 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		if err != nil {
 			return false, err
 		}
-		value, err := tc.exprType(stmt.Value, scope)
+		value, err := tc.exprTypeFor(stmt.Value, scope, actual)
 		if err != nil {
 			return false, err
 		}
@@ -4017,6 +4143,12 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 		value, err := tc.exprType(stmt.Value, scope)
 		if err != nil {
 			return false, err
+		}
+		if info, _ := tc.enumOf(value); info != nil {
+			return tc.checkEnumMatch(stmt, info, value, scope, result, inLoop)
+		}
+		if stmt.IfLet {
+			return false, locate(fmt.Errorf("`if let` takes apart a value of an enum, and this is %s; compare it with `if`", article(typeName(value))), stmt.Value.Position(), "")
 		}
 		for _, arm := range stmt.Arms {
 			if !arm.Wildcard {

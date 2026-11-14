@@ -1,43 +1,73 @@
 module std.core.result
 
-// Result carries either a success value or an error. The error type defaults
-// to Unit, so a call that cannot deduce it does not have to be annotated:
+// Result carries either a success value or an error: Ok(value) or Err(error).
+//
+// It is an enum of the language, taken apart with match:
+//
+//	match parse(text) {
+//	    Ok(n) => total = total + n
+//	    Err(message) => print(message)
+//	}
+//
+// The error type defaults to Unit, so a call that cannot deduce it does not
+// have to be annotated:
 //
 //	let r: Result[u32, u32] = Ok(7)   // both types stated
-//	print(r)                          // E falls back to Unit
-struct Result[T, E = Unit] {
-    is_ok: bool
-    ok: T
-    err: E
+//	let s = Ok(7)                     // E falls back to Unit
+//
+// Err is declared first, so a zeroed Result — default(Result[T, E]), a field
+// never set — is an Err, as it was when Result was a struct. Code written
+// against that struct keeps working: `r.is_ok`, `r.ok` and `r.err` read the
+// enum (the one not held is the zero value of its type), `Result[T, E]{ flag,
+// ok, err }` still builds Ok or Err, and the functions below are unchanged.
+enum Result[T, E = Unit] {
+    Err(E)
+    Ok(T)
 }
 
 fn Ok[T, E = Unit](v: T) Result[T, E] {
-    return Result[T, E]{ true, v, default(E) }
+    return Result[T, E].Ok(v)
 }
 
 fn Err[T = Unit, E = Unit](e: E) Result[T, E] {
-    return Result[T, E]{ false, default(T), e }
+    return Result[T, E].Err(e)
 }
 
 fn is_ok[T, E = Unit](r: Result[T, E]) bool {
-    return r.is_ok
+    match r {
+        Ok(_) => { return true }
+        Err(_) => { return false }
+    }
 }
 
 fn is_err[T, E = Unit](r: Result[T, E]) bool {
-    return !r.is_ok
-}
-
-fn value[T, E = Unit](r: Result[T, E]) T {
-    return r.ok
-}
-
-fn error[T, E = Unit](r: Result[T, E]) E {
-    return r.err
-}
-
-fn unwrap[T, E = Unit](r: Result[T, E]) T {
-    if !r.is_ok {
-        panic("unwrap Err")
+    match r {
+        Ok(_) => { return false }
+        Err(_) => { return true }
     }
-    return r.ok
+}
+
+// value is the success value, or the zero value of T for an Err.
+fn value[T, E = Unit](r: Result[T, E]) T {
+    if let Ok(v) = r {
+        return v
+    }
+    return default(T)
+}
+
+// error is the error, or the zero value of E for an Ok.
+fn error[T, E = Unit](r: Result[T, E]) E {
+    if let Err(e) = r {
+        return e
+    }
+    return default(E)
+}
+
+// unwrap is the success value, and stops the program for an Err.
+fn unwrap[T, E = Unit](r: Result[T, E]) T {
+    if let Ok(v) = r {
+        return v
+    }
+    panic("unwrap Err")
+    return default(T)
 }

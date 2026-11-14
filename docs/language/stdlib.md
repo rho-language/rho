@@ -51,17 +51,22 @@ The types every other module is built out of.
 
 | Module | What it carries |
 |---|---|
-| `std.core.option` | `Option[T]`: `Some`, `None`, `is_some`, `is_none`, `value`, `unwrap` |
-| `std.core.result` | `Result[T, E]`: `Ok`, `Err`, `is_ok`, `is_err`, `value`, `error`, `unwrap` |
+| `std.core.option` | `enum Option[T] { None, Some(T) }`: `Some`, `None`, `is_some`, `is_none`, `value`, `unwrap` |
+| `std.core.result` | `enum Result[T, E = Unit] { Err(E), Ok(T) }`: `Ok`, `Err`, `is_ok`, `is_err`, `value`, `error`, `unwrap` |
 | `std.core.ptr` | The functions over the language's pointer `Ptr[T]`: `from_u64`, `to_u64`, `index` |
 | `std.core.slice` | `Slice[T]`: a pointer and a length, and `slice_empty` |
 | `std.core.range` | `Range`: a half-open range of `u32`, with `range` and `next` (`Some(i)` while `start <= i < end`) |
 | `std.core.maybe_uninit` | `MaybeUninit[T]`: a value not yet written, with `uninit` and `assume_init` |
 | `std.core.builtin` | Nothing to call: a written account of the primitive types and the built-ins, which the compiler supplies. Importing it changes nothing |
 
-`Option` and `Result` are structs, not sum types. `None[T]()` and `Err(e)` hold
-a default value beside the flag, and `unwrap` panics on the empty case: it
-writes `rho: unwrap None` (or `Err`) to standard error and exits with status 1.
+`Option` and `Result` are enums of the language ({ref}`language/types`), taken
+apart with `match` or `if let`. `value` and `error` answer the zero value of the
+type for the variant that does not carry it, and `unwrap` panics on the empty
+case: it writes `rho: unwrap None` (or `Err`) to standard error and exits with
+status 1. The fields they had as structs — `.is_some`, `.value`, `.is_ok`, `.ok`,
+`.err` — are kept as read-only accessors, so code written before they were enums
+builds unchanged. `None` and `Err` are their first variants, so a zeroed value
+is one of those. An `Option[Ptr[T]]` is the bare pointer on C.
 
 A primitive type cannot be declared again: `type u32` or `struct u8` is refused.
 

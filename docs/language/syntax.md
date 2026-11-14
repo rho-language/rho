@@ -210,6 +210,7 @@ let wide: u32 = u32(small)
 | `[T]` | a dynamic array of `T` |
 | `T[N]` | a fixed array of `N` of `T` |
 | `Name[T]` | a generic type, such as `Option[u32]` |
+| `Name` of an `enum` | one of the enum's variants; see [enums](#enums) |
 | `Ptr[T]` | a pointer to a `T`; see [pointers](#pointers) |
 
 `type` gives a name to another type:
@@ -281,6 +282,45 @@ fn flags() Flags {
 integers, not four. A width must be 1 to the width of its type, and the type
 must be an integer. The bits are packed the same on every backend: Go has no bit
 field, so both read and write one as a shift and a mask.
+
+## Enums
+
+An enum is declared with its variants, separated by a comma, a semicolon or a
+line break:
+
+```text
+enum Name [ "[" TypeParam { "," TypeParam } "]" ] "{" { Variant } "}"
+
+Variant = Name                                   // carries nothing
+        | Name "=" [ "-" ] Integer               // a plain enum's number
+        | Name "(" Type { "," Type } ")"         // values by position
+        | Name "{" Field { "," Field } "}"       // values by name, `name: Type`
+```
+
+```rho
+enum Mode { Off, On, Auto = 8 }
+
+enum Shape[T = u32] {
+    Circle(T)
+    Rect { w: T, h: T }
+    Empty
+}
+```
+
+A number is written only in an enum none of whose variants carries values; one
+not written is the one before it plus one, from 0. A type parameter may have a
+default, as a struct's may.
+
+A variant is a value written after its enum's name:
+
+| Written | Builds |
+|---|---|
+| `Mode.On` | a variant that carries nothing |
+| `Shape.Circle(3)` | a variant from its values, by position |
+| `Shape.Rect { 2, 3 }` | a struct-like variant from its values, in declared order |
+| `Shape[u8].Empty` | a variant of a generic enum, its arguments written |
+| `geo.Shape.Empty` | a variant of an enum module `geo` declares |
+| `Mode(n)` | a plain enum from a number, checked to be one of its values |
 
 ## Control flow
 
@@ -361,10 +401,12 @@ fn every_other(values: u32[6]) u32 {
 }
 ```
 
-`match` runs the first arm whose pattern equals the value; `_` matches anything,
-and an arm's body is an expression or a block. `return` is a statement, so an
-arm that returns is a block: `1 => { return "one" }`. A pattern may be a
-literal or a constant, and a `match` is not checked for exhaustiveness:
+`match` runs the first arm whose pattern matches the value; `_` matches
+anything, and an arm's body is an expression or a block. `return` and an
+assignment are statements, so an arm that returns or assigns is a block:
+`1 => { return "one" }`. Against a number or a string, a pattern is a literal or
+a constant it is compared with, and the `match` is not checked for
+exhaustiveness:
 
 ```rho
 fn describe(n: u32) void {
@@ -375,6 +417,42 @@ fn describe(n: u32) void {
     }
 }
 ```
+
+Against an enum, a pattern is a variant, with a pattern for each value it
+carries, and the match must handle every value:
+
+```text
+Pattern = "_"                                    // anything
+        | Name                                   // a variant, or (inside one) a binding
+        | Enum "." Name                          // a variant, qualified
+        | [ Enum "." ] Name "(" Pattern { "," Pattern } ")"
+        | [ Enum "." ] Name "{" Name { "," Name } "}"   // bind fields by name
+        | Literal                                // compared: 3, -1, "text", true
+```
+
+```rho
+fn area(s: Shape) u32 {
+    match s {
+        Shape.Circle(0) => { return 0 }
+        Shape.Circle(r) => { return 3 * r * r }
+        Rect { w, h } => { return w * h }
+        _ => { return 0 }
+    }
+}
+```
+
+`if let` tests one pattern, with an optional `else` (or `else if`):
+
+```rho
+if let Some(v) = lookup(key) {
+    print(v)
+} else {
+    print("missing")
+}
+```
+
+{ref}`types <language/types>` says what is checked: every variant handled, and
+an arm that can never run warned about.
 
 A condition is a `bool`. There is no implicit truth: a number is not a
 condition, and neither is a value that may be absent.
@@ -523,8 +601,10 @@ while `p`, or another pointer to the same memory, is still in use.
 ## Protocol declarations
 
 A schema file, read by `rho protocol` rather than by a Rho program, declares the
-messages on a wire. The type checker refuses `enum`, `message` and `rpc` in a
-program, with the reason.
+messages on a wire. The type checker refuses `message` and `rpc` in a program,
+with the reason. An `enum` is both a program's and a schema's; a schema takes
+only a plain one, whose variants are numbers, and refuses an enum that carries
+data or is generic, because a field of an enum type is its number on the wire.
 
 ```rho
 module sensor
@@ -590,6 +670,12 @@ literal from an index.
 - **A generic literal is written with brackets.** A type may be spelled
   `Box<u32>`, but a struct literal may not: `Box<u32> { 3 }` does not parse.
   Write `Box[u32] { 3 }`.
+- **An arm's body is one expression or a block.** `Some(v) => total = v` does
+  not parse; write `Some(v) => { total = v }`.
+- **A variant is named after its enum outside a pattern.** `Circle(3)` is a call
+  to a function `Circle`; build the variant with `Shape.Circle(3)`. Inside a
+  pattern the enum is known from the value, and `Circle(r)` is enough.
+  (`Some`, `None`, `Ok` and `Err` are functions as well as variants.)
 - **Bit fields store as integers.** A struct with bit fields is laid out as the
   storage integers it packs into — the layout is the language's, not the C
   compiler's — so a `struct`-shaped ABI a C header expects would have to be

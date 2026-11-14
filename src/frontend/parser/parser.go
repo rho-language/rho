@@ -86,7 +86,7 @@ func collectApplyNames(tokens []lexer.Token) map[string]bool {
 	}
 	for i := 0; i+1 < len(tokens); i++ {
 		switch tokens[i].Kind {
-		case lexer.TokenStruct, lexer.TokenType, lexer.TokenFn, lexer.TokenExtern:
+		case lexer.TokenStruct, lexer.TokenType, lexer.TokenFn, lexer.TokenExtern, lexer.TokenEnum:
 			if tokens[i+1].Kind == lexer.TokenIdent {
 				names[tokens[i+1].Lex] = true
 			}
@@ -227,12 +227,12 @@ func (p *Parser) parseNamespace() string {
 // intLiteral reads an integer literal. An enum's values are written, not counted,
 // so a value that is not a number is an error where it is written.
 func (p *Parser) intLiteral() int {
-	value, err := strconv.Atoi(p.current.Lex)
+	value, err := strconv.ParseInt(strings.ReplaceAll(p.current.Lex, "_", ""), 0, 64)
 	if err != nil {
 		panic(NewErrorf(p.current, "expected an integer, got %q", p.current.Lex))
 	}
 	p.readToken()
-	return value
+	return int(value)
 }
 
 func (p *Parser) parseFeatures() []string {
@@ -427,6 +427,9 @@ func (p *Parser) locate(node *ast.Decl, at ast.Position) {
 	case ast.FuncDecl:
 		n.Pos = at
 		*node = n
+	case ast.EnumDecl:
+		n.Pos = at
+		*node = n
 	}
 }
 
@@ -467,6 +470,9 @@ func (p *Parser) parseTypeDecl() ast.Decl {
 // already expresses it — so it nests rather than becoming a third shape.
 func (p *Parser) parseIfStmt() ast.Stmt {
 	p.readToken()
+	if p.current.Kind == lexer.TokenLet {
+		return p.parseIfLet()
+	}
 	condition := p.parseCondition()
 	thenBody := p.parseBlock()
 	elseBody := []ast.Stmt{}
@@ -479,6 +485,42 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 		}
 	}
 	return ast.IfStmt{Condition: condition, Then: thenBody, Else: elseBody}
+}
+
+// parseIfLet parses `if let Pattern = value { ... } else { ... }`, with the
+// cursor on `let`. It is a match of one arm whose else is the wildcard: the
+// pattern is the same pattern a match arm takes, tested and taken apart the
+// same way, and writing it as one keeps one meaning for both.
+func (p *Parser) parseIfLet() ast.Stmt {
+	at := p.position()
+	p.readToken() // let
+	previous := p.noStructLiteral
+	// A struct-like pattern's brace is the pattern's, not a block: the value
+	// comes after `=`, and only its brace opens the body.
+	p.noStructLiteral = false
+	pattern := p.parseExpr(0)
+	p.noStructLiteral = previous
+	p.expect(lexer.TokenAssign)
+	p.readToken()
+	value := p.parseCondition()
+	thenBody := p.parseBlock()
+	arm := ast.MatchArm{Pattern: pattern, Body: thenBody}
+	arm.Pos = at
+	arms := []ast.MatchArm{arm}
+	if p.current.Kind == lexer.TokenElse {
+		p.readToken()
+		elseArm := ast.MatchArm{Wildcard: true}
+		elseArm.Pos = p.position()
+		if p.current.Kind == lexer.TokenIf {
+			elseArm.Body = []ast.Stmt{p.parseIfStmt()}
+		} else {
+			elseArm.Body = p.parseBlock()
+		}
+		arms = append(arms, elseArm)
+	} else {
+		arms = append(arms, ast.MatchArm{Wildcard: true})
+	}
+	return ast.MatchStmt{Value: value, Arms: arms, IfLet: true}
 }
 
 // parseForStmt parses:
@@ -530,6 +572,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 			panic(NewErrorf(p.current, "unterminated match body"))
 		}
 		arm := ast.MatchArm{}
+		arm.Pos = p.position()
 		if p.current.Kind == lexer.TokenIdent && p.current.Lex == "_" {
 			arm.Wildcard = true
 			p.readToken()
@@ -743,36 +786,81 @@ func (p *Parser) parseFieldList() []ast.Field {
 	return fields
 }
 
-// parseEnumDecl reads:
+// parseEnumDecl reads an enum:
 //
-//	enum Severity {
-//	    INFO = 0
-//	    WARN = 1
+//	enum Name[T, E = Unit] {
+//	    Plain                 // no data; numbered from 0, or after the one before
+//	    Numbered = 4          // a written number, negative allowed
+//	    Tuple(T, string)      // values by position
+//	    Record { x: i32, y: T } // values by name
 //	}
+//
+// Variants are separated by a comma, a semicolon or a line break. Whether the
+// combination is allowed — a number on a variant of an enum that carries data,
+// say — is the checker's to say, because a protocol schema reads the same
+// declaration and allows less.
 func (p *Parser) parseEnumDecl() ast.Decl {
 	p.readToken()
 	name := p.name()
+	typeParams, typeDefaults := p.parseTypeParams()
 	p.expect(lexer.TokenLBrace)
 	p.readToken()
 	variants := []ast.EnumVariant{}
+	next := 0
 	for p.current.Kind != lexer.TokenRBrace {
 		if p.current.Kind == lexer.TokenEOF {
 			panic(NewErrorf(p.current, "unterminated enum body"))
 		}
-		variantName := p.name()
-		value := 0
-		if p.current.Kind == lexer.TokenAssign {
+		at := p.position()
+		variant := ast.EnumVariant{Name: p.name()}
+		variant.Pos = at
+		switch p.current.Kind {
+		case lexer.TokenLParen:
 			p.readToken()
+			for p.current.Kind != lexer.TokenRParen {
+				if p.current.Kind == lexer.TokenEOF {
+					panic(NewErrorf(p.current, "unterminated variant %s: close its values with `)`", variant.Name))
+				}
+				fieldAt := p.position()
+				fieldType := p.parseType()
+				field := ast.Field{Type: fieldType.String(), TypeExpr: fieldType}
+				field.Pos = fieldAt
+				variant.Fields = append(variant.Fields, field)
+				if p.current.Kind == lexer.TokenComma {
+					p.readToken()
+				}
+			}
+			p.readToken()
+		case lexer.TokenLBrace:
+			p.readToken()
+			variant.Fields = p.parseFieldList()
+			variant.Named = true
+		case lexer.TokenAssign:
+			p.readToken()
+			negative := false
+			if p.current.Kind == lexer.TokenMinus {
+				negative = true
+				p.readToken()
+			}
 			p.expect(lexer.TokenNumber)
-			value = p.intLiteral()
+			value := p.intLiteral()
+			if negative {
+				value = -value
+			}
+			variant.Value = value
+			variant.Explicit = true
 		}
-		variants = append(variants, ast.EnumVariant{Name: variantName, Value: value})
+		if !variant.Explicit {
+			variant.Value = next
+		}
+		next = variant.Value + 1
+		variants = append(variants, variant)
 		if p.current.Kind == lexer.TokenComma || p.current.Kind == lexer.TokenSemicolon {
 			p.readToken()
 		}
 	}
 	p.readToken()
-	return ast.EnumDecl{Name: name, Variants: variants}
+	return ast.EnumDecl{Name: name, Variants: variants, TypeParams: typeParams, TypeParamDefaults: typeDefaults}
 }
 
 // parseMessageDecl reads `message Name { fields }`.
@@ -1260,6 +1348,11 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 				}
 				p.readToken()
 				expression = ast.StructLiteralExpr{Type: ast.TypeExpr{Name: expression.(ast.IdentifierExpr).Name, Args: args}, Values: values}
+			} else if p.current.Kind == lexer.TokenDot && isTypeApplication(expression) {
+				// `Option[u32].None`: a variant of a generic enum, named with
+				// the specialisation it belongs to.
+				p.readToken()
+				expression = ast.MemberExpr{Object: expression, Name: p.name(), TypeArgs: args}
 			} else {
 				index := ast.IdentifierExpr{Name: args[0].Name}
 				expression = ast.IndexExpr{Object: expression, Index: index}
@@ -1274,9 +1367,11 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			isType := isIdentifier && p.isTypeName(identifier.Name)
 			// `alert.AlertRule { ... }` is a literal of a type another module
 			// declares.
-			if member, isMember := expression.(ast.MemberExpr); isMember {
-				if module, named := member.Object.(ast.IdentifierExpr); named && p.isTypeName(member.Name) {
-					identifier, isType = ast.IdentifierExpr{Node: member.Node, Name: module.Name + "." + member.Name}, true
+			// `geo.Shape.Rect { ... }` is a variant of an enum another module
+			// declares, written the same way.
+			if member, isMember := expression.(ast.MemberExpr); isMember && p.isTypeName(member.Name) {
+				if dotted, named := dottedName(member.Object); named {
+					identifier, isType = ast.IdentifierExpr{Node: member.Node, Name: dotted + "." + member.Name}, true
 				}
 			}
 			if !isType {
@@ -1307,6 +1402,23 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			return expression
 		}
 	}
+}
+
+// dottedName is a chain of names joined by dots, `a` or `a.B`, when an
+// expression is only that.
+func dottedName(expression ast.Expr) (string, bool) {
+	switch e := expression.(type) {
+	case ast.IdentifierExpr:
+		return e.Name, true
+	case ast.MemberExpr:
+		if len(e.TypeArgs) > 0 {
+			return "", false
+		}
+		if object, ok := dottedName(e.Object); ok {
+			return object + "." + e.Name, true
+		}
+	}
+	return "", false
 }
 
 // isTypeApplication reports whether `name[...]` names a generic type rather

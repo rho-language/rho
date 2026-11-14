@@ -45,7 +45,11 @@ rpc SetInterval {
 - **`namespace a.b.vN`** names the schema and its version. The version is the
   number in the last component, or 1, and it is written into every message.
 - **`enum`** values are written, not counted. A wire protocol numbers its values,
-  and a reader can only trust a number it can see.
+  and a reader can only trust a number it can see. (A variant without one is the
+  one before it plus one, as in a program, but a schema should write them.) Only a
+  plain enum is a schema's: one whose variants carry data, or that is generic, is
+  refused — a field of an enum type is its number on the wire, and such an enum
+  has none. Its data goes in message fields beside a plain enum that says which.
 - **`message`** is an ordered set of fields. It is a struct that makes a promise
   a struct does not: a byte layout and a version.
 - **`rpc`** is a request and a response, each a set of fields. They become two
@@ -53,8 +57,8 @@ rpc SetInterval {
 
 `message` and `rpc` are contextual: they name a declaration only where one
 begins, so a field or a variable may still be called one. A Rho program may not
-declare an `enum`, `message` or `rpc`; the type checker refuses them and says
-that they belong to a schema.
+declare a `message` or `rpc`; the type checker refuses them and says that they
+belong to a schema. An `enum` is a program's too ({ref}`language/types`).
 
 ## The wire
 
@@ -125,8 +129,9 @@ and a `Register<Name>(mux, path, handler)` that puts the handler on an
 and `reading_unmarshal`, written field by field in the same little-endian order
 through the {ref}`text built-ins <language/builtins>`, and `reading_valid`,
 which rejects a payload that is short or of another schema version. An enum
-becomes `u32` constants (`HEALTH_OK` …), because a Rho program has no enum and the
-wire carries a 32-bit value.
+becomes `u32` constants (`HEALTH_OK` …), and a field of one a `u32`, because the
+wire carries a 32-bit value and code already written against the generated module
+reads the constants.
 
 Given a framing — `--transport FILE`, or `--platform NAME` for the
 `protocol-transport-rho` binding its integration plugin provides — it also carries

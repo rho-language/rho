@@ -7,15 +7,18 @@
 
 package codegen
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // An if expression is lowered to `(cond ? then : else)`, which C has and Go
 // does not. The Go translator rewrites it to the generic select the runtime
 // carries, including when one is nested inside another.
 func TestToGoExprRewritesConditional(t *testing.T) {
 	cases := map[string]string{
-		"(a > b ? x : y)":                     "rhoSelect(a > b, x, y)",
-		"(a ? (b ? x : y) : z)":               "rhoSelect(a, rhoSelect(b, x, y), z)",
+		"(a > b ? x : y)":                        "rhoSelect(a > b, x, y)",
+		"(a ? (b ? x : y) : z)":                  "rhoSelect(a, rhoSelect(b, x, y), z)",
 		"rho_concat(\"a\", (c ? \"b\" : \"c\"))": "(\"a\" + rhoSelect(c, \"b\", \"c\"))",
 	}
 	for in, want := range cases {
@@ -38,5 +41,15 @@ func TestTernaryRewriteLeavesStringLiteralsAlone(t *testing.T) {
 	mixed := `(flag ? "a (b ? c : d)" : "e")`
 	if got := rewriteTernaries(mixed); got != `rhoSelect(flag, "a (b ? c : d)", "e")` {
 		t.Fatalf("a conditional around string literals was rewritten as %q", got)
+	}
+}
+
+// A typed conditional whose condition is a call ending in one name, `f(o)`, keeps
+// the call: the translator that runs after the rewrite read `(o) {` as a
+// compound literal and wrote `fo`.
+func TestATypedConditionalKeepsACallAsItsCondition(t *testing.T) {
+	got := ToGoExpr(`(is_none_string(o) ? (const char*)("yes") : (const char*)("no"))`)
+	if want := `isNoneString(o)`; !strings.Contains(got, want) {
+		t.Fatalf("the condition lost its call: %q, want it to contain %q", got, want)
 	}
 }

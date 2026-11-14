@@ -189,12 +189,37 @@ func entryFor(decl ast.Decl) (Entry, bool) {
 		body := "{ " + strings.Join(fields, ", ") + " }"
 		return Entry{Name: declaration.Name, Kind: "struct", Signature: "struct" + generic + " " + body, Display: "struct " + declaration.Name + generic + " " + body}, true
 	case ast.EnumDecl:
+		// A plain enum promises its numbers; one that carries data promises
+		// what each variant carries, in order, which is what building and
+		// taking one apart depend on.
+		carries := declaration.CarriesData()
 		variants := make([]string, len(declaration.Variants))
 		for i, variant := range declaration.Variants {
-			variants[i] = fmt.Sprintf("%s = %d", variant.Name, variant.Value)
+			switch {
+			case variant.Named:
+				fields := make([]string, len(variant.Fields))
+				for j, field := range variant.Fields {
+					fields[j] = field.Name + ": " + normalise(field.Type)
+				}
+				variants[i] = variant.Name + " { " + strings.Join(fields, ", ") + " }"
+			case len(variant.Fields) > 0:
+				fields := make([]string, len(variant.Fields))
+				for j, field := range variant.Fields {
+					fields[j] = normalise(field.Type)
+				}
+				variants[i] = variant.Name + "(" + strings.Join(fields, ", ") + ")"
+			case carries:
+				variants[i] = variant.Name
+			default:
+				variants[i] = fmt.Sprintf("%s = %d", variant.Name, variant.Value)
+			}
+		}
+		generic := ""
+		if len(declaration.TypeParams) > 0 {
+			generic = "[" + strings.Join(declaration.TypeParams, ", ") + "]"
 		}
 		body := "{ " + strings.Join(variants, ", ") + " }"
-		return Entry{Name: declaration.Name, Kind: "enum", Signature: "enum " + body, Display: "enum " + declaration.Name + " " + body}, true
+		return Entry{Name: declaration.Name, Kind: "enum", Signature: "enum" + generic + " " + body, Display: "enum " + declaration.Name + generic + " " + body}, true
 	case ast.TypeDecl:
 		target := normalise(declaration.Type.String())
 		return Entry{Name: declaration.Name, Kind: "type", Signature: "type = " + target, Display: "type " + declaration.Name + " = " + target}, true

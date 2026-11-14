@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"rho/src/frontend/ast"
@@ -47,6 +48,8 @@ type ApiModule struct {
 	Functions []ApiFunction
 	// Structs are the structs it declares, sorted by name.
 	Structs []ApiStruct
+	// Enums are the enums it declares, sorted by name.
+	Enums []ApiEnum
 	// Externs are the functions the host supplies, which is what a port does.
 	Externs []ApiExtern
 }
@@ -95,6 +98,44 @@ type ApiStruct struct {
 
 // Name is the struct as it is written, with its type parameters.
 func (s ApiStruct) NameWithParams() string { return s.Name + typeParams(s.TypeParams) }
+
+// ApiEnum is one declared enum and its variants, each as it is written:
+// `Circle(i32)`, `Rect { w: i32, h: i32 }`, `On = 2`.
+type ApiEnum struct {
+	Name       string
+	TypeParams []string
+	Variants   []string
+}
+
+// NameWithParams is the enum as it is written, with its type parameters.
+func (e ApiEnum) NameWithParams() string { return e.Name + typeParams(e.TypeParams) }
+
+// enumVariants writes each variant of an enum the way it is declared.
+func enumVariants(decl ast.EnumDecl) []string {
+	carries := decl.CarriesData()
+	out := make([]string, 0, len(decl.Variants))
+	for _, variant := range decl.Variants {
+		written := variant.Name
+		switch {
+		case variant.Named:
+			parts := make([]string, len(variant.Fields))
+			for i, field := range variant.Fields {
+				parts[i] = field.Name + ": " + field.Type
+			}
+			written += " { " + strings.Join(parts, ", ") + " }"
+		case len(variant.Fields) > 0:
+			parts := make([]string, len(variant.Fields))
+			for i, field := range variant.Fields {
+				parts[i] = field.Type
+			}
+			written += "(" + strings.Join(parts, ", ") + ")"
+		case !carries:
+			written += " = " + strconv.Itoa(variant.Value)
+		}
+		out = append(out, written)
+	}
+	return out
+}
 
 // ApiExtern is one function the host supplies for a module.
 type ApiExtern struct {
@@ -206,8 +247,15 @@ func readApiModule(path string) (ApiModule, Diagnostic, bool) {
 				TypeParams: decl.TypeParams,
 				Fields:     fields(decl.Fields),
 			})
+		case ast.EnumDecl:
+			entry.Enums = append(entry.Enums, ApiEnum{
+				Name:       decl.Name,
+				TypeParams: decl.TypeParams,
+				Variants:   enumVariants(decl),
+			})
 		}
 	}
+	sort.Slice(entry.Enums, func(i, j int) bool { return entry.Enums[i].Name < entry.Enums[j].Name })
 	sort.Slice(entry.Functions, func(i, j int) bool { return entry.Functions[i].Name < entry.Functions[j].Name })
 	sort.Slice(entry.Structs, func(i, j int) bool { return entry.Structs[i].Name < entry.Structs[j].Name })
 	sort.Slice(entry.Externs, func(i, j int) bool { return entry.Externs[i].Name < entry.Externs[j].Name })
@@ -281,6 +329,22 @@ func RenderApiModule(module ApiModule) *Document {
 			row.Children = []*Node{
 				cell(structure.NameWithParams()),
 				cell(fieldList(structure.Fields)),
+			}
+			table.Children = append(table.Children, row)
+		}
+		document.Blocks = append(document.Blocks, table)
+	}
+	if len(module.Enums) > 0 {
+		document.Blocks = append(document.Blocks, heading(2, "Enums", ""))
+		table := &Node{Kind: BlockTable}
+		header := &Node{Kind: BlockRow, Text: "header"}
+		header.Children = []*Node{cell("Enum"), cell("Variants")}
+		table.Children = append(table.Children, header)
+		for _, enum := range module.Enums {
+			row := &Node{Kind: BlockRow}
+			row.Children = []*Node{
+				cell(enum.NameWithParams()),
+				cell("`" + strings.Join(enum.Variants, "`, `") + "`"),
 			}
 			table.Children = append(table.Children, row)
 		}
@@ -410,6 +474,9 @@ func ApiSearchText(module ApiModule) string {
 	}
 	for _, structure := range module.Structs {
 		parts = append(parts, structure.Name, fieldList(structure.Fields))
+	}
+	for _, enum := range module.Enums {
+		parts = append(parts, enum.Name, strings.Join(enum.Variants, " "))
 	}
 	for _, extern := range module.Externs {
 		parts = append(parts, extern.Name)

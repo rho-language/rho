@@ -174,10 +174,9 @@ Stated plainly, because a reference that implies otherwise is worse than none:
   (see Memory).
 - No mutable module state. A top-level `const`, `let` or `var` is a constant,
   and assigning to one is refused.
-- No enums in a program. `enum`, `message` and `rpc` belong to protocol schemas.
-  A program names its numbers with `const`.
-- No sum types. A value that may be absent is an `Option[T]`, and one that may
-  fail is a `Result[T, E]`, both structs.
+- No `message` or `rpc` in a program; they belong to protocol schemas. An
+  `enum` is the program's own: a set of numbers, or variants that carry values,
+  taken apart with an exhaustive `match` ({ref}`language/types`).
 - No closures, no function values, and no higher-order functions.
 - No maps in the language. `std.collections.map` is a fixed-capacity table
   written in Rho.

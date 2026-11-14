@@ -699,7 +699,14 @@ func (tc *TypeChecker) zeroValueFor(name string) string {
 	if i := strings.IndexByte(base, '['); i >= 0 {
 		base = base[:i]
 	}
+	if info, ok := tc.enums[name]; ok && info.Plain {
+		// A plain enum's zero is its first variant, a value it can hold.
+		return plainValue(info, &info.Variants[0])
+	}
 	switch base {
+	case "Ptr":
+		// A pointer's zero is null, in C and (as nil) in Go.
+		return "NULL"
 	case "bool":
 		return "false"
 	case "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f32", "f64":
@@ -777,11 +784,13 @@ func (tc *TypeChecker) structToSpecialisation(s ast.StructDecl, subs map[string]
 				element := tc.declaredTypeWith(fieldType.Args[0].Name, subs)
 				fieldType.Args = []ir.Type{element}
 			}
-			fields[i] = ir.FieldIR{Name: f.Name, Type: fieldType}
+			name, variant := storedField(f)
+			fields[i] = ir.FieldIR{Name: name, Type: fieldType, Variant: variant, Shared: f.Shared}
 			continue
 		}
 		fieldType = tc.declaredTypeWith(fieldType.Name, subs)
-		fields[i] = ir.FieldIR{Name: f.Name, Type: fieldType}
+		name, variant := storedField(f)
+		fields[i] = ir.FieldIR{Name: name, Type: fieldType, Variant: variant, Shared: f.Shared}
 	}
 	name := mangleGeneric(s.Name, args)
 	return ir.StructIR{
@@ -1013,7 +1022,7 @@ func sameStruct(a, b ir.StructIR) bool {
 // The comparison is the IR's own, so two pointers at the same element are one
 // type however each spelled the element's name.
 func sameField(a, b ir.FieldIR) bool {
-	if a.Name != b.Name || a.BitWidth != b.BitWidth || a.Unit != b.Unit || a.Shift != b.Shift {
+	if a.Name != b.Name || a.Variant != b.Variant || a.Shared != b.Shared || a.BitWidth != b.BitWidth || a.Unit != b.Unit || a.Shift != b.Shift {
 		return false
 	}
 	return ir.SameType(a.Type, b.Type)

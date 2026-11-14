@@ -339,16 +339,84 @@ func (cg *Codegen) emitStruct(s ir.StructIR) {
 		return
 	}
 	cg.b.WriteString("typedef struct {\n")
-	for _, f := range packedFields(s) {
+	fields, variants, shared := enumLayout(packedFields(s))
+	for _, f := range fields {
 		cg.b.WriteString("    ")
 		cg.b.WriteString(cTypeFor(f.Type))
 		cg.b.WriteString(" ")
 		cg.b.WriteString(f.Name)
 		cg.b.WriteString(";\n")
 	}
+	// An enum's variants share their storage: a value is one variant at a time,
+	// so the values of each are a struct in a union, and the enum is as large as
+	// its largest variant and its tag.
+	if len(variants) > 0 {
+		cg.b.WriteString("    union {\n")
+		for _, variant := range variants {
+			cg.b.WriteString("        struct {")
+			for _, f := range variant.fields {
+				cg.b.WriteString(" ")
+				cg.b.WriteString(cTypeFor(f.Type))
+				cg.b.WriteString(" ")
+				cg.b.WriteString(f.Name)
+				cg.b.WriteString(";")
+			}
+			cg.b.WriteString(" } ")
+			cg.b.WriteString(variant.name)
+			cg.b.WriteString(";\n")
+		}
+		cg.b.WriteString("    } as;\n")
+	}
+	// Values stored by their own names share one anonymous union, so each is
+	// reached as a member of the struct, as it is in Go.
+	if len(shared) > 0 {
+		cg.b.WriteString("    union {\n")
+		for _, f := range shared {
+			cg.b.WriteString("        ")
+			cg.b.WriteString(cTypeFor(f.Type))
+			cg.b.WriteString(" ")
+			cg.b.WriteString(f.Name)
+			cg.b.WriteString(";\n")
+		}
+		cg.b.WriteString("    };\n")
+	}
 	cg.b.WriteString("} ")
 	cg.b.WriteString(s.Name)
 	cg.b.WriteString(";\n\n")
+}
+
+// enumVariant is the fields of one variant of an enum, in declared order.
+type enumVariant struct {
+	name   string
+	fields []ir.FieldIR
+}
+
+// enumLayout splits a struct's fields into its own, those of each variant, and
+// those stored by name in shared storage, for an enum. A struct has neither of
+// the last two, and its fields come back as they are.
+func enumLayout(fields []ir.FieldIR) ([]ir.FieldIR, []enumVariant, []ir.FieldIR) {
+	own := []ir.FieldIR{}
+	shared := []ir.FieldIR{}
+	variants := []enumVariant{}
+	at := map[string]int{}
+	for _, field := range fields {
+		if field.Shared {
+			shared = append(shared, field)
+			continue
+		}
+		if field.Variant == "" {
+			own = append(own, field)
+			continue
+		}
+		index, seen := at[field.Variant]
+		if !seen {
+			index = len(variants)
+			at[field.Variant] = index
+			variants = append(variants, enumVariant{name: field.Variant})
+		}
+		variants[index].fields = append(variants[index].fields, field)
+	}
+	return own, variants, shared
 }
 
 // emitAlias declares a type alias as a typedef, so a name a program gave a type

@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"rho/src/codegen"
 	"rho/src/deps"
@@ -447,6 +448,10 @@ func compileToIR(compiled *ast.Module, path string, dependencyRoots []string) (i
 	tc := types.New()
 	if err := tc.CheckModule(*compiled); err != nil {
 		return ir.ModuleIR{}, nil, sourceDiagnostic(path, readSource(path), "typechecking", err)
+	}
+	if warnings := typeWarnings(path, tc); len(warnings) > 0 {
+		base, _ := os.Getwd()
+		fmt.Fprintln(os.Stderr, RenderDiagnostics(warnings, base))
 	}
 	irModule := tc.ToIR(*compiled)
 	if err := codegen.ValidateModule(irModule); err != nil {
@@ -2156,16 +2161,26 @@ func preludeGenericsUsedBy(module *ast.Module) []string {
 	used := []string{}
 	seen := map[string]bool{}
 	note := func(written string) {
-		name, _, found := strings.Cut(written, "[")
-		if !found {
-			return
+		// Every application in the written type, nested ones included:
+		// `Box[Option[u32]]` uses Option as much as Box.
+		for rest := written; ; {
+			open := strings.IndexByte(rest, '[')
+			if open < 0 {
+				return
+			}
+			start := open
+			for start > 0 && (rest[start-1] == '_' || unicode.IsLetter(rune(rest[start-1])) || unicode.IsDigit(rune(rest[start-1]))) {
+				start--
+			}
+			name := rest[start:open]
+			rest = rest[open+1:]
+			module_, known := preludeGenerics[name]
+			if !known || seen[name] {
+				continue
+			}
+			seen[name] = true
+			used = append(used, module_)
 		}
-		module_, known := preludeGenerics[name]
-		if !known || seen[name] {
-			return
-		}
-		seen[name] = true
-		used = append(used, module_)
 	}
 	var walkExpr func(expr ast.Expr)
 	walkExpr = func(expr ast.Expr) {
@@ -2182,11 +2197,16 @@ func preludeGenericsUsedBy(module *ast.Module) []string {
 		case ast.IdentifierExpr:
 			note(e.Name)
 		case ast.StructLiteralExpr:
-			note(e.Type.Name)
+			note(e.Type.String())
 			for _, value := range e.Values {
 				walkExpr(value)
 			}
 		case ast.MemberExpr:
+			// `Option.None`, `Result[u32, string].Ok`: a variant of a prelude
+			// enum, named by the enum alone.
+			if object, ok := e.Object.(ast.IdentifierExpr); ok {
+				note(object.Name + "[]")
+			}
 			walkExpr(e.Object)
 		case ast.IndexExpr:
 			walkExpr(e.Object)
@@ -2224,6 +2244,19 @@ func preludeGenericsUsedBy(module *ast.Module) []string {
 			for _, inner := range s.Body {
 				walkStmt(inner)
 			}
+		case ast.ForStmt:
+			walkExpr(s.Collection)
+			for _, inner := range s.Body {
+				walkStmt(inner)
+			}
+		case ast.MatchStmt:
+			walkExpr(s.Value)
+			for _, arm := range s.Arms {
+				walkExpr(arm.Pattern)
+				for _, inner := range arm.Body {
+					walkStmt(inner)
+				}
+			}
 		}
 	}
 	for _, decl := range module.Decls {
@@ -2239,6 +2272,12 @@ func preludeGenericsUsedBy(module *ast.Module) []string {
 		case ast.StructDecl:
 			for _, field := range d.Fields {
 				note(field.Type)
+			}
+		case ast.EnumDecl:
+			for _, variant := range d.Variants {
+				for _, field := range variant.Fields {
+					note(field.Type)
+				}
 			}
 		}
 	}

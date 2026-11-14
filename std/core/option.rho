@@ -1,36 +1,64 @@
 module std.core.option
 
-// Option carries a value that may be absent.
-struct Option[T] {
-    is_some: bool
-    value: T
+// Option carries a value that may be absent: None, or Some(value).
+//
+// It is an enum of the language, taken apart with match:
+//
+//	match lookup(key) {
+//	    Some(v) => use(v)
+//	    None => print("missing")
+//	}
+//
+// None is declared first, so a zeroed Option — default(Option[T]), a field
+// never set — is None, as it was when Option was a struct. Code written
+// against that struct keeps working: `o.is_some` and `o.value` read the enum
+// (value is the zero value of T when the Option is None), `Option[T]{ flag, v }`
+// still builds Some or None, and the functions below are unchanged.
+//
+// An Option of a pointer, Option[Ptr[T]], is stored as the pointer: None is
+// null, which is what a C library returns for "nothing".
+enum Option[T] {
+    None
+    Some(T)
 }
 
 fn Some[T](v: T) Option[T] {
-    return Option[T]{ true, v }
+    return Option[T].Some(v)
 }
 
 // None builds an empty Option. T defaults to Unit, so `None()` on its own
 // means "no value" without an annotation.
 fn None[T = Unit]() Option[T] {
-    return Option[T]{ false, default(T) }
+    return Option[T].None
 }
 
 fn is_some[T](o: Option[T]) bool {
-    return o.is_some
+    match o {
+        Some(_) => { return true }
+        None => { return false }
+    }
 }
 
 fn is_none[T](o: Option[T]) bool {
-    return !o.is_some
-}
-
-fn value[T](o: Option[T]) T {
-    return o.value
-}
-
-fn unwrap[T](o: Option[T]) T {
-    if !o.is_some {
-        panic("unwrap None")
+    match o {
+        Some(_) => { return false }
+        None => { return true }
     }
-    return o.value
+}
+
+// value is the value an Option holds, or the zero value of T when it is None.
+fn value[T](o: Option[T]) T {
+    if let Some(v) = o {
+        return v
+    }
+    return default(T)
+}
+
+// unwrap is the value an Option holds, and stops the program when it is None.
+fn unwrap[T](o: Option[T]) T {
+    if let Some(v) = o {
+        return v
+    }
+    panic("unwrap None")
+    return default(T)
 }

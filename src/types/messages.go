@@ -101,6 +101,12 @@ func article(name string) string {
 func conversionHint(got, want ir.Type) string {
 	wantName := typeName(want)
 	switch {
+	case want.Enum && got.Enum:
+		return fmt.Sprintf("these are two different enums; convert through the number, as in %s(u32(v)), if that is what is meant", wantName)
+	case want.Enum && numeric(got):
+		return fmt.Sprintf("a number is not %s; convert it with %s(n), which stops the program if n is none of its values", article(wantName), wantName)
+	case got.Enum && numeric(want):
+		return fmt.Sprintf("an enum is not a number; write %s(v) to use its number", wantName)
 	case got.Kind == ir.TypeString && integerBits(want.Kind) > 0:
 		return "parse it with int_from_str(...) or i64_from_str(...) and convert the result, or change the declared type"
 	case integerBits(got.Kind) > 0 && want.Kind == ir.TypeString:

@@ -1030,9 +1030,12 @@ func rewriteTernaries(expr string) string {
 					// other arm must not run.
 					if goType := ternaryArmType(strings.TrimSpace(thenPart)); goType != "" &&
 						ternaryArmType(strings.TrimSpace(elsePart)) == goType {
-						out.WriteString("func() " + goType + " { if ")
+						// The condition is parenthesised: a call ending in one
+						// name, `f(o)`, followed by ` {` reads as the compound
+						// literal `(o){` to the translator that runs next.
+						out.WriteString("func() " + goType + " { if (")
 						out.WriteString(rewriteTernaries(strings.TrimSpace(cond)))
-						out.WriteString(" { return ")
+						out.WriteString(") { return ")
 						out.WriteString(rewriteTernaries(strings.TrimSpace(thenPart)))
 						out.WriteString(" }; return ")
 						out.WriteString(rewriteTernaries(strings.TrimSpace(elsePart)))

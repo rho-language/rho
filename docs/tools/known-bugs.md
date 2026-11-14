@@ -43,11 +43,19 @@ appears below as open.
 | 26 | lexer | Every column on a line after the first was one too far: the newline was counted as column 1 of the next line, so `fn` at the start of line 3 was at 3:2. | The newline is column 0, and the first character of every line is at 1. | `TestATokenSaysWhereItIs`, `TestParseErrorCarriesPosition` |
 | 27 | rho-lsp | Diagnostics were published one line low (the compiler's lines count from one, the protocol's from zero), and a file was checked on its own, so a file that imported anything was not type-checked as the build checks it. | The server checks the file as part of its program (`rho.DiagnoseInProgram`) and converts to the protocol's coordinates. | `TestTheEditorPublishesWhatTheBuildReports`, `TestAnIncludedFilesErrorIsPublishedForThatFile` |
 | 28 | parser | A token kind was printed as a number: `expected 34, got 30 ("{")`. | Kinds have names: ``expected `:`, got `{` ``. | `TestBrokenProgramsAreReportedWhereTheMistakeIs` (`parse`) |
+| 29 | Go backend | An if expression whose condition is a call ending in one name, `if is_none(o) { "a" } else { "b" }`, lost the call in Go: the condition was written before ` {`, and the translator read `(o) {` as a compound literal, giving `isNoneo`. | The condition of the rewritten conditional is parenthesised. | `TestATypedConditionalKeepsACallAsItsCondition`; parity: "enums: Option and Result are enums…" |
+| 30 | type checker | `.value` of an `Option[Ptr[T]]` was typed `Ptr[u8]` whatever it pointed at, so `use_thing(found.value)` was refused for a `Ptr[Thing]` parameter. | It is the pointer the Option holds. | `TestAnOptionalPointerIsStillThePointer` |
+| 31 | build | The prelude scan loaded `std.core.option` only for an outermost `Option[...]`: `Box[Option[u32]]`, `Option.None`, and a `match` or `for` body were not looked into, so Option was the built-in placeholder and its functions undefined. | Every application in a written type, a variant named by its enum, and every statement are scanned. parity: "enums: Option named only inside an application, and enum constants" |
+| 32 | rho-fmt | An `enum` was printed as `/* unprinted declaration */`, so formatting a schema dropped its enums. | Every enum form is printed, and `if let` and `Option[u32].None` with it. | `TestFormatKeepsEnumsAndPatterns`, `TestFormatterPreservesEveryRepoSource` |
 
 ## Open
 
-None. A case added to the cross-backend suite with `diverges:` is a new open
-entry here.
+| # | Where | What is wrong | Reproduction |
+|---|---|---|---|
+| 33 | C backend | A local declared without a value, `var x: u32` or `var s: Shape`, is uninitialised in C and zero in Go, so reading it before it is assigned prints different things (a garbage number; for an enum, an arbitrary variant). Found while adding enums; not an enum bug. | `var x: u32` then `print(int_to_str(x))`: C prints whatever was on the stack, Go prints 0. |
+
+A case added to the cross-backend suite with `diverges:` is a new open entry
+here.
 
 Limitations, recorded so they are not mistaken for bugs: a generic body cannot
 do arithmetic on a type parameter (`T + T` is refused); `std.collections.map`
@@ -57,6 +65,19 @@ are tagged for C and a Go build is refused; there are no `<<=`, `>>=` or `%=`
 operators; a compound assignment evaluates its target twice, which matters only
 for a target with a call in it; an index into a `[T]` or a `Ptr[T]` is not
 checked.
+
+Limitations of enums (Phase 3a): a value written inside a struct literal does not
+take its type from the field (`Box[Option[u32]]{ Some(7) }` builds an
+`Option[i32]`; write `Some[u32](7)`) — the same as any generic value in a struct
+literal; `Option` and `Result` each declare a generic `value` and `unwrap`, and
+when a program imports both the first declared wins for the unqualified name
+(take the value apart with `match`, or use `.value` / `.ok`); a name inside a
+pattern always binds, so `Circle(LIMIT)` binds `LIMIT` rather than comparing with
+the constant; there are no or-patterns (`A | B`) and no guards; an arm's body is
+one expression or a block; `print` does not take an enum, and there is no
+variant-name function; `==` on an enum that carries data is refused rather than
+compared field by field; a variant is always written after its enum's name
+outside a pattern.
 
 Diagnostics, recorded so they are not mistaken for bugs: a diagnostic carries
 where the mistake begins and not where it ends, so the editor underlines the

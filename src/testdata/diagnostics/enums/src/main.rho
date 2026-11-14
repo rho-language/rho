@@ -1,0 +1,31 @@
+module app
+
+enum Shape {
+    Circle(i32)
+    Rect { w: i32, h: i32 }
+    Empty
+}
+
+enum Color { Red, Green, Blue }
+
+fn area(s: Shape) i32 {
+    match s {
+        Shape.Circle(r) => { return r }
+    }
+    return 0
+}
+
+fn main() void {
+    let a: Shape = Shape.Circle(1, 2)
+    let b: Shape = Shape.Empty
+    match b {
+        Shape.Circle(x, y) => print("two")
+        _ => print("other")
+    }
+    if a == b {
+        print("same")
+    }
+    let k: i32 = Color.Red + 1
+    let n: Color = 2
+    let m: Color = Color(9)
+}

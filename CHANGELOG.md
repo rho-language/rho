@@ -456,3 +456,11 @@ Errors point at the mistake. Every position keeps the file it came from, through
 One diagnostic, everywhere: `file:line:col: error|warning: message`, with notes (`X is declared here`, `helper.rho is included here`, what a generic was specialised with). `rho build`, `rho lint` (a new `rho-check` rule) and the language server report the same thing at the same place; the editor checks a file as part of its project, with its unsaved text. The twenty most common messages say what is wrong and what to do, with a "did you mean" where a name is close to one in scope.
 
 Fixed: columns were one too far right on every line after the first; the language server published every diagnostic one line low.
+
+## [0.13.0] - 2026-11-14
+
+Enums, with or without data. `enum Shape { Circle(i32), Rect { w: i32, h: i32 }, Empty }` and plain enums with numbers (`enum Mode { Off = 0, Auto = 2 }`); generic enums with default type arguments. A value is built as `Shape.Circle(3)` and taken apart with `match` or `if let`: variants bind their payloads, patterns nest, literals compare, and a `match` that misses a variant is refused with the missing ones named (an arm that can never be reached is a warning). Plain enums are the narrowest integer on both backends and convert to and from numbers (`Mode(n)` stops the program if `n` is not a value); data enums are a tag and a union, copied as values, and follow the string arena's rules. `==` works on plain enums.
+
+`Option` and `Result` are language enums now (`enum Option[T] { None, Some(T) }`, `enum Result[T, E = Unit] { Err(E), Ok(T) }`), with their helpers; the field-style reads (`.is_some`, `.value`, `.is_ok`, `.ok`, `.err`) and struct-style literals keep working, and `Option[Ptr[T]]` is still a bare pointer in C. A protocol schema or a SQL column takes a plain enum as a number and refuses a data enum.
+
+Warnings reach `rho build` and the editor. Fixed: Go if-expressions over a call, `Option[Ptr[T]].value`'s type, nested prelude generics, and `rho fmt` dropping enums.

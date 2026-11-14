@@ -226,6 +226,10 @@ type StructDecl struct {
 	// TypeParamDefaults holds the default type written for a parameter, as in
 	// `struct Result[T, E = Unit]`. A parameter with no entry has no default.
 	TypeParamDefaults map[string]string
+	// Enum says the struct is the layout the checker made for an enum that
+	// carries data: its tag, then each variant's values (Field.Variant). It is
+	// never written; the enum it stands for is checked in its place.
+	Enum bool
 }
 
 func (StructDecl) declNode() {}
@@ -244,37 +248,79 @@ type Field struct {
 	// BitWidth is the width of a bit field, as in `flag: u8 : 1`. It is nil for
 	// an ordinary field.
 	BitWidth *int
+	// Variant is the enum variant a field of an enum's layout belongs to
+	// (StructDecl.Enum); empty for a field of a struct.
+	Variant string
+	// Shared marks a field of an enum's layout stored by its own name in the
+	// storage the variants share (ir.FieldIR.Shared).
+	Shared bool
 }
 
 /* -------------------------------------------------------------------------- */
 /*  Enum Declaration                                                          */
 /* -------------------------------------------------------------------------- */
 
-// EnumDecl represents a named set of integer values:
+// EnumDecl is an enum: a type whose value is one of a fixed set of variants.
 //
-//	enum Severity {
+//	enum Severity {            // a plain enum: each variant is a number
 //	    INFO = 0
-//	    WARN = 1
+//	    WARN                   // counted on from the one before: 1
 //	}
 //
-// The values are explicit: a wire protocol numbers its values and two builds
-// that disagree about the numbering are two builds that cannot talk, so the
-// number is written rather than counted.
+//	enum Shape {               // an enum whose variants carry data
+//	    Circle(i32)            // tuple-like: values by position
+//	    Rect { w: i32, h: i32 } // struct-like: values by name
+//	    Empty                  // no data
+//	}
+//
+//	enum Option[T] { None, Some(T) }   // generic, specialised per use
+//
+// A variant of a plain enum may give its number (`A = 1`), which is what a C
+// header or a wire protocol agrees on; a variant without one is the one before
+// it plus one, starting at 0. An enum where any variant carries data has no
+// numbers of its own to give, and writing one is refused by the checker.
+//
+// A protocol schema reads the same declaration, and only the plain form.
 type EnumDecl struct {
 	Node
 	Name     string
 	Owner    string
 	Variants []EnumVariant
+	// TypeParams are the type parameters of a generic enum, as in
+	// `enum Result[T, E = Unit]`, and TypeParamDefaults the defaults written
+	// for them.
+	TypeParams        []string
+	TypeParamDefaults map[string]string
 }
 
 func (EnumDecl) declNode() {}
 
 func (n EnumDecl) Position() Position { return n.Pos }
 
-// EnumVariant is one value of an enum.
+// EnumVariant is one variant of an enum.
 type EnumVariant struct {
-	Name  string
+	Node
+	Name string
+	// Value is the variant's number: the one written, or the one before it plus
+	// one. It is what a plain enum is on the wire and in C.
 	Value int
+	// Explicit says the number was written, `A = 1`.
+	Explicit bool
+	// Fields are the values the variant carries: none for a plain variant,
+	// unnamed ones for `B(u32, string)`, named ones for `C { x: i32 }`.
+	Fields []Field
+	// Named says the fields were written with names, in braces.
+	Named bool
+}
+
+// CarriesData reports whether any variant of an enum carries a value.
+func (n EnumDecl) CarriesData() bool {
+	for _, variant := range n.Variants {
+		if len(variant.Fields) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 /* -------------------------------------------------------------------------- */
@@ -474,19 +520,30 @@ func (ForStmt) stmtNode() {}
 
 func (n ForStmt) Position() Position { return n.Pos }
 
-// MatchArm is one alternative of a match: a literal to compare against, or a
-// wildcard, and the statements to run.
+// MatchArm is one alternative of a match: a pattern, or a wildcard, and the
+// statements to run.
+//
+// A pattern is an expression read as a shape: a literal compares, a variant of
+// an enum (`Shape.Circle`, or `Circle` against a value of that enum) tests the
+// variant, and the values written inside it — `Shape.Circle(r)`,
+// `Shape.Rect { w, h }` — bind names, compare literals, or nest further
+// patterns. `_` stands for anything, as an arm or as one value inside one.
 type MatchArm struct {
+	Node
 	Pattern  Expr // nil when Wildcard
 	Wildcard bool
 	Body     []Stmt
 }
 
-// MatchStmt runs the first arm whose pattern equals Value, or the wildcard.
+// MatchStmt runs the first arm whose pattern matches Value, or the wildcard.
 type MatchStmt struct {
 	Node
 	Value Expr
 	Arms  []MatchArm
+	// IfLet says the match was written `if let Pattern = value { } else { }`:
+	// one arm and the else as its wildcard. It is not checked for being
+	// exhaustive, because the else is what it does otherwise.
+	IfLet bool
 }
 
 func (MatchStmt) stmtNode() {}
@@ -577,6 +634,10 @@ type MemberExpr struct {
 	Node
 	Object Expr
 	Name   string
+	// TypeArgs are type arguments written on the object before the dot, as in
+	// `Option[u32].None`: the variant of a generic enum named with its
+	// specialisation.
+	TypeArgs []TypeExpr
 }
 
 func (MemberExpr) exprNode() {}

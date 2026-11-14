@@ -222,12 +222,35 @@ func emitGoStructForTarget(b *strings.Builder, structure ir.StructIR, isServer b
 	if len(fields) == 0 {
 		fields = structure.Fields
 	}
-	for _, field := range fields {
+	own, variants, shared := enumLayout(fields)
+	// A value stored by its own name is a field of its own in Go, which has no
+	// union: the layout the standard Option and Result had as structs.
+	own = append(own, shared...)
+	for _, field := range own {
 		goType := goTypeForIR(field.Type)
 		if goType == "" {
 			goType = "any"
 		}
 		fmt.Fprintf(b, "\t%s %s\n", goFieldName(field.Name), goType)
+	}
+	// An enum's variants are a struct each, reached as `as.<Variant>`, the
+	// same path the C union gives them. Go has no union, so they sit side by
+	// side; a value holds one variant at a time all the same, and copying it
+	// copies all of them, which is the value semantics C has.
+	if len(variants) > 0 {
+		b.WriteString("\tas struct {\n")
+		for _, variant := range variants {
+			fmt.Fprintf(b, "\t\t%s struct {\n", goFieldName(variant.name))
+			for _, field := range variant.fields {
+				goType := goTypeForIR(field.Type)
+				if goType == "" {
+					goType = "any"
+				}
+				fmt.Fprintf(b, "\t\t\t%s %s\n", goFieldName(field.Name), goType)
+			}
+			b.WriteString("\t\t}\n")
+		}
+		b.WriteString("\t}\n")
 	}
 	b.WriteString("}\n")
 }

@@ -185,7 +185,7 @@ func TestBrokenProgramsAreReportedWhereTheMistakeIs(t *testing.T) {
 func TestTheEditorSeesWhatTheBuildRefuses(t *testing.T) {
 	root, _ := filepath.Abs(filepath.Join("testdata", "diagnostics"))
 	repo, _ := filepath.Abs("..")
-	for _, name := range []string{"included", "nested", "imported", "stdmisuse", "generic", "several", "cascade", "parse", "lex", "included_parse"} {
+	for _, name := range []string{"included", "nested", "imported", "stdmisuse", "generic", "several", "cascade", "parse", "lex", "included_parse", "enums"} {
 		caseDir := filepath.Join(root, name)
 		t.Run(name, func(t *testing.T) {
 			entry := filepath.Join(caseDir, "src", "main.rho")

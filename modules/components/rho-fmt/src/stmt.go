@@ -105,6 +105,22 @@ func printStmt(b *strings.Builder, stmt ast.Stmt, depth int) {
 		b.WriteString(pad + "}\n")
 
 	case ast.MatchStmt:
+		// `if let` is a match of one arm and a wildcard, and is printed as it
+		// was written.
+		if x.IfLet && len(x.Arms) == 2 && !x.Arms[0].Wildcard && x.Arms[1].Wildcard {
+			b.WriteString(pad + "if let ")
+			printExpr(b, x.Arms[0].Pattern, 0)
+			b.WriteString(" = ")
+			printExpr(b, x.Value, 0)
+			b.WriteString(" {\n")
+			printStmts(b, x.Arms[0].Body, depth+1)
+			if len(x.Arms[1].Body) > 0 {
+				b.WriteString(pad + "} else {\n")
+				printStmts(b, x.Arms[1].Body, depth+1)
+			}
+			b.WriteString(pad + "}\n")
+			return
+		}
 		b.WriteString(pad + "match ")
 		printExpr(b, x.Value, 0)
 		b.WriteString(" {\n")
