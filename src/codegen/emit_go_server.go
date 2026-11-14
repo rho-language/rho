@@ -245,7 +245,11 @@ func goServerLifecycle(cfg ServerConfig) string {
 	b.WriteString("// serverAddr returns the listen address, overridable with RHO_HTTP_ADDR.\n")
 	b.WriteString("func serverAddr() string {\n")
 	b.WriteString("\tif addr := os.Getenv(\"RHO_HTTP_ADDR\"); addr != \"\" {\n\t\treturn addr\n\t}\n")
-	fmt.Fprintf(&b, "\treturn %q\n}\n\n", DefaultServerAddr)
+	defaultAddr := cfg.DefaultAddr
+	if defaultAddr == "" {
+		defaultAddr = DefaultServerAddr
+	}
+	fmt.Fprintf(&b, "\treturn %q\n}\n\n", defaultAddr)
 
 	b.WriteString("// StartServer runs the HTTP service until SIGINT or SIGTERM.\n")
 	b.WriteString("func StartServer(addr string) error {\n")

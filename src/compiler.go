@@ -2028,8 +2028,14 @@ func ResolveEntryPoint(arg string) (entry string, projectRoot string, err error)
 	}
 
 	// A directory: the manifest names the entry point.
-	manifest, manifestErr := deps.LoadManifest(deps.ManifestPath(absolute))
+	manifestPath := deps.ManifestPath(absolute)
+	manifest, manifestErr := deps.LoadManifest(manifestPath)
 	if manifestErr != nil {
+		// A folder with no manifest is told what makes one, not which legacy file
+		// was looked for last.
+		if _, statErr := os.Stat(manifestPath); os.IsNotExist(statErr) {
+			return "", "", fmt.Errorf("%s is not a Rho project: it has no module.yml (start one with `rho init <directory>`)", candidate)
+		}
 		return "", "", fmt.Errorf("%s is not a Rho project: %w", candidate, manifestErr)
 	}
 	if manifest.Main == "" {

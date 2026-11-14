@@ -171,6 +171,9 @@ type ServerConfig struct {
 	// Middleware lists the wrappers composed around the router, outermost
 	// first, in the order the target declared them.
 	Middleware []MiddlewareSpec
+	// DefaultAddr is where the service listens when RHO_HTTP_ADDR says
+	// nothing: loopback on the port its manifest names, or DefaultServerAddr.
+	DefaultAddr string
 }
 
 // Routed reports whether the target routes through a named router, rather than

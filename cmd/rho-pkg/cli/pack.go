@@ -52,6 +52,18 @@ func Main(args []string) int {
 	}
 
 	cmd := args[0]
+	// A flag is never a name: `rho pkg init --help` asks for help, and must not
+	// make a directory called --help.
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("usage: rho pkg <command> [args]")
+			fmt.Println("  init <name>          start a package directory")
+			fmt.Println("  pack [dir]           pack a module into a .rho-pkg")
+			fmt.Println("  unpack <file> [dir]  unpack a package")
+			fmt.Println("  inspect <file>       show what a package holds")
+			return 0
+		}
+	}
 
 	var err error
 	switch cmd {

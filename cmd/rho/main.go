@@ -116,6 +116,16 @@ func main() {
 		os.Exit(buildCLI(os.Args[2:]))
 
 	case "help":
+		// `rho help build` is the command's own help, as `rho build --help` is.
+		if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "-") {
+			self, err := os.Executable()
+			if err == nil {
+				command := exec.Command(self, os.Args[2], "--help")
+				command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+				_ = command.Run()
+				return
+			}
+		}
 		printHelp()
 
 	case "config":
@@ -763,6 +773,11 @@ func usableIncludeDirs(dirs []string) []string {
 
 func buildCLI(args []string) int {
 	fs := flag.NewFlagSet("rho build", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: rho build [flags] [<project-dir>|<file.rho>]")
+		fmt.Fprintln(fs.Output(), "Generates and builds every target the project's module.yml declares (default: the current directory).")
+		fs.PrintDefaults()
+	}
 	out := fs.String("o", "", "output C file (optional)")
 	// target restricts the build to a single descriptor target, which is how
 	// a test module asks for exactly the backend it can run.

@@ -34,3 +34,7 @@ column.
 Built against the manifest reader that knows providers (`type: provider`),
 interfaces and bindings. The 0.1.2 binary refused those manifests as unreadable,
 so a tree's provider modules were left out of its documentation.
+
+## [0.1.4] - 2026-11-14
+
+Built against rho 0.7.1, whose manifest reader knows a module's `sql:` block: the six RoboHub modules that declare one (appapi, inventory, journal, rules, scheduler, widgets) are documented again instead of skipped as unreadable.

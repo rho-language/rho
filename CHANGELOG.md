@@ -362,3 +362,13 @@ Safer defaults and fixes from a security and usability review.
 - A program's report file (`rho_exec`, `rho_exec_args`) is written owner-only, in an owner-only folder: a program's output may carry a secret.
 - `rho install --force` removes the toolchain — programs, standard library, components, plugins, local registry, caches — and keeps the credentials, the configuration, the keeper's and Mesh's state and the fetched toolchains, where it removed all of `~/.rho`.
 - `rho init` works in the folder it is run in (the default `--project .` was refused).
+
+## [0.7.2] - 2026-11-14
+
+Usability.
+
+- A generated service started by hand listens on loopback at the port its manifest names (`module.port`, else `deploy.port`), so the keeper comes up on 127.0.0.1:19090 and Mesh on 127.0.0.1:8478 as their documentation says.
+- `rho help <command>` shows that command's help; `rho build -h` says what it builds; the command list describes `build`, `run`, `install`, `protocol` and `env` as they are.
+- `rho pkg … --help` prints help instead of creating a directory named `--help`.
+- A folder with no `module.yml` is told so, and how to start one, instead of naming the legacy `rho.mod`.
+- rho-doc 0.1.4 reads manifests with a `sql:` block, so modules that declare one are documented.

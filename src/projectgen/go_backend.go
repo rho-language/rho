@@ -73,6 +73,9 @@ func EmitGoProject(ctx Context) (Artifacts, error) {
 		// How a service routes and what it wraps the router in is the
 		// descriptor's decision, so the backend reads it rather than choosing.
 		server := ServerConfigFor(ctx.Target)
+		if port := applicationPort(ctx.ProjectRoot); port != "" {
+			server.DefaultAddr = "127.0.0.1:" + port
+		}
 		artifacts.Server = codegen.EmitGoServer(ctx.IR, server)
 		artifacts.Entrypoint = codegen.EmitGoServerEntrypoint(ctx.IR)
 		// A server target still exposes the application entry point, so

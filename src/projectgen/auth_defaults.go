@@ -20,6 +20,7 @@ package projectgen
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"rho/src/deps"
@@ -74,6 +75,27 @@ func applicationAudience(projectRoot string) string {
 	}
 	if manifest, err := deps.LoadManifest(path); err == nil && manifest != nil {
 		return manifest.ModuleName
+	}
+	return ""
+}
+
+// applicationPort is the port an application says it listens on — `module.port`,
+// else `deploy.port` — or "" when it says none. A service started by hand then
+// comes up where its manifest and its documentation say, on this machine only.
+func applicationPort(projectRoot string) string {
+	data, err := os.ReadFile(deps.ManifestPath(projectRoot))
+	if err != nil {
+		return ""
+	}
+	root, err := yaml.Load(string(data))
+	if err != nil {
+		return ""
+	}
+	for _, port := range []string{root.Map["module"].Map["port"].Str, root.Map["deploy"].Map["port"].Str} {
+		port = strings.Trim(strings.TrimSpace(port), "\"'")
+		if n, convErr := strconv.Atoi(port); convErr == nil && n > 0 && n < 65536 {
+			return port
+		}
 	}
 	return ""
 }

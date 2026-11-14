@@ -38,18 +38,20 @@ import (
 // lets a machine with nothing installed still be told what it can do.
 func Core() []Command {
 	return []Command{
-		{Invocation: "run <file.rho>", Description: "Run a Rho program"},
-		{Invocation: "build <file.rho> [-o]", Description: "Compile Rho to C, and build it"},
+		{Invocation: "run [<project-dir>|<file.rho>]", Description: "Build and run a project (or one file)"},
+		{Invocation: "build [<project-dir>|<file.rho>]", Description: "Generate and build a project's targets (C, Go, Go service)"},
 		{Invocation: "init [<generator>] <directory>", Description: "Start a Rho application, or a project a module knows how to generate"},
 		{Invocation: "new <file.rho>", Description: "Start a Rho source file with its header: module name, description, author, date, licence"},
-		{Invocation: "install", Description: "Install Rho programming language"},
+		{Invocation: "install [--update|--force]", Description: "Install the toolchain; --update replaces it, --force reinstalls it keeping user data"},
 		{Invocation: "pkg <command>", Description: "Package management (init, pack, unpack, inspect)"},
 		{Invocation: "module <command>", Description: "Modules in the local registry"},
 		{Invocation: "plugin <command>", Description: "Plugins: list, enable, disable"},
 		{Invocation: "config <command>", Description: "Read and set configuration"},
 		{Invocation: "ide <editor> [dir]", Description: "Write what an editor reads: launch.json, tasks.json"},
 		{Invocation: "version", Description: "Print the Rho version"},
-		{Invocation: "help", Description: "Show this help"},
+		{Invocation: "protocol generate", Description: "Generate C, Go or Rho from protocol schemas"},
+		{Invocation: "env", Description: "Show the environment a build sees"},
+		{Invocation: "help [<command>]", Description: "Show this help, or a command's own"},
 	}
 }
 
