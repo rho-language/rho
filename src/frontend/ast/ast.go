@@ -653,6 +653,20 @@ func (IndexExpr) exprNode() {}
 
 func (n IndexExpr) Position() Position { return n.Pos }
 
+// SliceExpr is a sub-slice, `s[low..high]`: the elements from low up to, and
+// not including, high. Either bound may be left out — `s[..high]`, `s[low..]`,
+// `s[..]` — and is then the start or the length. It is a `Slice[T]` over the
+// same storage, on a `Slice[T]` or a fixed array `T[N]`.
+type SliceExpr struct {
+	Node
+	Object    Expr
+	Low, High Expr // nil when not written
+}
+
+func (SliceExpr) exprNode() {}
+
+func (n SliceExpr) Position() Position { return n.Pos }
+
 type CastExpr struct {
 	Node
 	Type  TypeExpr

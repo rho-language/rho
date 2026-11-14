@@ -112,9 +112,11 @@ uint32_t rho_strlen(const char* s)
     return s != NULL ? (uint32_t)strlen(s) : 0;
 }
 
+/* A NULL string is the empty one, as everywhere else in the runtime: the zero
+ * of a struct's string field is NULL in C and "" in Go, and they compare equal. */
 bool rho_str_eq(const char* a, const char* b)
 {
-    return a != NULL && b != NULL && strcmp(a, b) == 0;
+    return strcmp(a != NULL ? a : "", b != NULL ? b : "") == 0;
 }
 
 bool rho_str_starts_with(const char* s, const char* prefix)

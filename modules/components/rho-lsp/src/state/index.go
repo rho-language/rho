@@ -247,6 +247,14 @@ func (ix *Index) indexExpr(expr ast.Expr) {
 	case ast.IndexExpr:
 		ix.indexExpr(e.Object)
 		ix.indexExpr(e.Index)
+	case ast.SliceExpr:
+		ix.indexExpr(e.Object)
+		if e.Low != nil {
+			ix.indexExpr(e.Low)
+		}
+		if e.High != nil {
+			ix.indexExpr(e.High)
+		}
 	case ast.CastExpr:
 		ix.indexExpr(e.Value)
 	case ast.StructLiteralExpr:

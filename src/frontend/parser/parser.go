@@ -1268,6 +1268,9 @@ func (p *Parser) placeExpr(expr ast.Expr, at ast.Position) ast.Expr {
 	case ast.IndexExpr:
 		e.Pos = at
 		return e
+	case ast.SliceExpr:
+		e.Pos = at
+		return e
 	case ast.CastExpr:
 		e.Pos = at
 		return e
@@ -1299,9 +1302,20 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			expression = ast.MemberExpr{Object: expression, Name: p.name()}
 		case lexer.TokenLBracket:
 			application := p.bracketOpensApplication(expression)
+			at := p.position()
 			p.readToken()
+			// `s[..b]` and `s[..]`: a sub-slice from the start.
+			if p.current.Kind == lexer.TokenRange {
+				expression = p.parseSliceBounds(expression, nil, at)
+				continue
+			}
 			if p.current.Kind == lexer.TokenNumber || !application {
 				index := p.parseExpr(0)
+				// `s[a..b]` and `s[a..]`: a sub-slice.
+				if p.current.Kind == lexer.TokenRange {
+					expression = p.parseSliceBounds(expression, index, at)
+					continue
+				}
 				p.expect(lexer.TokenRBracket)
 				p.readToken()
 				expression = ast.IndexExpr{Object: expression, Index: index}
@@ -1402,6 +1416,23 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			return expression
 		}
 	}
+}
+
+// parseSliceBounds reads the rest of a sub-slice once its low bound (nil when
+// it was left out) has been read and the cursor is at `..`: the high bound, if
+// written, and the closing bracket.
+func (p *Parser) parseSliceBounds(object, low ast.Expr, at ast.Position) ast.Expr {
+	p.expect(lexer.TokenRange)
+	p.readToken()
+	var high ast.Expr
+	if p.current.Kind != lexer.TokenRBracket {
+		high = p.parseExpr(0)
+	}
+	p.expect(lexer.TokenRBracket)
+	p.readToken()
+	slice := ast.SliceExpr{Object: object, Low: low, High: high}
+	slice.Pos = at
+	return slice
 }
 
 // dottedName is a chain of names joined by dots, `a` or `a.B`, when an

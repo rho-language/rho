@@ -13,3 +13,11 @@ Initial release.
 ## [0.2.0] - 2026-11-14
 
 A new `rho-check` rule reports what the type checker refuses; `rho-parse` reports each broken declaration where it is.
+
+## [0.2.1] - 2026-11-14
+
+Rules walk into slice cuts (`s[a..b]`).
+
+## [0.2.1] - 2026-11-14
+
+Rules walk into slice cuts (`s[a..b]`).

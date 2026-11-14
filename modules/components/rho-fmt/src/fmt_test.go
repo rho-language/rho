@@ -258,3 +258,34 @@ fn main() void {
 		t.Errorf("formatting is not stable (%v):\n%s\n---\n%s", err, once, twice)
 	}
 }
+
+// A cut is printed as it was written, each bound present or left out, so
+// formatting a program that slices does not change what it slices.
+func TestFormatKeepsSubslices(t *testing.T) {
+	source := `module app
+
+fn main() void {
+    var buf: u32[8]
+    var s = buf[..0]
+    s = append(s, 1)
+    let a = buf[1..n + 1]
+    let b = s[2..]
+    let c = s[..]
+    let d = Slice.from_raw(&buf[0], 4)
+    print(int_to_str(a[0] + b[0] + c[0] + d[0]))
+}
+`
+	once, err := FormatSource(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"buf[..0]", "buf[1..n + 1]", "s[2..]", "s[..]", "Slice.from_raw(&buf[0], 4)", "s = append(s, 1)"} {
+		if !strings.Contains(once, want) {
+			t.Errorf("the formatted source has no %q:\n%s", want, once)
+		}
+	}
+	twice, err := FormatSource(once)
+	if err != nil || twice != once {
+		t.Errorf("formatting is not stable (%v):\n%s\n---\n%s", err, once, twice)
+	}
+}

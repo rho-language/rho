@@ -611,7 +611,7 @@ func (tc *TypeChecker) isEnumConstruction(expr ast.Expr, scope map[string]ir.Typ
 // exprTypeFor types a value written where a type is wanted: a variant of a
 // generic enum deduces from it, anything else is typed on its own.
 func (tc *TypeChecker) exprTypeFor(expr ast.Expr, scope map[string]ir.Type, want ir.Type) (ir.Type, error) {
-	if tc.isEnumConstruction(expr, scope) {
+	if tc.isEnumConstruction(expr, scope) || tc.literalForSlice(expr, want) {
 		typ, err := tc.exprTypeExpected(expr, scope, want)
 		if err != nil {
 			return typ, locate(err, expr.Position(), "")
@@ -623,7 +623,7 @@ func (tc *TypeChecker) exprTypeFor(expr ast.Expr, scope map[string]ir.Type, want
 
 // lowerExprFor is exprTypeFor's lowering.
 func (tc *TypeChecker) lowerExprFor(expr ast.Expr, scope map[string]ir.Type, want ir.Type) string {
-	if tc.isEnumConstruction(expr, scope) {
+	if tc.isEnumConstruction(expr, scope) || tc.literalForSlice(expr, want) {
 		return tc.lowerExprExpected(expr, scope, want)
 	}
 	return tc.lowerExpr(expr, scope)

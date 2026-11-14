@@ -546,6 +546,32 @@ func (cg *Codegen) emitFunctionSignature(fn ir.FuncIR) {
 	cg.b.WriteString(")")
 }
 
+// cZeroInitializer is what a local of a C type starts as when the program gave
+// it no value: 0 for a number, "" for a string (Go's zero string, and what the
+// runtime treats a NULL string as), NULL for a pointer and `{0}` for an array, a
+// struct or an enum that carries data.
+func cZeroInitializer(cType string) string {
+	trimmed := strings.TrimSpace(cType)
+	switch {
+	case strings.Contains(trimmed, "[0]"):
+		// An array of no elements has nothing to set, and C allows no
+		// initialiser element for it.
+		return ""
+	case strings.Contains(trimmed, "["):
+		return "{0}"
+	case trimmed == "const char*" || trimmed == "const char *":
+		return "\"\""
+	case strings.HasSuffix(trimmed, "*"):
+		return "NULL"
+	}
+	switch trimmed {
+	case "bool", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t",
+		"float", "double", "size_t", "uintptr_t", "int", "unsigned", "char":
+		return "0"
+	}
+	return "{0}"
+}
+
 func defaultValueFor(t ir.Type) string {
 	switch t.Kind {
 	case ir.TypeBool, ir.TypeU8, ir.TypeU16, ir.TypeU32, ir.TypeU64, ir.TypeI32, ir.TypeI64, ir.TypeF64, ir.TypeF32:
@@ -617,6 +643,11 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 				value = "(" + strings.TrimSuffix(instr.Type, "*") + "[])" + value
 			}
 			line += " = " + arenaKept(instr.Arena, value)
+		} else if zero := cZeroInitializer(instr.Type); zero != "" {
+			// A local declared without a value is the zero of its type, as it is
+			// in Go: `var x: u32` reads 0 and `var s: Shape` its first variant,
+			// never what was on the stack.
+			line += " = " + zero
 		}
 		cg.b.EmitLine(line + ";")
 

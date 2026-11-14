@@ -12,9 +12,9 @@ What a Rho value can be, and how a shape is built out of them.
 | `bool` | `true` or `false` |
 | `string` | A byte string: a literal, and what the built-in text functions take and return |
 | `Unit` | The type of nothing, a generic's default; written `void` at a signature |
-| `T[N]` | A fixed array of `N` elements, a value of its own |
-| `[T]` | A dynamic array: a Go slice, and on C a pointer to someone else's elements |
-| `Slice[T]` | A pointer and a length, from `std.core.slice` |
+| `T[N]` | A fixed array of `N` elements, a value whose length is part of its type |
+| `Slice[T]` | A pointer and a length: the sequence type, what a function takes and std uses |
+| `[T]` | A bare pointer to elements someone else owns, for C interfaces; it has no length |
 | `Ptr[T]` | In an `extern fn` signature, a C pointer; elsewhere a handle carrying an address |
 | `Option[T]` | A value that may be absent: the enum `None` or `Some(T)` |
 | `Result[T, E]` | A value, or an error: the enum `Err(E)` or `Ok(T)` |
@@ -38,12 +38,13 @@ leave it undefined:
 | `<<`, `>>` by a count the type is not wide enough for | 0, and for a signed `>>` the sign (-1 for a negative value). A right shift of a signed value is arithmetic. A count is not converted to the shifted type and a shift's type is its left operand's; a negative count is treated as its unsigned value, which is too large |
 | `/`, `%` by zero | The program stops: `rho: division by zero` on standard error and status 1 on a host, the platform's stop on a board |
 | The most negative value `/ -1` | Itself, with `% -1` giving 0 |
-| `a[i]` on a fixed array `T[N]`, or `s.ptr[i]` on a `Slice[T]` | The program stops when `i` is outside `[0, N)` or `[0, s.len)`: `rho: index 7 out of range [0,4)` |
+| `a[i]` on a fixed array `T[N]`, or `s[i]` (and `s.ptr[i]`) on a `Slice[T]` | The program stops when `i` is outside `[0, N)` or `[0, s.len)`: `rho: index 7 out of range [0,4)` |
+| `s[a..b]` on a `Slice[T]` or a fixed array | The program stops unless `0 <= a <= b <= len`: `rho: slice [1..5] out of range [0,3]` |
 
 A constant that makes one of these certain is refused at compile time: a shift
 by a constant count of at least the width (`shift count 32 overflows type u32`),
-a division by a constant zero, a constant index outside a fixed array, and a
-constant that does not fit the integer type it becomes (`u32(7 / -2)`,
+a division by a constant zero, a constant index outside a fixed array (or a
+constant cut bound past one), and a constant that does not fit the integer type it becomes (`u32(7 / -2)`,
 `let b: u8 = 300`, `b + 300` for a `u8` b: `constant -3 overflows u32`).
 
 The checks are cheap. On C each is an inline function beside the call, so with a
@@ -52,6 +53,10 @@ in an unsigned type and converted back, so nothing relies on `-fwrapv` or on a
 compiler flag a target might not pass. A bare pointer — `[T]`, or a `Ptr[T]`
 indexed directly — carries no length and is not checked, and neither is a
 `Slice[T]` read through a `ptr` taken out of it first.
+
+A local declared without a value, `var x: u32` or `var s: Shape`, is the zero
+of its type on both backends: 0, `false`, `""`, a struct of zeros, an enum's
+first variant, a `Slice[T]` of length 0, a null `Ptr[T]`.
 
 ## Option and Result
 
@@ -144,35 +149,96 @@ Generic declarations are templates, and they are instantiated rather than looked
 up through a table: every application of a declaration is a concrete function, so
 a call is a direct, inlinable call and there is no vtable to indirect through.
 
-## Arrays and slices
+## Arrays, slices and pointers
 
-A fixed array `T[N]` is a value: it is as long as the program declared, and the
-length is part of its type.
+There are three sequence types, each with one job.
 
-A dynamic array `[T]` is a view of elements somebody else owns. Making one costs
-nothing, and there is no resizing on C:
+A **fixed array** `T[N]` is a value: as long as the program declared, with the
+length part of its type, so `len(a)` is the constant `N` and a constant index
+past the end is refused when the program is compiled. It converts to the other
+two where one is wanted: to a `Slice[T]` of all `N` elements, pointing at the
+array, and to a `[T]`, the pointer to its first element.
+
+A **`Slice[T]`** is a pointer and a length — `{ T* ptr; uint32_t len; }` in C and
+the same two fields in Go — and it is the idiomatic sequence: what a function
+takes when it is given elements, what the standard library takes, and what
+RoboHub's contracts are written in. The language provides it; no import is
+needed. On both backends alike:
+
+| Written | What it does |
+|---|---|
+| `s.len`, `len(s)` | the number of elements, a `u32` |
+| `s[i]` | element `i`, read or written; `i` outside `[0, s.len)` stops the program |
+| `s[a..b]`, `s[..b]`, `s[a..]`, `s[..]` | a `Slice[T]` of elements `a` to `b - 1`, over the same storage; unless `0 <= a <= b <= s.len` the program stops |
+| `for x in s` | each element in turn (`reverse` and `step` as for an array); `s` is read once, when the loop starts |
+| `s = append(s, v)`, `s = append(s, v, w)` | writes each value at `s[s.len]` and lengthens `s`; see below |
+| `Slice.from_raw(p, n)`, `Slice[T].from_raw(p, n)` | the `n` elements starting at `p`, a `Ptr[T]` or a `[T]`; nothing checks that they are there |
+| `let s: Slice[T] = buf`, `f(buf)` | a fixed array as a Slice of all of it |
+| `let s: Slice[T] = [1, 2, 3]` | an array literal as a Slice over storage of the block it is written in |
 
 ```rho
-fn first[T](items: [T]) T {
-    return items[0]
+fn sum(values: Slice[u32]) u32 {
+    var total: u32 = 0
+    for v in values {
+        total = total + v
+    }
+    return total
 }
 
-fn main() {
-    let primes: [u32] = [2, 3, 5]
-    print(int_to_str(first(primes)) + "\n")
+fn main() void {
+    var raw: u32[6] = [1, 2, 3, 4, 5, 6]
+    print(int_to_str(sum(raw)) + " " + int_to_str(sum(raw[2..4])) + "\n")  // 21 7
 }
 ```
 
-Declaring one, a literal, indexing and passing work on both backends. On Go a
-`[T]` is a slice, so `len`, `for` and `append` work on it. On C it is a bare
-pointer, which carries no length, so those three are Go-only; `len` on one stops a
-C build with the call named. `len` of a fixed-size array `T[N]` is `N` on both.
+A `s[i]` and a cut read the slice twice — its pointer and its length — and a cut
+reads its bounds twice, so they are written over names: `f()[i]` and
+`s[next()..]` are refused with a request to bind the value first.
 
-`Slice[T]` from `std.core.slice` is a struct of a `Ptr[T]` and a `len`. A
-function that has to know how many elements it was given on both backends takes
-one. Reading or writing `s.ptr[i]` checks `i` against `s.len`, and an index
-into a fixed array against its length; an index into a `[T]` is not checked,
-because a `[T]` on C has no length to check it against.
+**append** has to put the element somewhere, and the C backend has no heap: the
+only memory it manages is the string arena, released in bulk where the program's
+text makes that safe, and a board's arena is a fixed size. So a slice grows into
+the fixed array it was cut from, and nowhere else:
+
+```rho
+var buf: u32[16]
+var readings = buf[..0]          // empty, capacity 16
+readings = append(readings, 7)
+readings = append(readings, 8, 9)
+readings = readings[..0]         // empty again, the same 16 slots
+```
+
+The capacity is the `N` of the array, which the compiler knows because it knows
+the array: `append` is accepted on a slice declared in the same function from a
+fixed array, starting at its first element (`buf`, `buf[..n]` or `buf[0..n]`),
+and afterwards assigned only `append(s, ...)`, a cut of itself from its start,
+or a fresh cut of the same array from its start. Appending to a full slice stops
+the program with `rho: append past capacity 16` on both backends. Anything else —
+a slice that is a parameter, a field, cut from the middle of an array, or
+reassigned from elsewhere — would need a capacity the slice does not carry, and
+is refused with what to write instead. A function that fills a caller's buffer
+takes it as a `Slice[T]`, writes `out[i]` and returns how many it wrote.
+
+A slice points at storage, so it must not outlive it. Returning a `Slice[T]` that
+points at the function's own fixed array, at a slice that grew into one, or at
+an array literal is refused: on C that memory is gone once the function returns.
+Storing such a slice where it outlives the function — in a struct the caller
+keeps, through a pointer — is not detected, and is the program's to avoid.
+
+Strings kept in a slice follow the string arena's rules (see {ref}`memory
+<language/index>`): a loop whose iterations append or store a string they built
+into a slice declared outside it is not released per iteration, and a `while`
+loop that does so is reported, a warning on a host and an error on a board.
+
+A **`[T]`** is a bare pointer — `T*` in C, 2 bytes on AVR, matching C's ABI — for
+C interfaces, DMA and MMIO buffers, and an unsized pointer handed to a callback.
+It has no length, so declaring one, a literal, indexing it (unchecked) and
+passing it work on both backends, and nothing that needs a length is offered: a
+cut `p[a..b]` is refused everywhere, and `len`, `for` and `append` on one stop a
+C build with the place named and the Slice to use. A Go build keeps those three,
+because a `[T]` is a Go slice there and Go-only programs (the `read_file`
+built-in returns one) use them. `Slice.from_raw(p, n)` is how a `[T]` gets a
+length.
 
 ## Structs
 

@@ -506,7 +506,7 @@ func (tc *TypeChecker) olderValue(value ast.Expr, declared map[string]bool) bool
 	switch v := value.(type) {
 	case ast.StringExpr, ast.NumberExpr, ast.BoolExpr:
 		return true
-	case ast.IdentifierExpr, ast.MemberExpr, ast.IndexExpr:
+	case ast.IdentifierExpr, ast.MemberExpr, ast.IndexExpr, ast.SliceExpr:
 		root := rootName(v)
 		if root == "" || declared[root] {
 			return false
@@ -531,6 +531,11 @@ func (tc *TypeChecker) olderValue(value ast.Expr, declared map[string]bool) bool
 // isReference is whether a variable of a type is a pointer or a slice: storage
 // somewhere else, which a write through it reaches.
 func (tc *TypeChecker) isReference(typ ir.Type) bool {
+	if _, isSlice := tc.sliceElement(typ); isSlice {
+		// A Slice[T] is a pointer and a length: an element written through it
+		// lands wherever it points.
+		return true
+	}
 	return typ.Kind == ir.TypePtr || typ.Kind == ir.TypeSlice
 }
 
@@ -582,6 +587,8 @@ func rootName(expr ast.Expr) string {
 		case ast.MemberExpr:
 			expr = e.Object
 		case ast.IndexExpr:
+			expr = e.Object
+		case ast.SliceExpr:
 			expr = e.Object
 		case ast.UnaryExpr:
 			if e.Op != "*" && e.Op != "&" {
@@ -783,6 +790,10 @@ func (tc *TypeChecker) exprAllocates(expr ast.Expr, scope map[string]ir.Type) bo
 		case ast.IndexExpr:
 			visit(v.Object)
 			visit(v.Index)
+		case ast.SliceExpr:
+			visit(v.Object)
+			visit(v.Low)
+			visit(v.High)
 		case ast.CastExpr:
 			visit(v.Value)
 		case ast.IfExpr:
@@ -913,6 +924,11 @@ func (tc *TypeChecker) containsString(typ ir.Type, depth int) bool {
 		return false
 	}
 	if element, isArray := arrayElementOf(typ); isArray {
+		return tc.containsString(element, depth+1)
+	}
+	// A Slice of strings holds them as much as an array does: a slice built in
+	// a statement may point at strings the statement built.
+	if element, isSlice := tc.sliceElement(typ); isSlice {
 		return tc.containsString(element, depth+1)
 	}
 	if typ.Kind != ir.TypeStruct {
@@ -1125,6 +1141,10 @@ func visitExpr(expr ast.Expr, visit func(ast.Expr)) {
 	case ast.IndexExpr:
 		visitExpr(e.Object, visit)
 		visitExpr(e.Index, visit)
+	case ast.SliceExpr:
+		visitExpr(e.Object, visit)
+		visitExpr(e.Low, visit)
+		visitExpr(e.High, visit)
 	case ast.CastExpr:
 		visitExpr(e.Value, visit)
 	case ast.StructLiteralExpr:

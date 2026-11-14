@@ -76,7 +76,7 @@ var checksSource string
 // checkedHelperNames are the helpers checks.h defines, which a program calls
 // where the type checker lowered an operation to one (types/checked.go).
 func checkedHelperNames() []string {
-	names := []string{"rho_index"}
+	names := []string{"rho_index", "rho_subslice", "rho_slice_len", "rho_append_at", "rho_raw_ptr", "rho_array_ptr"}
 	for _, suffix := range []string{"i8", "i16", "i32", "i64", "u8", "u16"} {
 		names = append(names, "rho_add_"+suffix, "rho_sub_"+suffix, "rho_mul_"+suffix, "rho_neg_"+suffix)
 	}

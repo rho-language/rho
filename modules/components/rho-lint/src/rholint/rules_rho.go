@@ -443,6 +443,14 @@ func countNamesIn(node any, names map[string]bool) {
 	case ast.IndexExpr:
 		countNamesIn(one.Object, names)
 		countNamesIn(one.Index, names)
+	case ast.SliceExpr:
+		countNamesIn(one.Object, names)
+		if one.Low != nil {
+			countNamesIn(one.Low, names)
+		}
+		if one.High != nil {
+			countNamesIn(one.High, names)
+		}
 	case ast.CastExpr:
 		countTypeNames(one.Type, names)
 		countNamesIn(one.Value, names)

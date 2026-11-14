@@ -73,7 +73,7 @@ fn show(b: BitSet, i: u32) void {
 
 fn main() void {
     var words: u64[2] = [0, 0]
-    let b: BitSet = bitset(&words[0], 2)
+    let b: BitSet = bitset(words)
     print("cap=" + int_to_str(capacity(b)))
     set(b, 0)
     set(b, 3)

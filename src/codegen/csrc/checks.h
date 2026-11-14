@@ -27,6 +27,8 @@
 
 RHO_NORETURN void rho_panic_index(int64_t i, int64_t n);
 RHO_NORETURN void rho_panic_div(void);
+RHO_NORETURN void rho_panic_slice(int64_t lo, int64_t hi, int64_t n);
+RHO_NORETURN void rho_panic_append(int64_t cap);
 
 /* An index into something whose length is known: a fixed array or a Slice. */
 static inline int64_t rho_index(int64_t i, int64_t n)
@@ -36,6 +38,43 @@ static inline int64_t rho_index(int64_t i, int64_t n)
     }
     return i;
 }
+
+/* A sub-slice s[lo..hi] of something n long: 0 <= lo <= hi <= n, or the
+ * program stops. The answer is the address of element lo — or p itself for an
+ * empty cut, so no address past the storage is ever formed. rho_subslice names
+ * the element type, which is how the address is counted in elements. */
+static inline void* rho_subslice_at(void* p, int64_t lo, int64_t hi, int64_t n, size_t size)
+{
+    if (lo < 0 || lo > hi || hi > n) {
+        rho_panic_slice(lo, hi, n);
+    }
+    return lo == hi ? p : (void*)((char*)p + (size_t)lo * size);
+}
+
+#define rho_subslice(T, p, lo, hi, n) ((T*)rho_subslice_at((void*)(p), (lo), (hi), (n), sizeof(T)))
+
+/* The length of s[lo..hi], once rho_subslice has checked the bounds. Counted
+ * unsigned, so a bound that has not been checked yet cannot overflow. */
+static inline uint32_t rho_slice_len(int64_t lo, int64_t hi)
+{
+    return (uint32_t)((uint64_t)hi - (uint64_t)lo);
+}
+
+/* Where append writes: the slice's length, while it is below the capacity of
+ * the fixed array the slice grows into. */
+static inline uint32_t rho_append_at(uint32_t len, uint32_t cap)
+{
+    if (len >= cap) {
+        rho_panic_append(cap);
+    }
+    return len;
+}
+
+/* The first element of a [T], which is the pointer it already is in C. */
+#define rho_raw_ptr(p) ((void*)(p))
+
+/* An array literal as storage of the block it is written in. */
+#define rho_array_ptr(T, ...) ((T[]){__VA_ARGS__})
 
 /* +, -, * and unary -: two's complement, at the type's width. */
 #define RHO_WRAPPING(S, T, U)                                                   \

@@ -47,12 +47,14 @@ appears below as open.
 | 30 | type checker | `.value` of an `Option[Ptr[T]]` was typed `Ptr[u8]` whatever it pointed at, so `use_thing(found.value)` was refused for a `Ptr[Thing]` parameter. | It is the pointer the Option holds. | `TestAnOptionalPointerIsStillThePointer` |
 | 31 | build | The prelude scan loaded `std.core.option` only for an outermost `Option[...]`: `Box[Option[u32]]`, `Option.None`, and a `match` or `for` body were not looked into, so Option was the built-in placeholder and its functions undefined. | Every application in a written type, a variant named by its enum, and every statement are scanned. parity: "enums: Option named only inside an application, and enum constants" |
 | 32 | rho-fmt | An `enum` was printed as `/* unprinted declaration */`, so formatting a schema dropped its enums. | Every enum form is printed, and `if let` and `Option[u32].None` with it. | `TestFormatKeepsEnumsAndPatterns`, `TestFormatterPreservesEveryRepoSource` |
+| 33 | C backend | A local declared without a value, `var x: u32` or `var s: Shape`, was uninitialised in C and zero in Go, so reading it before it was assigned printed different things (a garbage number; for an enum, an arbitrary variant). | It is initialised to the zero of its type: `0`, `""` for a string, `NULL` for a pointer, `{0}` for an array, a struct or an enum. | parity: "a local declared without a value is zero on both backends" |
+| 34 | type checker | An element of a fixed array of strings, `names[i]` of a `string[4]`, was typed `u8` — the byte of a string — so it could not be compared with a string or passed as one. | The length of an array is asked about before its kind. | parity: "a local declared without a value…", "slices: strings built in loops…" |
+| 35 | runtime (C) | `rho_str_eq` answered false when either side was `NULL`, the zero of a string field in C, while Go's zero string `""` equals `""`. | A `NULL` string is the empty string there, as everywhere else in the runtime. | parity: "a local declared without a value is zero on both backends" |
+| 36 | compiler: generics | A local of a type parameter in a generic body, `var out: T`, was declared as `T` in the C and the Go of every specialisation. | It is declared as the type the specialisation substitutes. | parity: "slices: a generic over Slice[T], a Slice field, and a module-level array" |
 
 ## Open
 
-| # | Where | What is wrong | Reproduction |
-|---|---|---|---|
-| 33 | C backend | A local declared without a value, `var x: u32` or `var s: Shape`, is uninitialised in C and zero in Go, so reading it before it is assigned prints different things (a garbage number; for an enum, an arbitrary variant). Found while adding enums; not an enum bug. | `var x: u32` then `print(int_to_str(x))`: C prints whatever was on the stack, Go prints 0. |
+None. An open entry is a row of `#`, where, what is wrong and a reproduction.
 
 A case added to the cross-backend suite with `diverges:` is a new open entry
 here.
@@ -78,6 +80,19 @@ one expression or a block; `print` does not take an enum, and there is no
 variant-name function; `==` on an enum that carries data is refused rather than
 compared field by field; a variant is always written after its enum's name
 outside a pattern.
+
+Limitations of slices (Phase 3b): `append` grows a slice only into the fixed
+array it was declared from in the same function, starting at its first element,
+and is written only as `s = append(s, v)`; a slice that is a parameter or a field
+is not grown, and a function filling a caller's buffer writes `out[i]` and
+returns a count. `s[i]` and a cut need the slice (and a cut's bounds) to be names
+or arithmetic over them, since each is read twice. A returned Slice pointing at
+the function's own array or at an array literal is refused, but a slice of a
+local array stored into something that outlives the function is not detected.
+There is no `for i, x in s`. `Slice[T].len` is a `u32` (`uint32_t` in C), not a
+`size_t`: the language has no `usize`, and every existing use compares it with a
+`u32`. `len`, `for` and `append` on a `[T]` are kept on Go, where a `[T]` is a Go
+slice (`read_file` returns one, and Go-only tools use it), and refused on C.
 
 Diagnostics, recorded so they are not mistaken for bugs: a diagnostic carries
 where the mistake begins and not where it ends, so the editor underlines the

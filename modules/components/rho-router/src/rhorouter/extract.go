@@ -725,6 +725,14 @@ func walkCallArguments(expression ast.Expr, visit func(ast.Expr)) {
 	case ast.IndexExpr:
 		walkCallArguments(node.Object, visit)
 		walkCallArguments(node.Index, visit)
+	case ast.SliceExpr:
+		walkCallArguments(node.Object, visit)
+		if node.Low != nil {
+			walkCallArguments(node.Low, visit)
+		}
+		if node.High != nil {
+			walkCallArguments(node.High, visit)
+		}
 	case ast.CastExpr:
 		walkCallArguments(node.Value, visit)
 	case ast.StructLiteralExpr:
@@ -760,6 +768,14 @@ func walkExpression(expression ast.Expr, visit func(ast.CallExpr)) {
 	case ast.IndexExpr:
 		walkExpression(node.Object, visit)
 		walkExpression(node.Index, visit)
+	case ast.SliceExpr:
+		walkExpression(node.Object, visit)
+		if node.Low != nil {
+			walkExpression(node.Low, visit)
+		}
+		if node.High != nil {
+			walkExpression(node.High, visit)
+		}
 	case ast.CastExpr:
 		walkExpression(node.Value, visit)
 	case ast.StructLiteralExpr:

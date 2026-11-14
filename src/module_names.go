@@ -711,6 +711,21 @@ func (names *moduleNames) expr(expression ast.Expr, at scope) (ast.Expr, error) 
 			return nil, err
 		}
 		return expr, nil
+	case ast.SliceExpr:
+		if expr.Object, err = names.expr(expr.Object, at); err != nil {
+			return nil, err
+		}
+		if expr.Low != nil {
+			if expr.Low, err = names.expr(expr.Low, at); err != nil {
+				return nil, err
+			}
+		}
+		if expr.High != nil {
+			if expr.High, err = names.expr(expr.High, at); err != nil {
+				return nil, err
+			}
+		}
+		return expr, nil
 	case ast.CastExpr:
 		if expr.Type, err = names.typeExpr(expr.Type, at); err != nil {
 			return nil, err

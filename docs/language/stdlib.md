@@ -7,7 +7,9 @@ copied here. A module is imported by its full name: `import std.core.option`.
 ## What it is made of
 
 Most of the library is plain Rho over values: structs passed whole, fixed
-arrays, and views over memory the caller owns. Where it needs something only a
+arrays, and views over memory the caller owns. A function that takes a sequence
+takes a `Slice[T]` ({ref}`language/types`), so a caller passes a fixed array, a
+cut of one, or `Slice.from_raw(p, n)`. Where it needs something only a
 host can do, it says so with an `extern fn` and leaves the implementation to
 the runtime, a port or the platform. Each section below says which of those it
 relies on.
@@ -54,7 +56,7 @@ The types every other module is built out of.
 | `std.core.option` | `enum Option[T] { None, Some(T) }`: `Some`, `None`, `is_some`, `is_none`, `value`, `unwrap` |
 | `std.core.result` | `enum Result[T, E = Unit] { Err(E), Ok(T) }`: `Ok`, `Err`, `is_ok`, `is_err`, `value`, `error`, `unwrap` |
 | `std.core.ptr` | The functions over the language's pointer `Ptr[T]`: `from_u64`, `to_u64`, `index` |
-| `std.core.slice` | `Slice[T]`: a pointer and a length, and `slice_empty` |
+| `std.core.slice` | `Slice[T]`: a pointer and a length, and `slice_empty`. The language provides the type and its operations (`s[i]`, `s[a..b]`, `for`, `append`, `len`, `Slice.from_raw`) without an import |
 | `std.core.range` | `Range`: a half-open range of `u32`, with `range` and `next` (`Some(i)` while `start <= i < end`) |
 | `std.core.maybe_uninit` | `MaybeUninit[T]`: a value not yet written, with `uninit` and `assume_init` |
 | `std.core.builtin` | Nothing to call: a written account of the primitive types and the built-ins, which the compiler supplies. Importing it changes nothing |
@@ -94,7 +96,7 @@ over bytes it holds.
 | Module | What it carries |
 |---|---|
 | `std.collections.array` | `Array[T, N]`: a pointer to `N` elements, the count a type parameter, with `get`, `set` and `as_slice` |
-| `std.collections.bitset` | `BitSet`: a pointer to 64-bit words the caller owns and how many, built with `bitset(&words[0], n)`, with `capacity`, `set`, `clear` and `get`. An index past the last word is outside the set |
+| `std.collections.bitset` | `BitSet`: the 64-bit words the caller owns, built with `bitset(words)` from a `Slice[u64]` (a `u64[N]` converts to one), with `capacity`, `set`, `clear` and `get`. An index past the last word is outside the set |
 | `std.collections.map` | `Map[K, V, N]`: a fixed-capacity hash table of `N` slots, with `insert` and `get` |
 
 The map is plain Rho, with no port behind it. It uses open addressing with
@@ -167,12 +169,13 @@ thing on every architecture:
 |---|---|---|---|
 | `std.os.time` | `now()`, a `TimeSpec` of seconds and nanoseconds from the realtime clock | yes | yes |
 | `std.os.sys` | `exit(code)`, `setenv(key, value)` (replaces a value already set) | yes | yes |
-| `std.os.sys` | `write(fd, buf, len)`, `read(fd, buf, len)`: bytes moved, or `0xFFFFFFFF` on failure | yes | yes |
+| `std.os.sys` | `write(fd, buf)`, `read(fd, buf)` over a `Slice[u8]`: bytes moved, or `0xFFFFFFFF` on failure | yes | yes |
 | `std.os.fs` | `open(path, flags)` with the C library's `O_*` flags (a created file is mode 0644), `close(fd)` | yes | yes |
 
-The descriptor calls move bytes through a `Ptr[u8]`, which on both backends is
-the program's own memory: `write(fd, &buf[0], n)` writes an array's bytes where
-they are, and a path is a NUL-terminated `Ptr[u8]`. A hosted program that
+The descriptor calls move the bytes of a `Slice[u8]`, which on both backends is
+the program's own memory: `write(fd, buf)` writes a `u8[N]` array's bytes where
+they are, `write(fd, buf[..n])` the first `n` of them, and `read(fd, buf)` reads
+up to `buf.len`. A path is a NUL-terminated `Ptr[u8]`. A hosted program that
 handles text reads and writes whole files, runs programs and reads the clock
 with the runtime functions in {ref}`built-in functions <language/builtins>`,
 which both backends supply.

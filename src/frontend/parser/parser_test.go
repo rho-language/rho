@@ -524,3 +524,33 @@ func TestParseBitField(t *testing.T) {
 		t.Errorf("count is an ordinary field: %#v", structDecl.Fields[2])
 	}
 }
+
+// A cut `s[a..b]` is a SliceExpr, with a bound that was left out nil, and an
+// index is still an index.
+func TestParseSubslice(t *testing.T) {
+	source := "module app\nfn main() {\n  let a = s[1..n]\n  let b = s[..2]\n  let c = s[i..]\n  let d = s[..]\n  let e = s[i]\n  for x in buf[1..3] {\n  }\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := mod.Decls[0].(ast.FuncDecl)
+	for i, want := range []struct{ low, high bool }{{true, true}, {false, true}, {true, false}, {false, false}} {
+		cut, ok := fn.Body[i].(ast.LetStmt).Value.(ast.SliceExpr)
+		if !ok {
+			t.Fatalf("statement %d: expected a SliceExpr, got %T", i, fn.Body[i].(ast.LetStmt).Value)
+		}
+		if (cut.Low != nil) != want.low || (cut.High != nil) != want.high {
+			t.Errorf("statement %d: low %v high %v, want %v %v", i, cut.Low != nil, cut.High != nil, want.low, want.high)
+		}
+	}
+	if _, ok := fn.Body[4].(ast.LetStmt).Value.(ast.IndexExpr); !ok {
+		t.Errorf("s[i] should be an index, got %T", fn.Body[4].(ast.LetStmt).Value)
+	}
+	if _, ok := fn.Body[5].(ast.ForStmt).Collection.(ast.SliceExpr); !ok {
+		t.Errorf("a for over buf[1..3] should loop over a SliceExpr, got %T", fn.Body[5].(ast.ForStmt).Collection)
+	}
+}

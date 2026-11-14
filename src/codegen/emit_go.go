@@ -838,7 +838,9 @@ func EmitGoRuntime(implementation string) string {
 	// with the words the C runtime uses, rather than with a Go runtime panic.
 	usesDiv := strings.Contains(implementation, "rhoDiv[") || strings.Contains(implementation, "rhoMod[")
 	usesIndex := strings.Contains(implementation, "rhoIndex(")
-	if usesDiv || usesIndex {
+	usesSlice := strings.Contains(implementation, "rhoSubslice[") || strings.Contains(implementation, "rhoSliceLen(")
+	usesAppend := strings.Contains(implementation, "rhoAppendAt(")
+	if usesDiv || usesIndex || usesSlice {
 		body.WriteString("// rhoInteger is every integer type a checked operation takes.\n")
 		body.WriteString("type rhoInteger interface {\n\t~int8 | ~int16 | ~int32 | ~int64 | ~int | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uint | ~uintptr\n}\n\n")
 	}
@@ -852,6 +854,29 @@ func EmitGoRuntime(implementation string) string {
 		body.WriteString("// rhoIndex is an index checked against a length, which stops the program\n// when it is outside it.\n")
 		body.WriteString("func rhoIndex[I, N rhoInteger](i I, n N) I {\n\tif int64(i) < 0 || int64(i) >= int64(n) {\n")
 		body.WriteString("\t\tpanicf(\"index \" + strconv.FormatInt(int64(i), 10) + \" out of range [0,\" + strconv.FormatInt(int64(n), 10) + \")\")\n\t}\n\treturn i\n}\n\n")
+		imports = addGoImport(imports, "strconv")
+	}
+	if usesSlice {
+		// The Go half of types/slices.go: a sub-slice's bounds are checked as
+		// the C runtime checks them, and an empty cut keeps the pointer it was
+		// given, so no address past the storage is formed for the collector to
+		// find.
+		body.WriteString("// rhoSubslice is the address of element lo of something n long, once\n// 0 <= lo <= hi <= n has been checked.\n")
+		body.WriteString("func rhoSubslice[T any, L, H, N rhoInteger](p unsafe.Pointer, lo L, hi H, n N) unsafe.Pointer {\n")
+		body.WriteString("\tl, h, m := int64(lo), int64(hi), int64(n)\n")
+		body.WriteString("\tif l < 0 || l > h || h > m {\n")
+		body.WriteString("\t\tpanicf(\"slice [\" + strconv.FormatInt(l, 10) + \"..\" + strconv.FormatInt(h, 10) + \"] out of range [0,\" + strconv.FormatInt(m, 10) + \"]\")\n\t}\n")
+		body.WriteString("\tif l == h {\n\t\treturn p\n\t}\n")
+		body.WriteString("\tvar zero T\n\treturn unsafe.Add(p, uintptr(l)*unsafe.Sizeof(zero))\n}\n\n")
+		body.WriteString("// rhoSliceLen is the length of s[lo..hi], counted unsigned as C counts it.\n")
+		body.WriteString("func rhoSliceLen[L, H rhoInteger](lo L, hi H) uint32 {\n\treturn uint32(uint64(int64(hi)) - uint64(int64(lo)))\n}\n\n")
+		imports = addGoImport(imports, "strconv")
+		imports = addGoImport(imports, "unsafe")
+	}
+	if usesAppend {
+		body.WriteString("// rhoAppendAt is where append writes: the length, while it is below the\n// capacity of the fixed array the slice grows into.\n")
+		body.WriteString("func rhoAppendAt(n uint32, capacity uint32) uint32 {\n\tif n >= capacity {\n")
+		body.WriteString("\t\tpanicf(\"append past capacity \" + strconv.FormatUint(uint64(capacity), 10))\n\t}\n\treturn n\n}\n\n")
 		imports = addGoImport(imports, "strconv")
 	}
 

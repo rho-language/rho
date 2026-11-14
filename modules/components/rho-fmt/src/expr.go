@@ -57,7 +57,7 @@ func precedence(e ast.Expr) int {
 	case ast.UnaryExpr:
 		// A unary binds tighter than any binary but looser than a call.
 		return 6
-	case ast.CallExpr, ast.IndexExpr, ast.MemberExpr, ast.CastExpr, ast.StructLiteralExpr:
+	case ast.CallExpr, ast.IndexExpr, ast.SliceExpr, ast.MemberExpr, ast.CastExpr, ast.StructLiteralExpr:
 		return 7
 	case ast.IfExpr:
 		return 0
@@ -148,6 +148,19 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 		printExpr(b, x.Object, 7)
 		b.WriteString("[")
 		printExpr(b, x.Index, 0)
+		b.WriteString("]")
+
+	case ast.SliceExpr:
+		// A cut, `s[a..b]`, with either bound left out as it was written.
+		printExpr(b, x.Object, 7)
+		b.WriteString("[")
+		if x.Low != nil {
+			printExpr(b, x.Low, 0)
+		}
+		b.WriteString("..")
+		if x.High != nil {
+			printExpr(b, x.High, 0)
+		}
 		b.WriteString("]")
 
 	case ast.CastExpr:

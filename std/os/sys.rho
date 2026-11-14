@@ -1,9 +1,12 @@
 module std.os.sys
 
+import std.core.slice
+
 // The process, through the runtime: the C library's wrappers on the C backend
 // and the system calls on the Go backend, so the same call means the same thing
-// on every architecture. The descriptor calls move bytes through a Ptr[u8],
-// which on both backends is the program's own memory.
+// on every architecture. The descriptor calls move the bytes of a Slice[u8],
+// which on both backends is the program's own memory: a fixed array converts to
+// one, and Slice.from_raw(p, n) makes one of a pointer.
 extern fn rho_exit(code: u32)
 extern fn rho_fd_write(fd: u32, buf: Ptr[u8], len: u32) u32
 extern fn rho_fd_read(fd: u32, buf: Ptr[u8], len: u32) u32
@@ -13,14 +16,16 @@ fn exit(code: u32) void {
     rho_exit(code)
 }
 
-// write returns the number of bytes written, or 0xFFFFFFFF when it failed.
-fn write(fd: u32, buf: Ptr[u8], len: u32) u32 {
-    return rho_fd_write(fd, buf, len)
+// write writes the bytes of buf, and returns how many it wrote, or 0xFFFFFFFF
+// when it failed.
+fn write(fd: u32, buf: Slice[u8]) u32 {
+    return rho_fd_write(fd, buf.ptr, buf.len)
 }
 
-// read returns the number of bytes read, or 0xFFFFFFFF when it failed.
-fn read(fd: u32, buf: Ptr[u8], len: u32) u32 {
-    return rho_fd_read(fd, buf, len)
+// read reads up to buf.len bytes into buf, and returns how many it read, or
+// 0xFFFFFFFF when it failed.
+fn read(fd: u32, buf: Slice[u8]) u32 {
+    return rho_fd_read(fd, buf.ptr, buf.len)
 }
 
 // setenv sets an environment variable, replacing a value already set. It is the

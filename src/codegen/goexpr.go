@@ -318,6 +318,9 @@ func translateKnownCall(src []byte, start, nameEnd int, name string) (int, strin
 		return 0, "", false
 	}
 	args := splitTopLevel(string(src[pos+1 : close]))
+	if replacement, ok := translateSliceHelper(name, args); ok {
+		return close + 1, replacement, true
+	}
 	parts := make([]string, 0, len(args))
 	for _, arg := range args {
 		parts = append(parts, ToGoExpr(arg))
@@ -353,7 +356,7 @@ var checkedGoTypes = map[string]string{
 // checker lowers an operation to (types/checked.go): `rho_add_i32`,
 // `rho_shl_u8`, `rho_div_u64`, `rho_index`.
 func isCheckedHelper(name string) bool {
-	if name == "rho_index" {
+	if name == "rho_index" || sliceHelpers[name] {
 		return true
 	}
 	parts := strings.Split(name, "_")
@@ -1107,4 +1110,60 @@ func splitTernary(inner string) (cond, thenPart, elsePart string, ok bool) {
 		}
 	}
 	return "", "", "", false
+}
+
+// sliceHelpers are the helpers a Slice operation is lowered to
+// (types/slices.go), each rewritten as a whole call by translateSliceHelper.
+var sliceHelpers = map[string]bool{
+	"rho_subslice": true, "rho_slice_len": true, "rho_append_at": true,
+	"rho_raw_ptr": true, "rho_array_ptr": true,
+}
+
+// translateSliceHelper rewrites a Slice helper, whose first argument may be a
+// C type rather than an expression, from the call's arguments as written:
+//
+//	rho_subslice(T, p, lo, hi, n)   ->  rhoSubslice[GoT](p, lo, hi, n)
+//	rho_slice_len(lo, hi)           ->  rhoSliceLen(lo, hi)
+//	rho_append_at(len, cap)         ->  rhoAppendAt(len, cap)
+//	rho_raw_ptr(xs)                 ->  unsafe.Pointer(unsafe.SliceData(xs))
+//	rho_array_ptr(T, a, b)          ->  unsafe.Pointer(&[]GoT{a, b}[0])
+func translateSliceHelper(name string, args []string) (string, bool) {
+	if !sliceHelpers[name] {
+		return "", false
+	}
+	translated := func(from int) []string {
+		out := make([]string, 0, len(args))
+		for _, arg := range args[from:] {
+			out = append(out, ToGoExpr(arg))
+		}
+		return out
+	}
+	switch name {
+	case "rho_subslice":
+		if len(args) != 5 {
+			return "", false
+		}
+		return "rhoSubslice[" + goTypeForCName(args[0]) + "](" + strings.Join(translated(1), ", ") + ")", true
+	case "rho_slice_len":
+		if len(args) != 2 {
+			return "", false
+		}
+		return "rhoSliceLen(" + strings.Join(translated(0), ", ") + ")", true
+	case "rho_append_at":
+		if len(args) != 2 {
+			return "", false
+		}
+		return "rhoAppendAt(" + strings.Join(translated(0), ", ") + ")", true
+	case "rho_raw_ptr":
+		if len(args) != 1 {
+			return "", false
+		}
+		return "unsafe.Pointer(unsafe.SliceData(" + ToGoExpr(args[0]) + "))", true
+	case "rho_array_ptr":
+		if len(args) < 2 {
+			return "", false
+		}
+		return "unsafe.Pointer(&[]" + goTypeForCName(args[0]) + "{" + strings.Join(translated(1), ", ") + "}[0])", true
+	}
+	return "", false
 }

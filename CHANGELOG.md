@@ -464,3 +464,18 @@ Enums, with or without data. `enum Shape { Circle(i32), Rect { w: i32, h: i32 },
 `Option` and `Result` are language enums now (`enum Option[T] { None, Some(T) }`, `enum Result[T, E = Unit] { Err(E), Ok(T) }`), with their helpers; the field-style reads (`.is_some`, `.value`, `.is_ok`, `.ok`, `.err`) and struct-style literals keep working, and `Option[Ptr[T]]` is still a bare pointer in C. A protocol schema or a SQL column takes a plain enum as a number and refuses a data enum.
 
 Warnings reach `rho build` and the editor. Fixed: Go if-expressions over a call, `Option[Ptr[T]].value`'s type, nested prelude generics, and `rho fmt` dropping enums.
+
+## [0.14.0] - 2026-11-14
+
+`Slice[T]` is the everyday sequence, on both backends. A fixed array `T[N]` becomes a `Slice[T]` over all N elements wherever one is wanted (a `let`, an assignment, an argument, a return, a struct field), and still decays to `[T]`. A slice has `s.len` and `len(s)`, checked indexing, cuts `s[a..b]`, `s[..b]`, `s[a..]` and `s[..]` (checked `0 <= a <= b <= len`, stopping with `rho: slice [a..b] out of range [0,len]`), `for x in s` with `reverse` and `step`, and `Slice.from_raw(p, n)` over a `Ptr[T]` or a `[T]`. `append` grows a slice into the fixed array it was cut from: `var buf: u8[64]`, `var s = buf[..0]`, `s = append(s, v)`; past the array it stops with `rho: append past capacity 64` on both backends. A slice that would point at a function's own storage after it returns is refused.
+
+`[T]` stays a bare pointer: a cut of it is refused, and `len`, `for` and `append` of it are refused on C with a pointer to `Slice[T]` and `Slice.from_raw`.
+
+A C local declared without a value starts at zero (`0`, `""`, `NULL`, `{0}`), as on Go.
+
+### Breaking
+
+- `std.os.sys`: `write(fd, buf, len)` and `read(fd, buf, len)` take `buf: Slice[u8]` instead: `write(fd, buf[..n])`.
+- `std.collections.bitset`: `bitset(&words[0], n)` is `bitset(words)`, with `words` a `Slice[u64]` or a `u64[N]`.
+
+Fixed: an element of a `string[N]` was typed `u8`; `var x: T` in a generic body kept the name `T`; `Slice[T]` was not deduced from a fixed-array argument.

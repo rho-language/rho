@@ -464,6 +464,12 @@ func (tc *TypeChecker) unifyTypeArgs(typeParams []string, declared, actual ir.Ty
 	// and a generic function taking `Option[T]` has to be able to deduce its
 	// argument from one — otherwise `is_some(handle)` needs the caller to spell
 	// out the type the value already has.
+	// A fixed array is passed where a Slice is taken, so `Slice[T]` against
+	// `u32[4]` binds T to the array's element.
+	if declBase == "Slice" && declGeneric && len(declArgs) == 1 && isFixedArray(actual) && actual.Kind != ir.TypeSlice {
+		tc.unifyTypeArgs(typeParams, declArgs[0], elementType(actual), subs)
+		return
+	}
 	if declBase == "Option" && IsOptionalPointer(actual.Name) && len(declArgs) == 1 {
 		// The pointer is named as every pointer is, `Ptr[X]`: bound under its
 		// payload's name, `value(handle)` was typed as the struct it points to.
@@ -828,7 +834,10 @@ func (tc *TypeChecker) funcToSpecialisation(fn ast.FuncDecl, subs map[string]ir.
 	tc.currentTypeArgs = subs
 	tc.currentReturnHint = tc.typeFor(fn.ReturnType)
 	savedArena := tc.arenaEnter(tc.qualifiedName(fn.Owner, name), name, fn.Owner)
+	previousBackings := tc.backings
+	tc.backings = sliceBackings(fn.Body, fn.Params)
 	body := tc.lowerStatements(fn.Body, scope)
+	tc.backings = previousBackings
 	tc.arenaLeave(savedArena)
 	tc.currentTypeArgs = previous
 
@@ -1117,6 +1126,14 @@ func (tc *TypeChecker) scanExpr(expr ast.Expr) {
 	case ast.IndexExpr:
 		tc.scanExpr(expr.Object)
 		tc.scanExpr(expr.Index)
+	case ast.SliceExpr:
+		tc.scanExpr(expr.Object)
+		if expr.Low != nil {
+			tc.scanExpr(expr.Low)
+		}
+		if expr.High != nil {
+			tc.scanExpr(expr.High)
+		}
 	case ast.CastExpr:
 		tc.scanExpr(expr.Value)
 	case ast.ArrayLiteralExpr:

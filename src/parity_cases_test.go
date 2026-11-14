@@ -539,12 +539,12 @@ fn main() void {
 `,
 		want: "42 42 2,7 99,98,100 9 5 5",
 	},
-	// The descriptor calls of std.os.sys and std.os.fs move bytes through a
-	// Ptr[u8], which on both backends is the program's own memory: the bytes
-	// written are an array's, and the bytes read land in another. The program
+	// The descriptor calls of std.os.sys move the bytes of a Slice[u8], which on
+	// both backends is the program's own memory: the bytes written are an
+	// array's, and the bytes read land in another. The program
 	// runs in a directory of its own, so the file it makes is its own too.
 	{
-		name: "std.os: descriptor open, write, close and read through Ptr[u8]",
+		name: "std.os: descriptor open, write, close and read through a Slice[u8]",
 		source: `module app
 
 import std.os.sys
@@ -560,11 +560,11 @@ fn main() void {
         print("open failed")
         return
     }
-    let wrote: u32 = write(opened.ok, &text[0], 5)
+    let wrote: u32 = write(opened.ok, text)
     close(opened.ok)
     var back: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
     let reopened: Result[u32, u32] = open(&path[0], 0)
-    let got: u32 = read(reopened.ok, &back[0], 8)
+    let got: u32 = read(reopened.ok, back)
     close(reopened.ok)
     print("wrote=" + int_to_str(wrote) + " read=" + int_to_str(got) + " bytes=")
     var i: u32 = 0
@@ -572,7 +572,7 @@ fn main() void {
         print(int_to_str(u32(back[i])) + ",")
         i = i + 1
     }
-    print(" bad=" + int_to_str(read(9999, &back[0], 8)))
+    print(" bad=" + int_to_str(read(9999, back[..])))
 }
 `,
 		want: "wrote=5 read=5 bytes=104,101,108,108,111, bad=4294967295",
@@ -588,13 +588,13 @@ fn main() void {
     let fd: i32 = rho_fd_open("/dev/null", 1)
     let line: u8[3] = [111, 107, 10]
     if fd >= 0 {
-        let n: u32 = write(u32(fd), &line[0], 3)
+        let n: u32 = write(u32(fd), line)
         close(u32(fd))
         if n == 3 {
-            write(1, &line[0], 3)
+            write(1, line)
         }
     }
-    write(1, Ptr[u8](0), 0)
+    write(1, Slice.from_raw(Ptr[u8](0), 0))
 }
 `,
 		want: "ok\n",

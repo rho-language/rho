@@ -114,6 +114,13 @@ type TypeChecker struct {
 	// `default(T)` resolve against concrete types.
 	currentTypeArgs map[string]ir.Type
 
+	// backings are the local slices of the function being checked or lowered
+	// that append may grow, and the fixed array each grows into (slices.go).
+	backings map[string]*sliceBacking
+	// appendAllowed says the expression being checked is the value of
+	// `s = append(s, ...)`, the one place append on a Slice is written.
+	appendAllowed bool
+
 	// currentReturnHint is the enclosing function's declared return type, used
 	// as a deduction hint while lowering a return expression.
 	currentReturnHint ir.Type
@@ -653,6 +660,9 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	if tc.collect != nil {
 		reported = len(tc.collect.errors) + tc.collect.omitted
 	}
+	previousBackings := tc.backings
+	tc.backings = sliceBackings(fn.Body, fn.Params)
+	defer func() { tc.backings = previousBackings }()
 	terminates, err := tc.checkStatements(fn.Body, scope, tc.typeFor(fn.ReturnType), false)
 	if err != nil {
 		return fmt.Errorf("function %s: %w", fn.Name, err)
@@ -926,6 +936,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if err != nil {
 			return ir.Type{}, err
 		}
+		if element, isSlice := tc.sliceElement(object); isSlice {
+			return tc.sliceIndexType(value, element, scope)
+		}
 		if _, err := tc.exprType(value.Index, scope); err != nil {
 			return ir.Type{}, err
 		}
@@ -933,6 +946,8 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			return ir.Type{}, err
 		}
 		return elementType(object), nil
+	case ast.SliceExpr:
+		return tc.subsliceType(value, scope)
 	case ast.CastExpr:
 		if _, err := tc.exprType(value.Value, scope); err != nil {
 			return ir.Type{}, err
@@ -949,6 +964,14 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		return converted, nil
 	case ast.CallExpr:
+		// `Slice.from_raw(p, n)`: a pointer given a length.
+		if written, ok := tc.isFromRaw(value, scope); ok {
+			return tc.fromRawType(value, written, scope)
+		}
+		// `append(s, v)` on a Slice grows it into its fixed array.
+		if target, ok := tc.isSliceAppend(value, scope); ok {
+			return tc.appendType(value, target, scope)
+		}
 		// `Shape.Circle(3)`: a variant built from its values.
 		if construct, ok := tc.enumConstruction(value, scope); ok {
 			return tc.enumConstructionType(construct, scope, expected)
@@ -1236,6 +1259,28 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		}
 		return typ, nil
 	case ast.ArrayLiteralExpr:
+		// A literal written where a Slice is wanted is a Slice over storage of
+		// the block it is written in: `let s: Slice[u8] = [1, 2, 3]`.
+		if element, isSlice := tc.sliceElement(expected); isSlice {
+			if value.Repeat != nil {
+				if _, constant := constIntValue(*value.Repeat); !constant {
+					return ir.Type{}, fmt.Errorf("the count of a `[value; count]` literal must be a constant")
+				}
+			}
+			for _, item := range value.Values {
+				itemType, itemErr := tc.exprTypeExpected(item, scope, element)
+				if itemErr != nil {
+					return ir.Type{}, itemErr
+				}
+				if !assignable(element, itemType) {
+					return ir.Type{}, locate(fmt.Errorf("array literal element is %s, want %s", typeName(itemType), typeName(element)), item.Position(), "")
+				}
+				if err := checkConstantFits(item, element); err != nil {
+					return ir.Type{}, err
+				}
+			}
+			return tc.sliceOf(element), nil
+		}
 		// A repeat or empty literal adopts the array type it is written
 		// against: `[0; 512]` is how a u8[512] buffer starts, and `[]` is how an
 		// empty [u8] does. The element type is the declared one, which a bare
@@ -1424,7 +1469,9 @@ func arrayElementOf(value ir.Type) (ir.Type, bool) {
 }
 
 func elementType(value ir.Type) ir.Type {
-	if value.Kind == ir.TypeString {
+	// A string is a run of bytes, and an array of strings is not: `string[4]`
+	// holds strings, so its length is asked about before its kind.
+	if value.Kind == ir.TypeString && value.ArrayLen == 0 && !isFixedArray(value) {
 		return ir.Type{Kind: ir.TypeU8, Name: "u8"}
 	}
 	if (value.Kind == ir.TypePtr || value.Kind == ir.TypeSlice) && len(value.Args) > 0 {
@@ -1731,6 +1778,10 @@ func assignable(want, got ir.Type) bool {
 		}
 		return assignable(want.Args[0], elementType(got))
 	}
+	// A fixed array converts to a Slice of all its elements, pointing at it.
+	if fixedArrayToSlice(want, got) {
+		return true
+	}
 	// Two pointers are the same type when they point at the same element. A
 	// program holds storage through `Slice[T].ptr` and passes that field to a
 	// foreign function — `Slice[SqlStmt].ptr` into `sql_prepare` — and a
@@ -2036,7 +2087,10 @@ func (tc *TypeChecker) funcToIR(fn ast.FuncDecl) ir.FuncIR {
 func (tc *TypeChecker) lowerFunctionBody(fn ast.FuncDecl, scope map[string]ir.Type) []ir.Instr {
 	previous := tc.currentReturnHint
 	tc.currentReturnHint = tc.typeFor(fn.ReturnType)
+	previousBackings := tc.backings
+	tc.backings = sliceBackings(fn.Body, fn.Params)
 	body := tc.lowerStatements(fn.Body, scope)
+	tc.backings = previousBackings
 	tc.currentReturnHint = previous
 	return body
 }
@@ -2221,8 +2275,8 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 		return tc.arenaWrapped(wrap, ir.Instr{
 			Op:       ir.OpLet,
 			Dest:     stmt.Name,
-			Type:     tc.cTypeForTypeName(declaredName),
-			TypeName: tc.writtenWithoutAliases(declaredName),
+			Type:     tc.letCType(declaredName),
+			TypeName: tc.letTypeName(declaredName),
 			Args:     []string{value},
 		})
 	case ast.AssignStmt:
@@ -2240,6 +2294,14 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 				rmw := fmt.Sprintf("((%s ^ (%s & (%d << %d))) | ((%s & %d) << %d))",
 					storage, storage, mask, field.Shift, value, mask, field.Shift)
 				return []ir.Instr{{Op: ir.OpAssign, Dest: storage, Args: []string{rmw}}}
+			}
+		}
+		// `s = append(s, v...)` on a Slice writes into its fixed array.
+		if call, isCall := stmt.Value.(ast.CallExpr); isCall && stmt.Op == "=" {
+			if _, isAppend := tc.isSliceAppend(call, scope); isAppend {
+				if target, isName := stmt.Target.(ast.IdentifierExpr); isName {
+					return tc.lowerAppend(target.Name, call, scope)
+				}
 			}
 		}
 		wrap := wrapNone
@@ -2344,6 +2406,22 @@ func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir
 	// The length is cast to i64 too, so a dynamic array's `len` — a u32 — and a
 	// fixed array's written number compare as the same type.
 	length := "(int64_t)(" + tc.lengthExpr(collectionName, collectionType) + ")"
+	elementAt := collectionName + "[" + indexName + "]"
+	if sliceElement, isSlice := tc.sliceElement(collectionType); isSlice {
+		// A Slice is evaluated once, into a temporary: it is a pointer and a
+		// length, cheap to copy, and the loop walks what it was when the loop
+		// began whatever the body does to the variable it came from.
+		element = sliceElement
+		sliceName := "rho_for_slice_" + suffix
+		out = append(out, ir.Instr{Op: ir.OpLet, Dest: sliceName, Type: tc.cTypeFor(collectionType), TypeName: typeName(collectionType),
+			Args: []string{tc.lowerExpr(stmt.Collection, scope)}})
+		scope[sliceName] = collectionType
+		length = "(int64_t)(" + sliceName + ".len)"
+		pointer := ir.Type{Kind: ir.TypePtr, Name: "Ptr[" + typeName(element) + "]", Args: []ir.Type{element}}
+		elementAt = tc.pointerElementAt(pointer, sliceName+".ptr", indexName)
+	} else if collectionType.Kind == ir.TypeSlice {
+		tc.refuseBarePointer(stmt.Pos, "for "+stmt.Name+" in "+writtenExpr(stmt.Collection), "for", stmt.Collection, collectionType)
+	}
 	start := "0"
 	condition := "(" + indexName + " < " + length + ")"
 	// The step, as an expression over the index. It is an assignment and not a
@@ -2399,7 +2477,7 @@ func (tc *TypeChecker) lowerFor(stmt ast.ForStmt, scope map[string]ir.Type) []ir
 	// the element, and the element is the one the index names before it moves.
 	body = append([]ir.Instr{
 		{Op: ir.OpLet, Dest: elementName, Type: tc.cTypeFor(element), TypeName: typeName(element),
-			Args: []string{collectionName + "[" + indexName + "]"}},
+			Args: []string{elementAt}},
 		{Op: ir.OpAssign, Dest: indexName, Args: []string{step}},
 	}, body...)
 
@@ -2552,6 +2630,13 @@ func (tc *TypeChecker) integerPrint(expr ast.Expr, scope map[string]ir.Type) (st
 // conversion is written out, in the cast spelling both backends read. A bare
 // literal is untyped and takes the type it meets.
 func (tc *TypeChecker) converted(lowered string, expr ast.Expr, scope map[string]ir.Type, target ir.Type) string {
+	// A fixed array or an array literal where a Slice is wanted.
+	if isSliceStruct(target) {
+		if slice, ok := tc.lowerToSlice(lowered, expr, scope, target); ok {
+			return slice
+		}
+		return lowered
+	}
 	// A string passed where a foreign function takes a `Ptr[u8]` — which the
 	// checker allows only at a foreign call — is the string's bytes. In C the
 	// string already is that pointer; Go has to give it a terminating byte.
@@ -2785,6 +2870,11 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		return tc.lowerExpr(expr.Object, scope) + "." + expr.Name
 	case ast.IndexExpr:
 		object, objectErr := tc.exprType(expr.Object, scope)
+		if objectErr == nil {
+			if element, isSlice := tc.sliceElement(object); isSlice {
+				return tc.lowerSliceIndex(expr, element, scope)
+			}
+		}
 		index := tc.lowerExpr(expr.Index, scope)
 		if objectErr == nil {
 			index = tc.checkedIndex(expr, object, index, scope)
@@ -2793,7 +2883,12 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			return tc.pointerElementAt(object, tc.lowerExpr(expr.Object, scope), index)
 		}
 		return tc.lowerExpr(expr.Object, scope) + "[" + index + "]"
+	case ast.SliceExpr:
+		return tc.lowerSubslice(expr, scope)
 	case ast.CallExpr:
+		if _, ok := tc.isFromRaw(expr, scope); ok {
+			return tc.lowerFromRaw(expr, scope)
+		}
 		if construct, ok := tc.enumConstruction(expr, scope); ok {
 			return tc.lowerEnumConstruction(construct, scope, expected)
 		}
@@ -2801,7 +2896,13 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			return lowered
 		}
 		if ident, ok := expr.Callee.(ast.IdentifierExpr); ok {
-			tc.noteBackendCall(ident.Name, expr.Pos)
+			// append on a `[T]` is Go's; a C build is refused with the Slice to
+			// use instead, rather than by the built-in's name alone.
+			if first, isBare := tc.firstArgBarePointer(ident.Name, expr, scope); isBare {
+				tc.refuseBarePointer(expr.Pos, "append("+writtenExpr(expr.Args[0])+", ...)", "append", expr.Args[0], first)
+			} else {
+				tc.noteBackendCall(ident.Name, expr.Pos)
+			}
 		}
 		// sizeof(T) is the size of a type, decided here rather than emitted:
 		// the number is the same on both backends, and a C `sizeof` and a Go
@@ -2872,6 +2973,7 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			}
 		}
 		callee := ""
+		var genericParams []ir.Type
 		if qualified, named, err := tc.qualifiedCall(expr.Callee, scope); named && err == nil {
 			// A qualified call is emitted under the name the module's function
 			// is emitted under; an extern under the name its header gave it.
@@ -2972,6 +3074,15 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 						TypeArgs: typeArgs,
 						IsStruct: false,
 					})
+					// The parameters at this specialisation, so an argument
+					// converts to what the specialisation takes: a fixed array
+					// passed where a Slice[T] is.
+					if decl, ok := tc.genericFuncs[identifier.Name]; ok && len(decl.TypeParams) == len(typeArgs) {
+						subs := tc.buildSubstitutionFromTypes(decl.TypeParams, decl.TypeParamDefaults, typeArgs)
+						for _, param := range decl.Params {
+							genericParams = append(genericParams, tc.declaredTypeWith(param.Type, subs))
+						}
+					}
 				}
 				if decl, ok := tc.genericFuncs[identifier.Name]; ok {
 					callee = tc.qualifiedName(decl.Owner, mangled)
@@ -3001,6 +3112,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			}
 		}
 		params := tc.calleeParams(expr.Callee, expr.Args, scope)
+		if params == nil && len(genericParams) == len(expr.Args) {
+			params = genericParams
+		}
 		args := []string{}
 		for i, arg := range expr.Args {
 			want := ir.Type{}
@@ -3074,8 +3188,23 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			}
 			return "(" + mangleTypeName(name) + "){ " + strings.Join(packed, ", ") + " }"
 		}
-		for _, value := range expr.Values {
-			values = append(values, tc.lowerExpr(value, scope))
+		var fieldTypes []ir.Type
+		if decl, generic := tc.genericStructs[expr.Type.Name]; generic {
+			typeArgs := tc.resolveTypeArgs(expr.Type.Args)
+			if len(typeArgs) == 0 {
+				typeArgs = tc.applicationFor(expr, scope, expected)
+			}
+			fieldTypes = tc.structFieldTypes(decl.Name, typeArgs)
+		} else {
+			fieldTypes = tc.structFieldTypes(name, nil)
+		}
+		for i, value := range expr.Values {
+			lowered := tc.lowerExpr(value, scope)
+			// A field that is a Slice takes a fixed array or a literal as one.
+			if i < len(fieldTypes) && isSliceStruct(fieldTypes[i]) {
+				lowered = tc.converted(lowered, value, scope, fieldTypes[i])
+			}
+			values = append(values, lowered)
 		}
 		return "(" + mangleTypeName(name) + "){ " + strings.Join(values, ", ") + " }"
 	case ast.ArrayLiteralExpr:
@@ -3391,24 +3520,14 @@ func (tc *TypeChecker) lowerLen(call ast.CallExpr, scope map[string]ir.Type) (st
 	if n, fixed := fixedArrayLength(typ); fixed {
 		return "((uint32_t)" + strconv.Itoa(n) + ")", true
 	}
+	if _, isSlice := tc.sliceElement(typ); isSlice {
+		return "(" + tc.lowerExpr(arg, scope) + ").len", true
+	}
 	switch {
 	case typ.Kind == ir.TypeString:
 		return "rho_strlen(" + tc.lowerExpr(arg, scope) + ")", true
 	case typ.Kind == ir.TypeSlice:
-		written := "len(...)"
-		if identifier, ok := arg.(ast.IdentifierExpr); ok {
-			written = "len(" + identifier.Name + ")"
-		}
-		where := ""
-		if tc.owner != "" {
-			where = " (in " + tc.owner + ")"
-		}
-		tc.cRefusals = append(tc.cRefusals, ir.Refusal{
-			File: call.Pos.File, Line: call.Pos.Line, Column: call.Pos.Column,
-			Message: fmt.Sprintf("%s%s: a dynamic array %s is a bare pointer in C and carries no length, so len cannot measure it on a C target; "+
-				"use a fixed-size array (T[N]), whose length is part of its type, or a Slice[T] from std.core.slice, which carries its own",
-				written, where, typeName(typ)),
-		})
+		tc.refuseBarePointer(call.Pos, "len("+writtenExpr(arg)+")", "len", arg, typ)
 		return "len(" + tc.lowerExpr(arg, scope) + ")", true
 	}
 	return "", false
@@ -3451,7 +3570,7 @@ func (tc *TypeChecker) intrinsicApplies(name string, intrinsic functionType, arg
 			// len's parameter is typed as anything, so its own types are named:
 			// a string, a dynamic array and a fixed-size array are what a
 			// backend's len measures.
-			if _, fixed := fixedArrayLength(got); !fixed && got.Kind != ir.TypeString && got.Kind != ir.TypeSlice {
+			if _, fixed := fixedArrayLength(got); !fixed && got.Kind != ir.TypeString && got.Kind != ir.TypeSlice && !isSliceStruct(got) {
 				return false
 			}
 			continue
@@ -4031,9 +4150,21 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 				}
 			}
 		}
+		if _, isCut := stmt.Target.(ast.SliceExpr); isCut {
+			return false, locate(fmt.Errorf("a sub-slice is a value, not storage: assign its elements one at a time, or assign the slice variable it came from"), stmt.Target.Position(), "")
+		}
 		actual, err := tc.exprType(stmt.Target, scope)
 		if err != nil {
 			return false, err
+		}
+		if call, isCall := stmt.Value.(ast.CallExpr); isCall {
+			if _, isAppend := tc.isSliceAppend(call, scope); isAppend {
+				if err := tc.checkAppendStatement(stmt, call, scope); err != nil {
+					return false, err
+				}
+				tc.appendAllowed = true
+				defer func() { tc.appendAllowed = false }()
+			}
 		}
 		value, err := tc.exprTypeFor(stmt.Value, scope, actual)
 		if err != nil {
@@ -4072,6 +4203,9 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 			}
 			if !assignable(result, actual) {
 				return false, locate(fmt.Errorf("cannot return %s from a function declared to return %s; %s", typeName(actual), typeName(result), conversionHint(actual, result)), stmt.Value.Position(), "")
+			}
+			if err := tc.checkSliceReturn(stmt.Value, result, scope); err != nil {
+				return false, err
 			}
 			if err := checkConstantFits(stmt.Value, result); err != nil {
 				return false, err
@@ -4122,6 +4256,9 @@ func (tc *TypeChecker) checkStatement(statement ast.Stmt, scope map[string]ir.Ty
 			return false, err
 		}
 		element, ok := arrayElementOf(collection)
+		if sliceElement, isSlice := tc.sliceElement(collection); isSlice {
+			element, ok = sliceElement, true
+		}
 		if !ok {
 			return false, locate(fmt.Errorf("for iterates an array, got %s; loop over a fixed array (T[N]), a [T] or a Slice[T], or count with `while`", typeName(collection)), stmt.Collection.Position(), "")
 		}

@@ -181,9 +181,11 @@ Stated plainly, because a reference that implies otherwise is worse than none:
 - No maps in the language. `std.collections.map` is a fixed-capacity table
   written in Rho.
 - No reflection.
-- On C, no length for a `[T]`. `len`, `for` and `append` over one are Go-only,
-  and an index into one is not checked; an index into a fixed array or a
-  `Slice[T]` is ({ref}`language/types`).
+- No length for a `[T]`, which is a bare pointer: `len`, `for` and `append`
+  over one are Go-only and a cut of one is refused. A `Slice[T]` carries its
+  length, is checked on every index and cut, and grows with `append` into the
+  fixed array it was cut from — not onto a heap, which a board does not have
+  ({ref}`language/types`).
 
 ## Where to go next
 

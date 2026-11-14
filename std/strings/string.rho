@@ -15,7 +15,7 @@ fn eq(a: String, b: String) bool {
     }
     let i: u32 = 0
     while i < a.len {
-        if a.ptr[i] != b.ptr[i] {
+        if a[i] != b[i] {
             return false
         }
         i = i + 1
@@ -34,7 +34,7 @@ fn find(haystack: String, needle: String) Option[u32] {
         let ok: bool = true
 
         while j < needle.len {
-            if haystack.ptr[i + j] != needle.ptr[j] {
+            if haystack[i + j] != needle[j] {
                 ok = false
                 break
             }
@@ -58,7 +58,7 @@ fn starts_with(s: String, prefix: String) bool {
 
     let i: u32 = 0
     while i < prefix.len {
-        if s.ptr[i] != prefix.ptr[i] {
+        if s[i] != prefix[i] {
             return false
         }
         i = i + 1
@@ -76,7 +76,7 @@ fn ends_with(s: String, suffix: String) bool {
     let i: u32 = 0
 
     while i < suffix.len {
-        if s.ptr[offset + i] != suffix.ptr[i] {
+        if s[offset + i] != suffix[i] {
             return false
         }
         i = i + 1
@@ -91,9 +91,9 @@ fn split(s: String, sep: u8, out: Slice[String]) u32 {
     let i: u32 = 0
 
     while i < s.len {
-        if s.ptr[i] == sep {
+        if s[i] == sep {
             if count < out.len {
-                out.ptr[count] = String{ s.ptr + start, i - start }
+                out[count] = s[start..i]
             }
             count = count + 1
             start = i + 1
@@ -103,7 +103,7 @@ fn split(s: String, sep: u8, out: Slice[String]) u32 {
 
     // ultimul segment
     if count < out.len {
-        out.ptr[count] = String{ s.ptr + start, s.len - start }
+        out[count] = s[start..]
     }
     count = count + 1
 

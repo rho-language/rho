@@ -49,6 +49,39 @@ void rho_panic_index(int64_t i, int64_t n)
     }
 }
 
+void rho_panic_slice(int64_t lo, int64_t hi, int64_t n)
+{
+    char message[112];
+    char digits[24];
+    char* out = message;
+    digits[23] = '\0';
+    out = rho_checks_append(out, "slice [");
+    out = rho_checks_append(out, rho_checks_decimal(&digits[23], lo));
+    out = rho_checks_append(out, "..");
+    out = rho_checks_append(out, rho_checks_decimal(&digits[23], hi));
+    out = rho_checks_append(out, "] out of range [0,");
+    out = rho_checks_append(out, rho_checks_decimal(&digits[23], n));
+    out = rho_checks_append(out, "]");
+    *out = '\0';
+    panicf(message);
+    for (;;) {
+    }
+}
+
+void rho_panic_append(int64_t cap)
+{
+    char message[64];
+    char digits[24];
+    char* out = message;
+    digits[23] = '\0';
+    out = rho_checks_append(out, "append past capacity ");
+    out = rho_checks_append(out, rho_checks_decimal(&digits[23], cap));
+    *out = '\0';
+    panicf(message);
+    for (;;) {
+    }
+}
+
 void rho_panic_div(void)
 {
     panicf("division by zero");

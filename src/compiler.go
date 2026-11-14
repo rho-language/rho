@@ -2211,6 +2211,12 @@ func preludeGenericsUsedBy(module *ast.Module) []string {
 		case ast.IndexExpr:
 			walkExpr(e.Object)
 			walkExpr(e.Index)
+		case ast.SliceExpr:
+			// A cut is a Slice whether or not the program wrote the type.
+			note("Slice[]")
+			walkExpr(e.Object)
+			walkExpr(e.Low)
+			walkExpr(e.High)
 		case ast.BinaryExpr:
 			walkExpr(e.Left)
 			walkExpr(e.Right)

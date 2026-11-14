@@ -1,1 +1,1 @@
-src/bytes.rho:5:12: error: this program cannot be built for C: len(data): a dynamic array [u8] is a bare pointer in C
+src/bytes.rho:5:12: error: this program cannot be built for C: len(data): data is [u8], a dynamic array that is a bare pointer in C

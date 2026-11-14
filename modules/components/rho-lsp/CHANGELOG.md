@@ -13,3 +13,11 @@ Initial release.
 ## [0.2.0] - 2026-11-14
 
 Diagnostics are the compiler's: a file is checked as part of its project (its manifest, its dependencies, the unsaved buffer), every error is shown at its own line and column with the whole token underlined, and notes arrive as related information. Fixed: every diagnostic was one line low.
+
+## [0.2.1] - 2026-11-14
+
+Slice cuts are indexed: names used inside `s[a..b]` are found, hovered and renamed.
+
+## [0.2.1] - 2026-11-14
+
+Slice cuts are indexed: names used inside `s[a..b]` are found, hovered and renamed.

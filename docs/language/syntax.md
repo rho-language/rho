@@ -123,7 +123,7 @@ fn identity[T](value: T) T {
     return value
 }
 
-fn first[T](items: [T]) T {
+fn first[T](items: Slice[T]) T {
     return items[0]
 }
 ```
@@ -207,8 +207,9 @@ let wide: u32 = u32(small)
 | `string` | a byte string |
 | `void` | nothing |
 | `Unit` | the type of nothing, a generic's default and a handle's element |
-| `[T]` | a dynamic array of `T` |
-| `T[N]` | a fixed array of `N` of `T` |
+| `T[N]` | a fixed array of `N` of `T`, its length part of its type |
+| `Slice[T]` | a pointer and a length: the sequence a function takes; see [slices](#slices) |
+| `[T]` | a bare pointer to `T`, for C interfaces; it has no length |
 | `Name[T]` | a generic type, such as `Option[u32]` |
 | `Name` of an `enum` | one of the enum's variants; see [enums](#enums) |
 | `Ptr[T]` | a pointer to a `T`; see [pointers](#pointers) |
@@ -371,7 +372,7 @@ fn count_odd(limit: u32) u32 {
 }
 ```
 
-`for` walks the elements of an array, binding each one:
+`for` walks the elements of a fixed array or a `Slice[T]`, binding each one:
 
 ```rho
 fn total(values: u32[4]) u32 {
@@ -528,10 +529,58 @@ with `[value; count]`; an empty literal takes the element type from the
 declaration:
 
 ```rho
-let primes: [u32] = [2, 3, 5]
+let primes: u32[3] = [2, 3, 5]
 let zeros: u32[4] = [0; 4]
+let some: Slice[u32] = [2, 3, 5]
 let empty: [u8] = []
 ```
+
+A local declared without a value is the zero of its type on every backend: `0`,
+`false`, `""`, a struct of zeros, an enum's first variant, a `Slice[T]` of
+length 0.
+
+## Slices
+
+`s[a..b]` cuts a `Slice[T]` or a fixed array into a `Slice[T]` of the elements
+from `a` up to, not including, `b`, over the same storage. Either bound may be
+left out: `s[..b]` starts at 0, `s[a..]` runs to the length, and `s[..]` is all
+of it. The bounds are checked, `0 <= a <= b <= len`, and a cut outside them
+stops the program (`rho: slice [1..5] out of range [0,3]`):
+
+```rho
+fn sum(values: Slice[u32]) u32 {
+    var total: u32 = 0
+    for v in values {
+        total = total + v
+    }
+    return total
+}
+
+fn main() void {
+    var raw: u32[6] = [1, 2, 3, 4, 5, 6]
+    let all: Slice[u32] = raw         // a fixed array converts to a Slice
+    let mid = all[1..4]               // 2, 3, 4
+    print(int_to_str(sum(mid[1..])))  // 7, a cut of a cut
+    print(int_to_str(mid.len + len(all)))
+    mid[0] = 9                        // raw[1] is 9 now
+}
+```
+
+`s[i]` reads or writes element `i`, checked against `s.len`. `append` grows a
+slice into the fixed array it was cut from, and is written as the statement
+`s = append(s, v)`, with one value or several:
+
+```rho
+var buf: string[8]
+var names = buf[..0]          // empty, room for 8
+names = append(names, "a")
+names = append(names, "b", "c")
+```
+
+`Slice.from_raw(p, n)` gives a pointer its length: `p` is a `Ptr[T]` or a `[T]`
+pointing at the first of `n` elements. {ref}`Arrays, slices and pointers
+<language/types>` says what each of the three sequence types is for, and what
+`append` can and cannot grow.
 
 `+` joins two strings as well as adding two numbers:
 
@@ -657,11 +706,18 @@ literal from an index.
   `defer`, `range`, `select`, `switch`, `case`, `default`, `interface`,
   `package`, `goto`, `fallthrough`) is refused, with the reason. Choose
   another name.
-- **The length of a dynamic array in C.** A `[T]` is a Go slice and a C
-  pointer. Declaration, a literal, indexing and passing one work on both; what
-  a bare pointer does not carry is its length, so `len`, `for` and `append`
-  over a `[T]` are Go-only. On C, `len` of a string fails at the link too; use
-  `strlen`. `std.core.slice`'s `Slice[T]` carries a pointer and a length.
+- **A `[T]` has no length.** A `[T]` is a bare pointer in C (and a Go slice in
+  Go). Declaration, a literal, indexing and passing one work on both; `len`,
+  `for`, `append` and a cut `[a..b]` need a length, so a C build refuses the
+  first three with the place named and the cut is refused everywhere. Use a
+  `Slice[T]`: a fixed array converts to one, and `Slice.from_raw(p, n)` makes
+  one of a pointer.
+- **There is no `for i, x in s`.** A loop that needs the index counts with
+  `while`, or walks `0..len` by hand.
+- **append grows into a fixed array, nowhere else.** `s = append(s, v)` needs
+  `s` declared in the same function from a fixed array, starting at its first
+  element (`var s = buf[..0]`), and changed only by `append` or by a cut back
+  from its start; anything else is refused with what to write.
 - **No casts as an index.** `values[u32(i)]` does not parse; `values[i as u32]`
   does.
 - **`test fn` is not syntax.** A `_test.rho` file marks its cases `test fn`,
