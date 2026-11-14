@@ -111,3 +111,21 @@ func TestAPublishedRecordIsTheBaseline(t *testing.T) {
 		t.Errorf("baseline = %+v, %v", baseline, found)
 	}
 }
+
+// A module named by a relative path reads the same exports as by an absolute
+// one: the declarations in the files its main includes are still its own.
+func TestARelativeRootReadsTheIncludedFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "shape", "src"), 0o755)
+	os.WriteFile(filepath.Join(dir, "shape", "module.yml"), []byte("module:\n  name: shape\n  type: module\n  version: 0.1.0\nmain: src/main.rho\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "shape", "src", "main.rho"), []byte("module shape\ninclude \"area.rho\"\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "shape", "src", "area.rho"), []byte("module shape.area\nfn area(w: u32, h: u32) u32 { return w * h }\n"), 0o644)
+	t.Chdir(dir)
+	set, err := Read("shape")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := set.Entries["area"]; !found {
+		t.Fatalf("a relative root lost the included declarations: %v", set.Entries)
+	}
+}

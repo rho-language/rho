@@ -262,8 +262,12 @@ The toolchain holds both sides to it:
   too: an application that writes `forms.Field` needs `Field` under `exports`.
   A value of a type the module keeps can still be passed around, as what an
   exported function returns; it just cannot be named or built outside.
-- Including another module by name, which pastes its whole source into the
-  includer, is reported with the import that replaces it.
+- A module that is included rather than imported shares the includer's
+  namespace, which it needs when it calls functions the application defines
+  (the host hooks a module documents). The language cannot keep its helpers
+  private then, so a build reports each call, from any file of the program, to
+  a function of such a module that its `exports` do not list. A name the calling
+  module defines itself is its own and is not reported.
 
 A module with no `exports` list lets every name through, which is how modules
 written before export lists keep working.

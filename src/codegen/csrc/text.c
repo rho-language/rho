@@ -365,6 +365,41 @@ char* rho_str_field(const char* s, const char* sep, uint32_t index)
     return rho_text_copy(at, end != NULL ? (size_t)(end - at) : strlen(at));
 }
 
+/* The text with every occurrence of `from` replaced by `to`; an empty `from`
+ * replaces nothing. */
+char* rho_str_replace(const char* s, const char* from, const char* to)
+{
+    if (s == NULL) {
+        return "";
+    }
+    if (from == NULL || from[0] == 0) {
+        return rho_text_copy(s, strlen(s));
+    }
+    if (to == NULL) {
+        to = "";
+    }
+    size_t from_n = strlen(from), to_n = strlen(to), count = 0;
+    for (const char* at = strstr(s, from); at != NULL; at = strstr(at + from_n, from)) {
+        count++;
+    }
+    size_t n = strlen(s) + count * to_n - count * from_n;
+    char* out = (char*)malloc(n + 1);
+    if (out == NULL) {
+        return "";
+    }
+    char* w = out;
+    const char* r = s;
+    for (const char* at = strstr(r, from); at != NULL; at = strstr(r, from)) {
+        memcpy(w, r, (size_t)(at - r));
+        w += at - r;
+        memcpy(w, to, to_n);
+        w += to_n;
+        r = at + from_n;
+    }
+    strcpy(w, r);
+    return out;
+}
+
 /* Where `"key"` is followed by a colon, the first character of its value. */
 static const char* rho_json_value_at(const char* doc, const char* key)
 {

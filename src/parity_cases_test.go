@@ -305,11 +305,12 @@ fn main() void {
     show("i64", i64_to_str(big) + " " + i64_to_str(0 - big) + " " + i64_to_str(0))
     show("from", i64_to_str(i64_from_str(" -42 ")) + " " + i64_to_str(i64_from_str("+7")) + " " + i64_to_str(i64_from_str("4x")) + " " + i64_to_str(i64_from_str("")))
     show("case", str_lower("Tank A-1") + " " + str_upper("Tank a-1"))
+    show("replace", str_replace("{n} of {n}", "{n}", "3") + " " + str_replace("aaa", "aa", "b") + " " + str_replace("keep", "", "x") + " " + str_replace("a-b", "-", ""))
     show("field", str_field("a|b||d", "|", 1) + "," + str_field("a|b||d", "|", 2) + "," + str_field("a|b||d", "|", 3) + "," + str_field("a|b", "|", 5) + "," + str_field("one::two", "::", 1))
     let doc: string = "{\"name\": \"Tank \\\"A\\\"\", \"total\":{\"power\": -12.5e1, \"n\":3}, \"list\":[1]}"
     show("json", json_str_field(doc, "name") + "|" + json_num_field(doc, "power") + "|" + json_num_field(doc, "n") + "|" + json_str_field(doc, "missing") + "|" + json_num_field(doc, "name"))
 }
 `,
-		want: "i64=[9000000000 -9000000000 0]from=[-42 7 0 0]case=[tank a-1 TANK A-1]field=[b,,d,,two]json=[Tank \"A\"|-12.5e1|3||]",
+		want: "i64=[9000000000 -9000000000 0]from=[-42 7 0 0]case=[tank a-1 TANK A-1]replace=[3 of 3 ba keep ab]field=[b,,d,,two]json=[Tank \"A\"|-12.5e1|3||]",
 	},
 }

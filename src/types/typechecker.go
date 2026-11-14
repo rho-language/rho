@@ -1299,6 +1299,7 @@ var intrinsicLowering = map[string]string{
 	"i64_to_str":      "rho_i64_to_str",
 	"i64_from_str":    "rho_i64_from_str",
 	"str_lower":       "rho_str_lower",
+	"str_replace":     "rho_str_replace",
 	"str_upper":       "rho_str_upper",
 	"str_field":       "rho_str_field",
 	"json_str_field":  "rho_json_str_field",
@@ -2912,6 +2913,11 @@ func init() {
 	intrinsicSignatures["i64_from_str"] = functionType{params: oneString, result: i64Type}
 	intrinsicSignatures["str_lower"] = functionType{params: oneString, result: stringResult}
 	intrinsicSignatures["str_upper"] = functionType{params: oneString, result: stringResult}
+	// str_replace is the text with every occurrence of one text put in another's place.
+	intrinsicSignatures["str_replace"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeString, Name: "string"}},
+		result: stringResult,
+	}
 	intrinsicSignatures["str_field"] = functionType{
 		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeU32, Name: "u32"}},
 		result: stringResult,
@@ -2970,7 +2976,7 @@ func init() {
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
 		"str_trim", "str_url_encode", "str_url_decode", "form_field",
 		"milli_valid", "milli_parse", "milli_format", "milli_round",
-		"i64_to_str", "i64_from_str", "str_lower", "str_upper", "str_field",
+		"i64_to_str", "i64_from_str", "str_lower", "str_upper", "str_field", "str_replace",
 		"json_str_field", "json_num_field", "app_workspace",
 		"f32_to_bits", "f32_from_bits", "f64_to_bits", "f64_from_bits",
 		"template_get", "template_has", "template_fill", "env_or", "getenv",

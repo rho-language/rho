@@ -1690,6 +1690,10 @@ func rhoYamlKeyLess(a, b string) bool {
 			needs: []string{"rhoStrTrim("},
 		},
 		{
+			call:  "rhoStrReplace(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
 			call:  "rhoJsonStrField(",
 			needs: []string{"rhoStrTrim("},
 		},

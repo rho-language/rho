@@ -231,6 +231,14 @@ func rhoStrField(s string, sep string, index uint32) string {
 	return parts[index]
 }
 
+// rhoStrReplace is s with every from replaced by to; an empty from replaces nothing.
+func rhoStrReplace(s, from, to string) string {
+	if from == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, from, to)
+}
+
 func rhoJSONValueAt(doc, key string) (string, bool) {
 	needle := "\"" + key + "\""
 	from := 0

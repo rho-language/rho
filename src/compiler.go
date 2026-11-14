@@ -848,6 +848,7 @@ func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*a
 		return nil, err
 	}
 	visited := map[string]bool{}
+	defer dropProgramExports(visited)
 	root, loadErr := loadModuleFile(entry, projectRoot, dependencyRoots, components, visited)
 	if loadErr != nil {
 		return nil, loadErr
@@ -861,6 +862,7 @@ func loadModuleGraphWithDependencies(entry string, dependencyRoots []string) (*a
 	if err := loadFeatureModules(root, entry, projectRoot, dependencyRoots, components, visited); err != nil {
 		return nil, err
 	}
+	checkProgramExports(visited)
 	for file := range visited {
 		root.LoadedFiles = append(root.LoadedFiles, file)
 	}
@@ -1198,12 +1200,6 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 				return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
 			}
 		}
-		// Including another module by name pastes its source into this one,
-		// every helper with it. A module that publishes an import name is meant
-		// to be imported; say so, once per build and module.
-		if !strings.ContainsAny(include.Path, "/\\") && !strings.HasSuffix(include.Path, ".rho") {
-			warnIncludedModule(include.Path, includePath)
-		}
 		included, err := loadModuleFile(includePath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			return nil, fmt.Errorf("include %q from %q: %w", include.Path, abs, err)
@@ -1211,6 +1207,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		merged.Decls = append(merged.Decls, included.Decls...)
 		merged.Features = append(merged.Features, included.Features...)
 	}
+	recordFileCalls(visited, abs, mod.Decls)
 	for _, imp := range mod.Imports {
 		// A module a declared dependency provides under this name comes first:
 		// its manifest says what it is imported as and what it exports.
@@ -1499,33 +1496,6 @@ func interfaceZero(result string) (string, error) {
 		return "0.0", nil
 	}
 	return "", fmt.Errorf("an interface function returns a string, a number, a bool or nothing")
-}
-
-// warnedIncludes keeps the warning about including another module to once per
-// module and build.
-var warnedIncludes = map[string]bool{}
-
-// warnIncludedModule says, when another module is included by name, how to use
-// it instead: by the import name its manifest publishes, when it publishes one.
-func warnIncludedModule(name, entry string) {
-	if warnedIncludes[name] {
-		return
-	}
-	warnedIncludes[name] = true
-	for dir := filepath.Dir(entry); ; {
-		if manifest, err := deps.LoadManifest(filepath.Join(dir, "module.yml")); err == nil && manifest != nil {
-			if manifest.Provides != nil && manifest.Provides.Import != "" {
-				fmt.Fprintf(os.Stderr, "warning: include %q pastes %s's source into this module; import %s instead, which uses only what it exports\n",
-					name, manifest.ModuleName, manifest.Provides.Import)
-			}
-			return
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return
-		}
-		dir = parent
-	}
 }
 
 // providedImport finds the module a declared dependency provides under an import

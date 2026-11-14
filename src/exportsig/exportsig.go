@@ -61,6 +61,11 @@ type Set struct {
 // a list, every function, type and constant it declares. An interface's
 // functions are part of the promise too: its providers implement them.
 func Read(root string) (Set, error) {
+	// The includes are followed by absolute path and kept to the ones under
+	// root, which a relative root cannot be compared with.
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
 	manifest, err := deps.LoadManifest(filepath.Join(root, "module.yml"))
 	if err != nil {
 		return Set{}, err

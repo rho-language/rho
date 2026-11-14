@@ -408,3 +408,11 @@ no `extends:` needed) is read when the project is generated. A port is Go source
 compiled into the project, as its sources are, so an application can keep one
 beside its code and version it with it — Mesh's telemetry store moved out of the
 RoboHub platform plugin this way.
+
+## [0.8.3] - 2026-11-14
+
+A build says when a file calls a function of another module in the program that the module does not list in `provides.exports`. An included module shares the program's namespace, so the language cannot keep its private functions private; the warning shows where a module's declared boundary is crossed, wherever in the program the call is. A name the calling module defines itself is its own and is not reported. The warning that told every include of such a module to import it instead is gone: a module that calls the application's hooks has to be included, and the calls that do cross its boundary are now named.
+
+`str_replace(text, from, to)` replaces every occurrence of one text with another, on both backends; an empty `from` replaces nothing. Modules carried copies of it.
+
+`rho module publish` given a relative path read no exports from a module whose main only includes its other files, and refused the release as removing all of them.
