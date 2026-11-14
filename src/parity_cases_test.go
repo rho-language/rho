@@ -292,4 +292,24 @@ fn main() void {
 `,
 		want: "trim=[a b]trim-empty=[]encode=[a%20b%26c%3Dd%2F%C3%A9~x]decode=[a b&c=d/é~x%2%zz]field-name=[Tank 1]field-temp=[24,5]field-empty=[]field-flag=[]field-none=[]field-encoded-key=[1]milli 24.5=[yes 24.5]milli 24,5=[yes 24.5]milli -0.25=[yes -0.25]milli +3=[yes 3]milli  7 =[yes 7]milli 1.23456=[yes 1.234]milli .5=[yes 0.5]milli 5.=[yes 5]milli =[no 0]milli -=[no 0]milli 1.2.3=[no 0]milli abc=[no 0]milli 1234567890123456=[no 0]format=[-1.5 20 0.001 0 -0.01]round=[2.35 -2.35 3 2.4 2.345]",
 	},
+	{
+		name: "numbers of any width, case, fields and flat JSON",
+		source: `module app
+
+fn show(label: string, value: string) void {
+    print(label + "=[" + value + "]")
+}
+
+fn main() void {
+    let big: i64 = 9000000000
+    show("i64", i64_to_str(big) + " " + i64_to_str(0 - big) + " " + i64_to_str(0))
+    show("from", i64_to_str(i64_from_str(" -42 ")) + " " + i64_to_str(i64_from_str("+7")) + " " + i64_to_str(i64_from_str("4x")) + " " + i64_to_str(i64_from_str("")))
+    show("case", str_lower("Tank A-1") + " " + str_upper("Tank a-1"))
+    show("field", str_field("a|b||d", "|", 1) + "," + str_field("a|b||d", "|", 2) + "," + str_field("a|b||d", "|", 3) + "," + str_field("a|b", "|", 5) + "," + str_field("one::two", "::", 1))
+    let doc: string = "{\"name\": \"Tank \\\"A\\\"\", \"total\":{\"power\": -12.5e1, \"n\":3}, \"list\":[1]}"
+    show("json", json_str_field(doc, "name") + "|" + json_num_field(doc, "power") + "|" + json_num_field(doc, "n") + "|" + json_str_field(doc, "missing") + "|" + json_num_field(doc, "name"))
+}
+`,
+		want: "i64=[9000000000 -9000000000 0]from=[-42 7 0 0]case=[tank a-1 TANK A-1]field=[b,,d,,two]json=[Tank \"A\"|-12.5e1|3||]",
+	},
 }

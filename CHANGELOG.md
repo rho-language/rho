@@ -372,3 +372,14 @@ Usability.
 - `rho pkg … --help` prints help instead of creating a directory named `--help`.
 - A folder with no `module.yml` is told so, and how to start one, instead of naming the legacy `rho.mod`.
 - rho-doc 0.1.4 reads manifests with a `sql:` block, so modules that declare one are documented.
+
+## [0.8.0] - 2026-11-14
+
+More of what every module carried a copy of is the toolchain's, the same on both
+backends: `i64_to_str` and `i64_from_str` (whole numbers of any width — `int_to_str`
+takes a u32), `str_lower` and `str_upper` (ASCII), `str_field(s, sep, index)` (one
+field of a separated line), `json_str_field` and `json_num_field` (the first value
+of a key in a flat JSON document), and `app_workspace()` — where an application
+keeps its data: `RHO_APP_WORKSPACE`, else `ROBOHUB_APP_WORKSPACE`, else
+`~/.rho/apps/<RHO_APP_NAME or the program's name>`, one rule instead of one per
+module.

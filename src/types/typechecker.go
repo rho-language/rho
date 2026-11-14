@@ -1296,6 +1296,14 @@ var intrinsicLowering = map[string]string{
 	"milli_parse":     "rho_milli_parse",
 	"milli_format":    "rho_milli_format",
 	"milli_round":     "rho_milli_round",
+	"i64_to_str":      "rho_i64_to_str",
+	"i64_from_str":    "rho_i64_from_str",
+	"str_lower":       "rho_str_lower",
+	"str_upper":       "rho_str_upper",
+	"str_field":       "rho_str_field",
+	"json_str_field":  "rho_json_str_field",
+	"json_num_field":  "rho_json_num_field",
+	"app_workspace":   "rho_app_workspace",
 	"int_to_str":      "rho_int_to_str",
 	"int_from_str":    "rho_int_from_str",
 	"f32_to_bits":     "rho_f32_to_bits",
@@ -2896,6 +2904,21 @@ func init() {
 		params: []ir.Type{{Kind: ir.TypeI64, Name: "i64"}, {Kind: ir.TypeU32, Name: "u32"}},
 		result: ir.Type{Kind: ir.TypeI64, Name: "i64"},
 	}
+	// Numbers of any width as text, ASCII case, one field of a separated line,
+	// a value of a flat JSON document, and where the application keeps its data:
+	// what every module carried a copy of.
+	i64Type := ir.Type{Kind: ir.TypeI64, Name: "i64"}
+	intrinsicSignatures["i64_to_str"] = functionType{params: []ir.Type{i64Type}, result: stringResult}
+	intrinsicSignatures["i64_from_str"] = functionType{params: oneString, result: i64Type}
+	intrinsicSignatures["str_lower"] = functionType{params: oneString, result: stringResult}
+	intrinsicSignatures["str_upper"] = functionType{params: oneString, result: stringResult}
+	intrinsicSignatures["str_field"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeString, Name: "string"}, {Kind: ir.TypeU32, Name: "u32"}},
+		result: stringResult,
+	}
+	intrinsicSignatures["json_str_field"] = functionType{params: twoStrings, result: stringResult}
+	intrinsicSignatures["json_num_field"] = functionType{params: twoStrings, result: stringResult}
+	intrinsicSignatures["app_workspace"] = functionType{params: []ir.Type{}, result: stringResult}
 	// str_from_byte renders one byte as a one-character string.
 	intrinsicSignatures["str_from_byte"] = functionType{
 		params: []ir.Type{{Kind: ir.TypeU8, Name: "u8"}},
@@ -2947,6 +2970,8 @@ func init() {
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
 		"str_trim", "str_url_encode", "str_url_decode", "form_field",
 		"milli_valid", "milli_parse", "milli_format", "milli_round",
+		"i64_to_str", "i64_from_str", "str_lower", "str_upper", "str_field",
+		"json_str_field", "json_num_field", "app_workspace",
 		"f32_to_bits", "f32_from_bits", "f64_to_bits", "f64_from_bits",
 		"template_get", "template_has", "template_fill", "env_or", "getenv",
 		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",

@@ -14,6 +14,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -177,4 +179,129 @@ func rhoMilliRound(milli int64, places uint32) int64 {
 		return -rounded
 	}
 	return rounded
+}
+
+// rhoI64ToStr writes a whole number of any sign.
+func rhoI64ToStr(value int64) string { return strconv.FormatInt(value, 10) }
+
+// rhoI64FromStr reads a whole number with an optional sign, or 0.
+func rhoI64FromStr(text string) int64 {
+	s := strings.Trim(text, " \t\r\n")
+	digits := strings.TrimLeft(s, "+-")
+	if len(s)-len(digits) > 1 || digits == "" || len(digits) > 18 {
+		return 0
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0
+		}
+	}
+	value, _ := strconv.ParseInt(digits, 10, 64)
+	if strings.HasPrefix(s, "-") {
+		return -value
+	}
+	return value
+}
+
+func rhoTextCase(s string, upper bool) string {
+	b := []byte(s)
+	for i, c := range b {
+		if upper && c >= 'a' && c <= 'z' {
+			b[i] = c - 32
+		} else if !upper && c >= 'A' && c <= 'Z' {
+			b[i] = c + 32
+		}
+	}
+	return string(b)
+}
+
+// rhoStrLower and rhoStrUpper change ASCII letters only.
+func rhoStrLower(s string) string { return rhoTextCase(s, false) }
+func rhoStrUpper(s string) string { return rhoTextCase(s, true) }
+
+// rhoStrField is the field at index (from 0) of s split on sep, or "".
+func rhoStrField(s string, sep string, index uint32) string {
+	if sep == "" {
+		return ""
+	}
+	parts := strings.Split(s, sep)
+	if int(index) >= len(parts) {
+		return ""
+	}
+	return parts[index]
+}
+
+func rhoJSONValueAt(doc, key string) (string, bool) {
+	needle := "\"" + key + "\""
+	from := 0
+	for {
+		at := strings.Index(doc[from:], needle)
+		if at < 0 {
+			return "", false
+		}
+		rest := strings.TrimLeft(doc[from+at+len(needle):], " \t\r\n")
+		if strings.HasPrefix(rest, ":") {
+			return strings.TrimLeft(rest[1:], " \t\r\n"), true
+		}
+		from += at + 1
+	}
+}
+
+// rhoJsonStrField is the first string value of key anywhere in a document, or "".
+func rhoJsonStrField(doc string, key string) string {
+	rest, ok := rhoJSONValueAt(doc, key)
+	if !ok || !strings.HasPrefix(rest, "\"") {
+		return ""
+	}
+	var out strings.Builder
+	for i := 1; i < len(rest) && rest[i] != '"'; i++ {
+		c := rest[i]
+		if c == '\\' && i+1 < len(rest) {
+			i++
+			switch rest[i] {
+			case 'n':
+				c = '\n'
+			case 't':
+				c = '\t'
+			case 'r':
+				c = '\r'
+			default:
+				c = rest[i]
+			}
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
+}
+
+// rhoJsonNumField is the first numeric value of key, as written, or "".
+func rhoJsonNumField(doc string, key string) string {
+	rest, ok := rhoJSONValueAt(doc, key)
+	if !ok {
+		return ""
+	}
+	n := 0
+	for n < len(rest) && strings.IndexByte("+-.eE0123456789", rest[n]) >= 0 {
+		n++
+	}
+	return rest[:n]
+}
+
+// rhoAppWorkspace is where the application keeps its data: what its supervisor
+// says, else a folder of its own under the user's home.
+func rhoAppWorkspace() string {
+	for _, name := range []string{"RHO_APP_WORKSPACE", "ROBOHUB_APP_WORKSPACE"} {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	app := os.Getenv("RHO_APP_NAME")
+	if app == "" {
+		app = filepath.Base(os.Args[0])
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = "."
+	}
+	return filepath.Join(home, ".rho", "apps", app)
 }

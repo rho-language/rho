@@ -276,3 +276,183 @@ int64_t rho_milli_round(int64_t milli, uint32_t places)
     int64_t rounded = (magnitude + step / 2) / step * step;
     return milli < 0 ? -rounded : rounded;
 }
+
+char* rho_i64_to_str(int64_t value)
+{
+    char buf[24];
+    size_t j = sizeof(buf);
+    buf[--j] = 0;
+    uint64_t magnitude = value < 0 ? (uint64_t)0 - (uint64_t)value : (uint64_t)value;
+    do {
+        buf[--j] = (char)('0' + magnitude % 10);
+        magnitude /= 10;
+    } while (magnitude != 0);
+    if (value < 0) {
+        buf[--j] = '-';
+    }
+    return rho_text_copy(buf + j, sizeof(buf) - 1 - j);
+}
+
+/* A whole number with an optional sign and the space around it trimmed; 0 for
+ * anything else, or one that does not fit. */
+int64_t rho_i64_from_str(const char* text)
+{
+    if (text == NULL) {
+        return 0;
+    }
+    size_t start = 0;
+    size_t end = strlen(text);
+    while (start < end && rho_text_space(text[start])) {
+        start++;
+    }
+    while (end > start && rho_text_space(text[end - 1])) {
+        end--;
+    }
+    bool negative = false;
+    if (start < end && (text[start] == '-' || text[start] == '+')) {
+        negative = text[start] == '-';
+        start++;
+    }
+    if (start == end || end - start > 18) {
+        return 0;
+    }
+    int64_t value = 0;
+    for (size_t i = start; i < end; i++) {
+        if (text[i] < '0' || text[i] > '9') {
+            return 0;
+        }
+        value = value * 10 + (text[i] - '0');
+    }
+    return negative ? -value : value;
+}
+
+static char* rho_text_case(const char* s, bool upper)
+{
+    if (s == NULL) {
+        return "";
+    }
+    size_t n = strlen(s);
+    char* out = rho_text_copy(s, n);
+    for (size_t i = 0; i < n && out[0] != 0; i++) {
+        if (upper && out[i] >= 'a' && out[i] <= 'z') {
+            out[i] = (char)(out[i] - 32);
+        } else if (!upper && out[i] >= 'A' && out[i] <= 'Z') {
+            out[i] = (char)(out[i] + 32);
+        }
+    }
+    return out;
+}
+
+char* rho_str_lower(const char* s) { return rho_text_case(s, false); }
+char* rho_str_upper(const char* s) { return rho_text_case(s, true); }
+
+/* The field at `index` (from 0) of a text split on `sep`, or "" past the last. */
+char* rho_str_field(const char* s, const char* sep, uint32_t index)
+{
+    if (s == NULL || sep == NULL || sep[0] == 0) {
+        return "";
+    }
+    size_t step = strlen(sep);
+    const char* at = s;
+    for (uint32_t i = 0; i < index; i++) {
+        const char* next = strstr(at, sep);
+        if (next == NULL) {
+            return "";
+        }
+        at = next + step;
+    }
+    const char* end = strstr(at, sep);
+    return rho_text_copy(at, end != NULL ? (size_t)(end - at) : strlen(at));
+}
+
+/* Where `"key"` is followed by a colon, the first character of its value. */
+static const char* rho_json_value_at(const char* doc, const char* key)
+{
+    if (doc == NULL || key == NULL) {
+        return NULL;
+    }
+    size_t klen = strlen(key);
+    const char* p = doc;
+    while ((p = strchr(p, '"')) != NULL) {
+        if (strncmp(p + 1, key, klen) == 0 && p[1 + klen] == '"') {
+            const char* q = p + 2 + klen;
+            while (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n') {
+                q++;
+            }
+            if (*q == ':') {
+                q++;
+                while (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n') {
+                    q++;
+                }
+                return q;
+            }
+        }
+        p++;
+    }
+    return NULL;
+}
+
+char* rho_json_str_field(const char* doc, const char* key)
+{
+    const char* q = rho_json_value_at(doc, key);
+    if (q == NULL || *q != '"') {
+        return "";
+    }
+    q++;
+    size_t n = 0;
+    while (q[n] != 0 && q[n] != '"') {
+        n += (q[n] == '\\' && q[n + 1] != 0) ? 2 : 1;
+    }
+    char* out = (char*)malloc(n + 1);
+    if (out == NULL) {
+        return "";
+    }
+    size_t j = 0;
+    for (size_t i = 0; i < n; i++) {
+        char c = q[i];
+        if (c == '\\' && i + 1 < n) {
+            char e = q[++i];
+            c = e == 'n' ? '\n' : e == 't' ? '\t' : e == 'r' ? '\r' : e;
+        }
+        out[j++] = c;
+    }
+    out[j] = 0;
+    return out;
+}
+
+char* rho_json_num_field(const char* doc, const char* key)
+{
+    const char* q = rho_json_value_at(doc, key);
+    if (q == NULL) {
+        return "";
+    }
+    size_t n = 0;
+    while (q[n] == '-' || q[n] == '+' || q[n] == '.' || q[n] == 'e' || q[n] == 'E' || (q[n] >= '0' && q[n] <= '9')) {
+        n++;
+    }
+    return rho_text_copy(q, n);
+}
+
+/* Where the application keeps its data: what its supervisor says, else a folder
+ * of its own under the user's home. */
+char* rho_app_workspace(void)
+{
+    const char* named = getenv("RHO_APP_WORKSPACE");
+    if (named == NULL || named[0] == 0) {
+        named = getenv("ROBOHUB_APP_WORKSPACE");
+    }
+    if (named != NULL && named[0] != 0) {
+        return rho_text_copy(named, strlen(named));
+    }
+    const char* home = getenv("HOME");
+    const char* app = getenv("RHO_APP_NAME");
+    if (home == NULL) home = ".";
+    if (app == NULL || app[0] == 0) app = "app";
+    size_t n = strlen(home) + strlen(app) + 16;
+    char* out = (char*)malloc(n);
+    if (out == NULL) {
+        return "";
+    }
+    snprintf(out, n, "%s/.rho/apps/%s", home, app);
+    return out;
+}

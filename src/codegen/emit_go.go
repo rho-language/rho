@@ -1639,7 +1639,7 @@ func rhoYamlKeyLess(a, b string) bool {
 			// thousandths, rho_milli_*. The source is gosrc/text.go.
 			call:    "rhoStrTrim(",
 			define:  goSourceBody(goTextSource),
-			imports: []string{"strconv", "strings"},
+			imports: []string{"os", "path/filepath", "strconv", "strings"},
 		},
 		{
 			call:  "rhoStrUrlEncode(",
@@ -1667,6 +1667,38 @@ func rhoYamlKeyLess(a, b string) bool {
 		},
 		{
 			call:  "rhoMilliRound(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoI64ToStr(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoI64FromStr(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoStrLower(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoStrUpper(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoStrField(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoJsonStrField(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoJsonNumField(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoAppWorkspace(",
 			needs: []string{"rhoStrTrim("},
 		},
 		{

@@ -187,6 +187,8 @@ var runtimeFragments = []RuntimeFragment{
 		Provides: []string{
 			"rho_str_trim", "rho_str_url_encode", "rho_str_url_decode", "rho_form_field",
 			"rho_milli_valid", "rho_milli_parse", "rho_milli_format", "rho_milli_round",
+			"rho_i64_to_str", "rho_i64_from_str", "rho_str_lower", "rho_str_upper", "rho_str_field",
+			"rho_json_str_field", "rho_json_num_field", "rho_app_workspace",
 		},
 		Decls: []string{
 			"char* rho_str_trim(const char* s);",
@@ -197,6 +199,14 @@ var runtimeFragments = []RuntimeFragment{
 			"int64_t rho_milli_parse(const char* text);",
 			"char* rho_milli_format(int64_t milli);",
 			"int64_t rho_milli_round(int64_t milli, uint32_t places);",
+			"char* rho_i64_to_str(int64_t value);",
+			"int64_t rho_i64_from_str(const char* text);",
+			"char* rho_str_lower(const char* s);",
+			"char* rho_str_upper(const char* s);",
+			"char* rho_str_field(const char* s, const char* sep, uint32_t index);",
+			"char* rho_json_str_field(const char* doc, const char* key);",
+			"char* rho_json_num_field(const char* doc, const char* key);",
+			"char* rho_app_workspace(void);",
 		},
 	},
 	{
