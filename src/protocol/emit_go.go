@@ -55,6 +55,14 @@ func (s *Schema) EmitGo(packageName string) string {
 
 	fmt.Fprintf(&b, "// SchemaVersion is the version byte every message begins with.\nconst SchemaVersion = %d\n\n", s.Version)
 
+	if messagesUseString(messages) {
+		b.WriteString("// wireString is a fixed-width string field's text: its bytes up to the first\n")
+		b.WriteString("// NUL, which is where the padding begins.\n")
+		b.WriteString("func wireString(field []byte) string {\n")
+		b.WriteString("\tfor i, c := range field {\n\t\tif c == 0 {\n\t\t\treturn string(field[:i])\n\t\t}\n\t}\n")
+		b.WriteString("\treturn string(field)\n}\n\n")
+	}
+
 	for _, e := range s.Enums {
 		fmt.Fprintf(&b, "type %s int32\n\nconst (\n", e.Name)
 		for _, v := range e.Variants {
@@ -110,6 +118,17 @@ func (s *Schema) EmitGo(packageName string) string {
 	return b.String()
 }
 
+func messagesUseString(messages []ast.MessageDecl) bool {
+	for _, m := range messages {
+		for _, f := range m.Fields {
+			if isString(f) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func messageUsesFloat(m ast.MessageDecl) bool {
 	for _, f := range m.Fields {
 		if f.TypeExpr.Name == "f32" || f.TypeExpr.Name == "f64" {
@@ -120,18 +139,17 @@ func messageUsesFloat(m ast.MessageDecl) bool {
 }
 
 func emitGoWrite(b *strings.Builder, l *layout, f ast.Field, access, indent string) {
-	if f.TypeExpr.ArrayLen != nil && f.TypeExpr.Name == "string" {
-		fmt.Fprintf(b, "%scopy(out[off:off+%d], %s[:])\n%soff += %d\n", indent, *f.TypeExpr.ArrayLen, access, indent, *f.TypeExpr.ArrayLen)
+	// A string is its bytes, truncated to the field's width and NUL-padded: the
+	// buffer is zeroed, so whatever copy does not reach stays zero.
+	if isString(f) {
+		w := stringWidth(f)
+		fmt.Fprintf(b, "%scopy(out[off:off+%d], %s)\n%soff += %d\n", indent, w, access, indent, w)
 		return
 	}
 	if f.TypeExpr.ArrayLen != nil {
 		fmt.Fprintf(b, "%sfor i := 0; i < %d; i++ {\n", indent, *f.TypeExpr.ArrayLen)
 		writeGoElement(b, l, f.TypeExpr.Name, access+"[i]", indent+"\t")
 		fmt.Fprintf(b, "%s}\n", indent)
-		return
-	}
-	if f.TypeExpr.Name == "string" {
-		fmt.Fprintf(b, "%scopy(out[off:off+%d], %s)\n%soff += %d\n", indent, stringWire, access, indent, stringWire)
 		return
 	}
 	writeGoElement(b, l, f.TypeExpr.Name, access, indent)
@@ -176,18 +194,16 @@ func writeGoElement(b *strings.Builder, l *layout, typeName, expr, indent string
 }
 
 func emitGoRead(b *strings.Builder, l *layout, f ast.Field, access, indent string) {
-	if f.TypeExpr.ArrayLen != nil && f.TypeExpr.Name == "string" {
-		fmt.Fprintf(b, "%scopy(%s[:], data[off:off+%d])\n%soff += %d\n", indent, access, *f.TypeExpr.ArrayLen, indent, *f.TypeExpr.ArrayLen)
+	// A string is read up to its first NUL, so the padding is not part of it.
+	if isString(f) {
+		w := stringWidth(f)
+		fmt.Fprintf(b, "%s%s = wireString(data[off : off+%d])\n%soff += %d\n", indent, access, w, indent, w)
 		return
 	}
 	if f.TypeExpr.ArrayLen != nil {
 		fmt.Fprintf(b, "%sfor i := 0; i < %d; i++ {\n", indent, *f.TypeExpr.ArrayLen)
 		readGoElement(b, l, f.TypeExpr.Name, access+"[i]", indent+"\t")
 		fmt.Fprintf(b, "%s}\n", indent)
-		return
-	}
-	if f.TypeExpr.Name == "string" {
-		fmt.Fprintf(b, "%s%s = string(data[off : off+%d])\n%soff += %d\n", indent, access, stringWire, indent, stringWire)
 		return
 	}
 	readGoElement(b, l, f.TypeExpr.Name, access, indent)

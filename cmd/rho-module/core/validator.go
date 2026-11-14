@@ -107,6 +107,9 @@ func validatePlugin(dir string, manifest *deps.Manifest) error {
 	// platforms it serves plugs into no component; its integration is checked
 	// by the integration contract.
 	if manifest.Integration != nil && extension != nil && len(extension.Platforms) > 0 && len(extension.All()) == 0 {
+		if problems := integration.Validate(dir, manifest); len(problems) > 0 {
+			return fmt.Errorf("integration plugin does not meet the contract:\n  - %s", strings.Join(problems, "\n  - "))
+		}
 		return nil
 	}
 	if extension == nil || len(extension.All()) == 0 {

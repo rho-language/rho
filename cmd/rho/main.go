@@ -367,9 +367,9 @@ func installCLI(args []string) int {
 		// installed components and plugins, the local registry and the caches.
 		//
 		// It does not touch what is the user's or their applications': the
-		// credentials and signing keys (auth), the configuration, the keeper's
-		// and Mesh's state — a gateway key every board's key derives from — and
-		// the fetched cross toolchains. Removing those is never a reinstall.
+		// credentials and signing keys (auth), the configuration, the state the
+		// applications keep under the home — keys other keys may derive from —
+		// and the fetched cross toolchains. Removing those is never a reinstall.
 		home, err := install.GetRhoHome()
 		if err != nil {
 			fmt.Println("rho install:", err)

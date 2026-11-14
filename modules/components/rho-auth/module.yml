@@ -3,7 +3,7 @@ module:
   type: component
   version: 0.5.0
   author: Aurel Miron
-  description: Registry credentials
+  description: Credentials and tokens — registry logins, signing keys, tickets, people, clients and service tokens
   command: auth
 
 main: rho-auth

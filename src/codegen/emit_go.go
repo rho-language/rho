@@ -1787,6 +1787,97 @@ func rhoYamlKeyLess(a, b string) bool {
 			imports: []string{"math"},
 		},
 		{
+			// The floating-point functions: what the C backend takes from the
+			// C library, from the `math` package.
+			call:    "rhoSqrt(",
+			define:  "func rhoSqrt(x float64) float64 { return math.Sqrt(x) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoPow(",
+			define:  "func rhoPow(x, y float64) float64 { return math.Pow(x, y) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoSin(",
+			define:  "func rhoSin(x float64) float64 { return math.Sin(x) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoCos(",
+			define:  "func rhoCos(x float64) float64 { return math.Cos(x) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoAtan2(",
+			define:  "func rhoAtan2(y, x float64) float64 { return math.Atan2(y, x) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoFabs(",
+			define:  "func rhoFabs(x float64) float64 { return math.Abs(x) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call:    "rhoFloor(",
+			define:  "func rhoFloor(x float64) float64 { return math.Floor(x) }\n",
+			imports: []string{"math"},
+		},
+		{
+			call: "rhoClampF64(",
+			define: "func rhoClampF64(value, low, high float64) float64 {\n\tif value < low {\n\t\treturn low\n\t}\n" +
+				"\tif value > high {\n\t\treturn high\n\t}\n\treturn value\n}\n",
+		},
+		{
+			call:   "rhoLerp(",
+			define: "func rhoLerp(a, b, t float64) float64 { return a + (b-a)*t }\n",
+		},
+		{
+			// std.os.sys's exit and std.os.time's clock.
+			call:    "rhoExit(",
+			define:  "func rhoExit(code uint32) {\n\tos.Exit(int(code))\n}\n",
+			imports: []string{"os"},
+		},
+		{
+			call:    "rhoTimeNowNs(",
+			define:  "func rhoTimeNowNs() uint64 {\n\treturn uint64(time.Now().UnixNano())\n}\n",
+			imports: []string{"time"},
+		},
+		{
+			// std.os.fs and std.os.sys read and write through a Ptr[u8], which
+			// on this backend is a handle with no memory behind it, so the
+			// descriptor calls stop the program and say why rather than reading
+			// from address zero. They are defined rather than left out because
+			// every function of an imported module is emitted, and a program that
+			// imports std.os.sys for exit or setenv must still build.
+			call:   "rhoFdOpen(",
+			needs:  []string{"rhoFdRefuse("},
+			define: "func rhoFdOpen(_ ...any) int32 {\n\trhoFdRefuse(\"open\")\n\treturn -1\n}\n",
+		},
+		{
+			call:   "rhoFdClose(",
+			needs:  []string{"rhoFdRefuse("},
+			define: "func rhoFdClose(_ ...any) uint32 {\n\trhoFdRefuse(\"close\")\n\treturn 0\n}\n",
+		},
+		{
+			call:   "rhoFdWrite(",
+			needs:  []string{"rhoFdRefuse("},
+			define: "func rhoFdWrite(_ ...any) uint32 {\n\trhoFdRefuse(\"write\")\n\treturn 0\n}\n",
+		},
+		{
+			call:   "rhoFdRead(",
+			needs:  []string{"rhoFdRefuse("},
+			define: "func rhoFdRead(_ ...any) uint32 {\n\trhoFdRefuse(\"read\")\n\treturn 0\n}\n",
+		},
+		{
+			call: "rhoFdRefuse(",
+			define: "func rhoFdRefuse(call string) {\n" +
+				"\tfmt.Fprintln(os.Stderr, \"rho: std.os \"+call+\" needs the C backend: a Ptr[u8] on the Go backend has no memory behind it\")\n" +
+				"\tos.Exit(1)\n" +
+				"}\n",
+			imports: []string{"fmt", "os"},
+		},
+		{
 			call:    "rhoStringFromI32(",
 			define:  "func rhoStringFromI32(value int32) string {\n\treturn strconv.Itoa(int(value))\n}\n",
 			imports: []string{"strconv"},

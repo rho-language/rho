@@ -80,11 +80,11 @@ this, exactly. The size is a type parameter, so it is known at compile time.
 | `std.math.control` | `PID`, `LowPass`, `MovingAverage4`, `Complementary` and `Kalman1D`, each a struct with an `_init` and an `_update` |
 | `std.math.embedded` | `map_range`, `saturate`, `deadband`, `smoothstep01` and angle conversions, without a C library |
 
-`std.math.float` and `std.math.fast` reach the C library through
-`extern fn c_sqrt`, `c_sin`, `c_pow` and the like. The toolchain defines none of
-these, so a program that uses them links its own: a C file the project
-carries, or the platform. They are not available on the Go backend.
-`std.math.linear` imports `std.math.float` and needs the same.
+`std.math.float`, `std.math.fast` and `std.math.linear` call the runtime's
+floating-point functions, which both backends supply: the C library's on C,
+with the generated CMake linking the maths library (`-lm`), and the `math`
+package on Go. A program may also call `sqrt`, `sin`, `cos`, `atan2`, `floor`,
+`clamp_f64` and `lerp` without importing anything.
 `basic`, `fixed`, `control` and `embedded` are arithmetic in Rho and need
 nothing.
 
@@ -111,17 +111,22 @@ means: the code does not change, because nothing in it names a part.
 
 ## os
 
-`std.os.sys`, `std.os.fs` and `std.os.time` are a thin layer over raw Linux
-system calls on x86-64. Each declares `extern fn c_syscall(num, a, b, c, d, e, f)`
-and calls it with that architecture's numbers: `read` (0), `write` (1), `open`
-(2), `close` (3), `exit` (60) and `clock_gettime` (228). `std.os.sys` also
-declares `extern fn setenv` from the C library.
+`std.os.sys`, `std.os.fs` and `std.os.time` call the runtime, which on C uses
+the C library's wrappers rather than system call numbers, so they mean the same
+thing on every architecture:
 
-The toolchain does not define `c_syscall`, so a program that imports these
-links its own. They are not a portable interface, and they do not exist on the
-Go backend. A hosted program reads and writes files, runs programs and reads
-the clock with the runtime functions in
-{ref}`built-in functions <language/builtins>`, which both backends supply.
+| Module | What it carries | C | Go |
+|---|---|---|---|
+| `std.os.time` | `now()`, a `TimeSpec` of seconds and nanoseconds from the realtime clock | yes | yes |
+| `std.os.sys` | `exit(code)`, `setenv(key, value)` (replaces a value already set) | yes | yes |
+| `std.os.sys` | `write(fd, buf, len)`, `read(fd, buf, len)`: bytes moved, or `0xFFFFFFFF` on failure | yes | no |
+| `std.os.fs` | `open(path, flags)` with the C library's `O_*` flags (a created file is mode 0644), `close(fd)` | yes | no |
+
+The descriptor calls take a `Ptr[u8]`, which on the Go backend is a handle with
+no memory behind it, so there they stop the program with a message that says
+so. A hosted program reads and writes files, runs programs and reads the clock
+with the runtime functions in {ref}`built-in functions <language/builtins>`,
+which both backends supply.
 
 ## sql
 

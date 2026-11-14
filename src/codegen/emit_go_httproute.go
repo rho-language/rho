@@ -515,6 +515,16 @@ func rhoNewRouter() (http.Handler, error) {
 /*  Mounting                                                                   */
 /* -------------------------------------------------------------------------- */
 
+// declaresRoute reports whether the module declares a route for method and path.
+func declaresRoute(m ir.ModuleIR, method, path string) bool {
+	for _, route := range m.Routes {
+		if strings.EqualFold(route.Method, method) && route.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
 // goMountRoutes renders the binding of every declared route onto whichever
 // router the target chose.
 //
@@ -527,11 +537,15 @@ func goMountRoutes(m ir.ModuleIR) string {
 	b.WriteString("// router's own registration, so the handlers below are net/http handlers\n")
 	b.WriteString("// whichever router is in use.\n")
 	b.WriteString("func rhoMountRoutes(register func(method, pattern string, handler http.HandlerFunc)) {\n")
-	b.WriteString("\t// Every service answers a liveness probe, whether or not the module\n")
-	b.WriteString("\t// declared one.\n")
-	b.WriteString("\tregister(\"GET\", \"/healthz\", func(w http.ResponseWriter, r *http.Request) {\n")
-	b.WriteString("\t\twriteJSON(w, http.StatusOK, map[string]string{\"status\": \"ok\"})\n")
-	b.WriteString("\t})\n")
+	// Every service answers a liveness probe; a module that declares its own
+	// is the one that answers, since registering the path twice stops the
+	// service at startup.
+	if !declaresRoute(m, "GET", "/healthz") {
+		b.WriteString("\t// Every service answers a liveness probe.\n")
+		b.WriteString("\tregister(\"GET\", \"/healthz\", func(w http.ResponseWriter, r *http.Request) {\n")
+		b.WriteString("\t\twriteJSON(w, http.StatusOK, map[string]string{\"status\": \"ok\"})\n")
+		b.WriteString("\t})\n")
+	}
 	if len(m.Routes) > 0 {
 		b.WriteString("\n\t// Routes declared by the Rho module.\n")
 		for _, route := range m.Routes {

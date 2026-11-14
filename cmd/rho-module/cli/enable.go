@@ -252,9 +252,13 @@ func parseModuleRef(reference string) (kind, name, version string) {
 	return deps.KindComponent, name, version
 }
 
+// installedKindOf is the kind a name is installed as: a component, a plugin
+// or a library module, which resolves as a dependency only once it is enabled.
 func installedKindOf(name string) string {
-	if len(deps.InstalledVersions(deps.KindPlugin, name)) > 0 {
-		return deps.KindPlugin
+	for _, kind := range []string{deps.KindComponent, deps.KindPlugin, deps.KindModule} {
+		if len(deps.InstalledVersions(kind, name)) > 0 {
+			return kind
+		}
 	}
 	return deps.KindComponent
 }

@@ -4,14 +4,19 @@ import std.os.sys
 import std.core.ptr
 import std.core.option
 
+extern fn rho_fd_open(path: Ptr[u8], flags: u32) i32
+extern fn rho_fd_close(fd: u32) u32
+
+// open opens a NUL-terminated path with the C library's `O_*` flags. A file it
+// creates is mode 0644. C only, as the descriptor calls in std.os.sys are.
 fn open(path: Ptr[u8], flags: u32) Result[u32, u32] {
-    let fd: u64 = c_syscall(2, path.raw, flags, 0, 0, 0, 0)
-    if fd == u64(-1) {
-        return Err[u32, u32](1)   // simplu: 1 = error
+    let fd: i32 = rho_fd_open(path, flags)
+    if fd < 0 {
+        return Err[u32, u32](1)   // 1 = the file could not be opened
     }
     return Ok[u32, u32](u32(fd))
 }
 
 fn close(fd: u32) u32 {
-    return u32(c_syscall(3, fd, 0, 0, 0, 0, 0))
+    return rho_fd_close(fd)
 }

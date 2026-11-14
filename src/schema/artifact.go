@@ -46,7 +46,7 @@ type ArtifactManifest struct {
 }
 
 // ValidateArtifactManifest is the contract every artifact has to satisfy before
-// Keeper or Mesh will stage it.
+// a deployer stages it.
 func ValidateArtifactManifest(manifest ArtifactManifest) error {
 	if strings.TrimSpace(manifest.Name) == "" {
 		return fmt.Errorf("artifact has no name")

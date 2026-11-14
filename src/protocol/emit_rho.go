@@ -17,9 +17,11 @@ import (
 // the wire are code a reader can follow rather than a hand-rolled copy that
 // drifts from the firmware.
 //
-// It returns an error for a field the emitter cannot lay out (an array, or a
-// type it does not know), because a Rho struct cannot hold a fixed array and a
-// silent omission would write a payload shorter than the C side reads.
+// It returns an error for a field the emitter cannot lay out (an array other
+// than `string[N]`, or a type it does not know), because a Rho struct cannot
+// hold a fixed array and a silent omission would write a payload shorter than
+// the C side reads. A `string[N]` is not an array of strings but a string N
+// bytes wide, and is a Rho string like any other.
 func (s *Schema) EmitRho(transport string) (string, error) {
 	l := s.newLayout()
 	p := s.prefix()
@@ -70,7 +72,7 @@ func (s *Schema) EmitRho(transport string) (string, error) {
 
 // rhoFieldSupported rejects a field the Rho layout cannot hold.
 func rhoFieldSupported(l *layout, f ast.Field) error {
-	if f.TypeExpr.ArrayLen != nil {
+	if f.TypeExpr.ArrayLen != nil && !isString(f) {
 		return fmt.Errorf("an array cannot be a Rho struct field yet")
 	}
 	switch l.kind(f.TypeExpr.Name) {
@@ -145,6 +147,10 @@ func emitRhoMarshal(b *strings.Builder, l *layout, p string, m ast.MessageDecl, 
 			fmt.Fprintf(b, "    out = out + %s_marshal(%s)\n", snake(f.TypeExpr.Name), field)
 			continue
 		}
+		if isString(f) {
+			fmt.Fprintf(b, "    out = out + %s_put_string(%s, %d)\n", p, field, stringWidth(f))
+			continue
+		}
 		fmt.Fprintf(b, "    out = out + %s_put_%s(%s)\n", p, rhoCell(l, f), field)
 	}
 	b.WriteString("    return out\n}\n\n")
@@ -166,6 +172,8 @@ func emitRhoUnmarshal(b *strings.Builder, l *layout, p string, m ast.MessageDecl
 		if l.kind(f.TypeExpr.Name) == "message" {
 			fmt.Fprintf(b, "    let %s: %s = %s_unmarshal(str_slice(data, off, %d))\n",
 				local, f.TypeExpr.Name, snake(f.TypeExpr.Name), l.messageSize(f.TypeExpr.Name))
+		} else if isString(f) {
+			fmt.Fprintf(b, "    let %s: string = %s_get_string(data, off, %d)\n", local, p, stringWidth(f))
 		} else {
 			fmt.Fprintf(b, "    let %s: %s = %s_get_%s(data, off)\n",
 				local, l.rhoType(f), p, rhoCell(l, f))
@@ -228,10 +236,14 @@ func emitRhoWireHelpers(b *strings.Builder, p string) {
 	fmt.Fprintf(b, "fn %s_get_f32(data: string, off: u32) f32 { return f32_from_bits(%s_get_u32(data, off)) }\n", p, p)
 	fmt.Fprintf(b, "fn %s_put_f64(value: f64) string { return %s_put_u64(f64_to_bits(value)) }\n", p, p)
 	fmt.Fprintf(b, "fn %s_get_f64(data: string, off: u32) f64 { return f64_from_bits(%s_get_u64(data, off)) }\n", p, p)
-	// A bare string is a fixed 64 bytes, zero-padded, which is the width the C
-	// and Go emitters give it.
-	fmt.Fprintf(b, "fn %s_put_string(value: string) string {\n", p)
+	// A string is a fixed width on the wire — N bytes for `string[N]`, 64 for a
+	// bare string — truncated or NUL-padded to it, and read back up to its first
+	// NUL, which is what the C and Go emitters do.
+	fmt.Fprintf(b, "fn %s_put_string(value: string, width: u32) string {\n", p)
 	fmt.Fprintf(b, "    var out: string = \"\"\n    var i: u32 = 0\n    let length: u32 = strlen(value)\n")
-	fmt.Fprintf(b, "    while i < 64 {\n        if i < length {\n            out = out + str_from_byte(str_at(value, i))\n        } else {\n            out = out + str_from_byte(u8(0))\n        }\n        i = i + 1\n    }\n    return out\n}\n")
-	fmt.Fprintf(b, "fn %s_get_string(data: string, off: u32) string { return str_slice(data, off, 64) }\n\n", p)
+	fmt.Fprintf(b, "    while i < width {\n        if i < length {\n            out = out + str_from_byte(str_at(value, i))\n        } else {\n            out = out + str_from_byte(u8(0))\n        }\n        i = i + 1\n    }\n    return out\n}\n")
+	fmt.Fprintf(b, "fn %s_get_string(data: string, off: u32, width: u32) string {\n", p)
+	fmt.Fprintf(b, "    var n: u32 = 0\n")
+	fmt.Fprintf(b, "    while n < width {\n        if str_at(data, off + n) == u8(0) {\n            return str_slice(data, off, n)\n        }\n        n = n + 1\n    }\n")
+	fmt.Fprintf(b, "    return str_slice(data, off, width)\n}\n\n")
 }

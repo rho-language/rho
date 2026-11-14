@@ -1321,6 +1321,26 @@ var intrinsicLowering = map[string]string{
 	"getenv":          "rho_getenv",
 }
 
+// mathBuiltinLowering maps the floating-point builtins a program may call bare
+// to the runtime functions both backends supply: the C library's on C, the
+// `math` package on Go.
+var mathBuiltinLowering = map[string]string{
+	"sqrt":      "rho_sqrt",
+	"sin":       "rho_sin",
+	"cos":       "rho_cos",
+	"atan2":     "rho_atan2",
+	"floor":     "rho_floor",
+	"clamp_f64": "rho_clamp_f64",
+	"lerp":      "rho_lerp",
+}
+
+// declaresFunc is whether a function of this name is declared where the module
+// being checked can call it.
+func (tc *TypeChecker) declaresFunc(name string) bool {
+	_, found := tc.lookupFunc(name)
+	return found
+}
+
 // isExternalBuiltinNames are the intrinsics a module may call without
 // declaring them, because a backend supplies the implementation.
 var isExternalBuiltinNames = map[string]bool{}
@@ -2411,6 +2431,11 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			case identifier.Name == "panic":
 				// The intrinsic the backends supply for a message abort.
 				callee = "panicf"
+			case mathBuiltinLowering[identifier.Name] != "" && !tc.declaresFunc(identifier.Name):
+				// A bare `sqrt` and its kin are the runtime's floating-point
+				// functions, unless the program or a module it imports declares
+				// one of its own under that name (`std.math.float` does).
+				callee = mathBuiltinLowering[identifier.Name]
 			case intrinsicLowering[identifier.Name] != "":
 				// A string or environment intrinsic, emitted by both backends
 				// under a fixed name.

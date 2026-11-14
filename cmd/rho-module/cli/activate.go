@@ -6,7 +6,7 @@
 // This determines which version is used when running `rho <command>`.
 //
 // Usage:
-//   rho module activate <name>[@version]
+//   rho module activate <name>@<version>
 //
 // @project Rho Programming Language
 // @version 0.1
@@ -29,7 +29,7 @@ import (
 
 func Activate(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: rho module activate <name>[@version]")
+		return fmt.Errorf("usage: rho module activate <name>@<version>")
 	}
 
 	spec := args[0]

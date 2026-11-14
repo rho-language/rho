@@ -6,7 +6,7 @@ module:
   type: component
   version: 0.1.0
   author: Aurel Miron
-  description: Generates a local instance identity and enrolls it with Keeper
+  description: Generates a local instance identity and enrolls it with an enrollment service
   command: bootstrap
 
 main: rho-bootstrap

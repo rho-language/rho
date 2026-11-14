@@ -86,6 +86,17 @@ var clockSource string
 //go:embed csrc/bits.c
 var bitsSource string
 
+// The floating-point functions, separate because they are the only part of the
+// runtime that needs the C library's maths, which a hosted build links apart.
+//
+//go:embed csrc/math.c
+var mathSource string
+
+// The process and its file descriptors, for `std.os`.
+//
+//go:embed csrc/os.c
+var osSource string
+
 // RuntimeFragment is one piece of the runtime, and the symbols that pull it in.
 //
 // `provides` is what a program has to name for this fragment to be worth
@@ -125,6 +136,9 @@ type RuntimeFragment struct {
 	// name that was declared right there. A fragment whose symbols only the
 	// runtime calls is not declared here at all.
 	Decls []string
+	// Libraries are what a hosted link needs besides the C library for this
+	// fragment: `m` for the maths, which glibc keeps in a library of its own.
+	Libraries []string
 }
 
 // runtimeFragments is the runtime, in emission order.
@@ -222,6 +236,36 @@ var runtimeFragments = []RuntimeFragment{
 		},
 	},
 	{
+		Name:      "math",
+		Source:    mathSource,
+		Provides:  []string{"rho_sqrt", "rho_pow", "rho_sin", "rho_cos", "rho_atan2", "rho_fabs", "rho_floor", "rho_clamp_f64", "rho_lerp"},
+		Libraries: []string{"m"},
+		Decls: []string{
+			"double rho_sqrt(double x);",
+			"double rho_pow(double x, double y);",
+			"double rho_sin(double x);",
+			"double rho_cos(double x);",
+			"double rho_atan2(double y, double x);",
+			"double rho_fabs(double x);",
+			"double rho_floor(double x);",
+			"double rho_clamp_f64(double value, double low, double high);",
+			"double rho_lerp(double a, double b, double t);",
+		},
+	},
+	{
+		Name:     "os",
+		Source:   osSource,
+		Provides: []string{"rho_exit", "rho_time_now_ns", "rho_fd_open", "rho_fd_close", "rho_fd_write", "rho_fd_read"},
+		Decls: []string{
+			"void rho_exit(uint32_t code);",
+			"uint64_t rho_time_now_ns(void);",
+			"int32_t rho_fd_open(const uint8_t* path, uint32_t flags);",
+			"uint32_t rho_fd_close(uint32_t fd);",
+			"uint32_t rho_fd_write(uint32_t fd, const uint8_t* buf, uint32_t len);",
+			"uint32_t rho_fd_read(uint32_t fd, uint8_t* buf, uint32_t len);",
+		},
+	},
+	{
 		Name:     "lock",
 		Source:   lockSource,
 		Provides: []string{"rho_lock", "rho_unlock"},
@@ -230,8 +274,12 @@ var runtimeFragments = []RuntimeFragment{
 	{
 		Name:     "env",
 		Source:   envSource,
-		Provides: []string{"rho_env_or", "rho_getenv"},
-		Decls:    []string{"const char* rho_env_or(const char* name, const char* fallback);", "char* rho_getenv(const char* name);"},
+		Provides: []string{"rho_env_or", "rho_getenv", "rho_setenv"},
+		Decls: []string{
+			"const char* rho_env_or(const char* name, const char* fallback);",
+			"char* rho_getenv(const char* name);",
+			"void rho_setenv(const char* name, const char* value);",
+		},
 	},
 	{
 		Name:   "crypto",
@@ -402,6 +450,27 @@ func runtimeFor(emitted string) string {
 		out.WriteString("\n\n")
 	}
 	return out.String()
+}
+
+// RuntimeLibraries are the libraries a link of this runtime needs besides the C
+// library, in the order the fragments are emitted: what the generated build adds
+// to the program's link line. Read from the runtime the generator produced, by
+// the banner each emitted fragment carries.
+func RuntimeLibraries(runtime string) []string {
+	libraries := []string{}
+	seen := map[string]bool{}
+	for _, fragment := range runtimeFragments {
+		if !strings.Contains(runtime, fragment.banner()) {
+			continue
+		}
+		for _, library := range fragment.Libraries {
+			if !seen[library] {
+				seen[library] = true
+				libraries = append(libraries, library)
+			}
+		}
+	}
+	return libraries
 }
 
 // emits is whether a fragment has anything of its own worth emitting: a symbol of

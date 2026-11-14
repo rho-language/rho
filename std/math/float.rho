@@ -1,35 +1,35 @@
 module std.math.float
 
-extern fn c_sqrt(x: f64) f64
-extern fn c_pow(x: f64, y: f64) f64
-extern fn c_sin(x: f64) f64
-extern fn c_cos(x: f64) f64
-extern fn c_atan2(y: f64, x: f64) f64
-extern fn c_fabs(x: f64) f64
-extern fn c_floor(x: f64) f64
+extern fn rho_sqrt(x: f64) f64
+extern fn rho_pow(x: f64, y: f64) f64
+extern fn rho_sin(x: f64) f64
+extern fn rho_cos(x: f64) f64
+extern fn rho_atan2(y: f64, x: f64) f64
+extern fn rho_fabs(x: f64) f64
+extern fn rho_floor(x: f64) f64
 
 fn sqrt(x: f64) f64 {
-    return c_sqrt(x)
+    return rho_sqrt(x)
 }
 
 fn pow(x: f64, y: f64) f64 {
-    return c_pow(x, y)
+    return rho_pow(x, y)
 }
 
 fn sin(x: f64) f64 {
-    return c_sin(x)
+    return rho_sin(x)
 }
 
 fn cos(x: f64) f64 {
-    return c_cos(x)
+    return rho_cos(x)
 }
 
 fn atan2(y: f64, x: f64) f64 {
-    return c_atan2(y, x)
+    return rho_atan2(y, x)
 }
 
 fn abs_f64(x: f64) f64 {
-    return c_fabs(x)
+    return rho_fabs(x)
 }
 
 fn deg_to_rad(degrees: f64) f64 {
@@ -42,7 +42,7 @@ fn rad_to_deg(radians: f64) f64 {
 
 fn wrap_pi(angle: f64) f64 {
     let two_pi: f64 = 6.283185307179586
-    let result: f64 = angle - two_pi * c_floor(angle / two_pi + 0.5)
+    let result: f64 = angle - two_pi * rho_floor(angle / two_pi + 0.5)
     return result
 }
 

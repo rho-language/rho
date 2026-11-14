@@ -416,3 +416,13 @@ A build says when a file calls a function of another module in the program that 
 `str_replace(text, from, to)` replaces every occurrence of one text with another, on both backends; an empty `from` replaces nothing. Modules carried copies of it.
 
 `rho module publish` given a relative path read no exports from a module whose main only includes its other files, and refused the release as removing all of them.
+
+## [0.8.4] - 2026-11-14
+
+`std.math.float`, `std.math.fast` and `std.math.linear` build and agree on both backends: the math they call is the runtime's own (`rho_sqrt` and the rest, libm on C, the math package on Go), and a C project that uses it links libm. `std.os` builds on C — the clock, the environment, exit, and file descriptors through the runtime rather than raw syscall numbers that held only on x86-64; on Go the descriptor calls stop with a message saying they need the C backend. `setenv` takes the value and overwrites.
+
+A service whose module declares its own `GET /healthz` answers it itself, where registering the path twice stopped the service at startup.
+
+`rho protocol`: a `string[N]` field is N bytes on the wire for every target — the C size macro and the Go struct had counted N strings of 64 bytes — and the Rho target accepts it. Decoded strings end at their first NUL.
+
+`rho module install` installs a provider; `rho module enable` finds an installed library module, which resolves as a dependency only once enabled. A plugin that only provides an ecosystem's data is held to the integration contract. `rho module activate` says a version is required.

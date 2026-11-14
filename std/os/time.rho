@@ -1,6 +1,8 @@
 module std.os.time
 
-extern fn c_syscall(num: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) u64
+// The realtime clock, read once in nanoseconds since the Unix epoch so the
+// seconds and the fraction belong to the same moment.
+extern fn rho_time_now_ns() u64
 
 struct TimeSpec {
     sec: u64
@@ -8,7 +10,6 @@ struct TimeSpec {
 }
 
 fn now() TimeSpec {
-    let ts: TimeSpec
-    c_syscall(228, 0, Ptr[TimeSpec](&ts).raw, 0, 0, 0, 0)
-    return ts
+    let ns: u64 = rho_time_now_ns()
+    return TimeSpec{ ns / 1000000000, ns % 1000000000 }
 }

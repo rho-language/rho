@@ -97,11 +97,19 @@ func main() {
 			fmt.Fprintln(os.Stderr, "rho fmt:", in, err)
 			os.Exit(1)
 		}
+		// With neither -w, -l nor -check the result is the output, whether or
+		// not it differs, so a pipeline always gets the file.
+		printing := !*write && !*list && !*check
 		if formatted == string(original) {
+			if printing {
+				fmt.Print(formatted)
+			}
 			continue
 		}
 		changed = true
-		if *list {
+		// -check names what needs formatting and prints no source: it is the
+		// question a build asks, and the answer is a list and an exit status.
+		if *list || *check {
 			fmt.Println(in)
 		}
 		if *write {
@@ -110,7 +118,7 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		if !*write && !*list {
+		if printing {
 			fmt.Print(formatted)
 		}
 	}

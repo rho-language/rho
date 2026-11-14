@@ -160,6 +160,13 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		artifacts.Extra = map[string]string{}
 	}
 	artifacts.Build = emitCMakeLists(ctx)
+	// The runtime's own libraries: the maths library, when the program calls the
+	// floating-point functions. A framework that builds the program as a
+	// component links its C library's maths itself, and MSVC has no `m`.
+	if libraries := codegen.RuntimeLibraries(compiled.Runtime); len(libraries) > 0 && ctx.LayoutDir == "" {
+		artifacts.Build += "\n# What the runtime needs linked besides the C library.\nif(NOT MSVC)\n" +
+			"  target_link_libraries(" + cmakeProjectName(ctx.ModuleName) + " PRIVATE " + strings.Join(libraries, " ") + ")\nendif()\n"
+	}
 	// A framework that builds by component wants the program as a directory of
 	// sources with a build file of its own, so that is written where it belongs
 	// and the project above it only says where the framework's project is.

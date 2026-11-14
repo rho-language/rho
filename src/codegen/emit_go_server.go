@@ -1002,9 +1002,11 @@ func goRegisterRoutes(m ir.ModuleIR) string {
 	var b strings.Builder
 	b.WriteString("// registerRoutes attaches the generated handlers to a router.\n")
 	b.WriteString("func registerRoutes(router *router) {\n")
-	b.WriteString("\trouter.handle(\"GET\", \"/healthz\", func(w http.ResponseWriter, r *http.Request) {\n")
-	b.WriteString("\t\twriteJSON(w, http.StatusOK, map[string]string{\"status\": \"ok\"})\n")
-	b.WriteString("\t})\n")
+	if !declaresRoute(m, "GET", "/healthz") {
+		b.WriteString("\trouter.handle(\"GET\", \"/healthz\", func(w http.ResponseWriter, r *http.Request) {\n")
+		b.WriteString("\t\twriteJSON(w, http.StatusOK, map[string]string{\"status\": \"ok\"})\n")
+		b.WriteString("\t})\n")
+	}
 	if len(m.Routes) > 0 {
 		fmt.Fprintf(&b, "\n\t// Routes declared by the Rho module.\n")
 		for _, route := range m.Routes {

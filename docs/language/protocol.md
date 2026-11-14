@@ -140,9 +140,7 @@ generated, and the program decides what each message id means.
 
 ## Known limitations
 
-- **No arrays on the Rho side.** A message with an array field generates C and
-  Go, and the Rho target refuses it: an array cannot be a Rho struct field yet.
-- **`string[N]` is read two ways.** The C codec writes `N` bytes, but the wire
-  size and the Go struct treat it as `N` strings of 64 bytes each, so the two
-  sides disagree. For text of a fixed length, use `u8[N]`, which C and Go size
-  the same.
+- **No arrays but strings on the Rho side.** A `string[N]` field is a Rho
+  `string`, padded or cut to N bytes on the wire. Any other array field (`u8[8]`)
+  generates C and Go, and the Rho target refuses it: an array cannot be a Rho
+  struct field yet.

@@ -305,8 +305,27 @@ func (l *layout) kind(name string) string {
 	return "unknown"
 }
 
-// sizeOfField is a field's wire width, arrays included.
+// stringWidth is the wire width of a string field: N bytes for `string[N]`, and
+// stringWire for a bare `string`. A string's length is its width on the wire,
+// not a count of strings: `string[16]` is sixteen bytes of text, NUL-padded.
+func stringWidth(f ast.Field) int {
+	if f.TypeExpr.ArrayLen != nil {
+		return *f.TypeExpr.ArrayLen
+	}
+	return stringWire
+}
+
+// isString reports whether a field is text: a bare `string` or a `string[N]`.
+func isString(f ast.Field) bool {
+	return f.TypeExpr.Name == "string"
+}
+
+// sizeOfField is a field's wire width, arrays included. A string's length is
+// its byte width rather than an element count, so it is sized apart.
 func (l *layout) sizeOfField(f ast.Field) int {
+	if isString(f) {
+		return stringWidth(f)
+	}
 	element := l.sizeOfType(f.TypeExpr.Name)
 	if f.TypeExpr.ArrayLen != nil {
 		return element * *f.TypeExpr.ArrayLen
@@ -382,16 +401,21 @@ func (l *layout) cBase(name string) string {
 // where the schema gave it a length.
 func (l *layout) cDeclaration(f ast.Field) string {
 	name := snake(f.Name)
+	if isString(f) {
+		return fmt.Sprintf("char %s[%d]", name, stringWidth(f))
+	}
 	if f.TypeExpr.ArrayLen != nil {
 		return fmt.Sprintf("%s %s[%d]", l.cBase(f.TypeExpr.Name), name, *f.TypeExpr.ArrayLen)
-	}
-	if f.TypeExpr.Name == "string" {
-		return fmt.Sprintf("char %s[%d]", name, stringWire)
 	}
 	return l.cBase(f.TypeExpr.Name) + " " + name
 }
 
+// goType is a struct field's Go type. A string of any width is a Go string; its
+// width is the codec's business, not the struct's.
 func (l *layout) goType(f ast.Field) string {
+	if isString(f) {
+		return "string"
+	}
 	base := goScalars[f.TypeExpr.Name]
 	if base == "" {
 		if f.TypeExpr.Name == "string" {

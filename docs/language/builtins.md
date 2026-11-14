@@ -115,7 +115,7 @@ first occurrence of a key at any depth.
 | `write_file(path: string, data: [u8])` | Writes a whole file (mode 0644); says nothing about failure | no | yes |
 | `append(items: [T], item: T) [T]` | The array with one more element | no | yes |
 | `extern fn rho_arg(index: i32) string` | One argument by position, from 0; `""` past the last | no | yes |
-| `extern fn rho_setenv(name: string, value: string)` | Sets a variable for this process and what it runs | no | yes |
+| `extern fn rho_setenv(name: string, value: string)` | Sets a variable for this process and what it runs | yes | yes |
 
 ## Ending the program
 

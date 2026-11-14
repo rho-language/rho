@@ -170,9 +170,10 @@ func installKindFor(moduleType string) (string, error) {
 		}
 	}
 	switch moduleType {
-	case "rho", "application":
-		// A Rho application is installed as a module, which is what the
-		// toolchain resolves a dependency against.
+	case "rho", "application", "provider":
+		// A Rho application, and a provider (an implementation of an
+		// interface), are installed as modules, which is what the toolchain
+		// resolves a dependency against.
 		return KindModule, nil
 	}
 	// An ecosystem's type is installed as a library when it is not one of the

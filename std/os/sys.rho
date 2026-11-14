@@ -1,19 +1,30 @@
 module std.os.sys
 
-extern fn c_syscall(num: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) u64
+// The process, through the runtime: the C library's wrappers on the C backend,
+// so the same call means the same thing on every architecture. The descriptor
+// calls take a Ptr[u8] and are C only; exit and setenv work on both backends.
+extern fn rho_exit(code: u32)
+extern fn rho_fd_write(fd: u32, buf: Ptr[u8], len: u32) u32
+extern fn rho_fd_read(fd: u32, buf: Ptr[u8], len: u32) u32
+extern fn rho_setenv(key: string, value: string)
 
 fn exit(code: u32) void {
-    c_syscall(60, code, 0, 0, 0, 0, 0)
+    rho_exit(code)
 }
 
+// write returns the number of bytes written, or 0xFFFFFFFF when it failed.
 fn write(fd: u32, buf: Ptr[u8], len: u32) u32 {
-    return u32(c_syscall(1, fd, buf.raw, len, 0, 0, 0))
+    return rho_fd_write(fd, buf, len)
 }
 
+// read returns the number of bytes read, or 0xFFFFFFFF when it failed.
 fn read(fd: u32, buf: Ptr[u8], len: u32) u32 {
-    return u32(c_syscall(0, fd, buf.raw, len, 0, 0, 0))
+    return rho_fd_read(fd, buf, len)
 }
 
-// setenv sets an environment variable. It is the caller's responsibility not to
-// set a variable the generated service reads during its initialisation.
-extern fn setenv(key: string, value: string) void
+// setenv sets an environment variable, replacing a value already set. It is the
+// caller's responsibility not to set a variable the generated service reads
+// during its initialisation.
+fn setenv(key: string, value: string) void {
+    rho_setenv(key, value)
+}

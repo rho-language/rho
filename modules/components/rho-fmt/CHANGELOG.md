@@ -25,3 +25,7 @@ The formatter now writes `continue`, `for ... in ...` (with `reverse` and
 `step`) and `match`, instead of replacing them with an unprinted-statement
 comment. A program that used any of them no longer changed meaning when it was
 formatted.
+
+## [0.1.3] - 2026-11-14
+
+`-check` names the files that need formatting and exits 1, and prints no source; it used to print the formatted file. A plain run prints every file it is given, formatted or already formatted, where a file that needed no change printed nothing.

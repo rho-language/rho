@@ -313,4 +313,63 @@ fn main() void {
 `,
 		want: "i64=[9000000000 -9000000000 0]from=[-42 7 0 0]case=[tank a-1 TANK A-1]replace=[3 of 3 ba keep ab]field=[b,,d,,two]json=[Tank \"A\"|-12.5e1|3||]",
 	},
+	{
+		name: "the floating-point functions through std.math",
+		source: `module app
+
+import std.math.float
+import std.math.fast
+import std.math.linear
+
+fn milli(x: f64) string {
+    return int_to_str(u32(x * 1000.0 + 0.5))
+}
+
+fn main() void {
+    print("float=[" + milli(sqrt(16.0)) + " " + milli(pow(2.0, 10.0)) + " " + milli(sin(0.5)) + " " + milli(cos(0.5)) + " " + milli(atan2(1.0, 1.0)) + " " + milli(abs_f64(-1.5)) + " " + milli(wrap_pi(7.0)) + " " + milli(lerp(0.0, 10.0, 0.25)) + "]")
+    print("fast=[" + milli(fast_sqrt(81.0)) + " " + milli(fast_sin(1.0)) + " " + milli(fast_cos(1.0)) + " " + milli(fast_atan2(1.0, 2.0)) + "]")
+    print("linear=[" + milli(vec2_length(Vec2{ 3.0, 4.0 })) + "]")
+}
+`,
+		want: "float=[4000 1024000 479 878 785 1500 717 2500]fast=[9000 841 540 464]linear=[5000]",
+	},
+	{
+		name: "bare floating-point builtins with nothing imported",
+		source: `module app
+
+fn milli(x: f64) string {
+    return int_to_str(u32(x * 1000.0 + 0.5))
+}
+
+fn main() void {
+    print(milli(sqrt(2.0)) + " " + milli(floor(2.7)) + " " + milli(sin(0.5)) + " " + milli(cos(0.5)) + " " + milli(atan2(1.0, 1.0)))
+    print(" " + milli(clamp_f64(-1.0, 0.0, 5.0)) + " " + milli(lerp(2.0, 4.0, 0.5)))
+}
+`,
+		want: "1414 2000 479 878 785 0 3000",
+	},
+	{
+		name: "std.os: the clock, the environment and exit",
+		source: `module app
+
+import std.os.sys
+import std.os.time
+
+fn main() void {
+    setenv("RHO_PARITY_VAR", "one")
+    setenv("RHO_PARITY_VAR", "two")
+    print("env=[" + getenv("RHO_PARITY_VAR") + "]")
+    let t: TimeSpec = now()
+    if t.sec > 1700000000 {
+        print(" clock")
+    }
+    if t.nsec < 1000000000 {
+        print(" nsec")
+    }
+    exit(0)
+    print(" after")
+}
+`,
+		want: "env=[two] clock nsec",
+	},
 }

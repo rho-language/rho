@@ -97,7 +97,7 @@ func runBothBackends(t *testing.T, source string) (c outcome, g outcome) {
 	cBinary := filepath.Join(t.TempDir(), "parity-c")
 	build := exec.Command("gcc", "-std=c11", "-g", "-O0", "-fsanitize=address,undefined",
 		"-fno-sanitize-recover=undefined", "-o", cBinary,
-		filepath.Join(cDir, "main.c"), filepath.Join(cDir, "app.c"), filepath.Join(cDir, "runtime.c"), "-I", cDir)
+		filepath.Join(cDir, "main.c"), filepath.Join(cDir, "app.c"), filepath.Join(cDir, "runtime.c"), "-I", cDir, "-lm")
 	if out, err := build.CombinedOutput(); err != nil {
 		c.failed = "C build failed: " + string(out)
 	} else {

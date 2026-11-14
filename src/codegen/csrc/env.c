@@ -26,3 +26,12 @@ char* rho_getenv(const char* name)
     }
     return strdup(value);
 }
+
+/* rho_setenv sets a variable for this process and the programs it runs,
+ * replacing a value already set, as the Go runtime's does. */
+void rho_setenv(const char* name, const char* value)
+{
+    if (name != NULL && value != NULL) {
+        setenv(name, value, 1);
+    }
+}

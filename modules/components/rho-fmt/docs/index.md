@@ -5,10 +5,10 @@ canonical form: one statement per line, one declaration per block, includes and
 imports kept with the module they belong to.
 
 ```sh
-rho fmt src/main.rho              # print the canonical form, if it differs
+rho fmt src/main.rho              # print the canonical form
 rho fmt -w src/*.rho              # rewrite the files in place
 rho fmt -l src/*.rho              # list the files that are not canonical
-rho fmt -l -check src/*.rho       # the same, and exit 1 if there are any
+rho fmt -check src/*.rho          # the same, and exit 1 if there are any
 ```
 
 ## Flags
@@ -17,12 +17,11 @@ rho fmt -l -check src/*.rho       # the same, and exit 1 if there are any
 |---|---|
 | `-w` | Write the result back to each file that differs |
 | `-l` | Print the name of each file that differs |
-| `-check` | Exit 1 when any file differs |
+| `-check` | Print the name of each file that differs, and exit 1 when any does |
 
-Without `-w` or `-l`, the canonical form of each file that differs is printed to
-standard output, and a file that is already canonical prints nothing. `-check`
-does not stop the printing, so a check in CI is written `-l -check`: the names of
-the files to fix, and a failing exit code.
+Without `-w`, `-l` or `-check`, the canonical form of every file is printed to
+standard output, whether or not it differs. `-check` prints no source: a check
+in CI gets the names of the files to fix and a failing exit code.
 
 A file that cannot be read or parsed stops the run with exit 1 and the parser's
 message; no file names at all is a usage error, exit 2.

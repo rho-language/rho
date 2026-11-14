@@ -202,14 +202,16 @@ func emitCSerialize(c *strings.Builder, l *layout, pfx string, m ast.MessageDecl
 }
 
 func emitCWrite(b *strings.Builder, l *layout, pfx string, f ast.Field, access, indent string) {
+	// A string, bare or `string[N]`, is its char array copied whole: N bytes.
+	if isString(f) {
+		w := stringWidth(f)
+		fmt.Fprintf(b, "%smemcpy(out + off, %s, %du);\n%soff += %du;\n", indent, access, w, indent, w)
+		return
+	}
 	if f.TypeExpr.ArrayLen != nil {
 		fmt.Fprintf(b, "%sfor (size_t i = 0; i < %du; i++) {\n", indent, *f.TypeExpr.ArrayLen)
 		writeCElement(b, l, pfx, f.TypeExpr.Name, access+"[i]", indent+"    ")
 		fmt.Fprintf(b, "%s}\n", indent)
-		return
-	}
-	if f.TypeExpr.Name == "string" {
-		fmt.Fprintf(b, "%smemcpy(out + off, %s, %du);\n%soff += %du;\n", indent, access, stringWire, indent, stringWire)
 		return
 	}
 	writeCElement(b, l, pfx, f.TypeExpr.Name, access, indent)
@@ -239,14 +241,15 @@ func writeCElement(b *strings.Builder, l *layout, pfx, typeName, expr, indent st
 }
 
 func emitCRead(b *strings.Builder, l *layout, pfx string, f ast.Field, access, indent string) {
+	if isString(f) {
+		w := stringWidth(f)
+		fmt.Fprintf(b, "%smemcpy(%s, data + off, %du);\n%soff += %du;\n", indent, access, w, indent, w)
+		return
+	}
 	if f.TypeExpr.ArrayLen != nil {
 		fmt.Fprintf(b, "%sfor (size_t i = 0; i < %du; i++) {\n", indent, *f.TypeExpr.ArrayLen)
 		readCElement(b, l, pfx, f.TypeExpr.Name, access+"[i]", indent+"    ")
 		fmt.Fprintf(b, "%s}\n", indent)
-		return
-	}
-	if f.TypeExpr.Name == "string" {
-		fmt.Fprintf(b, "%smemcpy(%s, data + off, %du);\n%soff += %du;\n", indent, access, stringWire, indent, stringWire)
 		return
 	}
 	readCElement(b, l, pfx, f.TypeExpr.Name, access, indent)
