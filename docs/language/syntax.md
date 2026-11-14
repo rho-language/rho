@@ -157,6 +157,58 @@ fn factorial(n: u32) u32 {
 }
 ```
 
+### Functions as values, and closures
+
+A function type is written `fn(A, B) -> R`, or `fn(A)` for one that returns
+nothing. A named function is a value of its type wherever one is wanted, and a
+value of a function type is called like a function:
+
+```rho
+fn twice(x: i32) i32 {
+    return x * 2
+}
+
+fn apply(f: fn(i32) -> i32, v: i32) i32 {
+    return f(v)
+}
+
+fn main() void {
+    print(int_to_str(apply(twice, 21) as u32))   // 42
+}
+```
+
+A function literal — a closure — is written like a declaration without a name,
+its result after `->` or not at all:
+
+```rho
+fn make_adder(k: i32) -> fn(i32) -> i32 {
+    return fn(x: i32) -> i32 { return x + k }
+}
+
+let add3 = make_adder(3)
+let say = fn(m: string) { print(m) }
+```
+
+A closure **captures by value**: each local of the enclosing function it names
+is copied when the literal is evaluated, so a later change to the variable is
+not seen, and the closure cannot assign to a captured name or take its address
+(declare a local copy inside it instead). A literal may not capture a pointer, a
+`[T]`, a `Slice[T]` or a struct holding one — what it points at may belong to
+the function that made the closure, which a returned closure outlives — nor a
+fixed array; pass those as parameters. Each is refused where it is written, with
+what to write instead.
+
+A function type may be a parameter, a result, a local, a struct field, the
+element of a `Slice[T]` and the payload of an `Option`. An array of functions
+puts the type in parentheses, `(fn(u32) -> u32)[4]`, because
+`fn() -> u32[4]` would be a function returning an array, which is refused. A
+generic function is a value where a function type says which specialisation is
+meant (`let f: fn(u32) -> u32 = identity`); a built-in such as `print` is not a
+value, and is wrapped in a literal. Calling a value that holds no function — the
+zero of a function type, as in a struct field never set — stops the program with
+`call of a function value that holds no function` on both backends. Function
+values cannot be compared or printed.
+
 ## Bindings
 
 `let` binds a name that does not change, `var` one that does. The type may be
@@ -213,6 +265,7 @@ let wide: u32 = u32(small)
 | `Name[T]` | a generic type, such as `Option[u32]` |
 | `Name` of an `enum` | one of the enum's variants; see [enums](#enums) |
 | `Ptr[T]` | a pointer to a `T`; see [pointers](#pointers) |
+| `fn(A, B) -> R` | a function value: a named function or a closure; see [functions as values](#functions-as-values-and-closures) |
 
 `type` gives a name to another type:
 
@@ -732,6 +785,10 @@ literal from an index.
   to a function `Circle`; build the variant with `Shape.Circle(3)`. Inside a
   pattern the enum is known from the value, and `Circle(r)` is enough.
   (`Some`, `None`, `Ok` and `Err` are functions as well as variants.)
+- **A closure captures by value and holds no references.** It cannot assign to
+  what it captured, and it cannot capture a pointer, a `[T]`, a `Slice[T]` (or a
+  struct holding one) or a fixed array; pass those as parameters. A closure
+  cannot call itself by name: recursion goes through a named function.
 - **Bit fields store as integers.** A struct with bit fields is laid out as the
   storage integers it packs into — the layout is the language's, not the C
   compiler's — so a `struct`-shaped ABI a C header expects would have to be

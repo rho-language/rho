@@ -154,6 +154,9 @@ type TypeChecker struct {
 	enumHelperOrder []string
 	// warnings are what checking found that does not stop a build.
 	warnings []*Error
+	// closures is what checking and lowering know about function values and
+	// the literals that make them (closures.go).
+	closures closureState
 }
 
 type functionType struct {
@@ -782,6 +785,13 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if typ, ok := tc.moduleConstTypes[value.Name]; ok {
 			return typ, nil
 		}
+		// A function named where a value goes is a value of its type.
+		if fv, named, err := tc.namedFuncValue(value.Name, value.Pos, scope, expected); named {
+			if err != nil {
+				return ir.Type{}, err
+			}
+			return fv.typ, nil
+		}
 		if _, ok := tc.lookupFunc(value.Name); ok {
 			return ir.Type{Kind: ir.TypeStruct, Name: "function"}, nil
 		}
@@ -876,6 +886,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 			}
 		}
 		if value.Op == "==" || value.Op == "!=" || value.Op == "<" || value.Op == "<=" || value.Op == ">" || value.Op == ">=" {
+			if left.Kind == ir.TypeFunc || right.Kind == ir.TypeFunc {
+				return ir.Type{}, locate(fmt.Errorf(msgFuncCompare, value.Op), value.Position(), "")
+			}
 			if !comparable(left, right) {
 				return ir.Type{}, locate(
 					fmt.Errorf("incompatible comparison: cannot compare %s with %s using %s; %s", article(typeName(left)), article(typeName(right)), value.Op, conversionHint(right, left)),
@@ -942,11 +955,20 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		if object, ok := value.Object.(ast.IdentifierExpr); ok && ((object.Name == "yaml" && (value.Name == "load" || value.Name == "value" || value.Name == "kind" || value.Name == "keys")) || (object.Name == "string" && value.Name == "from_i32")) {
 			return ir.Type{Kind: ir.TypeStruct, Name: "function"}, nil
 		}
+		// `module.function` named where a value goes.
+		if fv, named, err := tc.qualifiedFuncValue(value, scope); named {
+			if err != nil {
+				return ir.Type{}, err
+			}
+			return fv.typ, nil
+		}
 		object, err := tc.exprType(value.Object, scope)
 		if err != nil {
 			return ir.Type{}, err
 		}
 		return tc.memberType(object, value.Name)
+	case ast.FuncLitExpr:
+		return tc.funcLitType(value, scope)
 	case ast.IndexExpr:
 		object, err := tc.exprType(value.Object, scope)
 		if err != nil {
@@ -996,6 +1018,13 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 		// its values.
 		if typ, handled, err := tc.enumConversionType(value, scope); handled {
 			return typ, err
+		}
+		// `f(x)` for a value of a function type: a local, a field, an element.
+		if typ, isValue, err := tc.funcValueCallee(value, scope); isValue {
+			if err != nil {
+				return ir.Type{}, err
+			}
+			return tc.funcValueCallType(value, typ, scope)
 		}
 		var signature functionType
 		// A generic call is checked against the signature with its type
@@ -1123,8 +1152,10 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 				if len(value.Args) != 1 {
 					return ir.Type{}, fmt.Errorf("print expects one argument")
 				}
-				if _, err := tc.exprType(value.Args[0], scope); err != nil {
+				if printed, err := tc.exprType(value.Args[0], scope); err != nil {
 					return ir.Type{}, err
+				} else if printed.Kind == ir.TypeFunc {
+					return ir.Type{}, locate(fmt.Errorf("print writes a string, and %s is a function value; call it and print what it returns", writtenExpr(value.Args[0])), placed(value.Args[0].Position(), value.Pos), "")
 				}
 				return ir.Type{Kind: ir.TypeVoid, Name: "void"}, nil
 			}
@@ -1494,6 +1525,9 @@ func elementType(value ir.Type) ir.Type {
 		return value.Args[0]
 	}
 
+	if value.ArrayLen > 0 && value.Kind == ir.TypeFunc {
+		return funcTypeOf(value.FuncParams(), value.FuncResult())
+	}
 	if value.ArrayLen > 0 {
 		element := value
 		element.ArrayLen = 0
@@ -1530,10 +1564,16 @@ func typeArguments(name string) []ir.Type {
 	if start < 0 || !strings.HasSuffix(name, "]") {
 		return nil
 	}
-	parts := strings.Split(name[start+1:len(name)-1], ",")
+	parts := splitTypeArgs(name[start+1 : len(name)-1])
 	args := make([]ir.Type, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
+		if ast.IsFuncTypeName(part) {
+			if typ, err := resolveTypeName(part); err == nil {
+				args = append(args, typ)
+				continue
+			}
+		}
 		args = append(args, ir.Type{Kind: primitiveKind(part), Name: part})
 	}
 	return args
@@ -1768,6 +1808,13 @@ func assignable(want, got ir.Type) bool {
 	if want.Kind == ir.TypeInvalid || got.Kind == ir.TypeInvalid {
 		return true
 	}
+	// A function value is one of exactly the signature wanted.
+	if want.Kind == ir.TypeFunc && got.Kind == ir.TypeFunc && want.ArrayLen > 0 {
+		return want.ArrayLen == got.ArrayLen && sameFuncType(elementType(want), elementType(got))
+	}
+	if (want.Kind == ir.TypeFunc && want.ArrayLen == 0) || (got.Kind == ir.TypeFunc && got.ArrayLen == 0) {
+		return sameFuncType(want, got)
+	}
 	// A plain enum is an integer to a backend and a type of its own here: one
 	// enum does not stand in for another, nor a number for an enum or an enum
 	// for a number, without a conversion that says so.
@@ -1952,6 +1999,11 @@ func (tc *TypeChecker) ToIR(m ast.Module) ir.ModuleIR {
 	// The functions building and reading enums, which the bodies above call.
 	out.Funcs = append(out.Funcs, tc.enumHelperFuncs()...)
 
+	// What function values were made of: the functions literals and thunks
+	// became, the environments closures capture into, and the signatures
+	// values are made and called at.
+	tc.closureIR(&out)
+
 	// What C cannot emit, once each: a body may be lowered more than once.
 	seen := map[string]bool{}
 	for _, refusal := range tc.cRefusals {
@@ -2133,6 +2185,13 @@ func qualifiedCName(owner, name string) string {
 }
 
 func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type {
+	if ast.IsFuncTypeName(expr.Name) {
+		previous := tc.checkingTypeParams
+		tc.checkingTypeParams = append(append([]string{}, previous...), params...)
+		typ := tc.typeFor(expr.Name)
+		tc.checkingTypeParams = previous
+		return typ
+	}
 	// `u32[MAX]` parses as an application of u32 to MAX; with MAX a module
 	// constant and u32 nothing generic, it is the fixed array u32[32].
 	if expr.ArrayLen == nil && len(expr.Args) == 1 && len(expr.Args[0].Args) == 0 && expr.Args[0].ArrayLen == nil {
@@ -2177,6 +2236,20 @@ func (tc *TypeChecker) typeFromExpr(expr ast.TypeExpr, params []string) ir.Type 
 }
 
 func (tc *TypeChecker) resolveType(name string) (ir.Type, bool) {
+	// A function type, `fn(A, B) -> R`, is resolved from its parts.
+	if ast.IsFuncTypeName(name) {
+		return tc.resolveFuncType(name)
+	}
+	// An array of functions, `(fn(i32) -> i32)[4]`.
+	if inner, n, ok := parenthesisedArray(name); ok {
+		element, found := tc.resolveType(inner)
+		if !found || element.Kind != ir.TypeFunc {
+			return ir.Type{}, false
+		}
+		element.ArrayLen = n
+		element.Name = name
+		return element, true
+	}
 	name = tc.arrayConstantsResolved(name)
 	// An alias resolves to what it names, so a handle written as `SqlDb` is the
 	// pointer it is and a backend spells it as one.
@@ -2731,8 +2804,14 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			if digits, ok := tc.valueTypeArg(expr.Name); ok {
 				return digits
 			}
+			// A function named where a value goes: its thunk, bound.
+			if fv, named, err := tc.namedFuncValue(expr.Name, expr.Pos, scope, expected); named && err == nil {
+				return tc.lowerNamedFuncValue(fv)
+			}
 		}
 		return expr.Name
+	case ast.FuncLitExpr:
+		return tc.lowerFuncLit(expr, scope)
 	case ast.NumberExpr:
 		// A Rho number may be written with separators — 1_000_000 — and the
 		// backends are handed the digits, not the way the author spaced them.
@@ -2846,6 +2925,9 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		if construct, ok := tc.enumConstruction(expr, scope); ok {
 			return tc.lowerEnumConstruction(construct, scope, expected)
 		}
+		if fv, named, err := tc.qualifiedFuncValue(expr, scope); named && err == nil {
+			return tc.lowerNamedFuncValue(fv)
+		}
 		object, isIdentifier := expr.Object.(ast.IdentifierExpr)
 		if isIdentifier && object.Name == "yaml" && expr.Name == "load" {
 			return "rho_yaml_load"
@@ -2920,6 +3002,10 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 		}
 		if lowered, ok := tc.lowerEnumConversion(expr, scope); ok {
 			return lowered
+		}
+		// A call through a value of a function type.
+		if typ, isValue := tc.isFuncValueCall(expr, scope); isValue {
+			return tc.lowerFuncValueCall(expr, typ, scope)
 		}
 		if ident, ok := expr.Callee.(ast.IdentifierExpr); ok {
 			// append on a `[T]` is Go's; a C build is refused with the Slice to
@@ -3006,6 +3092,12 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			callee = qualified.cName
 			if runtimeForeign(qualified, expr.Callee.(ast.MemberExpr).Name) || callee == "" {
 				callee = expr.Callee.(ast.MemberExpr).Name
+			}
+		} else if identifier, isName := expr.Callee.(ast.IdentifierExpr); isName {
+			// The name of what is called, not the function as a value.
+			callee = identifier.Name
+			if alias, aliased := tc.lowerAliases[identifier.Name]; aliased {
+				callee = alias
 			}
 		} else {
 			callee = tc.lowerExpr(expr.Callee, scope)
@@ -3434,6 +3526,13 @@ func cTypeForKind(kind ir.TypeKind) string {
 }
 
 func cTypeForName(name string) string {
+	// Every function value is one C type, whatever its signature.
+	if ast.IsFuncTypeName(name) {
+		return "RhoFn"
+	}
+	if inner, n, ok := parenthesisedArray(name); ok {
+		return cTypeForName(inner) + fmt.Sprintf("[%d]", n)
+	}
 	// A dynamic array `[T]` is a pointer to its element in C. The brackets lead
 	// the name, which is what tells it from a fixed-size `T[N]`, whose brackets
 	// trail the element type.
@@ -4002,6 +4101,10 @@ func (tc *TypeChecker) cTypeFor(t ir.Type) string {
 		if t.Name != "" {
 			return mangleTypeName(t.Name)
 		}
+	case ir.TypeFunc:
+		// Every function value is an RhoFn in C; the name of its signature
+		// is what Go reads the func type back from.
+		return tc.funcSig(t)
 	}
 	return "void*"
 }

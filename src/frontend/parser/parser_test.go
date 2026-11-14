@@ -554,3 +554,51 @@ func TestParseSubslice(t *testing.T) {
 		t.Errorf("a for over buf[1..3] should loop over a SliceExpr, got %T", fn.Body[5].(ast.ForStmt).Collection)
 	}
 }
+
+// A function type is one name, spelled one way, wherever it is written; a
+// literal is a FuncLitExpr with its parameters, result and body; an array of
+// functions is written with the type in parentheses.
+func TestParseFunctionTypesAndLiterals(t *testing.T) {
+	source := "module app\n" +
+		"struct H { run: fn(i32,string)->bool, done: fn() }\n" +
+		"fn make(k: i32) -> fn(i32) -> fn(i32) -> i32 {\n  return fn(x: i32) -> fn(i32) -> i32 { return fn(y: i32) -> i32 { return x + y + k } }\n}\n" +
+		"fn main() {\n  var t: (fn(u8))[3]\n  let s = fn(m: string) { print(m) }\n  if apply(fn(a: i32) -> bool { return a > 0 }, 1) {\n  }\n}\n"
+	tokens, err := lexer.Lex(source)
+	if err != nil {
+		t.Fatalf("lex failed: %v", err)
+	}
+	mod, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	h := mod.Decls[0].(ast.StructDecl)
+	if h.Fields[0].Type != "fn(i32, string) -> bool" || h.Fields[1].Type != "fn()" {
+		t.Errorf("field types are %q and %q", h.Fields[0].Type, h.Fields[1].Type)
+	}
+	mk := mod.Decls[1].(ast.FuncDecl)
+	if mk.ReturnType != "fn(i32) -> fn(i32) -> i32" {
+		t.Errorf("make returns %q", mk.ReturnType)
+	}
+	lit, ok := mk.Body[0].(ast.ReturnStmt).Value.(ast.FuncLitExpr)
+	if !ok || len(lit.Params) != 1 || lit.ReturnType != "fn(i32) -> i32" || len(lit.Body) != 1 {
+		t.Fatalf("the returned literal is %#v", mk.Body[0].(ast.ReturnStmt).Value)
+	}
+	if !lit.Pos.Valid() {
+		t.Error("a literal carries where it begins")
+	}
+	main := mod.Decls[2].(ast.FuncDecl)
+	if typ := main.Body[0].(ast.LetStmt).Type.String(); typ != "(fn(u8))[3]" {
+		t.Errorf("an array of functions is %q", typ)
+	}
+	if say := main.Body[1].(ast.LetStmt).Value.(ast.FuncLitExpr); say.ReturnType != "void" {
+		t.Errorf("a literal with no result returns %q, want void", say.ReturnType)
+	}
+	call := main.Body[2].(ast.IfStmt).Condition.(ast.CallExpr)
+	if _, ok := call.Args[0].(ast.FuncLitExpr); !ok {
+		t.Errorf("a literal in a condition's call is %T", call.Args[0])
+	}
+	params, result, ok := ast.SplitFuncTypeName("fn(Slice[u8], fn(i32) -> i32) -> Option[u32]")
+	if !ok || len(params) != 2 || params[1] != "fn(i32) -> i32" || result != "Option[u32]" {
+		t.Errorf("split gives %v %q %v", params, result, ok)
+	}
+}

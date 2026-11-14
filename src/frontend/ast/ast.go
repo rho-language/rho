@@ -105,6 +105,11 @@ type TypeExpr struct {
 
 func (t TypeExpr) String() string {
 	name := t.Name
+	// An array of functions is written with the function type in brackets,
+	// `(fn(i32) -> i32)[4]`, so its length is not read as the result's.
+	if IsFuncTypeName(name) && (t.ArrayLen != nil || len(t.Dims) > 0) {
+		name = "(" + name + ")"
+	}
 	if len(t.Args) > 0 {
 		name += "["
 		for i, arg := range t.Args {
@@ -709,3 +714,113 @@ type IfExpr struct {
 func (IfExpr) exprNode() {}
 
 func (n IfExpr) Position() Position { return n.Pos }
+
+// FuncLitExpr is a function written where a value goes, a closure:
+//
+//	fn(x: i32) -> i32 { return x + k }
+//
+// It is written like a declaration without a name. The locals of the enclosing
+// function it names are captured by value: each is copied into the closure when
+// the literal is evaluated, and a later change to the variable is not seen by
+// it. A captured name cannot be assigned inside the body.
+type FuncLitExpr struct {
+	Node
+	Params []Param
+	// ReturnType is the result as written, "void" when none was.
+	ReturnType string
+	Body       []Stmt
+}
+
+func (FuncLitExpr) exprNode() {}
+
+func (n FuncLitExpr) Position() Position { return n.Pos }
+
+// IsFuncTypeName reports whether a written type name is a function type,
+// `fn(i32, string) -> bool`.
+func IsFuncTypeName(name string) bool {
+	return len(name) >= 3 && name[:3] == "fn("
+}
+
+// FuncTypeName is the one spelling of a function type: `fn(A, B) -> R`, or
+// `fn(A, B)` when it returns nothing. Every function type is spelled this way,
+// whoever builds it, so two spellings of one type are the same text.
+func FuncTypeName(params []string, result string) string {
+	name := "fn("
+	for i, param := range params {
+		if i > 0 {
+			name += ", "
+		}
+		name += param
+	}
+	name += ")"
+	if result != "" && result != "void" {
+		name += " -> " + result
+	}
+	return name
+}
+
+// SplitFuncTypeName takes a function type's spelling apart into its parameter
+// types and its result ("void" when it returns nothing). The third result says
+// whether the name was a function type at all.
+func SplitFuncTypeName(name string) ([]string, string, bool) {
+	if !IsFuncTypeName(name) {
+		return nil, "", false
+	}
+	depth := 0
+	closing := -1
+	for i := 2; i < len(name); i++ {
+		switch name[i] {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+			if depth == 0 && name[i] == ')' {
+				closing = i
+			}
+		}
+		if closing >= 0 {
+			break
+		}
+	}
+	if closing < 0 {
+		return nil, "", false
+	}
+	params := []string{}
+	inner := name[3:closing]
+	start := 0
+	depth = 0
+	for i := 0; i < len(inner); i++ {
+		switch inner[i] {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				params = append(params, trimSpace(inner[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	if tail := trimSpace(inner[start:]); tail != "" {
+		params = append(params, tail)
+	}
+	rest := trimSpace(name[closing+1:])
+	if rest == "" {
+		return params, "void", true
+	}
+	if len(rest) < 2 || rest[:2] != "->" {
+		return nil, "", false
+	}
+	return params, trimSpace(rest[2:]), true
+}
+
+func trimSpace(s string) string {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
+		s = s[1:]
+	}
+	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
+		s = s[:len(s)-1]
+	}
+	return s
+}

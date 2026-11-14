@@ -57,7 +57,7 @@ func precedence(e ast.Expr) int {
 	case ast.UnaryExpr:
 		// A unary binds tighter than any binary but looser than a call.
 		return 6
-	case ast.CallExpr, ast.IndexExpr, ast.SliceExpr, ast.MemberExpr, ast.CastExpr, ast.StructLiteralExpr:
+	case ast.CallExpr, ast.IndexExpr, ast.SliceExpr, ast.MemberExpr, ast.CastExpr, ast.StructLiteralExpr, ast.FuncLitExpr:
 		return 7
 	case ast.IfExpr:
 		return 0
@@ -193,6 +193,20 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 		b.WriteString(" } else { ")
 		printExpr(b, x.Else, 0)
 		b.WriteString(" }")
+
+	case ast.FuncLitExpr:
+		// A closure: a declaration without a name, whose body is indented
+		// from the statement it is written in.
+		b.WriteString("fn(")
+		printParams(b, x.Params)
+		b.WriteString(")")
+		if x.ReturnType != "" && x.ReturnType != "void" {
+			b.WriteString(" -> " + x.ReturnType)
+		}
+		b.WriteString(" {\n")
+		depth := statementDepth
+		printStmts(b, x.Body, depth+1)
+		b.WriteString(strings.Repeat(indent, depth) + "}")
 
 	default:
 		// An expression kind this formatter does not know yet must not be

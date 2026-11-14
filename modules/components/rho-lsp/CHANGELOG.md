@@ -21,3 +21,7 @@ Slice cuts are indexed: names used inside `s[a..b]` are found, hovered and renam
 ## [0.2.1] - 2026-11-14
 
 Slice cuts are indexed: names used inside `s[a..b]` are found, hovered and renamed.
+
+## [0.2.2] - 2026-11-15
+
+Function literals are indexed: their parameters and the names they capture are found and hovered.

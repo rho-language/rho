@@ -29,6 +29,7 @@ RHO_NORETURN void rho_panic_index(int64_t i, int64_t n);
 RHO_NORETURN void rho_panic_div(void);
 RHO_NORETURN void rho_panic_slice(int64_t lo, int64_t hi, int64_t n);
 RHO_NORETURN void rho_panic_append(int64_t cap);
+RHO_NORETURN void rho_panic_fn(void);
 
 /* An index into something whose length is known: a fixed array or a Slice. */
 static inline int64_t rho_index(int64_t i, int64_t n)

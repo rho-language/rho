@@ -467,13 +467,34 @@ func countNamesIn(node any, names map[string]bool) {
 		countNamesIn(one.Condition, names)
 		countNamesIn(one.Then, names)
 		countNamesIn(one.Else, names)
+	case ast.FuncLitExpr:
+		for _, param := range one.Params {
+			names[param.Name] = true
+			countTypeNames(param.TypeExpr, names)
+		}
+		countTypeNames(ast.TypeExpr{Name: one.ReturnType}, names)
+		for _, statement := range one.Body {
+			countNamesIn(statement, names)
+		}
 	}
 }
 
 // countTypeNames is every identifier a type names.
 func countTypeNames(one ast.TypeExpr, names map[string]bool) {
+	// A function type names the types of its parameters and its result.
+	if params, result, ok := ast.SplitFuncTypeName(strings.TrimSpace(one.Name)); ok {
+		for _, param := range params {
+			countTypeNames(ast.TypeExpr{Name: param}, names)
+		}
+		countTypeNames(ast.TypeExpr{Name: result}, names)
+		return
+	}
 	if name := strings.TrimSpace(one.Name); name != "" {
 		names[name] = true
+		// `alert.Rule` names the module it is written with.
+		if dot := strings.Index(name, "."); dot > 0 {
+			names[name[:dot]] = true
+		}
 	}
 	for _, argument := range one.Args {
 		countTypeNames(argument, names)

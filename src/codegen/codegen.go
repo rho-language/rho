@@ -87,6 +87,7 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	m.Funcs = cg.renameForeignInFuncs(m.Funcs)
 
 	cg.emitTypes(m.Structs, m.Aliases)
+	cg.emitFuncValueHelpers(m)
 	cg.foreignHeaders = m.ForeignHeaders
 	cg.emitFuncPrototypes(m.Funcs)
 	cg.emitFuncs(m.Funcs)
@@ -103,6 +104,11 @@ func (cg *Codegen) EmitModule(m ir.ModuleIR) string {
 	// The header goes in front, once the program is known, so that the runtime
 	// prototypes it needs can be gated to the ones it calls.
 	body := cg.b.String()
+	// Every function value is one C type, declared before any struct that
+	// holds one.
+	if strings.Contains(body, "RhoFn") || strings.Contains(body, "RHO_FN_NIL") {
+		body = funcValueTypedef + body
+	}
 	cg.b.Reset()
 	cg.emitHeader(m)
 	if decls := runtimeDecls(body); decls != "" {
@@ -810,6 +816,8 @@ func cTypeFor(t ir.Type) string {
 			return cTypeFor(t.Args[0]) + "*" + suffix
 		}
 		return "uint8_t*" + suffix
+	case ir.TypeFunc:
+		return "RhoFn" + suffix
 	case ir.TypePtr:
 		// `Ptr[T]` is `T*`, wherever it was written. A pointer to nothing —
 		// `Ptr[Unit]`, which is how a foreign handle is declared — is what C
@@ -1030,4 +1038,64 @@ func cSymbolFor(fn ir.FuncIR) string {
 		return fn.CName
 	}
 	return fn.Name
+}
+
+// funcValueTypedef is what every function value is in C: the function, called
+// with the environment first, and the environment (types/closures.go). The
+// function is held as a generic function pointer and converted back to its own
+// type where it is called, which is the one conversion C defines for one.
+const funcValueTypedef = `/* A function value: a function that takes its environment first, and the
+ * environment, NULL for a named function. */
+typedef struct {
+    void (*fn)(void);
+    void* env;
+} RhoFn;
+#define RHO_FN_NIL ((RhoFn){ NULL, NULL })
+
+`
+
+// emitFuncValueHelpers writes the helpers function values are made, called
+// and captured with (ir.ModuleIR.FuncSigs and Envs), after the structs whose
+// types they name.
+func (cg *Codegen) emitFuncValueHelpers(m ir.ModuleIR) {
+	for _, env := range m.Envs {
+		cg.b.WriteString("static inline void* " + env + "_make(" + env + " v)\n{\n")
+		cg.b.WriteString("    " + env + "* e = (" + env + "*)rho_env_alloc(sizeof(" + env + "));\n")
+		cg.b.WriteString("    *e = v;\n    return e;\n}\n")
+		cg.b.WriteString("static inline " + env + " " + env + "_at(void* e)\n{\n    return *(" + env + "*)e;\n}\n")
+	}
+	for _, sig := range m.FuncSigs {
+		cg.b.WriteString("typedef RhoFn " + sig.Name + ";\n")
+	}
+	for _, sig := range m.FuncSigs {
+		params := sig.Type.FuncParams()
+		result := sig.Type.FuncResult()
+		returns := cTypeFor(result)
+		if isUnitType(result) {
+			returns = "void"
+		}
+		types := []string{"void*"}
+		named := []string{"RhoFn f"}
+		args := []string{"f.env"}
+		for i, param := range params {
+			name := fmt.Sprintf("a%d", i)
+			types = append(types, cTypeFor(param))
+			named = append(named, cTypeFor(param)+" "+name)
+			args = append(args, name)
+		}
+		pointer := returns + " (*)(" + strings.Join(types, ", ") + ")"
+		cg.b.WriteString("static inline " + returns + " " + sig.Name + "_call(" + strings.Join(named, ", ") + ")\n{\n")
+		cg.b.WriteString("    if (f.fn == NULL) {\n        rho_panic_fn();\n    }\n")
+		call := "((" + pointer + ")f.fn)(" + strings.Join(args, ", ") + ")"
+		if returns == "void" {
+			cg.b.WriteString("    " + call + ";\n}\n")
+		} else {
+			cg.b.WriteString("    return " + call + ";\n}\n")
+		}
+		cg.b.WriteString("static inline RhoFn " + sig.Name + "_bind(" + returns + " (*fn)(" + strings.Join(types, ", ") + "), void* env)\n{\n")
+		cg.b.WriteString("    RhoFn f;\n    f.fn = (void (*)(void))fn;\n    f.env = env;\n    return f;\n}\n")
+	}
+	if len(m.Envs) > 0 || len(m.FuncSigs) > 0 {
+		cg.b.WriteString("\n")
+	}
 }

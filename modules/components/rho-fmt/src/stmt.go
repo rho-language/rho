@@ -24,6 +24,10 @@ import (
 // indent is one level of Rho source indentation.
 const indent = "    "
 
+// statementDepth is the depth of the statement being printed, which a function
+// literal inside one indents its body from.
+var statementDepth int
+
 // printStmts writes a statement list, each on its own line.
 func printStmts(b *strings.Builder, list []ast.Stmt, depth int) {
 	for _, stmt := range list {
@@ -34,6 +38,10 @@ func printStmts(b *strings.Builder, list []ast.Stmt, depth int) {
 // printStmt writes one statement, indented to the given depth.
 func printStmt(b *strings.Builder, stmt ast.Stmt, depth int) {
 	pad := strings.Repeat(indent, depth)
+	// A function literal in this statement indents its body from here.
+	outer := statementDepth
+	statementDepth = depth
+	defer func() { statementDepth = outer }()
 
 	switch x := stmt.(type) {
 	case ast.BlockStmt:

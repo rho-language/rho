@@ -219,3 +219,34 @@ func fieldsHint(name string, fields map[string]ir.Type) string {
 	}
 	return "its fields are " + strings.Join(names, ", ")
 }
+
+// What is refused about function values and closures (closures.go), each with
+// what to write instead.
+const (
+	// msgFuncTypeArray: a function type, the fixed array in it, its element.
+	msgFuncTypeArray = "%s takes or returns the fixed array %s, which C passes by address and Go by copy; use a Slice[%s] instead"
+	// msgGenericFuncValue: the function, the type wanted, the function, its
+	// type parameters.
+	msgGenericFuncValue = "the generic function %s cannot be used as %s: no specialisation of it has that signature; write a function literal that calls %s[%s](...)"
+	// msgGenericNotAValue: the function three times.
+	msgGenericNotAValue = "the generic function %s is not a value here: call it, as in %s(...), or use it where a function type says which specialisation of %s is meant"
+	// msgFuncValueMismatch: the function, its signature, the type wanted.
+	msgFuncValueMismatch = "%s is %s, which cannot be used as %s"
+	// msgBuiltinFuncValue: the built-in.
+	msgBuiltinFuncValue = "%s is built into the language and is not a function value; wrap it in a function literal, as in `fn(s: string) { print(s) }`"
+	// msgNotAFunction: what was called, its type with an article.
+	msgNotAFunction = "%s is %s, not a function, and cannot be called; only a function or a value of a function type `fn(...) -> ...` can"
+	// msgFuncValueArity: the value, its type, the count it takes, the count passed.
+	msgFuncValueArity = "%s is %s and takes %s, and this call passes %d"
+	// msgFuncCompare: the operator.
+	msgFuncCompare = "function values cannot be compared with %s: two closures of one function differ in what they captured, and C and Go would answer differently; compare what the functions compute instead"
+	// msgCaptureArray: the name, its type.
+	msgCaptureArray = "a closure cannot capture %s, the fixed array %s: C cannot copy an array into the closure; wrap it in a struct and capture that, or pass it as a parameter"
+	// msgCaptureReference: the name, its type, what kind of reference, the
+	// name, its type.
+	msgCaptureReference = "a closure cannot capture %s (%s), which holds %s: what it points at may belong to the function that made the closure, and the closure can outlive it; pass %s as a parameter of type %s instead"
+	// msgCaptureAssigned: the name three times.
+	msgCaptureAssigned = "a closure cannot assign to %s, which it captured: captures are copies made when the closure was created; declare a local inside it (`var %s_copy = %s`) and change that"
+	// msgCaptureAddressed: the name twice.
+	msgCaptureAddressed = "a closure cannot take the address of %s, which it captured: captures are copies made when the closure was created; declare a local inside it (`var copy = %s`) and use that"
+)

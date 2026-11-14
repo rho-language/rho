@@ -93,3 +93,21 @@ func TestIndexKeepsWhatItCanWhenAFileIsBroken(t *testing.T) {
 		t.Error("the declaration before the mistake was lost")
 	}
 }
+
+// A closure's parameters are declarations and what its body names are uses,
+// and a function type in a signature does not stop the index.
+func TestIndexReadsClosures(t *testing.T) {
+	source := "module shop\n\nfn apply(f: fn(i32) -> i32, v: i32) -> i32 {\n  return f(v)\n}\n\nfn main() void {\n  let k: i32 = 2\n  let add = fn(x: i32) -> i32 { return x + k }\n  print(int_to_str(apply(add, 1) as u32))\n}\n"
+	ix := BuildIndex("file:///test.rho", source)
+	if ix == nil {
+		t.Fatal("a well-formed file was not indexed")
+	}
+	for _, name := range []string{"apply", "add", "x", "k"} {
+		if !ix.Symbols.Local[name] {
+			t.Errorf("%q is declared and was not indexed", name)
+		}
+	}
+	if len(ix.Symbols.LocalRefs["k"]) < 2 {
+		t.Errorf("k is used inside the closure and has %d places, want its declaration and the use", len(ix.Symbols.LocalRefs["k"]))
+	}
+}

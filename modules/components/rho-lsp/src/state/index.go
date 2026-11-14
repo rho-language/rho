@@ -265,6 +265,14 @@ func (ix *Index) indexExpr(expr ast.Expr) {
 		for _, value := range e.Values {
 			ix.indexExpr(value)
 		}
+	case ast.FuncLitExpr:
+		// A closure declares its parameters and uses what its body names.
+		for _, param := range e.Params {
+			ix.declare(string(RoleParameter), param.Name, param.Pos)
+		}
+		for _, stmt := range e.Body {
+			ix.indexStmt(stmt)
+		}
 	}
 }
 

@@ -76,7 +76,7 @@ var checksSource string
 // checkedHelperNames are the helpers checks.h defines, which a program calls
 // where the type checker lowered an operation to one (types/checked.go).
 func checkedHelperNames() []string {
-	names := []string{"rho_index", "rho_subslice", "rho_slice_len", "rho_append_at", "rho_raw_ptr", "rho_array_ptr"}
+	names := []string{"rho_panic_fn", "rho_index", "rho_subslice", "rho_slice_len", "rho_append_at", "rho_raw_ptr", "rho_array_ptr"}
 	for _, suffix := range []string{"i8", "i16", "i32", "i64", "u8", "u16"} {
 		names = append(names, "rho_add_"+suffix, "rho_sub_"+suffix, "rho_mul_"+suffix, "rho_neg_"+suffix)
 	}
@@ -218,6 +218,7 @@ var runtimeFragments = []RuntimeFragment{
 		Provides: []string{
 			"rho_str_alloc", "rho_str_dup", "rho_str_adopt",
 			"rho_arena_mark", "rho_arena_release", "rho_arena_keep", "rho_arena_release_cond", "rho_arena_used",
+			"rho_env_alloc",
 		},
 		Needs: []string{"panicf"},
 		Decls: []string{
@@ -227,6 +228,7 @@ var runtimeFragments = []RuntimeFragment{
 			"const char* rho_arena_keep(size_t mark, const char* s);",
 			"bool rho_arena_release_cond(size_t mark, bool value);",
 			"size_t rho_arena_used(void);",
+			"void* rho_env_alloc(size_t n);",
 		},
 	},
 	{

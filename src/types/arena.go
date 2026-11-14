@@ -16,8 +16,11 @@
 //
 // Both are sound because a Rho string can outlive the place it was built only by
 // being returned, stored in something declared outside the loop, written through
-// a pointer, or kept by a C function. The language has no mutable globals, no
-// closures and no heap objects, so those are all of the ways. A loop whose body
+// a pointer, or kept by a C function. The language has no mutable globals and
+// no heap objects, and a closure's environment is treated as a string itself
+// (closures.go): a function value is kept wherever a string would be, and a
+// closure captures no reference a string could be written through. So those
+// are all of the ways. A loop whose body
 // stores a string outside itself is not reset; a statement that passes a pointer
 // is not released. A C function is given a string for the duration of the call
 // and copies what it keeps.
@@ -759,7 +762,19 @@ func (tc *TypeChecker) exprAllocates(expr ast.Expr, scope map[string]ir.Type) bo
 			}
 			visit(v.Left)
 			visit(v.Right)
+		case ast.FuncLitExpr:
+			// A closure's environment is built in the arena.
+			if tc.funcLitAllocates(v, scope) {
+				allocates = true
+			}
+			return
 		case ast.CallExpr:
+			// A call through a value runs a body nothing here can see, which
+			// may build a string and leave it behind.
+			if _, isValue := tc.isFuncValueCall(v, scope); isValue {
+				allocates = true
+				return
+			}
 			// `print(int_to_str(n))` prints the number without building it.
 			if callee, ok := v.Callee.(ast.IdentifierExpr); ok && callee.Name == "print" && len(v.Args) == 1 {
 				if inner, printsNumber := numberPrinted(v.Args[0]); printsNumber {
@@ -922,6 +937,11 @@ func (tc *TypeChecker) containsString(typ ir.Type, depth int) bool {
 		return true
 	case ir.TypePtr:
 		return false
+	case ir.TypeFunc:
+		// A function value may be a closure, whose environment lives in the
+		// arena as a string does (closures.go), and is kept where a string
+		// would be.
+		return true
 	}
 	if element, isArray := arrayElementOf(typ); isArray {
 		return tc.containsString(element, depth+1)

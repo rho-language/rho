@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 
+	"rho/src/frontend/ast"
 	"rho/src/ir"
 )
 
@@ -272,7 +273,7 @@ func ToGoExpr(expr string) string {
 
 // translateWord maps a single identifier to its Go spelling.
 func translateWord(word string) string {
-	if word == "NULL" {
+	if word == "NULL" || word == "RHO_FN_NIL" {
 		return "nil"
 	}
 	// Keywords and literals keep their spelling.
@@ -857,6 +858,8 @@ func goTypeForIR(t ir.Type) string {
 		// a foreign handle. `unsafe.Pointer` is the one Go type the collector
 		// follows and that converts to and from an address held as a number.
 		return "unsafe.Pointer"
+	case ir.TypeFunc:
+		return goFuncType(t)
 	case ir.TypeSlice:
 		// A dynamic array is a Go slice. This is the difference from a pointer
 		// that makes the two kinds worth telling apart.
@@ -873,6 +876,20 @@ func goTypeForIR(t ir.Type) string {
 	}
 }
 
+// goFuncType is a function type in Go: a func of the same signature.
+func goFuncType(t ir.Type) string {
+	params := t.FuncParams()
+	parts := make([]string, len(params))
+	for i, param := range params {
+		parts[i] = goTypeForIR(param)
+	}
+	out := "func(" + strings.Join(parts, ", ") + ")"
+	if returns := goTypeForIR(t.FuncResult()); returns != "" && !isUnitType(t.FuncResult()) {
+		out += " " + returns
+	}
+	return out
+}
+
 // sanitizeGoTypeName normalises a struct type name for Go use.
 func sanitizeGoTypeName(name string) string {
 	return strings.NewReplacer("[", "_", "]", "", ",", "_", " ", "").Replace(name)
@@ -885,6 +902,11 @@ func sanitizeGoTypeName(name string) string {
 func goTypeName(name string) string {
 	if name == "" {
 		return ""
+	}
+	// A specialisation over a function type, `Slice[fn(u32) -> u32]`, is the
+	// struct emitted under its mangled name.
+	if strings.ContainsAny(name, "()") {
+		return lowerCamel(mangleGoName(name))
 	}
 	return lowerCamel(sanitizeGoTypeName(name))
 }
@@ -960,6 +982,30 @@ func goTypeForRhoName(name string) string {
 	}
 	if mapped, ok := goRhoPrimitives[trimmed]; ok {
 		return mapped
+	}
+	// An array of functions, `(fn(i32) -> i32)[4]`.
+	if strings.HasPrefix(trimmed, "(") {
+		if close := strings.LastIndexByte(trimmed, ')'); close > 0 {
+			if base, dims, ok := goNameArrayDims(trimmed); ok && base == trimmed[:close+1] {
+				prefix := ""
+				for _, dim := range dims {
+					prefix += "[" + strconv.Itoa(dim) + "]"
+				}
+				return prefix + goTypeForRhoName(trimmed[1:close])
+			}
+		}
+	}
+	// A function type is a Go func of the same signature.
+	if params, result, ok := ast.SplitFuncTypeName(trimmed); ok {
+		parts := make([]string, len(params))
+		for i, param := range params {
+			parts[i] = goTypeForRhoName(param)
+		}
+		out := "func(" + strings.Join(parts, ", ") + ")"
+		if returns := goTypeForRhoName(result); returns != "" {
+			out += " " + returns
+		}
+		return out
 	}
 	if isRhoPointerName(trimmed) {
 		return "unsafe.Pointer"
@@ -1166,4 +1212,22 @@ func translateSliceHelper(name string, args []string) (string, bool) {
 		return "unsafe.Pointer(&[]" + goTypeForCName(args[0]) + "{" + strings.Join(translated(1), ", ") + "}[0])", true
 	}
 	return "", false
+}
+
+// mangleGoName is a written type name as the identifier its specialisation is
+// emitted under: every run of what is not a letter or a digit is one
+// underscore, as the checker mangles it.
+func mangleGoName(name string) string {
+	var b strings.Builder
+	last := false
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			last = false
+		} else if !last {
+			b.WriteByte('_')
+			last = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }

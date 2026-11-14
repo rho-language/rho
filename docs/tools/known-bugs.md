@@ -53,6 +53,9 @@ appears below as open.
 | 36 | compiler: generics | A local of a type parameter in a generic body, `var out: T`, was declared as `T` in the C and the Go of every specialisation. | It is declared as the type the specialisation substitutes. | parity: "slices: a generic over Slice[T], a Slice field, and a module-level array" |
 | 37 | type checker | A fixed array whose length is a module constant, `var buf: u8[MAX]`, was not a fixed array: it could not be cut, did not become a `Slice[T]`, and in a struct field it was emitted as a single element (`items uint32`). | The constant's value is the length wherever the type is written. | parity: "arrays: a length named by a constant, in a local, a parameter and a struct field" |
 | 38 | C backend | A struct field of a fixed-array type, `items: u32[4]`, was declared `uint32_t[4] items;`, which no C compiler accepts. | The length follows the name: `uint32_t items[4];`. | parity: "arrays: a length named by a constant…" |
+| 39 | type checker | A member of a struct named by a generic application with a nested one in it, `Pair[Slice[u8], u32]`, or a function type, `Slice[fn(u32) -> u32]`, read its type arguments by splitting at every comma and resolved none of them, so `s[i]` of a `Slice[fn(u32) -> u32]` was typed as a struct named `fn_u32_u32`. | The arguments are split at the top level and a function type among them is resolved. | parity: "closures: arrays, a Slice and an Option of functions…" |
+| 40 | rho-lint | An import used only as the module of a type, `fn f(r: alert.Rule)`, was reported as unused: the rule recorded the type's name `alert.Rule` and not its module. | A dotted type name counts its module as used, and a function type counts every type it names. | `TestRhoRulesReadClosuresAndFunctionTypes` |
+| 41 | type checker | A generic function named where a value goes, `return None` for `None()`, was typed as a placeholder every struct type accepted, and the build failed in the C and Go compilers on a name nothing declared. | It is refused where it is written, with the call to write instead. | `TestClosuresThatCannotBeHonouredAreRefused` ("a generic function named where…") |
 
 ## Open
 
@@ -69,6 +72,22 @@ are tagged for C and a Go build is refused; there are no `<<=`, `>>=` or `%=`
 operators; a compound assignment evaluates its target twice, which matters only
 for a target with a call in it; an index into a `[T]` or a `Ptr[T]` is not
 checked.
+
+Limitations of closures (Phase 3c): a closure captures by value and cannot
+assign to what it captured or take its address; it cannot capture a pointer, a
+`[T]`, a `Slice[T]` (or a struct, array or enum holding one), because what it
+points at may be the frame that made the closure, nor a fixed array, which C
+cannot copy into an environment — pass those as parameters, or wrap an array in
+a struct; a closure cannot name itself, so recursion goes through a named
+function; a function type cannot take or return a fixed array, and an array of
+functions is written `(fn(...) -> R)[N]`; a generic function is a value only
+where a function type says which specialisation is meant, and a built-in such as
+`print` never is; function values cannot be compared or printed; an environment
+lives in the string arena under the string rule, so a loop that keeps the
+closures it makes is not released (refused on a board, as for strings), and a
+call through a function value counts as building strings because its body is
+not known where it is called; on C every function value is one type, `RhoFn`,
+whose signature the checker alone enforces.
 
 Limitations of enums (Phase 3a): a value written inside a struct literal does not
 take its type from the field (`Box[Option[u32]]{ Some(7) }` builds an

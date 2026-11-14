@@ -37,3 +37,7 @@ Enums are printed (they were dropped as an unprinted declaration).
 ## [0.1.5] - 2026-11-14
 
 Slice cuts (`s[a..b]`, `s[..b]`, `s[a..]`, `s[..]`) are printed.
+
+## [0.1.6] - 2026-11-15
+
+Function types (`fn(A) -> R`, `(fn(u32) -> u32)[4]`) and function literals are printed.

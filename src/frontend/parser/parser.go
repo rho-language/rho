@@ -644,6 +644,39 @@ func (p *Parser) parseTypeParams() ([]string, map[string]string) {
 }
 
 func (p *Parser) parseType() ast.TypeExpr {
+	// A function type: `fn(i32, string) -> bool`, or `fn(u8)` for one that
+	// returns nothing. It is kept as one name, spelled one way
+	// (ast.FuncTypeName), as a dynamic array is.
+	if p.current.Kind == lexer.TokenFn {
+		return p.parseFuncType()
+	}
+	// A parenthesised type is the type inside, so a function type can be the
+	// element of an array: `(fn(i32) -> i32)[4]`.
+	if p.current.Kind == lexer.TokenLParen {
+		p.readToken()
+		inner := p.parseType()
+		p.expect(lexer.TokenRParen)
+		p.readToken()
+		for p.current.Kind == lexer.TokenLBracket {
+			p.readToken()
+			if p.current.Kind != lexer.TokenNumber {
+				panic(NewErrorf(p.current, "an array dimension must be a number"))
+			}
+			dimension, err := strconv.Atoi(p.current.Lex)
+			if err != nil {
+				panic(NewErrorf(p.current, "invalid array length"))
+			}
+			if inner.ArrayLen == nil {
+				inner.ArrayLen = &dimension
+			} else {
+				inner.Dims = append(inner.Dims, dimension)
+			}
+			p.readToken()
+			p.expect(lexer.TokenRBracket)
+			p.readToken()
+		}
+		return inner
+	}
 	// Dynamic array type: [u8], [u32], etc.
 	if p.current.Kind == lexer.TokenLBracket {
 		p.readToken()
@@ -724,6 +757,89 @@ func (p *Parser) parseType() ast.TypeExpr {
 		p.readToken()
 	}
 	return typeExpr
+}
+
+// parseFuncType reads a function type, `fn(A, B) -> R`. The arrow binds to the
+// right, so `fn(i32) -> fn(i32) -> i32` returns a function.
+func (p *Parser) parseFuncType() ast.TypeExpr {
+	p.expect(lexer.TokenFn)
+	p.readToken()
+	p.expect(lexer.TokenLParen)
+	p.readToken()
+	params := []string{}
+	for p.current.Kind != lexer.TokenRParen {
+		if p.current.Kind == lexer.TokenEOF {
+			panic(NewErrorf(p.current, "unterminated function type: close its parameter types with `)`"))
+		}
+		// A name before a type is a mistake worth naming: a function type lists
+		// types only.
+		if p.current.Kind == lexer.TokenIdent && p.nextTok.Kind == lexer.TokenColon {
+			panic(NewErrorf(p.current, "a function type lists parameter types only: drop the name `%s:` and write only its type", p.current.Lex))
+		}
+		paramAt := p.current
+		param := p.parseType()
+		if param.ArrayLen != nil || len(param.Dims) > 0 {
+			panic(NewErrorf(paramAt, "a function type cannot take the fixed array %s, which C passes by address and Go by copy; take a Slice[%s]", param.String(), param.Name))
+		}
+		params = append(params, param.String())
+		if p.current.Kind == lexer.TokenComma {
+			p.readToken()
+		} else if p.current.Kind != lexer.TokenRParen {
+			panic(NewErrorf(p.current, "expected `,` or `)` in a function type, got %s", describe(p.current)))
+		}
+	}
+	p.readToken()
+	result := "void"
+	if p.current.Kind == lexer.TokenArrow {
+		p.readToken()
+		resultAt := p.current
+		returned := p.parseType()
+		if returned.ArrayLen != nil || len(returned.Dims) > 0 {
+			panic(NewErrorf(resultAt, "a function type cannot return the fixed array %s; for an array of functions write `(fn(...) -> %s)[%d]`, and to return elements use a Slice or a struct", returned.String(), returned.Name, arrayLenOf(returned)))
+		}
+		result = returned.String()
+	}
+	return ast.TypeExpr{Name: ast.FuncTypeName(params, result)}
+}
+
+// parseFuncLit reads a function literal, a closure: `fn(x: i32) -> i32 { ... }`.
+// It is a declaration without a name, and the result is written after an arrow
+// or not at all.
+func (p *Parser) parseFuncLit() ast.Expr {
+	p.expect(lexer.TokenFn)
+	p.readToken()
+	p.expect(lexer.TokenLParen)
+	p.readToken()
+	params := []ast.Param{}
+	for p.current.Kind != lexer.TokenRParen {
+		if p.current.Kind == lexer.TokenEOF {
+			panic(NewErrorf(p.current, "unterminated function literal: close its parameters with `)`"))
+		}
+		at := p.position()
+		paramName := p.name()
+		p.expect(lexer.TokenColon)
+		p.readToken()
+		paramType := p.parseType()
+		param := ast.Param{Name: paramName, Type: paramType.String(), TypeExpr: paramType}
+		param.Pos = at
+		params = append(params, param)
+		if p.current.Kind == lexer.TokenComma {
+			p.readToken()
+		}
+	}
+	p.readToken()
+	returnType := "void"
+	if p.current.Kind == lexer.TokenArrow {
+		p.readToken()
+		returnType = p.parseType().String()
+	}
+	// The body is a block of its own: a brace in it is not the body of an
+	// enclosing condition.
+	previous := p.noStructLiteral
+	p.noStructLiteral = false
+	body := p.parseBlock()
+	p.noStructLiteral = previous
+	return ast.FuncLitExpr{Params: params, ReturnType: returnType, Body: body}
 }
 
 func (p *Parser) parseStructDecl() ast.Decl {
@@ -940,7 +1056,7 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 	if p.current.Kind == lexer.TokenArrow {
 		p.readToken()
 		returnType = p.parseType()
-	} else if p.current.Kind == lexer.TokenIdent {
+	} else if p.current.Kind == lexer.TokenIdent || (p.current.Kind == lexer.TokenFn && !extern && p.nextTok.Kind == lexer.TokenLParen) {
 		returnType = p.parseType()
 	}
 	body := []ast.Stmt{}
@@ -1227,6 +1343,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case lexer.TokenIdent:
 		expression = ast.IdentifierExpr{Name: p.current.Lex}
 		p.readToken()
+	case lexer.TokenFn:
+		expression = p.parseFuncLit()
 	default:
 		panic(NewErrorf(p.current, "expected an expression, got %s", describe(p.current)))
 	}
@@ -1281,6 +1399,9 @@ func (p *Parser) placeExpr(expr ast.Expr, at ast.Position) ast.Expr {
 		e.Pos = at
 		return e
 	case ast.IfExpr:
+		e.Pos = at
+		return e
+	case ast.FuncLitExpr:
 		e.Pos = at
 		return e
 	}
@@ -1568,4 +1689,11 @@ func (p *Parser) bracketOpensApplication(expression ast.Expr) bool {
 		}
 	}
 	return false
+}
+
+func arrayLenOf(t ast.TypeExpr) int {
+	if t.ArrayLen != nil {
+		return *t.ArrayLen
+	}
+	return 0
 }

@@ -20,6 +20,7 @@ What a Rho value can be, and how a shape is built out of them.
 | `Result[T, E]` | A value, or an error: the enum `Err(E)` or `Ok(T)` |
 | `struct` | A product type, declared in the module |
 | `enum` | One of a fixed set of variants, each with or without values ([enums](#enums)) |
+| `fn(A, B) -> R` | A function value: a named function or a closure ([function types](#function-types)) |
 
 There is no map among a program's types; `std.collections.map` is a table
 written in Rho.
@@ -409,6 +410,53 @@ A `match` on a number is not checked for exhaustiveness, so the function returns
 after it. An arm's body is an expression or a block, and `return` is a
 statement, so an arm that returns is written as a block.
 
+## Function types
+
+`fn(A, B) -> R` is the type of a function taking an `A` and a `B` and returning
+an `R`; `fn(A)` returns nothing. Two function types are the same type only when
+every parameter and the result are exactly the same: a `fn(i32)` is not a
+`fn(u8)`, because the two are called differently, and nothing converts one into
+the other.
+
+A value of one is a named function (a generic one where the function type says
+which specialisation is meant) or a closure ({ref}`syntax <language/syntax>`).
+Generic functions take function values and deduce through them:
+
+```rho
+fn map_into[T, U](s: Slice[T], out: Slice[U], f: fn(T) -> U) void {
+    var i: u32 = 0
+    while i < s.len {
+        out[i] = f(s[i])
+        i = i + 1
+    }
+}
+```
+
+**How a value is represented.** Every function value is a function that takes
+an environment first, and that environment. A closure's body becomes a function
+of its own and what it captured is copied into a struct; a named function is
+reached through a thunk with no environment. In C a value is an `RhoFn`,
+`{ void (*fn)(void); void* env; }`; in Go it is a `func(A, B) R`. Both backends
+call through a helper that stops the program when the value holds no function,
+with the same words.
+
+**Where an environment lives.** There is no general heap on a board, so a
+closure's environment lives in the string arena and follows the rule strings
+follow (see {ref}`memory <language/index>`): the compiler treats a function
+value everywhere as a value that holds a string. An environment built in a loop
+iteration lives until the end of that iteration unless the closure is stored in
+something declared outside the loop; one kept by a `let` lives as long as the
+string would; one returned from a function reaches the caller, as a returned
+string does. A loop that keeps the closures it makes is not released, and on a
+board that is refused as it is for strings. What makes this sound is what a
+closure may capture: values only, never a reference into a frame (a pointer, a
+`[T]`, a `Slice[T]`), and nothing it can change after it was made. A call
+through a function value is counted as building strings, because its body is
+not known where it is called.
+
+A function value cannot be compared (`==` is refused) or printed, and cannot
+take or return a fixed array — use a `Slice[T]`.
+
 ## Foreign types
 
 A type a C header declares is a Rho type by name, and the pointer to it is a
@@ -426,5 +474,5 @@ nothing else, which is the same thing the header's own author intended.
 
 ## Where to go next
 
-- {ref}`syntax <language/syntax>` — how these are written.
+- {ref}`syntax <language/syntax>` — how these are written, closures included.
 - {ref}`stdlib <language/stdlib>` — what the standard library is built from.

@@ -289,3 +289,54 @@ fn main() void {
 		t.Errorf("formatting is not stable (%v):\n%s\n---\n%s", err, once, twice)
 	}
 }
+
+// A function type and a closure are printed as they were written: the type in
+// a parameter, a field, a local and a result, and a literal's body indented
+// from the statement it is in, nested ones included.
+func TestFormatKeepsFunctionTypesAndClosures(t *testing.T) {
+	source := `module app
+
+struct Handler {
+    run: fn(i32) -> i32
+    done: fn()
+}
+
+fn apply(f: fn(i32, string) -> bool, v: i32) -> bool {
+    return f(v, "x")
+}
+
+fn make(k: i32) -> fn(i32) -> i32 {
+    return fn(x: i32) -> i32 { return x + k }
+}
+
+fn main() void {
+    var table: (fn(i32) -> i32)[2]
+    let add = fn(x: i32) -> i32 {
+        let inner = fn(y: i32) -> i32 { return y * x }
+        return inner(x)
+    }
+    let say = fn(m: string) { print(m) }
+    if apply(fn(a: i32, b: string) -> bool { return a > 0 }, 3) {
+        say("yes")
+    }
+}
+`
+	once, err := FormatSource(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"run: fn(i32) -> i32", "done: fn()", "f: fn(i32, string) -> bool", "fn make(k: i32) fn(i32) -> i32 {",
+		"var table: (fn(i32) -> i32)[2]", "let add = fn(x: i32) -> i32 {\n        let inner = fn(y: i32) -> i32 {\n            return y * x\n        }",
+		"let say = fn(m: string) {\n        print(m)\n    }",
+		"if apply(fn(a: i32, b: string) -> bool {",
+	} {
+		if !strings.Contains(once, want) {
+			t.Errorf("the formatted source has no %q:\n%s", want, once)
+		}
+	}
+	twice, err := FormatSource(once)
+	if err != nil || twice != once {
+		t.Errorf("formatting is not stable (%v):\n%s\n---\n%s", err, once, twice)
+	}
+}

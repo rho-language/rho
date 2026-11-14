@@ -492,3 +492,13 @@ A fixed array's length may be a module constant: with `const MAX: u32 = 32`, `u3
 - `read_file(path)` is a `Slice[u8]`: `let data: [u8] = read_file(path)` becomes `let data: Slice[u8] = read_file(path)`; `extern fn read_file(path: string) -> [u8]` becomes `-> Slice[u8]`, and `write_file`'s `data: [u8]` becomes `data: Slice[u8]`.
 
 Fixed: a fixed array sized by a constant was not a fixed array (#37); a struct field of array type did not compile on C (#38).
+
+## [0.16.0] - 2026-11-15
+
+Functions are values, on both backends. A function type is written `fn(A, B) -> R` (or `fn(A)`); a named function, an imported one, or a literal `fn(x: i32) -> i32 { return x + k }` is a value of it, and any expression of a function type can be called — a local, a field, an element of a `Slice` or an array (`(fn(u32) -> u32)[4]`), an `Option` payload, a call's result. Generic functions deduce through function types (`map_into(s, out, f: fn(T) -> U)`), and a generic function is a value where a function type says which specialisation is meant.
+
+A literal captures the names it uses by value, when it runs. On C a function value is a function pointer and an environment; the environment lives in the string arena and follows its rule — released with the loop iteration or statement that made it, kept by a `let` or a return, refused on a board where a loop would keep one per iteration. Calling a value that holds no function stops the program with `rho: call of a function value that holds no function` on both backends.
+
+Refused, each with what to write instead: assigning to or taking the address of a captured name; capturing a `Ptr`, `[T]`, `Slice[T]` or a value holding one (pass it as a parameter); capturing a fixed array; fixed arrays in a function type; comparing or printing a function value; a built-in used as a value.
+
+Fixed: type arguments containing commas were split wrongly, so `Slice[fn(u32) -> u32]` and nested applications got the wrong element type (#39); a bare generic function as a value (`return None`) produced invalid C and Go and is now refused with the fix (#41). rho-lint no longer reports an import used only in a type as unused (#40).

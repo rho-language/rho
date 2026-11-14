@@ -88,3 +88,12 @@ void rho_panic_div(void)
     for (;;) {
     }
 }
+
+/* A call through a function value that holds no function: the zero of a
+ * function type. */
+void rho_panic_fn(void)
+{
+    panicf("call of a function value that holds no function");
+    for (;;) {
+    }
+}

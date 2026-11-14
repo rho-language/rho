@@ -129,6 +129,12 @@ arena grows in 64 kB chunks and reuses them.
 `print(int_to_str(n))`, `print(i64_to_str(n))` and `print(string.from_i32(n))`
 write the number without building a string.
 
+**Closures follow the same rule.** A closure's environment — the values it
+captured — is copied into the arena when the literal is evaluated, and the
+compiler treats a function value as a value holding a string: it lives as long
+as a string built in the same place would, and is released with it
+({ref}`function types <language/types>`).
+
 ## What a program can reach
 
 A program reaches the machine through the runtime functions in
@@ -177,7 +183,10 @@ Stated plainly, because a reference that implies otherwise is worse than none:
 - No `message` or `rpc` in a program; they belong to protocol schemas. An
   `enum` is the program's own: a set of numbers, or variants that carry values,
   taken apart with an exhaustive `match` ({ref}`language/types`).
-- No closures, no function values, and no higher-order functions.
+- Closures that capture by value only: a closure cannot change what it
+  captured or capture a reference (a pointer, a `[T]`, a `Slice[T]`), and its
+  environment lives in the string arena under the string rule
+  ({ref}`language/types`).
 - No maps in the language. `std.collections.map` is a fixed-capacity table
   written in Rho.
 - No reflection.

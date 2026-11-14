@@ -98,6 +98,8 @@ func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 		body.WriteString("\n")
 	}
 
+	emitGoFuncValueHelpers(&body, m)
+
 	hasInit := hasGoInit(m)
 	if hasInit {
 		fmt.Fprintf(&body, "// %s runs Rho module initialisation before %s.\nfunc %s() {\n", AppInitName, AppMainName, AppInitName)
@@ -2101,4 +2103,45 @@ func goBanner(m ir.ModuleIR, file, brief string) string {
 // none must not carry it.
 func goBodyUsesUnsafe(body string) bool {
 	return strings.Contains(body, "unsafe.")
+}
+
+// emitGoFuncValueHelpers writes the Go half of the helpers function values are
+// made, called and captured with (types/closures.go). A value is a Go func; a
+// call through one that holds none stops the program as the C runtime does; an
+// environment is a copy of the captured values the func closes over.
+func emitGoFuncValueHelpers(b *strings.Builder, m ir.ModuleIR) {
+	for _, env := range m.Envs {
+		name := goTypeName(env)
+		fmt.Fprintf(b, "func %s(v %s) unsafe.Pointer {\n\treturn unsafe.Pointer(&v)\n}\n\n", goFuncName(env+"_make"), name)
+		fmt.Fprintf(b, "func %s(e unsafe.Pointer) %s {\n\treturn *(*%s)(e)\n}\n\n", goFuncName(env+"_at"), name, name)
+	}
+	for _, sig := range m.FuncSigs {
+		fnType := goFuncType(sig.Type)
+		fmt.Fprintf(b, "type %s = %s\n\n", goTypeName(sig.Name), fnType)
+		params := sig.Type.FuncParams()
+		result := sig.Type.FuncResult()
+		returns := goTypeForIR(result)
+		if isUnitType(result) {
+			returns = ""
+		}
+		named := make([]string, len(params))
+		args := make([]string, len(params))
+		types := []string{"unsafe.Pointer"}
+		for i, param := range params {
+			args[i] = fmt.Sprintf("a%d", i)
+			named[i] = args[i] + " " + goTypeForIR(param)
+			types = append(types, goTypeForIR(param))
+		}
+		suffix := ""
+		ret := ""
+		if returns != "" {
+			suffix = " " + returns
+			ret = "return "
+		}
+		fmt.Fprintf(b, "func %s(%s)%s {\n\tif f == nil {\n\t\tpanicf(\"call of a function value that holds no function\")\n\t}\n\t%sf(%s)\n}\n\n",
+			goFuncName(sig.Name+"_call"), strings.Join(append([]string{"f " + fnType}, named...), ", "), suffix, ret, strings.Join(args, ", "))
+		fmt.Fprintf(b, "func %s(fn func(%s)%s, env unsafe.Pointer) %s {\n\treturn func(%s)%s {\n\t\t%sfn(%s)\n\t}\n}\n\n",
+			goFuncName(sig.Name+"_bind"), strings.Join(types, ", "), suffix, fnType, strings.Join(named, ", "), suffix, ret,
+			strings.Join(append([]string{"env"}, args...), ", "))
+	}
 }

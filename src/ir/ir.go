@@ -62,7 +62,29 @@ const (
 	// registers on an ARM EABI target, so spelling an `f32` as a `double` is a
 	// declaration that compiles and a call that reads the wrong register.
 	TypeF32
+	// TypeFunc is a function value, written `fn(A, B) -> R`: a named function,
+	// or a closure with the values it captured. Args are the parameter types
+	// followed by the result (void when it returns nothing), and Name is the
+	// one spelling of the type (`fn(A, B) -> R`). C holds every one as an
+	// `RhoFn`, a function pointer and an environment; Go as a `func(A, B) R`.
+	TypeFunc
 )
+
+// FuncParams are a function type's parameter types.
+func (t Type) FuncParams() []Type {
+	if t.Kind != TypeFunc || len(t.Args) == 0 {
+		return nil
+	}
+	return t.Args[:len(t.Args)-1]
+}
+
+// FuncResult is a function type's result, void when it returns nothing.
+func (t Type) FuncResult() Type {
+	if t.Kind != TypeFunc || len(t.Args) == 0 {
+		return Type{Kind: TypeVoid, Name: "void"}
+	}
+	return t.Args[len(t.Args)-1]
+}
 
 // Type represents a concrete type in the IR.
 type Type struct {
@@ -137,6 +159,25 @@ type ModuleIR struct {
 	// lowering serves every target; the build refuses each on a target that does
 	// not supply it.
 	BackendCalls []BackendCall
+	// FuncSigs are the signatures function values are called and made at,
+	// each with the helpers a backend defines for it: `<Name>_call(f, ...)`,
+	// which stops the program when f holds no function and otherwise calls it,
+	// and `<Name>_bind(fn, env)`, which makes a value of a function that takes
+	// its environment first.
+	FuncSigs []FuncSigIR
+	// Envs are the environments closures capture into, each a struct in
+	// Structs under the same name, with the helpers a backend defines for it:
+	// `<Name>_make(value)`, which puts a copy where the closure can keep it,
+	// and `<Name>_at(env)`, which reads it back.
+	Envs []string
+}
+
+// FuncSigIR is one signature a function value is called or made at.
+type FuncSigIR struct {
+	// Name prefixes its helpers.
+	Name string
+	// Type is the function type, TypeFunc.
+	Type Type
 }
 
 // BackendCall is one call to a built-in that only some backends supply.

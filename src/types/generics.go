@@ -87,6 +87,9 @@ func (tc *TypeChecker) declaredType(name string) ir.Type {
 // declaredTypeWith is declaredType with an explicit substitution, used while
 // emitting a specialisation where the parameters are known.
 func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir.Type {
+	if _, _, ok := parenthesisedArray(name); ok || ast.IsFuncTypeName(name) {
+		return tc.substituteType(tc.typeFor(name), subs)
+	}
 	if element, n, ok := arrayOfApplication(name); ok {
 		typ := tc.declaredTypeWith(element, subs)
 		if typ.ArrayLen == 0 && !strings.Contains(typ.Name, "[") {
@@ -201,6 +204,15 @@ func (tc *TypeChecker) registerSpecialisationFields(base string, args []ir.Type)
 // cTypeForTypeName returns the C spelling of a written type name, mangling a
 // generic application to the name its specialisation is emitted under.
 func (tc *TypeChecker) cTypeForTypeName(name string) string {
+	if ast.IsFuncTypeName(name) {
+		if typ, ok := tc.resolveType(name); ok {
+			return tc.cTypeFor(typ)
+		}
+		return "RhoFn"
+	}
+	if inner, n, ok := parenthesisedArray(name); ok {
+		return tc.cTypeForTypeName(inner) + "[" + strconv.Itoa(n) + "]"
+	}
 	if element, n, ok := arrayOfApplication(name); ok {
 		return tc.cTypeForTypeName(element) + "[" + strconv.Itoa(n) + "]"
 	}
@@ -253,6 +265,19 @@ type typePair struct {
 // inside another generic is still found.
 func unify(param, actual ir.Type, params []string, subs map[string]ir.Type) bool {
 	if param.Kind == ir.TypeInvalid || actual.Kind == ir.TypeInvalid {
+		return true
+	}
+	// A function type is matched part by part: `fn(T) -> U` against
+	// `fn(u32) -> string` binds both.
+	if param.Kind == ir.TypeFunc {
+		if actual.Kind != ir.TypeFunc || len(param.Args) != len(actual.Args) {
+			return false
+		}
+		for i := range param.Args {
+			if !unify(param.Args[i], actual.Args[i], params, subs) {
+				return false
+			}
+		}
 		return true
 	}
 
@@ -340,6 +365,22 @@ func splitApplication(name string) (string, []ir.Type, bool) {
 // resolveTypeName resolves a written type name using the package-level table of
 // primitives plus the single-letter parameter convention the typechecker uses.
 func resolveTypeName(name string) (ir.Type, error) {
+	// A function type, from its parts; a part that is not a primitive is the
+	// struct of that name.
+	if params, result, ok := ast.SplitFuncTypeName(name); ok {
+		part := func(written string) ir.Type {
+			typ, err := resolveTypeName(written)
+			if err != nil {
+				return ir.Type{Kind: ir.TypeStruct, Name: written}
+			}
+			return typ
+		}
+		resolved := make([]ir.Type, len(params))
+		for i, param := range params {
+			resolved[i] = part(param)
+		}
+		return funcTypeOf(resolved, part(result)), nil
+	}
 	switch name {
 	case "void":
 		return ir.Type{Kind: ir.TypeVoid, Name: "void"}, nil
@@ -452,6 +493,15 @@ func (tc *TypeChecker) deduceStructArgs(decl ast.StructDecl, values []ast.Expr, 
 // supplied type's own parameters where the declared type names a parameter.
 func (tc *TypeChecker) unifyTypeArgs(typeParams []string, declared, actual ir.Type, subs map[string]ir.Type) {
 	if declared.Kind == ir.TypeInvalid || actual.Kind == ir.TypeInvalid {
+		return
+	}
+	// A function type is matched part by part.
+	if declared.Kind == ir.TypeFunc {
+		if actual.Kind == ir.TypeFunc && len(declared.Args) == len(actual.Args) {
+			for i := range declared.Args {
+				tc.unifyTypeArgs(typeParams, declared.Args[i], actual.Args[i], subs)
+			}
+		}
 		return
 	}
 	// The declared type may itself be an application of this generic, as in
@@ -613,6 +663,10 @@ func (tc *TypeChecker) substituteType(typ ir.Type, subs map[string]ir.Type) ir.T
 		if typ.Kind == ir.TypePtr && len(arguments) == 1 {
 			typ.Name = "Ptr[" + typeName(arguments[0]) + "]"
 		}
+		// A function type is spelled from its parts.
+		if typ.Kind == ir.TypeFunc {
+			typ = substituteFunc(typ)
+		}
 	}
 	if typ.Kind != ir.TypeStruct {
 		return typ
@@ -646,9 +700,9 @@ func splitTypeArgs(text string) []string {
 	start := 0
 	for i := 0; i < len(text); i++ {
 		switch text[i] {
-		case '[':
+		case '[', '(':
 			depth++
-		case ']':
+		case ']', ')':
 			depth--
 		case ',':
 			if depth == 0 {
@@ -701,6 +755,10 @@ func (tc *TypeChecker) buildSubstitution(typeParams []string, typeDefaults map[s
 // what "no value" actually is. A struct with fields is therefore zeroed with
 // braces rather than with a single zero.
 func (tc *TypeChecker) zeroValueFor(name string) string {
+	// A function value's zero holds no function; calling it stops the program.
+	if ast.IsFuncTypeName(name) {
+		return "RHO_FN_NIL"
+	}
 	base := name
 	if i := strings.IndexByte(base, '['); i >= 0 {
 		base = base[:i]
@@ -1144,11 +1202,24 @@ func (tc *TypeChecker) scanExpr(expr ast.Expr) {
 		tc.scanExpr(expr.Condition)
 		tc.scanExpr(expr.Then)
 		tc.scanExpr(expr.Else)
+	case ast.FuncLitExpr:
+		for _, param := range expr.Params {
+			tc.scanTypeApplication(param.Type)
+		}
+		tc.scanTypeApplication(expr.ReturnType)
+		tc.scanExprs(expr.Body)
 	}
 }
 
 // scanTypeApplication records `Result[u32, u32]` appearing in a type position.
 func (tc *TypeChecker) scanTypeApplication(typeName string) {
+	if params, result, ok := ast.SplitFuncTypeName(typeName); ok {
+		for _, param := range params {
+			tc.scanTypeApplication(param)
+		}
+		tc.scanTypeApplication(result)
+		return
+	}
 	if element, _, ok := arrayOfApplication(typeName); ok {
 		typeName = element
 	}

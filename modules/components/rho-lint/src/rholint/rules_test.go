@@ -602,3 +602,27 @@ func TestCRulesAndRhoRulesDoNotShareAName(t *testing.T) {
 		t.Error("no rules at all")
 	}
 }
+
+// An import named only inside a closure, or only in a function type, is in use;
+// and the rules read a closure's body without stopping on it.
+func TestRhoRulesReadClosuresAndFunctionTypes(t *testing.T) {
+	source := aRho("/project/src/main.rho", `module main
+
+import os
+import alert
+
+fn apply(f: fn(alert.Rule) -> u32, r: alert.Rule) -> u32 {
+    return f(r)
+}
+
+fn main() void {
+    let k: u32 = 2
+    let now = fn() -> u32 { return os.now() + k }
+    print(int_to_str(now()))
+}
+`)
+	assertNoFindings(t, rulesRun(t, RhoRules(), RhoUnusedImport, source), "both imports in use")
+	for _, rule := range RhoRules().Rules {
+		rule.Apply(source)
+	}
+}

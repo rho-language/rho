@@ -334,3 +334,16 @@ char* rho_str_adopt(char* heap)
     free(heap);
     return out;
 }
+
+/* A closure's environment (types/closures.go): the values it captured, kept in
+ * the arena so it lives exactly as long as a string built in the same place.
+ * Aligned for any value, which a string's bytes need not be. */
+void* rho_env_alloc(size_t n)
+{
+    const size_t align = 16u;
+    char* raw = rho_str_alloc(n + align - 1u);
+    if (raw == NULL) {
+        return NULL;
+    }
+    return (void*)(((uintptr_t)raw + (align - 1u)) & ~(uintptr_t)(align - 1u));
+}
