@@ -25,7 +25,7 @@ func putExpiring(t *testing.T, store *Store, expires time.Time) Credential {
 		Method:    TokenMethod,
 		Registry:  "http://reg:8080",
 		Secret:    "signed",
-		Subject:   "miraur",
+		Subject:   "alice",
 		IssuedAt:  time.Now().Add(-24 * time.Hour),
 		ExpiresAt: expires,
 	}
@@ -87,10 +87,10 @@ func TestDescribeIsQuietWhenHealthy(t *testing.T) {
 
 func TestFormatNotices(t *testing.T) {
 	out := FormatNotices([]Notice{
-		{Registry: "http://reg", Subject: "miraur", Method: TokenMethod, Level: Warn, Reason: "expires soon"},
+		{Registry: "http://reg", Subject: "alice", Method: TokenMethod, Level: Warn, Reason: "expires soon"},
 		{Registry: "http://other", Method: TokenMethod, Level: Fail, Reason: "expired"},
 	})
-	if !strings.Contains(out, "warning: miraur") {
+	if !strings.Contains(out, "warning: alice") {
 		t.Errorf("expected a warning line, got %q", out)
 	}
 	if !strings.Contains(out, "error:") {
@@ -128,7 +128,7 @@ func TestTokenForRegistryReusesAStoredCredential(t *testing.T) {
 		Method:    TokenMethod,
 		Registry:  "http://reg:8080",
 		Secret:    "already-have-this",
-		Subject:   "miraur",
+		Subject:   "alice",
 		IssuedAt:  time.Now(),
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
@@ -160,7 +160,7 @@ func TestTokenForRegistryReusesAStoredCredential(t *testing.T) {
 func TestTokenForRegistryObtainsWhenAutomatic(t *testing.T) {
 	store := newStore(t)
 	issued, claims, err := IssueToken(testSecret, TokenRequest{
-		Subject:  "miraur",
+		Subject:  "alice",
 		Audience: "http://reg:8080",
 	})
 	if err != nil {
@@ -197,7 +197,7 @@ func TestTokenForRegistryReplacesAnExpiredCredential(t *testing.T) {
 		Method:    TokenMethod,
 		Registry:  "http://reg:8080",
 		Secret:    "stale",
-		Subject:   "miraur",
+		Subject:   "alice",
 		IssuedAt:  time.Now().Add(-48 * time.Hour),
 		ExpiresAt: time.Now().Add(-time.Hour),
 	}
@@ -205,7 +205,7 @@ func TestTokenForRegistryReplacesAnExpiredCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fresh, claims, err := IssueToken(testSecret, TokenRequest{Subject: "miraur", Audience: "http://reg:8080"})
+	fresh, claims, err := IssueToken(testSecret, TokenRequest{Subject: "alice", Audience: "http://reg:8080"})
 	if err != nil {
 		t.Fatal(err)
 	}

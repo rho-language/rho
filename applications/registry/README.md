@@ -293,10 +293,10 @@ present it. Publishing always needs a token, even on a public registry:
 RHO_REGISTRY_BOOTSTRAP_SECRET=secret rho run applications/registry
 
 TOKEN=$(curl -s -H 'Authorization: Bearer secret' \
-  'http://localhost:8080/auth/token?user=miraur&host=localhost&days=1&scopes=push' \
+  'http://localhost:8080/auth/token?user=alice&host=localhost&days=1&scopes=push' \
   | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 curl -X POST -H "Authorization: Bearer $TOKEN" --data-binary @/tmp/m.rho-pkg \
-     "http://localhost:8080/modules/math/0.1.0/rho-pkg?author=miraur"
+     "http://localhost:8080/modules/math/0.1.0/rho-pkg?author=alice"
 ```
 
 With `access = secured` in the settings file, the same token is required to

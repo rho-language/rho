@@ -12,7 +12,7 @@ func TestTicketRoundTrip(t *testing.T) {
 	}
 	now := time.Now()
 	token, err := SignTicket(pair.Private, TicketClaims{
-		Subject: "miraur", Issuer: "keeper", Audience: "aquarium",
+		Subject: "alice", Issuer: "keeper", Audience: "aquarium",
 		TokenID: "one", IssuedAt: now.Unix(), ExpiresAt: now.Add(30 * time.Second).Unix(),
 	})
 	if err != nil {
@@ -22,7 +22,7 @@ func TestTicketRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.Subject != "miraur" || claims.TokenID != "one" {
+	if claims.Subject != "alice" || claims.TokenID != "one" {
 		t.Fatalf("unexpected claims: %+v", claims)
 	}
 	if _, err := VerifyTicket(pair.Public, token, "keeper", "mesh", now); err == nil {

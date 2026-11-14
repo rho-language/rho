@@ -303,7 +303,7 @@ func UploadModule(client *Client, name, version string, pkgData, sourceData []by
 	body, _ := io.ReadAll(resp.Body)
 	// A refusal from the registry says what was wrong and who holds the name,
 	// and that is more useful than the status it came with. It is the difference
-	// between "409" and "the module is published by miraur", which are the same
+	// between "409" and "the module is published by alice", which are the same
 	// event and only one of which a user can act on.
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:

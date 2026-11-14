@@ -4,7 +4,7 @@
 revokes a token.
 
 ```sh
-rho auth login   --registry http://localhost:8080 --user miraur --days 30
+rho auth login   --registry http://localhost:8080 --user alice --days 30
 rho auth status
 rho auth list
 rho auth inspect --registry http://localhost:8080
@@ -46,7 +46,7 @@ verifies locally:
 ```sh
 rho auth keygen --dir ~/.rho/auth
 rho auth ticket --private ~/.rho/auth/private.pem \
-  --issuer keeper --audience aquarium --subject miraur --ttl 30s
+  --issuer keeper --audience aquarium --subject alice --ttl 30s
 rho auth verify --public ~/.rho/auth/public.pem \
   --issuer keeper --audience aquarium --token "$TICKET"
 ```

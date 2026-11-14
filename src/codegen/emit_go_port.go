@@ -371,7 +371,7 @@ type moduleMeta struct {
 // the maintainer list exists so that letting a second identity in later is a
 // change to what is stored rather than a change to what is read.
 //
-//	{"name": "rho-router", "owner": "miraur", "maintainers": ["miraur"],
+//	{"name": "rho-router", "owner": "alice", "maintainers": ["alice"],
 //	 "visibility": "public", "first_published": "2026-09-28T10:07:00Z"}
 type modulePublisher struct {
 	Name string ` + "`json:\"name\"`" + `

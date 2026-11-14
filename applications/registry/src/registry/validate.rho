@@ -121,8 +121,8 @@ fn publisher_may_publish(record: string, identity: string) bool {
         return true
     }
     // The maintainers are a list, so the check is that the identity is one of
-    // the quoted entries rather than a substring of one: "miraur" must not match
-    // "miraur-bot", or a maintainer could be invented by suffix.
+    // the quoted entries rather than a substring of one: "alice" must not match
+    // "alice-bot", or a maintainer could be invented by suffix.
     return str_contains(json_array_field(record, "maintainers"), "\"" + identity + "\"")
 }
 

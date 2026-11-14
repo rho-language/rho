@@ -98,7 +98,7 @@ credential. What it records, the first time a name is published, is the identity
 in the credential:
 
 ```json
-{"name": "rho-router", "owner": "miraur", "maintainers": ["miraur"],
+{"name": "rho-router", "owner": "alice", "maintainers": ["alice"],
  "visibility": "public", "firstPublished": "2026-09-28T10:07:00Z"}
 ```
 

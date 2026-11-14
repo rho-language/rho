@@ -42,7 +42,7 @@ func issue(t *testing.T, request TokenRequest) (string, TokenClaims) {
 
 func TestIssueTokenShape(t *testing.T) {
 	token, claims := issue(t, TokenRequest{
-		Subject:  "miraur",
+		Subject:  "alice",
 		Audience: "http://localhost:18080",
 		Host:     "workstation",
 		Scopes:   []string{ScopePull, ScopePush},
@@ -50,7 +50,7 @@ func TestIssueTokenShape(t *testing.T) {
 	if parts := strings.Split(token, "."); len(parts) != 3 {
 		t.Fatalf("expected three segments, got %d", len(parts))
 	}
-	if claims.Subject != "miraur" {
+	if claims.Subject != "alice" {
 		t.Errorf("subject: got %q", claims.Subject)
 	}
 	if claims.TokenID == "" {
@@ -79,7 +79,7 @@ func TestIssueTokenRequiresSecret(t *testing.T) {
 // A token may never outlive the maximum, whatever the caller asks for.
 func TestIssueTokenClampsLifetime(t *testing.T) {
 	_, claims := issue(t, TokenRequest{
-		Subject:  "miraur",
+		Subject:  "alice",
 		Lifetime: 10 * 365 * 24 * time.Hour,
 	})
 	granted := time.Duration(claims.ExpiresAt-claims.IssuedAt) * time.Second
@@ -93,7 +93,7 @@ func TestIssueTokenClampsLifetime(t *testing.T) {
 
 // A caller may ask for a shorter lifetime than the maximum.
 func TestIssueTokenRespectsShorterLifetime(t *testing.T) {
-	_, claims := issue(t, TokenRequest{Subject: "miraur", Lifetime: 24 * time.Hour})
+	_, claims := issue(t, TokenRequest{Subject: "alice", Lifetime: 24 * time.Hour})
 	granted := time.Duration(claims.ExpiresAt-claims.IssuedAt) * time.Second
 	if granted != 24*time.Hour {
 		t.Fatalf("expected 24h, got %v", granted)
@@ -101,7 +101,7 @@ func TestIssueTokenRespectsShorterLifetime(t *testing.T) {
 }
 
 func TestIssueTokenDefaultsLifetime(t *testing.T) {
-	_, claims := issue(t, TokenRequest{Subject: "miraur"})
+	_, claims := issue(t, TokenRequest{Subject: "alice"})
 	granted := time.Duration(claims.ExpiresAt-claims.IssuedAt) * time.Second
 	if granted != DefaultTokenLifetime {
 		t.Fatalf("expected the default %v, got %v", DefaultTokenLifetime, granted)
@@ -114,7 +114,7 @@ func TestIssueTokenDefaultsLifetime(t *testing.T) {
 
 func TestVerifyAcceptsAValidToken(t *testing.T) {
 	token, _ := issue(t, TokenRequest{
-		Subject:  "miraur",
+		Subject:  "alice",
 		Audience: "reg",
 		Scopes:   []string{ScopePull, ScopePush},
 	})
@@ -123,7 +123,7 @@ func TestVerifyAcceptsAValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
-	if principal.Subject != "miraur" {
+	if principal.Subject != "alice" {
 		t.Errorf("subject: got %q", principal.Subject)
 	}
 	if principal.Method != TokenMethod {
@@ -135,7 +135,7 @@ func TestVerifyAcceptsAValidToken(t *testing.T) {
 }
 
 func TestVerifyRejectsAnotherSecret(t *testing.T) {
-	token, _ := issue(t, TokenRequest{Subject: "miraur"})
+	token, _ := issue(t, TokenRequest{Subject: "alice"})
 	other := TokenVerifier{Secret: []byte("a-different-secret-value-here!!")}
 	if _, err := other.VerifyToken(token); !errors.Is(err, ErrRejected) {
 		t.Fatalf("expected rejection, got %v", err)
@@ -143,7 +143,7 @@ func TestVerifyRejectsAnotherSecret(t *testing.T) {
 }
 
 func TestVerifyRejectsATamperedPayload(t *testing.T) {
-	token, _ := issue(t, TokenRequest{Subject: "miraur"})
+	token, _ := issue(t, TokenRequest{Subject: "alice"})
 	parts := strings.Split(token, ".")
 	// Rewrite the payload to claim a different subject, keeping the signature.
 	parts[1] = encodeSegment([]byte(`{"sub":"admin","iat":1,"exp":9999999999}`))
@@ -156,7 +156,7 @@ func TestVerifyRejectsATamperedPayload(t *testing.T) {
 }
 
 func TestVerifyRejectsAnExpiredToken(t *testing.T) {
-	token, _ := issue(t, TokenRequest{Subject: "miraur", Lifetime: time.Hour})
+	token, _ := issue(t, TokenRequest{Subject: "alice", Lifetime: time.Hour})
 	// Verify as though it were well past the expiry.
 	verifier := TokenVerifier{
 		Secret: testSecret,
@@ -168,7 +168,7 @@ func TestVerifyRejectsAnExpiredToken(t *testing.T) {
 }
 
 func TestVerifyRejectsAnotherAudience(t *testing.T) {
-	token, _ := issue(t, TokenRequest{Subject: "miraur", Audience: "other-registry"})
+	token, _ := issue(t, TokenRequest{Subject: "alice", Audience: "other-registry"})
 	verifier := TokenVerifier{Secret: testSecret, Audience: "my-registry"}
 	if _, err := verifier.VerifyToken(token); !errors.Is(err, ErrRejected) {
 		t.Fatalf("a token for another registry must be rejected, got %v", err)
@@ -204,7 +204,7 @@ func TestVerifyRejectsADowngradedAlgorithm(t *testing.T) {
 // The chain is what makes another mechanism possible later, so it has to hand
 // a credential it does not recognise to the next verifier.
 func TestChainPicksTheRecognisingMechanism(t *testing.T) {
-	token, _ := issue(t, TokenRequest{Subject: "miraur"})
+	token, _ := issue(t, TokenRequest{Subject: "alice"})
 
 	// A mechanism that never recognises anything stands in for a future one.
 	other := VerifierFunc{
@@ -219,7 +219,7 @@ func TestChainPicksTheRecognisingMechanism(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chain failed: %v", err)
 	}
-	if principal.Subject != "miraur" {
+	if principal.Subject != "alice" {
 		t.Fatalf("subject: got %q", principal.Subject)
 	}
 	if principal.Method != TokenMethod {
@@ -279,7 +279,7 @@ func TestChainRefusesAnUnknownCredential(t *testing.T) {
 func TestChainCanGrowAfterConstruction(t *testing.T) {
 	chain := NewChain()
 	chain.Add(TokenVerifier{Secret: testSecret})
-	token, _ := issue(t, TokenRequest{Subject: "miraur"})
+	token, _ := issue(t, TokenRequest{Subject: "alice"})
 	if _, err := chain.Authenticate(token); err != nil {
 		t.Fatalf("a mechanism added after construction should work: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestAnonymousPrincipal(t *testing.T) {
 }
 
 func TestPrincipalScopes(t *testing.T) {
-	principal := Principal{Subject: "miraur", Method: TokenMethod, Scopes: []string{ScopePull}}
+	principal := Principal{Subject: "alice", Method: TokenMethod, Scopes: []string{ScopePull}}
 	if !principal.HasScope(ScopePull) {
 		t.Error("expected the pull scope")
 	}
@@ -410,14 +410,14 @@ func TestLoadOrCreateSecretRejectsAnEmptyFile(t *testing.T) {
 // readable to whoever intercepts it, so it is pinned here rather than left to
 // be assumed.
 func TestTokenPayloadIsReadableNotHidden(t *testing.T) {
-	token, claims := issue(t, TokenRequest{Subject: "miraur", Host: "workstation"})
+	token, claims := issue(t, TokenRequest{Subject: "alice", Host: "workstation"})
 
 	parts := strings.Split(token, ".")
 	payload, err := decodeSegment(parts[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(payload), `"sub":"miraur"`) {
+	if !strings.Contains(string(payload), `"sub":"alice"`) {
 		t.Fatalf("expected readable claims, got %s", payload)
 	}
 	if !strings.Contains(string(payload), `"host":"workstation"`) {
@@ -436,7 +436,7 @@ func TestTokenPayloadIsReadableNotHidden(t *testing.T) {
 // The signing secret is what makes a signature worth anything, and it never
 // leaves the registry: a client asks for a token rather than minting one.
 func TestSecretNeverTravelsInAToken(t *testing.T) {
-	token, _ := issue(t, TokenRequest{Subject: "miraur"})
+	token, _ := issue(t, TokenRequest{Subject: "alice"})
 
 	parts := strings.Split(token, ".")
 	secretText := string(testSecret)
@@ -456,13 +456,13 @@ func TestSecretNeverTravelsInAToken(t *testing.T) {
 // Every claim a holder might rely on is covered by the signature, so none of
 // them can be altered in transit.
 func TestEveryClaimIsCoveredByTheSignature(t *testing.T) {
-	token, _ := issue(t, TokenRequest{Subject: "miraur", Audience: "reg"})
+	token, _ := issue(t, TokenRequest{Subject: "alice", Audience: "reg"})
 
 	for _, forged := range []string{
 		// a longer lifetime
-		`{"sub":"miraur","aud":"reg","exp":9999999999}`,
+		`{"sub":"alice","aud":"reg","exp":9999999999}`,
 		// a different audience
-		`{"sub":"miraur","aud":"other","exp":1}`,
+		`{"sub":"alice","aud":"other","exp":1}`,
 		// a different subject
 		`{"sub":"admin","aud":"reg","exp":1}`,
 	} {
@@ -477,7 +477,7 @@ func TestEveryClaimIsCoveredByTheSignature(t *testing.T) {
 // A token stops being usable when it runs out, and the check needs no clock
 // from the caller: the verifier's own time decides.
 func TestExpiryIsEnforcedWithoutCallerInput(t *testing.T) {
-	token, claims := issue(t, TokenRequest{Subject: "miraur", Lifetime: time.Hour})
+	token, claims := issue(t, TokenRequest{Subject: "alice", Lifetime: time.Hour})
 	verifier := TokenVerifier{Secret: testSecret}
 	if _, err := verifier.VerifyToken(token); err != nil {
 		t.Fatalf("a fresh token should verify: %v", err)

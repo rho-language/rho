@@ -83,7 +83,7 @@ test fn published_json_names_the_version() void {
 // so every field it reads is present even when the client sent no metadata.
 test fn publish_metadata_is_complete() void {
     let meta: string = meta_json("rho-lsp", "0.1.0", "rho", "Language server",
-        "src/main.rho", "lsp", "Aurel Miron", "Aurel Miron", "miraur", "public",
+        "src/main.rho", "lsp", "Alice Example", "Alice Example", "alice", "public",
         "Fixed a crash on hover.", "2026-10-12", "ab12", "cd34")
     assert_eq(json_string_field(meta, "signer"), "ab12")
     assert_eq(json_string_field(meta, "signature"), "cd34")
@@ -94,7 +94,7 @@ test fn publish_metadata_is_complete() void {
     assert_eq(json_string_field(meta, "main"), "src/main.rho")
     assert_eq(json_string_field(meta, "command"), "lsp")
     assert_eq(json_string_field(meta, "author"), "Aurel Miron")
-    assert_eq(json_string_field(meta, "owner"), "miraur")
+    assert_eq(json_string_field(meta, "owner"), "alice")
     assert_eq(json_string_field(meta, "visibility"), "public")
     assert_eq(json_string_field(meta, "release"), "Fixed a crash on hover.")
     assert_eq(json_string_field(meta, "released"), "2026-10-12")

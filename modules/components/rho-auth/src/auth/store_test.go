@@ -47,14 +47,14 @@ func credential(registry, subject, method string) Credential {
 
 func TestStorePutAndGet(t *testing.T) {
 	store := newStore(t)
-	if err := store.Put(credential("http://reg:8080", "miraur", TokenMethod)); err != nil {
+	if err := store.Put(credential("http://reg:8080", "alice", TokenMethod)); err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
 	got, err := store.Get("http://reg:8080", "")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
-	if got.Subject != "miraur" || got.Secret != "signed-value" {
+	if got.Subject != "alice" || got.Secret != "signed-value" {
 		t.Fatalf("unexpected credential: %+v", got)
 	}
 }
@@ -147,7 +147,7 @@ func TestStoreKeepsMethodsApart(t *testing.T) {
 
 func TestStoreDefaultsTheMethod(t *testing.T) {
 	store := newStore(t)
-	entry := credential("http://reg", "miraur", "")
+	entry := credential("http://reg", "alice", "")
 	if err := store.Put(entry); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestStoreListIsSorted(t *testing.T) {
 
 func TestStoreRevoke(t *testing.T) {
 	store := newStore(t)
-	if err := store.Put(credential("http://reg", "miraur", TokenMethod)); err != nil {
+	if err := store.Put(credential("http://reg", "alice", TokenMethod)); err != nil {
 		t.Fatal(err)
 	}
 	removed, err := store.Revoke("http://reg")
@@ -238,14 +238,14 @@ func TestStoreRevokeLeavesOtherRegistries(t *testing.T) {
 
 func TestStorePersistsAcrossOpenings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth", "credentials.json")
-	if err := Open(path).Put(credential("http://reg", "miraur", TokenMethod)); err != nil {
+	if err := Open(path).Put(credential("http://reg", "alice", TokenMethod)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := Open(path).Get("http://reg", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Subject != "miraur" {
+	if got.Subject != "alice" {
 		t.Fatalf("expected the credential to persist, got %+v", got)
 	}
 }
@@ -253,7 +253,7 @@ func TestStorePersistsAcrossOpenings(t *testing.T) {
 // The file holds credentials, so it must not be readable beyond its owner.
 func TestStoreIsOwnerOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth", "credentials.json")
-	if err := Open(path).Put(credential("http://reg", "miraur", TokenMethod)); err != nil {
+	if err := Open(path).Put(credential("http://reg", "alice", TokenMethod)); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -319,7 +319,7 @@ func TestIssuedCredentialVerifiesWhenPresented(t *testing.T) {
 		t.Fatal(err)
 	}
 	token, claims, err := IssueToken(secret, TokenRequest{
-		Subject:  "miraur",
+		Subject:  "alice",
 		Audience: "http://reg:8080",
 		Host:     "workstation",
 		Scopes:   []string{ScopePull, ScopePush},
@@ -353,7 +353,7 @@ func TestIssuedCredentialVerifiesWhenPresented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("presented credential did not verify: %v", err)
 	}
-	if principal.Subject != "miraur" {
+	if principal.Subject != "alice" {
 		t.Errorf("subject: got %q", principal.Subject)
 	}
 	if !principal.HasScope(ScopePush) {
@@ -365,7 +365,7 @@ func TestIssueTokenForScopes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scopes := r.URL.Query().Get("scopes")
 		claims := TokenClaims{
-			Subject: "miraur", TokenID: "id", Issuer: TokenIssuer, Audience: "reg",
+			Subject: "alice", TokenID: "id", Issuer: TokenIssuer, Audience: "reg",
 			Scopes: strings.Fields(scopes),
 		}
 		data, _ := json.Marshal(struct {
@@ -377,7 +377,7 @@ func TestIssueTokenForScopes(t *testing.T) {
 	}))
 	defer server.Close()
 	store := newStore(t)
-	token, claims, err := IssueTokenFor(store, server.URL, "miraur", "host", 7, "mesh:default", "telemetry:read")
+	token, claims, err := IssueTokenFor(store, server.URL, "alice", "host", 7, "mesh:default", "telemetry:read")
 	if err != nil {
 		t.Fatalf("IssueTokenFor: %v", err)
 	}

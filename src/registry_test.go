@@ -368,7 +368,7 @@ func TestRegistrySearchResponseShape(t *testing.T) {
 
 func TestRegistryRequiresTokenToPublish(t *testing.T) {
 	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = public\n")
-	issued := server.mintToken(t, "miraur")
+	issued := server.mintToken(t, "alice")
 
 	status, body := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), "")
 	if status != 401 {
@@ -413,7 +413,7 @@ func TestRegistryRejectsDuplicateVersion(t *testing.T) {
 
 func TestRegistryRejectsEmptyPackage(t *testing.T) {
 	server := startRegistry(t, "")
-	issued := server.mintToken(t, "miraur")
+	issued := server.mintToken(t, "alice")
 	// An empty package is refused on its own terms, so the publish carries
 	// everything else a real one would and only the body is missing.
 	status, body := server.publishModule(t, "math", "1.0.0", "module",
@@ -529,7 +529,7 @@ func TestRegistryHealth(t *testing.T) {
 // install from; it is not one anyone can fill.
 func TestRegistryPublicAccessAllowsReadingAndPublishingWithACredential(t *testing.T) {
 	server := startRegistryWithSettings(t, "secret", "data_dir = "+filepath.Join(t.TempDir(), "d")+"\naccess = public\n")
-	issued := server.mintToken(t, "miraur")
+	issued := server.mintToken(t, "alice")
 
 	// A publish with no credential is refused: the registry has to record who
 	// owns the module, and an anonymous publish has nobody to record.
@@ -561,7 +561,7 @@ func TestRegistryPublicAccessAllowsReadingAndPublishingWithACredential(t *testin
 // owner has to be able to show who wrote the module as well as who published it.
 func TestRegistryRefusesAPublishWithNoAuthor(t *testing.T) {
 	server := startRegistry(t, "")
-	issued := server.mintToken(t, "miraur")
+	issued := server.mintToken(t, "alice")
 	status, body := server.request(t, "POST",
 		"/modules/math/1.0.0/rho-pkg?version=1.0.0&type=module&main=src/main.rho",
 		[]byte("x"), issued)
@@ -577,7 +577,7 @@ func TestRegistryRefusesAPublishWithNoAuthor(t *testing.T) {
 func TestRegistryHonoursDataDirSetting(t *testing.T) {
 	data := filepath.Join(t.TempDir(), "elsewhere")
 	server := startRegistryWithSettings(t, "", "data_dir = "+data+"\n")
-	issued := server.mintToken(t, "miraur")
+	issued := server.mintToken(t, "alice")
 	if status, _ := server.publishModule(t, "math", "1.0.0", "module", "Aurel Miron", []byte("x"), issued); status != 201 {
 		t.Fatalf("publish failed with %d", status)
 	}
@@ -691,7 +691,7 @@ func TestRegistryHonoursAddressAndDataDir(t *testing.T) {
 	fields.Set("type", "module")
 	fields.Set("author", "Aurel Miron")
 	probe := fmt.Sprintf("http://%s/modules/probe/1.0.0/rho-pkg?%s", addr, fields.Encode())
-	issued := mintTokenAt(t, "http://"+addr, "miraur")
+	issued := mintTokenAt(t, "http://"+addr, "alice")
 	if status, body := clientPost(probe, "x", issued); status != 201 {
 		t.Fatalf("publish: %d %s", status, body)
 	}
