@@ -98,6 +98,9 @@ const (
 	// from another origin, which a SameSite cookie does not stop when the
 	// other origin is a different port on the same host.
 	MiddlewareSameOrigin = "same_origin"
+	// MiddlewareAppProxy serves the applications a supervisor runs behind one
+	// origin: /app/<name>/... is forwarded to that application's loopback port.
+	MiddlewareAppProxy = "app_proxy"
 )
 
 // registeredRouters lists the routers a target may name.
@@ -236,6 +239,9 @@ func emitHTTPRoutePort(ctx PortContext) ([]string, string) {
 		{Path: `"path/filepath"`},
 		{Path: `"sync"`},
 		{Path: `"time"`},
+		{Path: `"net/http/httputil"`},
+		{Path: `"regexp"`},
+		{Path: `"bytes"`},
 	}
 	candidates = append(candidates, adapterImports(ctx.Server.EffectiveRouter())...)
 
@@ -662,6 +668,7 @@ var middlewareEmitters = map[string]func(name string, spec MiddlewareSpec) strin
 	MiddlewareJWT:        emitJWTMiddleware,
 	MiddlewareAuth:       emitAuthMiddleware,
 	MiddlewareSameOrigin: emitSameOriginMiddleware,
+	MiddlewareAppProxy:   emitAppProxyMiddleware,
 }
 
 // middlewareFuncs are the Go names of the wrappers. The spellings follow the
@@ -673,6 +680,7 @@ var middlewareFuncs = map[string]string{
 	MiddlewareJWT:        "withJWT",
 	MiddlewareAuth:       "withAuth",
 	MiddlewareSameOrigin: "withSameOrigin",
+	MiddlewareAppProxy:   "withAppProxy",
 }
 
 // RegisteredMiddlewares lists the wrappers a target may compose.

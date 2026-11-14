@@ -383,3 +383,19 @@ of a key in a flat JSON document), and `app_workspace()` — where an applicatio
 keeps its data: `RHO_APP_WORKSPACE`, else `ROBOHUB_APP_WORKSPACE`, else
 `~/.rho/apps/<RHO_APP_NAME or the program's name>`, one rule instead of one per
 module.
+
+## [0.8.1] - 2026-11-14
+
+A supervisor can serve its applications behind its own origin: the `app_proxy`
+middleware forwards `/app/<name>/…` to the application's loopback port (listed in
+a file the supervisor writes, `name port` per line), streams the answer so an
+event feed is relayed as written, never forwards the supervisor's own cookie
+(`strip_cookie`), scopes the application's cookies to its path, and rewrites the
+root-relative links of its pages, its redirects and its stylesheets onto the
+prefix. Cookies are scoped by host and not by port, so this is what keeps the
+supervisor's session out of the applications' requests.
+
+The auth middleware builds its return address and callback from
+`X-Forwarded-Prefix` and `X-Forwarded-Host` when they come from the loopback,
+where such a proxy connects from, so an application signs in through the
+supervisor's origin as well as on its own port.

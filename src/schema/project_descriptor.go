@@ -125,6 +125,9 @@ const (
 	// MiddlewareSameOrigin refuses a state-changing request a browser sent
 	// from another origin.
 	MiddlewareSameOrigin = "same_origin"
+	// MiddlewareAppProxy serves a supervisor's applications under its own
+	// origin, at /app/<name>/.
+	MiddlewareAppProxy = "app_proxy"
 )
 
 // Security schemes a service may declare. The list is deliberately short: a
@@ -148,6 +151,7 @@ var ValidMiddlewares = []string{
 	MiddlewareJWT,
 	MiddlewareAuth,
 	MiddlewareSameOrigin,
+	MiddlewareAppProxy,
 }
 
 // ProjectDescriptorSchema returns the schema for project.yml.

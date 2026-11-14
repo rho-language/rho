@@ -913,10 +913,43 @@ func authSsoWantsJSON(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "application/json")
 }
 
+// authSsoProxied is the path prefix and host a supervisor's front proxy says
+// this service is reached at (X-Forwarded-Prefix and -Host), believed only from
+// the loopback, where that proxy connects from; ok is false otherwise.
+func authSsoProxied(r *http.Request) (prefix string, host string, ok bool) {
+	prefix = r.Header.Get("X-Forwarded-Prefix")
+	if prefix == "" || !strings.HasPrefix(prefix, "/") || strings.HasPrefix(prefix, "//") ||
+		strings.ContainsAny(prefix, "\\\r\n\t \"'<>?#") {
+		return "", "", false
+	}
+	addr, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return "", "", false
+	}
+	if ip := net.ParseIP(addr); ip == nil || !ip.IsLoopback() {
+		return "", "", false
+	}
+	host = r.Header.Get("X-Forwarded-Host")
+	if host == "" || strings.ContainsAny(host, "/\\ \r\n") {
+		host = r.Host
+	}
+	return strings.TrimRight(prefix, "/"), host, true
+}
+
+// authSsoBase is the path this service is reached under: what its proxy says,
+// or the base_path it was generated with.
+func authSsoBase(r *http.Request) string {
+	if prefix, _, ok := authSsoProxied(r); ok {
+		return prefix
+	}
+	return authSsoBasePath
+}
+
 func authSsoReturnTo(r *http.Request) string {
 	path := r.URL.RequestURI()
-	if authSsoBasePath != "" && !strings.HasPrefix(path, authSsoBasePath+"/") && path != authSsoBasePath {
-		path = authSsoBasePath + path
+	base := authSsoBase(r)
+	if base != "" && !strings.HasPrefix(path, base+"/") && path != base {
+		path = base + path
 	}
 	if authSsoMode == "proxy" && authSsoPublicURL != "" {
 		return strings.TrimRight(authSsoPublicURL, "/") + path
@@ -925,6 +958,12 @@ func authSsoReturnTo(r *http.Request) string {
 	proto := "http"
 	if r.TLS != nil || authSsoScheme == "https" {
 		proto = "https"
+	}
+	if _, proxiedHost, ok := authSsoProxied(r); ok {
+		host = proxiedHost
+		if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded == "https" {
+			proto = forwarded
+		}
 	}
 	if authSsoTrustForwarded {
 		if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" {
@@ -1332,7 +1371,7 @@ func authSsoCallbackURL(r *http.Request) string {
 			base = base[:at+3+slash]
 		}
 	}
-	return base + strings.TrimRight(authSsoBasePath, "/") + "/auth/callback"
+	return base + strings.TrimRight(authSsoBase(r), "/") + "/auth/callback"
 }
 
 func authSsoAbsolute(r *http.Request, path string) string {
