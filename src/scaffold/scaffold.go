@@ -267,7 +267,9 @@ func Init(req Request) ([]Result, string, error) {
 		}
 	}
 	project = filepath.Clean(project)
-	if filepath.IsAbs(project) || project == "." || project == ".." || strings.HasPrefix(project, ".."+string(filepath.Separator)) {
+	// "." is the project here — the default, and what `rho init --project .`
+	// says; anything else is one folder within the workspace.
+	if filepath.IsAbs(project) || project == ".." || strings.HasPrefix(project, ".."+string(filepath.Separator)) {
 		return nil, "", errors.New("project path must be a single relative path component within the workspace")
 	}
 	if strings.TrimSpace(req.Dir) == "" {

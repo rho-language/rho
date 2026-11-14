@@ -35,8 +35,10 @@ import (
 	"rho/src/types"
 )
 
-// DefaultServerAddr is used when RHO_HTTP_ADDR is unset.
-const DefaultServerAddr = ":8080"
+// DefaultServerAddr is used when RHO_HTTP_ADDR is unset: this machine only. A
+// service meant for the network says so with RHO_HTTP_ADDR=:<port>, as the
+// keeper does for an app deployed with `listen: lan`.
+const DefaultServerAddr = "127.0.0.1:8080"
 
 // StaticDir is the asset folder the generated server serves at /static/.
 const StaticDir = "static"

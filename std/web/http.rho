@@ -93,8 +93,16 @@ fn status_found() u32 {
 
 // redirect sends the browser to a URL. Headers carry the Location line, the
 // same shape a handler uses for a cookie.
+//
+// A location with a line break in it is refused for "/": the headers are a block
+// of lines, and a location carrying "%0A" decoded from a request would otherwise
+// add a header of its own (a cookie, another location).
 fn redirect(location: string) Response {
-    return Response{ status_found(), "", "text/plain; charset=utf-8", "Location: " + location }
+    var target: string = location
+    if str_index_of(target, "\n") >= 0 || str_index_of(target, "\r") >= 0 {
+        target = "/"
+    }
+    return Response{ status_found(), "", "text/plain; charset=utf-8", "Location: " + target }
 }
 
 // response_header appends header lines to a response. The Go backend owns the

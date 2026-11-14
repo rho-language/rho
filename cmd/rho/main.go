@@ -351,22 +351,32 @@ func installCLI(args []string) int {
 	}
 
 	if force {
-		// --force is the destructive one, and it is destructive on purpose: it
-		// takes the installation away and puts it back, so that a machine which
-		// has been changed by hand is returned to a state where every part of it
-		// came from one install. Everything the user has — what they published,
-		// what they fetched, who they logged in as — goes with it, which is why
-		// it is a flag and not the default.
+		// --force takes the toolchain away and puts it back, so a machine whose
+		// installation was changed by hand is returned to one where every part
+		// came from one install: the programs, the standard library, the
+		// installed components and plugins, the local registry and the caches.
+		//
+		// It does not touch what is the user's or their applications': the
+		// credentials and signing keys (auth), the configuration, the keeper's
+		// and Mesh's state — a gateway key every board's key derives from — and
+		// the fetched cross toolchains. Removing those is never a reinstall.
 		home, err := install.GetRhoHome()
 		if err != nil {
 			fmt.Println("rho install:", err)
 			return 1
 		}
-		fmt.Printf("Removing %s and everything in it...\n", home)
-		if err := os.RemoveAll(home); err != nil {
-			fmt.Println("rho install:", err)
-			return 1
+		for _, part := range []string{"bin", "cache", "docs", "modules", "pkg", "plugins", "registry", "std", "targets"} {
+			path := filepath.Join(home, part)
+			if _, statErr := os.Stat(path); statErr != nil {
+				continue
+			}
+			fmt.Printf("Removing %s...\n", path)
+			if err := os.RemoveAll(path); err != nil {
+				fmt.Println("rho install:", err)
+				return 1
+			}
 		}
+		fmt.Printf("Kept in %s: credentials, configuration, application state and fetched toolchains.\n", home)
 	}
 
 	fmt.Println("Installing Rho ecosystem...")

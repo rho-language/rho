@@ -1130,7 +1130,10 @@ func authSsoCallback(w http.ResponseWriter, r *http.Request) bool {
 	if parsed, err := url.Parse(returnTo); err == nil && parsed.Host == r.Host {
 		returnTo = parsed.RequestURI()
 	}
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+	// Only a path on this service: a browser reads "/\\host" as "//host", and a
+	// control character would end the Location header early.
+	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") ||
+		strings.ContainsAny(returnTo, "\\\r\n\t") {
 		returnTo = authSsoBasePath
 		if returnTo == "" {
 			returnTo = "/"

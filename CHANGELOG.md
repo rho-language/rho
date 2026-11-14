@@ -352,3 +352,13 @@ from a real 0. Every RoboHub module carried its own copy of each, and the copies
 had drifted: some read a comma, some a sign, some neither.
 
 A parity case can say what both backends must print, not only that they agree.
+
+## [0.7.1] - 2026-11-14
+
+Safer defaults and fixes from a security and usability review.
+
+- A generated service listens on 127.0.0.1:8080 when `RHO_HTTP_ADDR` does not say otherwise, where it listened on every interface; a service meant for the network says `RHO_HTTP_ADDR=:<port>`, as the keeper and Mesh already do for what they deploy.
+- `redirect()` refuses a location with a line break (it would add a header of its own), and the sign-in callback returns only to a path on its own service: no `/\\host`, no control characters.
+- A program's report file (`rho_exec`, `rho_exec_args`) is written owner-only, in an owner-only folder: a program's output may carry a secret.
+- `rho install --force` removes the toolchain — programs, standard library, components, plugins, local registry, caches — and keeps the credentials, the configuration, the keeper's and Mesh's state and the fetched toolchains, where it removed all of `~/.rho`.
+- `rho init` works in the folder it is run in (the default `--project .` was refused).

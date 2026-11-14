@@ -1536,14 +1536,16 @@ func rhoYamlKeyLess(a, b string) bool {
 			define: "func rhoExec(program string, arguments string, outputPath string) uint32 {\n" +
 				"\t// The report is written where it was asked for, and the place it\n" +
 				"\t// was asked for is made first: a run that cannot write its own\n" +
-				"\t// report is a run whose findings nobody can read.\n" +
-				"\t_ = os.MkdirAll(filepath.Dir(outputPath), 0755)\n" +
+				"\t// report is a run whose findings nobody can read. A report is the\n" +
+				"\t// owner's alone: a program's output may carry a secret.\n" +
+				"\t_ = os.MkdirAll(filepath.Dir(outputPath), 0700)\n" +
 				"\tcommand := exec.Command(program, rhoSplitArgs(arguments)...)\n" +
 				"\toutput, err := command.CombinedOutput()\n" +
 				"\tif err != nil {\n" +
 				"\t\t// The output a program wrote before it failed is still its\n" +
 				"\t\t// output, and a reader needs it to say why it failed.\n" +
-				"\t\t_ = os.WriteFile(outputPath, output, 0644)\n" +
+				"\t\t_ = os.WriteFile(outputPath, output, 0600)\n" +
+				"\t_ = os.Chmod(outputPath, 0600)\n" +
 				"\t\tif exit, ok := err.(*exec.ExitError); ok {\n" +
 				"\t\t\treturn uint32(exit.ExitCode())\n" +
 				"\t\t}\n" +
@@ -1551,7 +1553,8 @@ func rhoYamlKeyLess(a, b string) bool {
 				"\t\t// status: it is the one answer that is not a status.\n" +
 				"\t\treturn 255\n" +
 				"\t}\n" +
-				"\t_ = os.WriteFile(outputPath, output, 0644)\n" +
+				"\t_ = os.WriteFile(outputPath, output, 0600)\n" +
+				"\t_ = os.Chmod(outputPath, 0600)\n" +
 				"\treturn 0\n" +
 				"}\n",
 			imports: []string{"os/exec", "path/filepath"},
@@ -1567,9 +1570,10 @@ func rhoYamlKeyLess(a, b string) bool {
 				"\tif arguments != \"\" {\n" +
 				"\t\targs = strings.Split(strings.TrimSuffix(arguments, \"\\n\"), \"\\n\")\n" +
 				"\t}\n" +
-				"\t_ = os.MkdirAll(filepath.Dir(outputPath), 0755)\n" +
+				"\t_ = os.MkdirAll(filepath.Dir(outputPath), 0700)\n" +
 				"\toutput, err := exec.Command(program, args...).CombinedOutput()\n" +
-				"\t_ = os.WriteFile(outputPath, output, 0644)\n" +
+				"\t_ = os.WriteFile(outputPath, output, 0600)\n" +
+				"\t_ = os.Chmod(outputPath, 0600)\n" +
 				"\tif err != nil {\n" +
 				"\t\tif exit, ok := err.(*exec.ExitError); ok {\n" +
 				"\t\t\treturn uint32(exit.ExitCode())\n" +
