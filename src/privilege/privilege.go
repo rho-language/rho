@@ -61,6 +61,10 @@ type Situation struct {
 	Container bool
 	// CI is whether this looks like a pipeline, for the same reason.
 	CI bool
+	// Interactive is whether the warning would reach a person: stderr is a
+	// terminal. A program that runs rho and reads what it printed — a keeper
+	// reading a ticket, a doctor's TSV — gets the warning inside its answer.
+	Interactive bool
 	// RhoHome is where the installation keeps its state — the registry, the caches,
 	// the modules. Root-owned here is the specific damage that makes every later
 	// run fail.
@@ -89,7 +93,9 @@ func Detect() Situation {
 		SudoUser: strings.TrimSpace(os.Getenv("SUDO_USER")),
 		CI:       isCI(),
 		RhoHome:  home,
-		WorkDir:  work,
+
+		Interactive: stderrIsTerminal(),
+		WorkDir:     work,
 	}
 	for _, marker := range containerMarkers {
 		if _, err := os.Stat(marker); err == nil {
@@ -154,7 +160,12 @@ func Check(out io.Writer, situation Situation) bool {
 
 	if situation.Container || situation.CI {
 		// Said once and briefly, because in a container this is not a mistake and a
-		// paragraph about a person being careful would be read as nagging.
+		// paragraph about a person being careful would be read as nagging — and
+		// said only to a person: where root is the default, a program capturing
+		// rho's output would find this line inside the answer it asked for.
+		if !situation.Interactive {
+			return false
+		}
 		fmt.Fprintln(out, "rho: running as root, which is the default user in a container.")
 		return true
 	}
@@ -245,4 +256,11 @@ func ownerOf(path string) (int, bool) {
 		return 0, false
 	}
 	return int(stat.Uid), true
+}
+
+// stderrIsTerminal is whether standard error is a terminal rather than a pipe or
+// a file.
+func stderrIsTerminal() bool {
+	info, err := os.Stderr.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

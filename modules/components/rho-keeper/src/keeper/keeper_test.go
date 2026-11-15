@@ -527,6 +527,47 @@ func TestAPlanUsesThisHostsOwnManagerAndSkipsTheRest(t *testing.T) {
 	}
 }
 
+// A step runs a program with arguments. Run as one name, the whole line
+// (`sudo apt-get install -y gcc-avr`) is a program no machine has, which is how
+// every sync failed on a CI runner while the plan it printed read correctly.
+func TestAStepRunsItsProgramWithItsArguments(t *testing.T) {
+	current := detectHost()
+	if current.Manager == "" {
+		t.Skip("this machine has no package manager, so there is nothing to plan")
+	}
+	report := sysdep.Report{Results: []sysdep.CheckResult{
+		{
+			Module: "robohub-avr", Dep: "avr-gcc", Kind: sysdep.KindExecutable, Required: true,
+			Status: sysdep.StatusMissing, Message: "not installed",
+			Install: map[string]string{current.Manager: "gcc-avr"},
+		},
+		{
+			Module: "rho-dbg", Dep: "arm-none-eabi-gdb", Kind: sysdep.KindExecutable, Required: true,
+			Status: sysdep.StatusMissing, Message: "not installed",
+			Fetch:  &sysdep.FetchRecipe{URL: "https://example.com/gdb.tar.gz", Version: "14.2"},
+		},
+	}}
+	plan := PlanFor(report)
+	if len(plan.Steps) != 2 {
+		t.Fatalf("expected two steps, got:\n%s", plan.Text())
+	}
+	for _, step := range plan.Steps {
+		if strings.ContainsAny(step.Command, " \t") {
+			t.Errorf("the program a step runs is one word, got %q", step.Command)
+		}
+		words := strings.Fields(step.Line())
+		if len(words) != 1+len(step.Args) || strings.Count(step.Line(), step.Package) > 1 && step.Manager != "fetch" {
+			t.Errorf("the line repeats itself: %q", step.Line())
+		}
+	}
+	if !strings.HasSuffix(plan.Steps[0].Line(), "gcc-avr") || strings.Count(plan.Steps[0].Line(), "gcc-avr") != 1 {
+		t.Errorf("expected the package once, at the end: %q", plan.Steps[0].Line())
+	}
+	if plan.Steps[1].Line() != "rho keeper fetch rho-dbg arm-none-eabi-gdb" {
+		t.Errorf("unexpected fetch line: %q", plan.Steps[1].Line())
+	}
+}
+
 // A fetch is preferred over a package manager, always: it needs no privileges, it
 // belongs to the person rather than to the machine, and it does not change when the
 // machine's package manager does.

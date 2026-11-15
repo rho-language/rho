@@ -306,7 +306,7 @@ func PlanFor(report sysdep.Report) Plan {
 			plan.Steps = append(plan.Steps, PlannedStep{
 				Module: result.Module, Dep: result.Dep,
 				Manager: "fetch", Package: result.Fetch.URL,
-				Command: "rho keeper fetch " + result.Module + " " + result.Dep,
+				Command: "rho", Args: []string{"keeper", "fetch", result.Module, result.Dep},
 			})
 			continue
 		}
@@ -321,7 +321,7 @@ func PlanFor(report sysdep.Report) Plan {
 		plan.Steps = append(plan.Steps, PlannedStep{
 			Module: result.Module, Dep: result.Dep,
 			Manager: recipe.Manager, Package: recipe.Package,
-			Command: recipe.Command, Args: strings.Fields(recipe.Command)[1:],
+			Command: stepProgram(recipe.Command), Args: stepArgs(recipe.Command),
 		})
 		if current.elevation.command != "" {
 			plan.NeedsRoot = true
@@ -567,4 +567,22 @@ func ToolchainCommand() (string, bool) {
 		return found, true
 	}
 	return "", false
+}
+
+// stepProgram and stepArgs split a recipe's command line into the program a step
+// runs and its arguments. The program is the first word only: run as the whole
+// line, `sudo apt-get install -y gcc-avr` is a program nothing on any machine is
+// called.
+func stepProgram(line string) string {
+	if fields := strings.Fields(line); len(fields) > 0 {
+		return fields[0]
+	}
+	return ""
+}
+
+func stepArgs(line string) []string {
+	if fields := strings.Fields(line); len(fields) > 1 {
+		return fields[1:]
+	}
+	return nil
 }

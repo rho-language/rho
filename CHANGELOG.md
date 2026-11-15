@@ -579,3 +579,11 @@ Fixed: #49–#66 in `docs/tools/known-bugs.md`, among them array-of-struct field
 - `rho lint` no longer reads files under `build/`: pass `--include-generated` to keep the old behaviour.
 - A test suite that names no test file, or a file with no `test fn`, fails the run instead of being skipped.
 - A program function named `eprint`, `f64_to_str`, `f32_to_str`, `milli_format_fixed`, `str_to_bytes`, `str_from_bytes` or `arg_count` gives way to the built-in when called with the built-in's arguments: rename it.
+
+## [0.19.1] - 2026-11-15
+
+In a container or a pipeline, where root is the default, the "running as root" line is printed only to a terminal: a program that runs `rho` and reads its output — the keeper reading a sign-in ticket or the doctor's TSV — no longer finds the line inside its answer. `rho keeper sync` runs each install step as a program with its arguments (it ran `sudo apt-get install -y gcc-avr` as one program name, so every sync on a CI runner failed while the plan it printed read correctly); a fetch step runs `rho keeper fetch`.
+
+### Breaking
+
+None.

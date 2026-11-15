@@ -37,8 +37,8 @@ func TestOnlyRootIsEverToldAnything(t *testing.T) {
 // would be noise, and noise is what makes people stop reading warnings.
 func TestAContainerIsToldOnceAndBriefly(t *testing.T) {
 	for name, situation := range map[string]Situation{
-		"a container": {Root: true, Container: true, RhoHome: "/root/.rho"},
-		"a pipeline":  {Root: true, CI: true, RhoHome: "/root/.rho"},
+		"a container": {Root: true, Container: true, RhoHome: "/root/.rho", Interactive: true},
+		"a pipeline":  {Root: true, CI: true, RhoHome: "/root/.rho", Interactive: true},
 	} {
 		out := &bytes.Buffer{}
 		if !Check(out, situation) {
@@ -169,11 +169,26 @@ func TestAPipelineThatSaysItIsNotOneIsBelieved(t *testing.T) {
 func TestTheCheckHasNoWayToFailARun(t *testing.T) {
 	for _, situation := range []Situation{
 		{Root: true},
-		{Root: true, Container: true},
-		{Root: true, CI: true, SudoUser: "a"},
+		{Root: true, Container: true, Interactive: true},
+		{Root: true, CI: true, SudoUser: "a", Interactive: true},
 		{Root: true, SudoUser: "a", RhoHome: "/nonexistent", WorkDir: "/nonexistent"},
 	} {
 		out := &bytes.Buffer{}
 		Check(out, situation) // must not panic on paths that are not there
+	}
+}
+
+// Where root is the default — a container, a pipeline — the line is for a person.
+// A program that runs rho and reads its output (a keeper reading a ticket) must not
+// find it in the answer.
+func TestRootInAContainerSaysNothingToAProgram(t *testing.T) {
+	for name, situation := range map[string]Situation{
+		"a container": {Root: true, Container: true},
+		"a pipeline":  {Root: true, CI: true},
+	} {
+		var out bytes.Buffer
+		if Check(&out, situation) || out.Len() != 0 {
+			t.Errorf("%s, not a terminal: expected nothing, got %q", name, out.String())
+		}
 	}
 }
