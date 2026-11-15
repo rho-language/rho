@@ -60,7 +60,7 @@ fn show_instructions() void {
 }
 
 fn is_moves_left(board: u8[9]) bool {
-    let i: u32 = 0
+    var i: u32 = 0
     while i < 9 {
         if board[i] == 0 { return true }
         i = i + 1
@@ -70,7 +70,7 @@ fn is_moves_left(board: u8[9]) bool {
 
 fn evaluate(board: u8[9]) i32 {
     // Rows
-    let i: u32 = 0
+    var i: u32 = 0
     while i < 3 {
         let r: u32 = i * 3
         if board[r] != 0 && board[r] == board[r + 1] && board[r + 1] == board[r + 2] {
@@ -81,7 +81,7 @@ fn evaluate(board: u8[9]) i32 {
     }
 
     // Columns
-    let j: u32 = 0
+    var j: u32 = 0
     while j < 3 {
         if board[j] != 0 && board[j] == board[j + 3] && board[j + 3] == board[j + 6] {
             if board[j] == 1 { return 10 }
@@ -111,8 +111,8 @@ fn minimax(board: u8[9], depth: u32, is_max: bool) i32 {
     if !is_moves_left(board) { return 0 }
 
     if is_max {
-        let best: i32 = -1000
-        let i: u32 = 0
+        var best: i32 = -1000
+        var i: u32 = 0
         while i < 9 {
             if board[i] == 0 {
                 board[i] = 2  // computer
@@ -124,8 +124,8 @@ fn minimax(board: u8[9], depth: u32, is_max: bool) i32 {
         }
         return best
     } else {
-        let best: i32 = 1000
-        let i: u32 = 0
+        var best: i32 = 1000
+        var i: u32 = 0
         while i < 9 {
             if board[i] == 0 {
                 board[i] = 1  // human
@@ -140,9 +140,9 @@ fn minimax(board: u8[9], depth: u32, is_max: bool) i32 {
 }
 
 fn find_best_move(board: u8[9]) Move {
-    let best_val: i32 = -1000
+    var best_val: i32 = -1000
     let best: Move = Move{ 0, 0 }
-    let i: u32 = 0
+    var i: u32 = 0
     while i < 9 {
         if board[i] == 0 {
             board[i] = 2
@@ -160,7 +160,7 @@ fn find_best_move(board: u8[9]) Move {
 }
 
 fn row_crossed(board: u8[9]) bool {
-    let i: u32 = 0
+    var i: u32 = 0
     while i < 3 {
         let r: u32 = i * 3
         if board[r] != 0 && board[r] == board[r + 1] && board[r + 1] == board[r + 2] { return true }
@@ -170,7 +170,7 @@ fn row_crossed(board: u8[9]) bool {
 }
 
 fn column_crossed(board: u8[9]) bool {
-    let i: u32 = 0
+    var i: u32 = 0
     while i < 3 {
         if board[i] != 0 && board[i] == board[i + 3] && board[i + 3] == board[i + 6] { return true }
         i = i + 1
@@ -200,7 +200,7 @@ fn main() void {
     srand(1)
 
     let board: u8[9]
-    let i: u32 = 0
+    var i: u32 = 0
     while i < 9 {
         board[i] = 0
         i = i + 1
@@ -208,13 +208,13 @@ fn main() void {
 
     show_instructions()
 
-    let whose_turn: u32 = 2  // computer starts
-    let move_index: u32 = 0
+    var whose_turn: u32 = 2  // computer starts
+    var move_index: u32 = 0
 
     while !game_over(board) && move_index != 9 {
         if whose_turn == 2 {
             let temp_board: u8[9]
-            let t: u32 = 0
+            var t: u32 = 0
             while t < 9 {
                 if board[t] == 1 { temp_board[t] = 1 }
                 else if board[t] == 2 { temp_board[t] = 2 }
@@ -237,11 +237,11 @@ fn main() void {
             whose_turn = 1
         } else {
             print("Enter your move (1-9): ")
-            let c: i32 = getchar()
+            var c: i32 = getchar()
             // A counter that reaches all-ones and gives up. It is unsigned so
             // the sentinel is a value the type can hold; as an i32, 0xffffffff
             // is out of range and the comparison could not be emitted.
-            let timeout: u32 = 0
+            var timeout: u32 = 0
             while c == -1 { 
                 if timeout == 0xffffffff { return }
                 timeout = timeout + 1
@@ -250,7 +250,7 @@ fn main() void {
             if c == 10 {  // bare newline
                 print("Enter a number between 1 and 9.\n")
             } else {
-                let ch: i32 = c
+                var ch: i32 = c
                 while ch != -1 && ch != 10 { ch = getchar() }
                 let move_num: u32 = u32(c - 48)
                 if move_num < 1 || move_num > 9 {

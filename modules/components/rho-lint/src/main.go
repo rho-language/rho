@@ -120,6 +120,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --db PATH             the compilation database to read")
 	fmt.Fprintln(os.Stderr, "  --exclude FRAGMENT    a path fragment never to read; repeatable")
 	fmt.Fprintln(os.Stderr, "  --include-outside     read sources outside this project (a platform, not an application)")
+	fmt.Fprintln(os.Stderr, "  --include-generated   also read what the build wrote under the build directory")
 	fmt.Fprintln(os.Stderr, "  --write-db PATH       write the derived compilation database here")
 	fmt.Fprintln(os.Stderr, "  --force               allow --write-db to replace a database a build already wrote")
 	fmt.Fprintln(os.Stderr, "  --quiet               the findings only, with no notes about the machine")
@@ -151,6 +152,7 @@ type options struct {
 	database       string
 	exclude        []string
 	includeOutside bool
+	includeGen     bool
 	writeDatabase  string
 	overwrite      bool
 	quiet          bool
@@ -218,6 +220,8 @@ func parse(args []string) (options, error) {
 			chosen.writeDatabase, err = takeValue(&index, argument, inline, hasInline)
 		case "include-outside", "includeOutside":
 			chosen.includeOutside = true
+		case "include-generated", "includeGenerated":
+			chosen.includeGen = true
 		case "tree-plugins", "treePlugins":
 			chosen.treePlugins = true
 		case "force":
@@ -325,6 +329,8 @@ func analyse(args []string) int {
 		Write:       chosen.writeDatabase,
 		Overwrite:   chosen.overwrite,
 		TreePlugins: chosen.treePlugins,
+
+		IncludeGenerated: chosen.includeGen,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho lint:", err)

@@ -215,15 +215,17 @@ func rhoTestAction(path string) func(Suite) (string, bool, error) {
 		defer os.Remove(cFile)
 		defer os.Remove(binary)
 
-		// The C backend, and no target: the runner wants the C the backend
-		// generates, because it compiles it itself and runs what it compiled.
+		// The C backend, and only the translation: the runner compiles the C itself
+		// and runs what it compiled. `--emit-c` makes the build write that one file
+		// and nothing else — a whole build of the test program would generate the
+		// project's targets and put its binaries where the application's own are,
+		// and `build/<name>` would then be a test program.
 		//
 		// The name the runner used to pass was not a target a spec declares — a
 		// project that declares a Go target and no C one had no such target, and
 		// the build was asked for a board that does not exist.
-		build := exec.Command(rhoBinary(), "build", "-o", cFile, stripped)
-		if out, err := build.CombinedOutput(); err != nil {
-			return string(out), false, fmt.Errorf("rho build: %w: %s", err, strings.TrimSpace(string(out)))
+		if out, err := translate(stripped, cFile); err != nil {
+			return out, false, err
 		}
 		compile := exec.Command("cc", cFile, "-o", binary)
 		if out, err := compile.CombinedOutput(); err != nil {
@@ -233,6 +235,23 @@ func rhoTestAction(path string) func(Suite) (string, bool, error) {
 		out, err := run.CombinedOutput()
 		return string(out), err != nil, nil
 	}
+}
+
+// translate writes the C translation of a Rho file, and nothing else.
+//
+// A rho from before `--emit-c` refuses the flag; it is then asked the old way,
+// a full build with `-o`, so a newer runner still works with an older toolchain.
+func translate(source, cFile string) (string, error) {
+	build := exec.Command(rhoBinary(), "build", "--emit-c", "-o", cFile, source)
+	out, err := build.CombinedOutput()
+	if err != nil && strings.Contains(string(out), "flag provided but not defined: -emit-c") {
+		build = exec.Command(rhoBinary(), "build", "-o", cFile, source)
+		out, err = build.CombinedOutput()
+	}
+	if err != nil {
+		return string(out), fmt.Errorf("rho build: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return "", nil
 }
 
 func workDirFor(root string) string {

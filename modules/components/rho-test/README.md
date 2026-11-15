@@ -134,6 +134,10 @@ neither of the first two:
 - A suite whose kind has no runner installed is **skipped with the reason**, not
   dropped. A run that passed while a declared test went unrun is the outcome this
   runner exists to prevent.
+- A suite whose runner is installed and cannot find it — a `rho` suite whose file
+  is not there or declares no `test fn`, a `command` suite with nothing to run —
+  **fails**. A mistyped name in `tests.yml` is a test that never ran, and a run
+  that skipped it would exit 0.
 
 Suites and cases are counted separately: one cell of a smoke matrix that did not
 build is one failing suite, not one failure per case it would have had.

@@ -63,6 +63,8 @@ rho run .
 
 ```
 Created a Rho application in hello-app
+  module name: hello_app (from "hello-app"; a module name is lower case letters, digits and _; --name sets another)
+  targets: go; build.language: go
    module.yml
    src/main.rho
    README.md
@@ -72,9 +74,11 @@ Next:
 ```
 
 The new project builds for the `go` target, so `rho run .` generates a Go
-program under `build/generated/go/`, builds it and runs it, and needs no
-component. `rho init --language c` starts a C project instead, which `rho build`
-compiles through the `rho-target` component.
+program under `build/generated/go/`, builds it into `build/hello_app` and runs
+it, and needs no component. `rho init --target c` starts a C project instead,
+which `rho build` compiles through the `rho-target` component into
+`build/output/hello_app`. A program's own arguments follow the project:
+`rho run . input.csv --verbose`.
 
 The manifest, the layout and what each target generates are in
 {ref}`documentation/generating`. A project is an **application** — the thing you

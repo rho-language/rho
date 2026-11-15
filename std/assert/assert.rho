@@ -29,7 +29,7 @@ module std.assert.assert
 // intrinsic and be qualified with this module's name.
 
 fn fail(msg: string) {
-    print("ASSERTION FAILED: " + msg)
+    print("ASSERTION FAILED: " + msg + "\n")
     abort()
 }
 

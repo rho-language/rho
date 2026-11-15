@@ -1,0 +1,21 @@
+date,region,product,units,price,customer
+2026-01-03,North,Widget,12,2.50,Acme Corp
+2026-01-04,South,Gadget,3,19.99,"Smith, Jones & Co"
+2026-01-05,East,Widget,7,2.50,Bolt Ltd
+2026-01-07,West,Gizmo,1,149.00,"The ""Best"" Shop"
+2026-01-09,North,Gadget,5,19.99,Acme Corp
+2026-01-10,South,Widget,20,2.45,"Smith, Jones & Co"
+2026-01-12,East,Gizmo,2,145.50,Bolt Ltd
+2026-01-13,North,Widget,8,2.50,Northwind
+2026-01-15,West,Widget,15,2.40,"The ""Best"" Shop"
+2026-01-16,South,Gizmo,1,149.00,Southgate
+2026-01-18,East,Gadget,4,18.75,Eastern Supply
+2026-01-20,North,Gizmo,3,139.90,Northwind
+2026-01-21,West,Gadget,6,19.99,Westbrook
+2026-01-23,South,Gadget,2,19.99,Southgate
+2026-01-24,East,Widget,30,2.30,Eastern Supply
+2026-01-26,North,Widget,10,2.50,Acme Corp
+2026-01-27,West,Gizmo,2,149.00,Westbrook
+2026-01-28,South,Widget,9,2.50,"Smith, Jones & Co"
+2026-01-30,East,Gadget,1,19.99,Bolt Ltd
+2026-01-31,North,Gadget,7,-1.50,Northwind

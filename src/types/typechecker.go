@@ -290,12 +290,19 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			}
 			tc.userStructs[s.Name] = true
 			tc.types[s.Name] = ir.Type{Kind: ir.TypeStruct, Name: s.Name}
+			tc.genericParams[s.Name] = append([]string{}, s.TypeParams...)
+		}
+	}
+	// The fields once every struct is a type, so a field whose struct is
+	// declared further down the file — `struct St { inner: In }` before
+	// `struct In` — has that type and not an unknown one.
+	for _, decl := range m.Decls {
+		if s, ok := decl.(ast.StructDecl); ok && s.Name != "Ptr" && !primitiveTypeName(s.Name) {
 			fields := make(map[string]ir.Type, len(s.Fields))
 			for _, field := range s.Fields {
 				fields[field.Name] = tc.typeFor(field.Type)
 			}
 			tc.fields[s.Name] = fields
-			tc.genericParams[s.Name] = append([]string{}, s.TypeParams...)
 		}
 	}
 	// An alias is registered before anything is validated, because a function
@@ -705,6 +712,7 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 	if err != nil {
 		return fmt.Errorf("function %s: %w", fn.Name, err)
 	}
+	tc.warnLetAssignments(fn)
 	// A body with a statement already reported may end in it, and whether it
 	// returns is not worth a second report.
 	if tc.collect != nil && len(tc.collect.errors)+tc.collect.omitted > reported {
@@ -722,7 +730,11 @@ func (tc *TypeChecker) checkFunc(fn ast.FuncDecl) error {
 
 func (tc *TypeChecker) checkStatements(statements []ast.Stmt, scope map[string]ir.Type, result ir.Type, inLoop bool) (bool, error) {
 	terminates := false
-	for _, statement := range statements {
+	for index, statement := range statements {
+		// `p.f` through a pointer to a struct is `(*p).f` (autoderef.go),
+		// written back so that lowering reads the same statement.
+		statement = tc.derefStatement(statement, scope)
+		statements[index] = statement
 		if terminates {
 			err := locate(fmt.Errorf("unreachable statement: the statement before it always leaves the block (return, break or continue), so this one can never run; remove it or move it before that statement"), statement.Position(), "")
 			if tc.collect == nil {
@@ -1462,6 +1474,9 @@ func (tc *TypeChecker) exprTypeExpected(expr ast.Expr, scope map[string]ir.Type,
 }
 
 func (tc *TypeChecker) memberType(object ir.Type, name string) (ir.Type, error) {
+	if object.Kind == ir.TypePtr {
+		return ir.Type{}, fmt.Errorf("member access requires a struct: `.%s` reads a field, and %s points at %s, which has none; a field is reached through a pointer to a struct as `p.%s` or `(*p).%s`", name, typeName(object), article(typeName(elementType(object))), name, name)
+	}
 	if object.Kind != ir.TypeStruct {
 		return ir.Type{}, fmt.Errorf("member access requires a struct: `.%s` reads a field, and %s has none", name, article(typeName(object)))
 	}
@@ -1595,7 +1610,11 @@ func elementType(value ir.Type) ir.Type {
 	if value.ArrayLen > 0 {
 		element := value
 		element.ArrayLen = 0
-		if index := strings.IndexByte(value.Name, '['); index >= 0 {
+		// Only the trailing length is the array's: the element of
+		// `Box[i32][2]` is Box[i32].
+		if base, dims, ok := nameArrayDims(value.Name); ok && len(dims) == 1 && dims[0] == value.ArrayLen {
+			element.Name = base
+		} else if index := strings.IndexByte(value.Name, '['); index >= 0 {
 			element.Name = value.Name[:index]
 		}
 		if kind := primitiveKind(element.Name); kind != ir.TypeInvalid {
@@ -1680,6 +1699,17 @@ func substituteGeneric(value ir.Type, params []string, args []ir.Type) ir.Type {
 			return args[index]
 		}
 	}
+	// A fixed array of a parameter, `T[3]`, is three of the argument.
+	if base, dims, ok := nameArrayDims(value.Name); ok && len(dims) == 1 {
+		for index, param := range params {
+			if index < len(args) && base == param && args[index].ArrayLen == 0 {
+				element := args[index]
+				element.Name = typeName(element) + "[" + strconv.Itoa(dims[0]) + "]"
+				element.ArrayLen = dims[0]
+				return element
+			}
+		}
+	}
 	// A pointer carries its element as an argument, not in its name, so the
 	// element is what is substituted: `Slice[u8].ptr` is a `Ptr[u8]`.
 	if value.Kind == ir.TypePtr && len(value.Args) == 1 {
@@ -1734,44 +1764,52 @@ func isCallableBuiltin(name string, types map[string]ir.Type) bool {
 // intrinsicLowering maps an intrinsic to the name both backends emit. An empty
 // value means the name is used unchanged.
 var intrinsicLowering = map[string]string{
-	"strlen":          "rho_strlen",
-	"str_starts_with": "rho_str_starts_with",
-	"str_trim_prefix": "rho_str_trim_prefix",
-	"str_contains":    "rho_str_contains",
-	"str_at":          "rho_str_at",
-	"str_index_of":    "rho_str_index_of",
-	"str_slice":       "rho_str_slice",
-	"str_trim":        "rho_str_trim",
-	"str_url_encode":  "rho_str_url_encode",
-	"str_url_decode":  "rho_str_url_decode",
-	"form_field":      "rho_form_field",
-	"milli_valid":     "rho_milli_valid",
-	"milli_parse":     "rho_milli_parse",
-	"milli_format":    "rho_milli_format",
-	"milli_round":     "rho_milli_round",
-	"i64_to_str":      "rho_i64_to_str",
-	"i64_from_str":    "rho_i64_from_str",
-	"str_lower":       "rho_str_lower",
-	"str_replace":     "rho_str_replace",
-	"str_upper":       "rho_str_upper",
-	"str_field":       "rho_str_field",
-	"json_str_field":  "rho_json_str_field",
-	"json_num_field":  "rho_json_num_field",
-	"app_workspace":   "rho_app_workspace",
-	"int_to_str":      "rho_int_to_str",
-	"int_from_str":    "rho_int_from_str",
-	"f32_to_bits":     "rho_f32_to_bits",
-	"f32_from_bits":   "rho_f32_from_bits",
-	"f64_to_bits":     "rho_f64_to_bits",
-	"f64_from_bits":   "rho_f64_from_bits",
-	"template_get":    "template_get",
-	"template_has":    "template_has",
-	"template_fill":   "template_fill",
-	"auth_bearer":     "auth_bearer",
-	"auth_subject":    "auth_subject",
-	"str_from_byte":   "rho_str_from_byte",
-	"env_or":          "rho_env_or",
-	"getenv":          "rho_getenv",
+	"strlen":             "rho_strlen",
+	"str_starts_with":    "rho_str_starts_with",
+	"str_trim_prefix":    "rho_str_trim_prefix",
+	"str_contains":       "rho_str_contains",
+	"str_at":             "rho_str_at",
+	"str_index_of":       "rho_str_index_of",
+	"str_slice":          "rho_str_slice",
+	"str_trim":           "rho_str_trim",
+	"str_url_encode":     "rho_str_url_encode",
+	"str_url_decode":     "rho_str_url_decode",
+	"form_field":         "rho_form_field",
+	"milli_valid":        "rho_milli_valid",
+	"milli_parse":        "rho_milli_parse",
+	"milli_format":       "rho_milli_format",
+	"milli_round":        "rho_milli_round",
+	"i64_to_str":         "rho_i64_to_str",
+	"i64_from_str":       "rho_i64_from_str",
+	"str_lower":          "rho_str_lower",
+	"str_replace":        "rho_str_replace",
+	"str_upper":          "rho_str_upper",
+	"str_field":          "rho_str_field",
+	"json_str_field":     "rho_json_str_field",
+	"json_num_field":     "rho_json_num_field",
+	"app_workspace":      "rho_app_workspace",
+	"int_to_str":         "rho_int_to_str",
+	"int_from_str":       "rho_int_from_str",
+	"f32_to_bits":        "rho_f32_to_bits",
+	"f32_from_bits":      "rho_f32_from_bits",
+	"f64_to_bits":        "rho_f64_to_bits",
+	"f64_from_bits":      "rho_f64_from_bits",
+	"template_get":       "template_get",
+	"template_has":       "template_has",
+	"template_fill":      "template_fill",
+	"auth_bearer":        "auth_bearer",
+	"auth_subject":       "auth_subject",
+	"str_from_byte":      "rho_str_from_byte",
+	"env_or":             "rho_env_or",
+	"getenv":             "rho_getenv",
+	"get_args":           "rho_get_args",
+	"arg_count":          "rho_arg_count",
+	"eprint":             "rho_eprint",
+	"f64_to_str":         "rho_f64_to_str",
+	"f32_to_str":         "rho_f32_to_str",
+	"milli_format_fixed": "rho_milli_format_fixed",
+	"str_to_bytes":       "rho_str_to_bytes",
+	"str_from_bytes":     "rho_str_from_bytes",
 }
 
 // mathBuiltinLowering maps the floating-point builtins a program may call bare
@@ -2540,8 +2578,8 @@ func (tc *TypeChecker) lowerStatement(statement ast.Stmt, scope map[string]ir.Ty
 	case ast.ContinueStmt:
 		// A `continue` skips the release at the end of the body, so it releases
 		// first: the next iteration starts from the loop's mark.
-		if mark := tc.innermostLoopMark(); mark != "" {
-			return []ir.Instr{{Op: ir.OpArenaRelease, Dest: mark}, {Op: ir.OpContinue}}
+		if loop := tc.innermostLoop(); loop.mark != "" {
+			return []ir.Instr{arenaReleaseTo(loop), {Op: ir.OpContinue}}
 		}
 		return []ir.Instr{{Op: ir.OpContinue}}
 	default:
@@ -3198,7 +3236,10 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 				// functions, unless the program or a module it imports declares
 				// one of its own under that name (`std.math.float` does).
 				callee = mathBuiltinLowering[identifier.Name]
-			case intrinsicLowering[identifier.Name] != "":
+			case intrinsicLowering[identifier.Name] != "" && (!tc.declaresFunc(identifier.Name) || tc.callsIntrinsic(identifier.Name, expr.Args, scope)):
+				// A program's own function of the same name — an `arg_count`
+				// written before the built-in existed — is its own, where the
+				// built-in does not take the arguments.
 				// A string or environment intrinsic, emitted by both backends
 				// under a fixed name.
 				callee = intrinsicLowering[identifier.Name]
@@ -3324,6 +3365,15 @@ func (tc *TypeChecker) lowerExprExpected(expr ast.Expr, scope map[string]ir.Type
 			args = append(args, lowered)
 		}
 		tc.arenaRecordCall(callee)
+		// The runtime takes a Slice[u8] as its pointer and its length, which
+		// is what both backends' runtimes can be written against: the Slice
+		// struct is the program's own type.
+		if callee == "rho_str_to_bytes" && len(args) == 2 {
+			return "rho_str_to_bytes(" + args[0] + ", (" + args[1] + ").ptr, (" + args[1] + ").len)"
+		}
+		if callee == "rho_str_from_bytes" && len(args) == 1 {
+			return "rho_str_from_bytes((" + args[0] + ").ptr, (" + args[0] + ").len)"
+		}
 		return callee + "(" + strings.Join(args, ", ") + ")"
 	case ast.StructLiteralExpr:
 		if construct, ok := tc.enumConstruction(expr, scope); ok {
@@ -3962,6 +4012,40 @@ func init() {
 		params: []ir.Type{},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	}
+	// arg_count is how many arguments the program was given, not counting its
+	// own name: rho_arg answers for 0 to arg_count() - 1.
+	intrinsicSignatures["arg_count"] = functionType{
+		params: []ir.Type{},
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	}
+	// eprint writes to standard error, as print writes to standard output.
+	intrinsicSignatures["eprint"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}},
+		result: ir.Type{Kind: ir.TypeVoid, Name: "void"},
+	}
+	// A floating-point number in fixed notation with a number of decimals.
+	intrinsicSignatures["f64_to_str"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeF64, Name: "f64"}, {Kind: ir.TypeU32, Name: "u32"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
+	intrinsicSignatures["f32_to_str"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeF32, Name: "f32"}, {Kind: ir.TypeU32, Name: "u32"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
+	intrinsicSignatures["milli_format_fixed"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeI64, Name: "i64"}, {Kind: ir.TypeU32, Name: "u32"}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
+	// str_to_bytes and str_from_bytes take a Slice[u8], completed per
+	// program by intrinsicSignature as read_file's is.
+	intrinsicSignatures["str_to_bytes"] = functionType{
+		params: []ir.Type{{Kind: ir.TypeString, Name: "string"}, {}},
+		result: ir.Type{Kind: ir.TypeU32, Name: "u32"},
+	}
+	intrinsicSignatures["str_from_bytes"] = functionType{
+		params: []ir.Type{{}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	}
 	for _, name := range []string{
 		"strlen", "str_starts_with", "str_trim_prefix", "str_contains", "str_at",
 		"str_index_of", "str_slice", "int_to_str", "str_from_byte",
@@ -3974,7 +4058,8 @@ func init() {
 		"auth_bearer", "auth_subject", "auth_is_authenticated", "auth_expires",
 		"auth_required", "auth_open_tokens", "auth_bootstrap", "auth_allowed", "auth_list_configured",
 		"auth_issue", "int_from_str", "emit",
-		"len", "read_file", "write_file", "get_args", "append",
+		"len", "read_file", "write_file", "get_args", "arg_count", "append",
+		"eprint", "f64_to_str", "f32_to_str", "milli_format_fixed", "str_to_bytes", "str_from_bytes",
 		"store_list", "store_meta", "store_detail", "store_latest", "store_data_dir", "store_release",
 		"registry_data_dir", "registry_access", "config_get", "clock_year",
 		"registry_title", "registry_version", "registry_site_url", "registry_url", "registry_token_days",
@@ -4533,6 +4618,10 @@ func (tc *TypeChecker) intrinsicSignature(name string) (functionType, bool) {
 		signature.result = tc.sliceOf(ir.Type{Kind: ir.TypeU8, Name: "u8"})
 	case "write_file":
 		signature.params = []ir.Type{{Kind: ir.TypeString, Name: "string"}, tc.sliceOf(ir.Type{Kind: ir.TypeU8, Name: "u8"})}
+	case "str_to_bytes":
+		signature.params = []ir.Type{{Kind: ir.TypeString, Name: "string"}, tc.sliceOf(ir.Type{Kind: ir.TypeU8, Name: "u8"})}
+	case "str_from_bytes":
+		signature.params = []ir.Type{tc.sliceOf(ir.Type{Kind: ir.TypeU8, Name: "u8"})}
 	}
 	return signature, true
 }

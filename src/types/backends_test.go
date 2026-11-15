@@ -42,8 +42,8 @@ func TestABackendOnlyBuiltinIsRecorded(t *testing.T) {
 		source string
 		want   bool
 	}{
-		{"module app\n\nfn main() void {\n    print(get_args())\n}\n", true},
-		{"module app\n\nfn get_args() string {\n    return \"\"\n}\n\nfn main() void {\n    print(get_args())\n}\n", false},
+		{"module app\n\nfn main() void {\n    write_file(\"x\", read_file(\"y\"))\n}\n", true},
+		{"module app\n\nfn read_file(p: string) string {\n    return \"\"\n}\n\nfn main() void {\n    print(read_file(\"x\"))\n}\n", false},
 		{"module app\n\nfn main() void {\n    print(str_trim(\" a \"))\n}\n", false},
 	} {
 		tokens, _ := lexer.Lex(c.source)
@@ -58,7 +58,7 @@ func TestABackendOnlyBuiltinIsRecorded(t *testing.T) {
 		lowered := tc.ToIR(*module)
 		got := false
 		for _, call := range lowered.BackendCalls {
-			if call.Name == "get_args" && call.Line == 4 {
+			if (call.Name == "read_file" || call.Name == "write_file") && call.Line == 4 {
 				got = true
 			}
 		}

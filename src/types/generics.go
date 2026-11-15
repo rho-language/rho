@@ -26,6 +26,7 @@ package types
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -102,6 +103,18 @@ func (tc *TypeChecker) declaredTypeWith(name string, subs map[string]ir.Type) ir
 		return tc.substituteType(tc.typeFor(name), subs)
 	}
 	base := name[:open]
+	// A fixed array of a type parameter, `T[3]`, is three of what T is
+	// substituted with.
+	if _, param := subs[base]; param {
+		if element, dims, ok := nameArrayDims(name); ok && element == base && len(dims) == 1 {
+			typ := tc.substituteType(ir.Type{Kind: ir.TypeStruct, Name: base}, subs)
+			if typ.ArrayLen == 0 {
+				typ.Name = typeName(typ) + "[" + strconv.Itoa(dims[0]) + "]"
+				typ.ArrayLen = dims[0]
+				return typ
+			}
+		}
+	}
 	// A pointer is not a generic struct that happens to be called Ptr. It is the
 	// pointer type, and it is resolved as one here as on the path that reads a
 	// type used in an expression, so `Ptr[u8]` is one type wherever it is
@@ -873,6 +886,12 @@ func (tc *TypeChecker) structToSpecialisation(s ast.StructDecl, subs map[string]
 		fieldType := tc.typeFromExpr(f.TypeExpr, s.TypeParams)
 		if f.TypeExpr.Name == "" {
 			fieldType = tc.typeFor(f.Type)
+		} else if f.TypeExpr.ArrayLen != nil && len(f.TypeExpr.Dims) == 0 && slices.Contains(s.TypeParams, f.TypeExpr.Name) {
+			// A fixed array of a type parameter, `T[3]`: the parameter is
+			// substituted and the length kept.
+			name, variant := storedField(f)
+			fields[i] = ir.FieldIR{Name: name, Type: tc.declaredTypeWith(f.TypeExpr.String(), subs), Variant: variant, Shared: f.Shared}
+			continue
 		} else if fieldType.Kind == ir.TypePtr {
 			// A pointer is a kind with an element, not a name, so substituting
 			// it means substituting the element. Resolving the name instead —

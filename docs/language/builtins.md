@@ -43,9 +43,11 @@ hex.
 | `strlen(s: string) u32` | The length in bytes | yes | yes |
 | `len(value) u32` | The length of a string (as `strlen`; 0 for a NULL string on C), of a fixed-size array (the `N` of its type, a constant), of a `Slice[T]` (its `len`), or of a `[T]`. A `[T]` is a bare pointer on C, so `len` on one refuses a C build, naming the call: use a fixed-size array or a `Slice[T]`. A module that declares its own `len` gets the calls whose argument is none of these | string, fixed array, Slice | yes |
 | `str_eq(a: string, b: string) bool` | Whether two strings are equal. `==` between strings is the same call; `<`, `<=`, `>` and `>=` compare their bytes as unsigned values, the order Go's are in | yes | yes |
-| `str_at(s: string, i: u32) u8` | The byte at `i`, or 0 past the end | yes | yes |
+| `str_at(s: string, i: u32) u8` | The byte at `i`, or 0 past the end. Constant time on both backends: C remembers the length of the last long strings it measured, so a loop over a string by position is linear | yes | yes |
 | `str_from_byte(b: u8) string` | A one-byte string | yes | yes |
-| `str_slice(s: string, start: u32, length: u32) string` | `length` bytes from `start`, clamped to the string; `""` when `start` is past the end | yes | yes |
+| `str_slice(s: string, start: u32, length: u32) string` | `length` bytes from `start`, clamped to the string; `""` when `start` is past the end. It costs the bytes it copies, as `str_at` and `len` cost nothing per call | yes | yes |
+| `str_to_bytes(s: string, out: Slice[u8]) u32` | Copies the bytes of `s` into `out`, as many as fit, and answers how many. No terminating zero is written and nothing is allocated; a fixed array `u8[N]` or a cut of one is passed as it is. For a C path (`std.os.fs.open` takes a `Ptr[u8]` ended by a zero), copy into `buf[..N-1]` and write `buf[n] = 0` | yes | yes |
+| `str_from_bytes(b: Slice[u8]) string` | A string of the bytes up to the first zero byte, or all of them: what a C string of them is, on both backends | yes | yes |
 | `str_index_of(haystack: string, needle: string) i32` | Where `needle` first starts, or -1 | yes | yes |
 | `str_contains(haystack: string, needle: string) bool` | Whether `needle` occurs | yes | yes |
 | `str_starts_with(s: string, prefix: string) bool` | Whether `s` begins with `prefix` | yes | yes |
@@ -70,6 +72,8 @@ hex.
 | `int_from_str(s: string) u32` | A run of decimal digits. Anything else, a sign or a space included, is 0. A number too big for `u32` is 0 on Go and wraps on C | yes | yes |
 | `i64_to_str(n: i64) string` | An `i64` in base ten, with a sign when negative | yes | yes |
 | `i64_from_str(s: string) i64` | A whole number with an optional sign, the space around it trimmed. Text that is not one, or more than 18 digits, is 0 | yes | yes |
+| `f64_to_str(x: f64, decimals: u32) string` | `x` in fixed notation with exactly `decimals` digits after the point (at most 20; more is 20), rounded to nearest from the exact binary value with a tie to the even digit — 0.125 to 2 places is `0.12`, 2.5 to 0 is `2`. `NaN`, `+Inf` and `-Inf` for the values that are not numbers, and a negative value keeps its sign when it rounds to zero (`-0.00`). The same text on both backends, independent of the locale; C writes it with integer arithmetic, not `printf` | yes | yes |
+| `f32_to_str(x: f32, decimals: u32) string` | `f64_to_str` of the same value: the float's exact value, so `f32_to_str(f32(0.1), 10)` is `0.1000000015` | yes | yes |
 
 0 is also a valid answer. Text that may not be a number is checked first,
 with `milli_valid` for a decimal, or by comparing `i64_to_str` of the result
@@ -86,6 +90,7 @@ and write it identically, and parity tests check that they do.
 | `milli_parse(text: string) i64` | The decimal as thousandths. `2,5` and `2.5` are both 2500. Digits past the third decimal are dropped, not rounded. Text that is not a decimal is 0 | yes | yes |
 | `milli_format(milli: i64) string` | The thousandths as a decimal, without trailing zeros: 2500 is `2.5`, 3000 is `3`, -1500 is `-1.5` | yes | yes |
 | `milli_round(milli: i64, places: u32) i64` | Rounded to `places` decimals, half away from zero: 2345 to 2 places is 2350. Three places or more returns the value unchanged | yes | yes |
+| `milli_format_fixed(milli: i64, decimals: u32) string` | The thousandths with exactly `decimals` digits after the point (at most 20): fewer than three rounds half away from zero, as `milli_round` does, and more pads with zeros. 1500 to 2 places is `1.50`, -1005 is `-1.01`, 999 to 0 places is `1`. A value that rounds to zero has no sign | yes | yes |
 
 ## Bits
 
@@ -117,13 +122,14 @@ first occurrence of a key at any depth.
 | `getenv(name: string) string` | The variable's value, or `""` when it is not set | yes | yes |
 | `env_or(name: string, fallback: string) string` | The variable's value when it is set (even to `""`), otherwise `fallback` | yes | yes |
 | `app_workspace() string` | Where the application keeps its data: `RHO_APP_WORKSPACE` when set, otherwise `$HOME/.rho/apps/<name>`. The name is `RHO_APP_NAME`; without it, C uses `app` and Go uses the program's file name | yes | yes |
-| `get_args() string` | The command-line arguments joined by spaces | no | yes |
+| `get_args() string` | The command-line arguments after the program's name, joined by one space each. An argument that holds a space cannot be told from two, so a program that takes such arguments reads them with `rho_arg` | yes | yes |
+| `arg_count() u32` | How many arguments the program was given, its own name not counted: `rho_arg` answers for 0 to `arg_count() - 1`. 0 on a board, which has no command line | yes | yes |
 | `read_file(path: string) Slice[u8]` | A whole file as bytes, or an empty Slice when it cannot be read | no | yes |
 | `write_file(path: string, data: Slice[u8])` | Writes a whole file (mode 0644); says nothing about failure. A fixed array `u8[N]` or a cut of one is passed as it is | no | yes |
 | `s = append(s, v...)` on a `Slice[T]` | Writes each value at `s[s.len]` in the fixed array `s` was cut from and lengthens `s`; past the array's length the program stops (`rho: append past capacity N`). Written only as that statement, on a slice declared in the function from a fixed array ({ref}`language/types`) | yes | yes |
 | `append(items: [T], item: T) [T]` | The Go slice with one more element. A `[T]` is a bare pointer on C, so a C build is refused, naming the call | no | yes |
 | `Slice.from_raw(p, n) Slice[T]` | The `n` elements starting at `p`, a `Ptr[T]` or a `[T]`; nothing checks that they are there | yes | yes |
-| `extern fn rho_arg(index: i32) string` | One argument by position, from 0; `""` past the last | no | yes |
+| `extern fn rho_arg(index: i32) string` | One argument by position: `rho_arg(0)` is the first argument, not the program's name. `""` past the last and for a negative index; `arg_count` says how many there are, so an empty argument can be told from the end. A hosted C program's `main` keeps its `argc` and `argv` for these; on a board there are none, and every argument is `""` | yes | yes |
 | `extern fn rho_setenv(name: string, value: string)` | Sets a variable for this process and what it runs | yes | yes |
 
 ## Ending the program
@@ -131,6 +137,7 @@ first occurrence of a key at any depth.
 | Signature | What it does | C | Go |
 |---|---|---|---|
 | `print(s: string)` | Writes to standard output with no newline added | yes | yes |
+| `eprint(s: string)` | Writes to standard error, with no prefix and no newline added. On a board it goes to the platform's sink as descriptor 2 | yes | yes |
 | `panic(msg: string)` | Writes `rho: <msg>` to standard error and exits with status 1, on a hosted C build and on Go alike. On a board the message goes to the console and the program stops where the platform says (`RHO_PROGRAM_HALT`, or a breakpoint and `wfi` on Cortex-M and RISC-V) | yes | yes |
 | `abort()` | A `panic("aborted")`: writes `rho: aborted` to standard error and exits with status 1 on a hosted C build and on Go alike (the C library's `abort`, which raised SIGABRT and exited 134, is not called). On a board, the platform's stop | yes | yes |
 | `sizeof(T) u32` | The size of a type in bytes, decided at compile time | yes | yes |
@@ -150,7 +157,7 @@ extern fn rho_write_text(path: string, text: string) bool
 | `rho_write_text(path: string, text: string) bool` | Replaces the file (mode 0644), and whether every byte was written | yes | yes |
 | `rho_append_text(path: string, text: string) bool` | Appends to the file, creating it, and whether it did | yes | yes |
 | `rho_write_secret(path: string, text: string) bool` | Writes a file only its owner can read (0600). An existing file is narrowed to 0600 too. Go writes a temporary file beside the target and renames it over, so a reader never sees half of one. A board with no POSIX files writes it like any other | yes | yes |
-| `rho_path_exists(path: string) bool` | Whether anything is at `path` | no | yes |
+| `rho_path_exists(path: string) bool` | Whether anything — a file, a directory — is at `path`. It is how a missing file is told from an empty one, which `rho_read_text` answers `""` for alike | yes | yes |
 | `rho_list_dir(path: string) string` | The names in a directory, one per line; `""` when it cannot be read | no | yes |
 
 `yaml.value`, `yaml.kind`, `yaml.keys` and `yaml.load` are called as members and

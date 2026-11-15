@@ -75,11 +75,29 @@ from one string arena, and the compiler gives strings back in bulk:
 
 The rule a program follows is the iteration lifetime rule: **a string built in a
 loop iteration lives until the end of that iteration, unless it is stored in
-something declared outside the loop.** Storing one there — assigning it to an
-outer variable, field or element, passing `&outer` or an outer array or pointer
-to a Rho function — is allowed, and the compiler then does not release that loop
-at all. Storing a literal, or a string that existed before the loop, keeps
-nothing alive and does not count.
+something declared outside the loop.** Storing a literal, or a string that
+existed before the loop, keeps nothing alive and does not count.
+
+A loop that **replaces** what a variable declared outside it holds — the last
+reading, the status text, the last error — keeps exactly what that variable
+holds at the end of each iteration and releases the rest. The release that ends
+an iteration, the one before a `continue` and the one after the loop (left by
+its condition or a `break`) move the kept strings down to the loop's mark and
+point the variables at their new place, so the loop runs in the size of what it
+keeps plus one iteration's strings, for ever. Two variables holding one string,
+or one holding the tail of another, share it. The variable may be:
+
+- a `string`;
+- a struct, assigned whole or a field at a time (`status.text = line`), whose
+  strings are its own fields or fields of structs and enums inside it;
+- an enum, an `Option` or a `Result`, whose strings are kept for whichever
+  variant it holds;
+- a fixed array of any of these, element by element (`ring[slot] = line`), up
+  to 32 strings in all.
+
+A value read out of a kept variable and stored in another outer variable
+(`previous = last`) is kept too. An accumulator, `acc = acc + piece`, keeps only
+its newest value each iteration, so it holds its own length and nothing more.
 
 ```rho
 module sensor
@@ -87,32 +105,43 @@ module sensor
 extern fn read_temp() u32
 
 fn main() void {
-    var state: string = "idle"
     var last: string = ""
     while true {
         let line = "T=" + int_to_str(read_temp())   // lives until the iteration ends
         print(line + "\n")
-        state = "warm"                                // a literal keeps nothing alive
-        last = line                                   // stored outside the loop
+        last = line                                   // kept: the loop releases the rest
     }
 }
 ```
 
-Without its last line this loop is released every iteration and runs for ever
-in a few dozen bytes. With it, every line it builds is kept.
+This loop runs for ever in a few dozen bytes, and `last` holds the latest line.
 
-A loop that cannot be released keeps every string its iterations build, so it
-is reported when that garbage could live as long as the program: a `while` loop
-that never ends, or one in a function reached from `main` other than from a loop
-that is released or a statement that keeps its result. On a host the build warns
-and the memory grows. For a board the build is refused, because a board's arena
-has a fixed size. Whether a target is a board is read from its resolved spec,
-not its name. A target whose spec sizes the arena, or declares its RAM and is
-not deployed to, is a board. A target with a `deploy` block runs an operating
+A value the loop binds once from what was there before it, `let key = s[i]`
+never assigned again, is as old as what it was read from: sorting strings in
+place stores nothing new.
+
+What is still not released is a loop that stores a string it built where the
+loop cannot keep it by replacing a variable: an element of a `Slice[T]`
+(`out[i] = field`, the caller's storage), a field reached through a pointer, a
+variable given by address (`&outer`) or an outer array, pointer or slice passed
+to a Rho function, a function value (a closure's environment is not a string the
+runtime can measure), or more than 32 strings. Such a loop is not released at
+all and keeps every string its iterations build.
+
+It is reported when that garbage could live as long as the program: a `while`
+loop that builds strings and never ends, or one in a function reached from
+`main` other than from a loop that is released or a statement that keeps its
+result. On a host the build warns: for a loop that never ends, that its memory
+grows for as long as it runs; for one that ends, that it grows with every
+iteration until the call that ran it is released. For a board the build is refused, because a board's
+arena has a fixed size. Whether a target is a board is read from its resolved
+spec, not its name. A target whose spec sizes the arena, or declares its RAM and
+is not deployed to, is a board. A target with a `deploy` block runs an operating
 system and is a host, even on a board that also has an MCU. A target whose spec
-cannot be resolved is built as a host. Build the string in the iteration that uses it, keep it in a
-variable declared inside the loop, or return it from a function. A `for` loop is
-bounded by its array and is not reported.
+cannot be resolved is built as a host. Keep the latest value in a variable or a
+fixed array of your own rather than in a Slice's element, build the string in
+the iteration that uses it, or return it from a function. A `for` loop is bounded by its array and is not
+reported.
 
 **C functions borrow strings.** A string passed to an `extern fn` is valid for
 the duration of the call. C code that keeps it, in a queue or a static, copies
@@ -122,9 +151,12 @@ released by the arena.
 **The board arena size** comes from the target spec, `linker.string_arena_bytes`
 ({ref}`rho-target/index`). By default it is 4 kB, or an eighth of the RAM on a
 part with less than 32 kB. It bounds the strings one iteration holds at once,
-not the strings a program builds over its life. Running out stops the program
-with `string arena exhausted`. A board's strings need no `malloc`. On a host the
-arena grows in 64 kB chunks and reuses them.
+not the strings a program builds over its life, and what a loop keeps across its
+iterations counts towards it. Running out stops the program with
+`string arena exhausted`. A board's strings need no `malloc`. On a host the arena
+grows in 64 kB chunks and reuses them; a string longer than a chunk gets one four
+times its size, so an accumulator's chunks double rather than grow with every
+iteration.
 
 `print(int_to_str(n))`, `print(i64_to_str(n))` and `print(string.from_i32(n))`
 write the number without building a string.
@@ -133,7 +165,8 @@ write the number without building a string.
 captured — is copied into the arena when the literal is evaluated, and the
 compiler treats a function value as a value holding a string: it lives as long
 as a string built in the same place would, and is released with it
-({ref}`function types <language/types>`).
+({ref}`function types <language/types>`). A loop that replaces a function value
+declared outside it is not one the compiler keeps from: it is not released.
 
 ## What a program can reach
 
@@ -155,6 +188,12 @@ A program reaches the machine through the runtime functions in
 - **Time:** `rho_now_s`, `rho_local_date`, `rho_local_clock`,
   `rho_utc_offset_at`, and `rho_sleep_ms` for a task that waits between ticks.
 - **The environment:** `getenv`, `env_or`, `app_workspace`.
+- **The command line:** `get_args`, `arg_count` and `rho_arg`; on a board there
+  are no arguments.
+- **Output and text:** `print` and `eprint` (standard error), `f64_to_str` and
+  `f32_to_str` for a float, `str_to_bytes` and `str_from_bytes` between a string
+  and a `Slice[u8]`, and `rho_path_exists`, which tells a missing file from an
+  empty one.
 - **Cryptography:** `rho_hmac_sha256_hex` and `rho_random_hex`.
 
 Only the Go backend has these:
@@ -165,9 +204,8 @@ Only the Go backend has these:
   `rho_http_request` and `rho_http_body` send a request carrying one.
   `rho_sse_follow` follows another service's event stream into a file. No token
   is put on a command line or in a URL.
-- **The file system beyond one file:** `rho_path_exists`, `rho_list_dir`,
-  `read_file` and `write_file` for bytes (a `Slice[u8]`), and `get_args` and `rho_arg` for the
-  command line.
+- **The file system beyond one file:** `rho_list_dir`, and `read_file` and
+  `write_file` for bytes (a `Slice[u8]`).
 
 Anything else, such as a network socket, a serial line, a database or logging,
 is a port ({ref}`building/ports`) or an `extern fn` the platform implements.

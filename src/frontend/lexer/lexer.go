@@ -129,7 +129,6 @@ type Token struct {
 	Column int
 }
 
-// Lex tokenizes a complete source string and returns the first lexical error.
 // Error is a character the lexer could not read, and where it is.
 type Error struct {
 	Message string
@@ -155,8 +154,13 @@ func AsError(err error) *Error {
 	return nil
 }
 
+// Lex tokenizes a complete source string and returns the first lexical error.
 func Lex(source string) ([]Token, error) {
-	l := New(source)
+	return New(source).lexAll()
+}
+
+// lexAll reads every token of the source, stopping at the first lexical error.
+func (l *Lexer) lexAll() ([]Token, error) {
 	tokens := []Token{}
 	for {
 		token := l.Next()
@@ -199,6 +203,38 @@ type Lexer struct {
 	// stringErr records why a string literal was rejected, so the caller can
 	// report an invalid escape instead of a misleading unterminated string.
 	stringErr string
+	// keepComments makes the lexer record the comments it skips, which only a
+	// tool that prints source back needs. The compiler leaves it off.
+	keepComments bool
+	comments     []Comment
+}
+
+// Comment is a comment the lexer skipped, kept for a tool that has to print it
+// back: the formatter. Text is the comment exactly as written, its `//` or
+// `/* */` included; Line and Column are where it begins and EndLine is the line
+// its last character is on, which differs from Line only for a block comment.
+type Comment struct {
+	Text    string
+	Offset  int
+	Line    int
+	Column  int
+	EndLine int
+}
+
+// Block reports whether the comment is a `/* */` comment.
+func (c Comment) Block() bool { return strings.HasPrefix(c.Text, "/*") }
+
+// LexComments tokenizes a source as Lex does and also returns its comments, in
+// source order. The tokens are the ones Lex returns, so a parse of them is the
+// parse the compiler makes.
+func LexComments(source string) ([]Token, []Comment, error) {
+	l := New(source)
+	l.keepComments = true
+	tokens, err := l.lexAll()
+	if err != nil {
+		return nil, nil, err
+	}
+	return tokens, l.comments, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -466,10 +502,12 @@ func (l *Lexer) skipWhitespace() {
 		for unicode.IsSpace(l.ch) {
 			l.readChar()
 		}
+		start, line, column := l.pos-l.width, l.line, l.column
 		if l.ch == '/' && l.peekChar() == '/' {
 			for l.ch != 0 && l.ch != '\n' {
 				l.readChar()
 			}
+			l.keep(start, line, column, line)
 			continue
 		}
 		if l.ch == '/' && l.peekChar() == '*' {
@@ -478,14 +516,31 @@ func (l *Lexer) skipWhitespace() {
 			for l.ch != 0 && !(l.ch == '*' && l.peekChar() == '/') {
 				l.readChar()
 			}
+			endLine := l.line
 			if l.ch != 0 {
 				l.readChar()
 				l.readChar()
 			}
+			l.keep(start, line, column, endLine)
 			continue
 		}
 		break
 	}
+}
+
+// keep records the comment that began at start and ends where the lexer now
+// is, when comments are being kept.
+func (l *Lexer) keep(start, line, column, endLine int) {
+	if !l.keepComments {
+		return
+	}
+	end := l.pos - l.width
+	if end > l.length || end < start {
+		end = l.length
+	}
+	l.comments = append(l.comments, Comment{
+		Text: l.src[start:end], Offset: start, Line: line, Column: column, EndLine: endLine,
+	})
 }
 
 func (l *Lexer) readIdent() string {

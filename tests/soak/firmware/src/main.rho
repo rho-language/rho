@@ -1,0 +1,109 @@
+//
+// @file main.rho
+// @brief A firmware-shaped loop that runs until it is stopped.
+//
+// Every iteration does what a sensor node does: reads a value, builds the
+// strings that report it, keeps the last few readings in a fixed buffer,
+// sorts them, and hands them to callbacks. Nothing it builds is meant to
+// outlive the iteration except what it stores on purpose, so its memory must
+// stay flat for as long as it runs. tests/soak/soak.sh samples it.
+//
+// @project Rho
+// @date 2026
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+
+module soak
+
+import std.strings.string
+import std.collections.slices
+import std.core.cmp
+
+const WINDOW: u32 = 16
+const HEARTBEAT: u32 = 200000
+
+enum Reading {
+    Temperature(i32),
+    Switch(bool),
+    Missing,
+}
+
+// sample is a deterministic stand-in for a sensor: a value that wanders.
+fn sample(n: u32) -> Reading {
+    let k: u32 = n % 7
+    if k == 0 {
+        return Reading.Missing
+    }
+    if k == 3 {
+        return Reading.Switch(n % 2 == 0)
+    }
+    return Reading.Temperature(((n * 37) % 600) as i32 - 100)
+}
+
+// describe builds the line a node would publish for one reading.
+fn describe(r: Reading, label: string) -> string {
+    match r {
+        Reading.Temperature(t) => {
+            return label + "=" + int_to_str(t) + "dC"
+        }
+        Reading.Switch(on) => {
+            if on {
+                return label + "=on"
+            }
+            return label + "=off"
+        }
+        Reading.Missing => {
+            return label + "=missing"
+        }
+    }
+}
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x)
+}
+
+fn main() void {
+    var store: i32[WINDOW]
+    var window = store[..0]
+    var sorted: i32[WINDOW]
+    var n: u32 = 0
+    var checksum: u32 = 0
+    var last: string = ""
+    while true {
+        let r = sample(n)
+        let line = describe(r, "node" + int_to_str(n % 5))
+        checksum = checksum + strlen(line)
+
+        if let Reading.Temperature(t) = r {
+            if window.len == WINDOW {
+                window = store[..0]
+            }
+            window = append(window, t)
+        }
+
+        // A closure capturing a string built this iteration, dropped with it.
+        let prefix = "t" + int_to_str(n % 3)
+        let scaled = apply(fn(x: i32) -> i32 { return x * 2 + strlen(prefix) as i32 }, n as i32 % 50)
+        checksum = checksum + scaled as u32
+
+        if window.len > 0 {
+            var i: u32 = 0
+            while i < window.len {
+                sorted[i] = window[i]
+                i = i + 1
+            }
+            let view = sorted[..window.len]
+            sort(view)
+            checksum = checksum + (max(view[0], view[window.len - 1]) as u32)
+        }
+
+        // What it keeps on purpose: the last line, replaced every iteration.
+        last = line
+
+        n = n + 1
+        if n % HEARTBEAT == 0 {
+            print("soak " + int_to_str(n / HEARTBEAT) + " " + int_to_str(checksum) + " " + last + "\n")
+        }
+    }
+}

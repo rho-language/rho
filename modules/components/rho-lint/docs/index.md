@@ -37,6 +37,20 @@ compilation database, so one engine reads both — and for a Rho project the `rh
 engine reads the program *before* it became C, which is where a finding about a line
 somebody wrote comes from.
 
+What the build wrote under the project's build directory — the generated C, its
+runtime — is never read unless `--include-generated` asks for it: a finding there
+is not the project's to fix. A test file is read as the compiler is given it, with
+the test runner's `test` marker removed, so `test fn` is not a parse error and the
+lines and columns stay the file's.
+
+`rho-module-name` holds a file to the name `rho new` writes: the module's import
+name, then the file's folders and name under `src/` or `tests/`, and the import name
+alone for `src/main.rho`. A file whose name ends in its file's stem is also right.
+`rho-unused-import` counts a bare call of a function the imported module declares
+as a use (`import std.assert.assert` then `assert_eq(...)`), as the compiler's
+loader resolves it. `rho-shadowed-binding` reads a function in order, so a binding
+written after a loop shadows nothing the loop bound.
+
 Two of its rules are the compiler's own reading. `rho-parse` reports each place the
 parser stops — it recovers at the next declaration, so two broken functions are two
 findings — and `rho-check` runs the checker `rho build` runs, over the program the

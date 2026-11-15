@@ -25,6 +25,7 @@ import (
 
 	modcore "rho/cmd/rho-module/core"
 
+	clicore "rho/src/cli"
 	"rho/src/deps"
 	"rho/src/ide"
 )
@@ -35,6 +36,10 @@ func ideCLI(args []string) int {
 	if len(args) == 0 {
 		ideUsage()
 		return 2
+	}
+	if clicore.WantsHelp(args[:1]) {
+		ideUsage()
+		return 0
 	}
 
 	editor, err := ide.ParseEditor(args[0])
@@ -50,11 +55,16 @@ func ideCLI(args []string) int {
 	rest := args[1:]
 	for index := 0; index < len(rest); index++ {
 		switch {
-		case rest[index] == "-target" && index+1 < len(rest):
+		case (rest[index] == "-target" || rest[index] == "--target") && index+1 < len(rest):
 			target = rest[index+1]
 			index++
 		case strings.HasPrefix(rest[index], "-target="):
 			target = strings.TrimPrefix(rest[index], "-target=")
+		case strings.HasPrefix(rest[index], "--target="):
+			target = strings.TrimPrefix(rest[index], "--target=")
+		case clicore.WantsHelp(rest[index : index+1]):
+			ideUsage()
+			return 0
 		case strings.HasPrefix(rest[index], "-"):
 			fmt.Fprintf(os.Stderr, "rho ide: unknown flag %q\n", rest[index])
 			ideUsage()

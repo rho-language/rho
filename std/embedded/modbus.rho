@@ -36,13 +36,13 @@ fn init(bus: RS485, addr: u8) Modbus {
 }
 
 fn crc16_modbus(data: Slice[u8]) u16 {
-    let crc: u16 = 0xFFFF
+    var crc: u16 = 0xFFFF
 
-    let i: u32 = 0
+    var i: u32 = 0
     while i < data.len {
         crc = crc ^ u16(data[i])
 
-        let j: u32 = 0
+        var j: u32 = 0
         while j < 8 {
             if (crc & 0x0001) != 0 {
                 crc = (crc >> 1) ^ 0xA001
@@ -75,7 +75,7 @@ fn read_holding(m: Modbus, start: u16, qty: u16, out: Slice<u16>) bool {
 
     rs485.write(m.bus, buf)
 
-    // răspuns: addr, func, byte_count, data..., crc_lo, crc_hi
+    // the reply: addr, func, byte_count, data..., crc_lo, crc_hi
     let rx_raw: u8[64]
     let rx: Slice[u8] = rx_raw
 
@@ -84,7 +84,7 @@ fn read_holding(m: Modbus, start: u16, qty: u16, out: Slice<u16>) bool {
         return false
     }
 
-    // verificăm CRC
+    // check the CRC
     let crc_calc: u16 = crc16_modbus(rx[..n - 2])
     let crc_lo: u8 = rx[n - 2]
     let crc_hi: u8 = rx[n - 1]
@@ -100,7 +100,7 @@ fn read_holding(m: Modbus, start: u16, qty: u16, out: Slice<u16>) bool {
         return false
     }
 
-    let i: u32 = 0
+    var i: u32 = 0
     while i < u32(qty) && i < out.len {
         let base: u32 = 3 + i * 2
         let hi: u8 = rx[base]

@@ -39,6 +39,12 @@ type Parser struct {
 	// context where the two are ambiguous, and a name declared in another file
 	// cannot be told from a type by the leading-capital rule alone.
 	noStructLiteral bool
+	// previousLine is the line the token before current ends on. A newline
+	// ends an expression where it could end (Go's rule): a `(`, a `[` or a
+	// binary operator that starts a line begins something new rather than
+	// continuing the line above, so `x = fields` followed by `(*s).f = v` is
+	// two statements and not a call of `fields`.
+	previousLine int
 }
 
 func New(lx *lexer.Lexer) *Parser {
@@ -267,6 +273,10 @@ func (p *Parser) parseIncludes() []ast.Include {
 }
 
 func (p *Parser) readToken() {
+	p.previousLine = p.current.Line
+	if p.current.Kind == lexer.TokenString {
+		p.previousLine += strings.Count(p.current.Lex, "\n")
+	}
 	p.current = p.nextTok
 	if p.tokens != nil {
 		if p.tokenAt < len(p.tokens) {
@@ -284,6 +294,51 @@ func (p *Parser) expect(kind lexer.Kind) {
 	if p.current.Kind != kind {
 		panic(NewErrorf(p.current, "expected %v, got %s", kind, describe(p.current)))
 	}
+}
+
+// bracketHoldsTypeBeforeCall reports whether the bracket at the cursor holds
+// only what reads as a type — a scalar type name or a capitalised name the
+// module does not bind to a value — and is followed by a call.
+func (p *Parser) bracketHoldsTypeBeforeCall() bool {
+	if p.tokens == nil || p.tokenAt < len(p.tokens) && p.tokens[p.tokenAt].Kind == lexer.TokenLParen {
+		return false
+	}
+	if p.nextTok.Kind != lexer.TokenIdent || !(isScalarTypeName(p.nextTok.Lex) ||
+		isUpperName(p.nextTok.Lex) && !(p.valueNames != nil && p.valueNames[p.nextTok.Lex])) {
+		return false
+	}
+	open := p.tokenAt - 2
+	if open < 0 || open >= len(p.tokens) || p.tokens[open].Kind != lexer.TokenLBracket {
+		return false
+	}
+	depth := 0
+	for i := open; i < len(p.tokens); i++ {
+		switch p.tokens[i].Kind {
+		case lexer.TokenLBracket:
+			depth++
+		case lexer.TokenRBracket:
+			depth--
+			if depth == 0 {
+				return i+1 < len(p.tokens) && p.tokens[i+1].Kind == lexer.TokenLParen
+			}
+		}
+	}
+	return false
+}
+
+// allowStructLiteral lifts a condition's rule that a brace opens the body,
+// for the delimited part of it being read — parentheses, a call's arguments,
+// an index — and returns what puts the rule back.
+func (p *Parser) allowStructLiteral() func() {
+	previous := p.noStructLiteral
+	p.noStructLiteral = false
+	return func() { p.noStructLiteral = previous }
+}
+
+// startsLine reports whether the current token is the first on its line,
+// which ends the expression before it where one could end there.
+func (p *Parser) startsLine() bool {
+	return p.previousLine > 0 && p.current.Line > p.previousLine
 }
 
 // describe is a token as a message names it: what was written, or the end of
@@ -789,7 +844,14 @@ func (p *Parser) parseType() ast.TypeExpr {
 		if err != nil {
 			panic(NewErrorf(p.current, "invalid array length"))
 		}
-		typeExpr.Dims = append(typeExpr.Dims, dimension)
+		// The first length after a generic application is the array's own:
+		// `Box[i32][2]` is two Box[i32], not a Box[i32] with a further
+		// dimension of nothing.
+		if typeExpr.ArrayLen == nil && len(typeExpr.Args) > 0 {
+			typeExpr.ArrayLen = &dimension
+		} else {
+			typeExpr.Dims = append(typeExpr.Dims, dimension)
+		}
 		p.readToken()
 		p.expect(lexer.TokenRBracket)
 		p.readToken()
@@ -1193,7 +1255,9 @@ func (p *Parser) parseStmt() ast.Stmt {
 			Mutable: keyword == lexer.TokenVar}
 	case lexer.TokenReturn:
 		p.readToken()
-		if p.current.Kind == lexer.TokenRBrace || p.current.Kind == lexer.TokenSemicolon {
+		// A `return` at the end of its line returns nothing: what follows on
+		// the next line is the next statement, as in Go.
+		if p.current.Kind == lexer.TokenRBrace || p.current.Kind == lexer.TokenSemicolon || p.startsLine() {
 			p.consumeSemi()
 			stmt = ast.ReturnStmt{}
 			break
@@ -1299,7 +1363,7 @@ func (p *Parser) parseExpr(minPrecedence int) ast.Expr {
 	left := p.parsePrefix()
 	for {
 		currentPrecedence, ok := precedence[p.current.Kind]
-		if !ok || currentPrecedence < minPrecedence {
+		if !ok || currentPrecedence < minPrecedence || p.startsLine() {
 			break
 		}
 		op := p.current.Lex
@@ -1351,10 +1415,16 @@ func (p *Parser) parsePrefix() ast.Expr {
 		expression = ast.IfExpr{Condition: condition, Then: blockExpr(then), Else: elseExpr}
 	case lexer.TokenLParen:
 		p.readToken()
+		// Inside parentheses a brace is a literal again, even in a condition:
+		// `if (P { 1, 2 }).x == 1 {` is how a literal is written there, as in Go.
+		restore := p.allowStructLiteral()
 		expression = p.parseExpr(0)
+		restore()
 		p.expect(lexer.TokenRParen)
 		p.readToken()
 	case lexer.TokenLBracket:
+		restore := p.allowStructLiteral()
+		defer restore()
 		p.readToken()
 		// An empty dynamic-array literal carries no element type.
 		if p.current.Kind == lexer.TokenRBracket {
@@ -1390,6 +1460,9 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case lexer.TokenFn:
 		expression = p.parseFuncLit()
 	default:
+		if _, operator := precedence[p.current.Kind]; operator && p.startsLine() {
+			panic(NewErrorf(p.current, "expected an expression, got %s: a line that starts with an operator does not continue the line above; end the line above with the operator instead", describe(p.current)))
+		}
 		panic(NewErrorf(p.current, "expected an expression, got %s", describe(p.current)))
 	}
 	// Postfix calls and field accesses extend what was read, so they are applied
@@ -1466,6 +1539,9 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			p.readToken()
 			expression = ast.MemberExpr{Object: expression, Name: p.name()}
 		case lexer.TokenLBracket:
+			if p.startsLine() {
+				return expression
+			}
 			application := p.bracketOpensApplication(expression)
 			at := p.position()
 			p.readToken()
@@ -1475,7 +1551,9 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 				continue
 			}
 			if p.current.Kind == lexer.TokenNumber || !application {
+				restore := p.allowStructLiteral()
 				index := p.parseExpr(0)
+				restore()
 				// `s[a..b]` and `s[a..]`: a sub-slice.
 				if p.current.Kind == lexer.TokenRange {
 					expression = p.parseSliceBounds(expression, index, at)
@@ -1508,12 +1586,14 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			if p.current.Kind == lexer.TokenLParen {
 				p.readToken()
 				callArgs := []ast.Expr{}
+				restore := p.allowStructLiteral()
 				for p.current.Kind != lexer.TokenRParen {
 					callArgs = append(callArgs, p.parseExpr(0))
 					if p.current.Kind == lexer.TokenComma {
 						p.readToken()
 					}
 				}
+				restore()
 				p.readToken()
 				expression = ast.CallExpr{Callee: expression, TypeArgs: args, Args: callArgs}
 			} else if p.current.Kind == lexer.TokenLBrace {
@@ -1567,14 +1647,21 @@ func (p *Parser) parsePostfix(expression ast.Expr) ast.Expr {
 			p.readToken()
 			expression = ast.StructLiteralExpr{Type: ast.TypeExpr{Name: identifier.Name}, Values: values}
 		case lexer.TokenLParen:
+			if p.startsLine() {
+				return expression
+			}
 			p.readToken()
 			args := []ast.Expr{}
+			// A call's arguments are delimited, so a brace in one is a literal
+			// even in a condition: `if sum(P { 1, 1 }) == 2 {`.
+			restore := p.allowStructLiteral()
 			for p.current.Kind != lexer.TokenRParen {
 				args = append(args, p.parseExpr(0))
 				if p.current.Kind == lexer.TokenComma {
 					p.readToken()
 				}
 			}
+			restore()
 			p.readToken()
 			expression = ast.CallExpr{Callee: expression, Args: args}
 		default:
@@ -1676,6 +1763,16 @@ func isTypeApplication(expression ast.Expr) bool {
 // when indexed.
 func (p *Parser) bracketOpensApplication(expression ast.Expr) bool {
 	identifier, isIdentifier := expression.(ast.IdentifierExpr)
+	if member, isMember := expression.(ast.MemberExpr); isMember {
+		// A function of another module applied and called,
+		// `slices.sort_by[G](xs, less)`: the bracket holds a type and a call
+		// follows it. Anything else after a member — `suffix.ptr[i]` — is an
+		// index.
+		if _, qualified := member.Object.(ast.IdentifierExpr); !qualified || len(member.TypeArgs) > 0 {
+			return false
+		}
+		return p.bracketHoldsTypeBeforeCall()
+	}
 	if !isIdentifier {
 		// Only a bare name can be applied: `suffix.ptr[i]` indexes a field.
 		return false
@@ -1694,6 +1791,11 @@ func (p *Parser) bracketOpensApplication(expression ast.Expr) bool {
 	// `from_u64[u32](x)` is an application even though the name is lower-case
 	// and declared in another module the parser has not read, which is what a
 	// declared name alone could not tell it.
+	// A type name called is a conversion, and a value: `arr[u32(k % 3)]` is
+	// an index.
+	if p.tokens != nil && p.tokenAt < len(p.tokens) && p.tokens[p.tokenAt].Kind == lexer.TokenLParen {
+		return false
+	}
 	if p.nextTok.Kind == lexer.TokenIdent && isScalarTypeName(p.nextTok.Lex) {
 		return true
 	}

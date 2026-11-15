@@ -85,6 +85,10 @@ type Options struct {
 	Overwrite bool
 	// ExtraArgs are arguments passed to every engine.
 	ExtraArgs []string
+	// IncludeGenerated reads the files under the project's build directory too,
+	// which a run otherwise leaves out: they are what the toolchain wrote — the
+	// translation of the Rho sources, the runtime — and not the project's own.
+	IncludeGenerated bool
 	// TreePlugins runs the plugins this project's own tree carries.
 	//
 	// Off by default, and the default is the answer rather than an omission: a plugin
@@ -175,6 +179,9 @@ func Analyse(options Options) (*Result, error) {
 
 	units := sourcesFor(root, database)
 	exclusions := Exclusions{Root: root, Fragments: options.Exclude, Outside: options.Outside}
+	if !options.IncludeGenerated {
+		exclusions.Generated = GeneratedDirectories(root, options.Manifest)
+	}
 	out.Units = exclusions.Filter(units)
 	out.LeftOut = len(units) - len(out.Units)
 
@@ -283,6 +290,23 @@ func derivedPath(root string, options Options) string {
 // a `.rho` file — the file the compiler reads is the one this toolchain translated
 // out of it. So a run that wanted the Rho engine to have anything to read would have
 // to be handed it, and the ordinary case would find no Rho sources at all.
+// GeneratedDirectories are where a project's build writes: its build directory
+// and its output directory, as the manifest names them (`build/` unless it says
+// otherwise), absolute.
+func GeneratedDirectories(root string, manifest *deps.Manifest) []string {
+	directories := []string{}
+	for _, directory := range []string{manifest.BuildDirectory(), manifest.OutputDirectory()} {
+		if directory == "" {
+			continue
+		}
+		if !filepath.IsAbs(directory) {
+			directory = filepath.Join(root, directory)
+		}
+		directories = append(directories, filepath.Clean(directory))
+	}
+	return directories
+}
+
 func sourcesFor(root string, database Database) []Unit {
 	units := database.UnitsOf()
 	for _, path := range RhoSources(root) {

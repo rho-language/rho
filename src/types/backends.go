@@ -32,7 +32,8 @@ import (
 // server). A std module's `@backends` header line uses the same names.
 type BackendRule struct {
 	Backends []string
-	Port     string
+	// Port is the port that supplies it; "a|b" when either of two does.
+	Port string
 }
 
 var (
@@ -44,14 +45,12 @@ var (
 // builtinBackends lists every built-in that is not supplied by every backend.
 // A name missing from it is one both backends lower.
 var builtinBackends = map[string]BackendRule{
-	// The Go runtime's whole-file, argument, directory and HTTP client
-	// functions. The C runtime has none of them.
-	"get_args":            goOnly,
+	// The Go runtime's whole-file, directory and HTTP client functions. The
+	// C runtime has none of them. The arguments (get_args, rho_arg,
+	// arg_count) are both runtimes': a hosted C `main` keeps them.
 	"read_file":           goOnly,
 	"write_file":          goOnly,
 	"append":              goOnly,
-	"rho_arg":             goOnly,
-	"rho_path_exists":     goOnly,
 	"rho_list_dir":        goOnly,
 	"rho_yaml_flat":       goOnly,
 	"rho_yaml_write_flat": goOnly,
@@ -78,14 +77,15 @@ var builtinBackends = map[string]BackendRule{
 	"auth_issue":            goServerOnly,
 
 	// A module store and the settings that come with it are the fsstore port's.
-	"store_list":              fsstorePort,
-	"store_meta":              fsstorePort,
-	"store_detail":            fsstorePort,
-	"store_latest":            fsstorePort,
-	"store_data_dir":          fsstorePort,
-	"store_release":           fsstorePort,
-	"config_get":              fsstorePort,
-	"clock_year":              fsstorePort,
+	"store_list":     fsstorePort,
+	"store_meta":     fsstorePort,
+	"store_detail":   fsstorePort,
+	"store_latest":   fsstorePort,
+	"store_data_dir": fsstorePort,
+	"store_release":  fsstorePort,
+	"config_get":     fsstorePort,
+	// The year a page's footer shows: either store's service supplies it.
+	"clock_year":              {Backends: []string{"go"}, Port: "fsstore|docstore"},
 	"registry_data_dir":       fsstorePort,
 	"registry_access":         fsstorePort,
 	"registry_title":          fsstorePort,

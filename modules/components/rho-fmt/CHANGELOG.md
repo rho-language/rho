@@ -50,3 +50,11 @@ Function types (`fn(A) -> R`, `(fn(u32) -> u32)[4]`) and function literals are p
 ## [0.1.7] - 2026-11-15
 
 Constraints on type parameters (`[T: Ordered + Equal]`) and explicit type arguments are printed.
+
+## [0.2.0] - 2026-11-15
+
+Every comment is kept, in place: the file header, doc comments and their tags, comments above and after statements, fields, variants and match arms, and at the end of blocks; a file whose comments would change is refused and left alone. `test fn`, `namespace`, `message`, `rpc` and struct bit widths are printed (they were dropped). A cast's, call's or member's operand is parenthesised when it needs to be (`((n*37)%600) as i32` was printed as `n * 37 % 600 as i32`, which means something else). Struct literals print as `Point { 0, 0 }`.
+
+### Breaking
+
+None: output changes only where the old output was wrong or dropped code.

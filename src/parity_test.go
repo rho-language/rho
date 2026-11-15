@@ -79,7 +79,7 @@ type outcome struct {
 }
 
 // runBothBackends builds a Rho program for C and for Go and runs each.
-func runBothBackends(t *testing.T, source string) (c outcome, g outcome) {
+func runBothBackends(t *testing.T, source string, args ...string) (c outcome, g outcome) {
 	t.Helper()
 	root := t.TempDir()
 	entry := filepath.Join(root, "src", "main.rho")
@@ -105,7 +105,7 @@ func runBothBackends(t *testing.T, source string) (c outcome, g outcome) {
 	if out, err := build.CombinedOutput(); err != nil {
 		c.failed = "C build failed: " + string(out)
 	} else {
-		c = runBinary(cBinary)
+		c = runBinary(cBinary, args...)
 	}
 
 	goDir := dirs[1]
@@ -115,14 +115,14 @@ func runBothBackends(t *testing.T, source string) (c outcome, g outcome) {
 	if out, err := goBuild.CombinedOutput(); err != nil {
 		g.failed = "Go build failed: " + string(out)
 	} else {
-		g = runBinary(goBinary)
+		g = runBinary(goBinary, args...)
 	}
 	return c, g
 }
 
 // runBinary runs a built program and records what it said and whether it was clean.
-func runBinary(path string) outcome {
-	command := exec.Command(path)
+func runBinary(path string, args ...string) outcome {
+	command := exec.Command(path, args...)
 	// In the directory the binary was built into, which is the test's own, so
 	// a program that makes a file makes it there.
 	command.Dir = filepath.Dir(path)
@@ -159,9 +159,11 @@ type parityCase struct {
 	// the same thing first. A sanitizer report is still a failure of the case.
 	// Both must exit with the same status and write the same to standard error.
 	wantFailure bool
-	// wantStderr, when set, is what a failing program writes to standard error
-	// on both backends.
+	// wantStderr, when set, is what a program writes to standard error on
+	// both backends, whether it fails or not.
 	wantStderr string
+	// args are the command-line arguments the program is run with.
+	args []string
 }
 
 // parityCases are the programs the backends are compared on. The general ones
@@ -189,7 +191,7 @@ func TestBackendsAgree(t *testing.T) {
 	for _, c := range parityCases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
-			cOut, gOut := runBothBackends(t, c.source)
+			cOut, gOut := runBothBackends(t, c.source, c.args...)
 			agree := cOut.failed == "" && gOut.failed == "" && cOut.stdout == gOut.stdout
 			if c.diverges != "" {
 				if agree {
@@ -234,6 +236,9 @@ func TestBackendsAgree(t *testing.T) {
 			}
 			if c.want != "" && cOut.stdout != c.want {
 				t.Fatalf("both backends print\n%s\nwant\n%s", cOut.stdout, c.want)
+			}
+			if c.wantStderr != "" && (cOut.stderr != c.wantStderr || gOut.stderr != c.wantStderr) {
+				t.Fatalf("standard error:\nC  = %q\nGo = %q\nwant %q", cOut.stderr, gOut.stderr, c.wantStderr)
 			}
 		})
 	}

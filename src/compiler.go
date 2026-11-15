@@ -518,17 +518,24 @@ func checkArenaEscapes(escapes []types.ArenaEscape, board string) error {
 				File: escape.File, Line: escape.Line, Column: escape.Column,
 				Severity: SeverityError, Code: "arena",
 				Message: board + " is a board, whose strings live in a fixed arena, and a loop that keeps every string it builds would run it out: " +
-					escape.String() + "; build the string in the iteration that uses it, or keep it in a variable declared inside the loop",
+					escape.String() + "; keep the latest value in a variable or a fixed array of the loop's function rather than in a Slice's element, build the string in the iteration that uses it, or keep it in a variable declared inside the loop",
 			})
 		}
 		return out
 	}
 	base, _ := os.Getwd()
 	for _, escape := range escapes {
+		cost := "; on a host its memory grows for as long as the loop runs"
+		if !escape.Endless {
+			// A loop that ends gives its strings back when what called its
+			// function releases them: the memory grows with its iterations,
+			// not for ever.
+			cost = "; on a host its memory grows with every iteration until the call that ran it is released"
+		}
 		warning := Diagnostic{
 			File: escape.File, Line: escape.Line, Column: escape.Column,
 			Severity: SeverityWarning, Code: "arena",
-			Message: escape.String() + "; on a host its memory grows for as long as the loop runs",
+			Message: escape.String() + cost,
 		}
 		fmt.Fprintln(os.Stderr, warning.Render(base))
 	}

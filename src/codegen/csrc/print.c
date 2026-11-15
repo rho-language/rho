@@ -49,12 +49,12 @@ extern int _write(int fd, const char* data, int len);
 /* write() is declared __attribute__((warn_unused_result)) in glibc, and
  * (void)write(...) does not suppress it on all GCC versions. A static
  * wrapper that discards the return value once is the portable fix. */
-static inline void rho_write_stdout(const char* data, int len)
+static inline void rho_write_stdout(int fd, const char* data, int len)
 {
-    ssize_t r = write(1, data, (size_t)len);
+    ssize_t r = write(fd, data, (size_t)len);
     (void)r;
 }
-#define RHO_DEFAULT_WRITE(fd, data, len) rho_write_stdout((data), (len))
+#define RHO_DEFAULT_WRITE(fd, data, len) rho_write_stdout((fd), (data), (len))
 #endif
 
 /* Everything `print` says, and nothing else. */
@@ -72,6 +72,23 @@ void rho_print(const char* s)
         }
     }
 }
+/* Everything `eprint` says, on standard error, and nothing else: no prefix and
+ * no newline. On a board it goes to the same sink, as descriptor 2. */
+void rho_eprint(const char* s)
+{
+    if (s != NULL) {
+        uint32_t len = 0;
+        while (s[len] != 0) {
+            len++;
+        }
+        if (rho_write != NULL) {
+            rho_write(2, s, len);
+        } else {
+            (void)RHO_DEFAULT_WRITE(2, s, (int)len);
+        }
+    }
+}
+
 /* An integer, printed.
  *
  * This exists because `print(string.from_i32(n))` is the shape every program that

@@ -28,6 +28,7 @@ import std.assert.assert
 
 test fn prefix_is_hello() void {
     assert_eq(prefix(), "Hello ")
+    print("[PASS] prefix_is_hello\n")
 }
 
 test fn greeting_names_the_person() void {
@@ -45,12 +46,34 @@ The code under test is usually `include`d rather than imported, so the test sees
 the module's private functions as well as its exports.
 
 To run a file, the runner removes the `test` marker, translates what is left to
-C with `rho build -o`, compiles it with `cc`, and runs it under `build/test/`. A
-test fails by stopping the program: the exit status is the verdict. The cases a
-report lists are the `test fn` declarations in the file, with their lines; a
-program that prints `[PASS] name` or `[FAIL] name` lines (or TAP's `ok` /
-`not ok`) has those read as the per-case results. A file with no `test fn` in it
-is an error, not an empty pass.
+C with `rho build --emit-c -o`, compiles it with `cc`, and runs it; the C file
+and the program are written under `build/test/` and removed afterwards. Nothing
+else is built: the project's generated trees and its binaries (`build/<name>`,
+`build/output/<name>`) are left as they are, so a test run never replaces the
+application's program.
+
+**Rho test files run on the C backend only**, whatever targets the project
+declares. A difference between the C and the Go program is not something
+`rho test` can see; a `command` suite that builds both and compares their output
+is how a project checks that.
+
+A test fails by stopping the program: the exit status is the verdict. The cases
+a report lists are the `test fn` declarations in the file, with their lines, and
+only those:
+
+- A `[PASS] name` or `[FAIL] name` line the program prints (or TAP's
+  `ok N - name` / `not ok N - name`, read as `name`) reports the result of the
+  declared case called `name`. A failure wins over a pass for the same name.
+- A case nothing reported failed when the program stopped (a test asserts by
+  stopping the program). When the program exited 0, it passed if the program
+  reported no case at all — its exit status is the verdict — and it is
+  **skipped** if the program reported other cases: that is what a `test fn` that
+  `main` never calls looks like, and nothing shows it ran.
+- A printed name that is not a `test fn` never becomes a case. A `[FAIL]` under
+  such a name still fails the suite, so a failure the program reported is not
+  lost; a `[PASS]` under one is ignored.
+
+A file with no `test fn` in it is an error, not an empty pass.
 
 `rho new tests/greeting_test.rho` writes such a file with a `check` helper, one
 `test fn` and the `main` that calls it.
@@ -82,7 +105,7 @@ what the manifest declares and nothing else:
 # tests/tests.yml
 name: acme-sensors
 suites:
-  - name: tests/greeting          # tests/greeting_test.rho
+  - name: tests/greeting          # tests/greeting_test.rho (a comment, not part of the name)
     kind: rho
     tags: [unit, rho]
 
@@ -114,6 +137,14 @@ Every suite has a `name` and a `kind`. The keys the runner reads itself:
 | `matrix` | Axes the suite expands over, one suite per combination |
 | `status: skip`, `reason` | A suite declared but not run yet; it is reported as skipped with the reason, never as a pass |
 | `enabled: false` | A suite that is not run; it is reported as skipped, `disabled` |
+
+A `#` after whitespace starts a comment, after a value or a list item alike; a
+`#` inside quotes is part of the value.
+
+A suite its runner cannot find **fails the run**: a `rho` suite whose file is not
+there or declares no `test fn`, a `command` suite with no command and no script.
+Only a suite whose *kind* has no runner installed is reported as skipped, so a
+manifest can describe a suite for a plugin that is not installed yet.
 
 Any other key on a suite is passed untouched to the plugin that runs its kind,
 so the `ctest:` or `gtest:` settings belong to those plugins.
@@ -154,7 +185,11 @@ rho test --verbose --echo         # each step as it runs, and every suite's outp
 `--rho PATH` builds with another `rho` (by default `$RHO_BIN`, else the one on
 `PATH`), which is how a run uses a toolchain in progress. `--target` names the
 backend a run reports to its plugins; Rho test files are always built through the
-C backend.
+C backend. Options may come before or after the path, as `--name value` or
+`--name=value`.
+
+`--verbose` prints each step and each case as it is reported; `--echo` prints
+what each suite printed, without the result lines the report already shows.
 
 The run exits 0 when nothing failed and 1 when a suite failed or the run itself
 could not happen (an unreadable manifest, a project with no tests); a flag

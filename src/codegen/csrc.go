@@ -89,6 +89,11 @@ func checkedHelperNames() []string {
 //go:embed csrc/env.c
 var envSource string
 
+// The command line, kept by the generated `main` (FINDINGS #4).
+//
+//go:embed csrc/args.c
+var argsSource string
+
 //go:embed csrc/yaml.c
 var yamlSource string
 
@@ -113,6 +118,12 @@ var clockSource string
 
 //go:embed csrc/bits.c
 var bitsSource string
+
+// A floating-point number as decimal text, exactly and without the C
+// library's formatting (FINDINGS #11).
+//
+//go:embed csrc/float.c
+var floatSource string
 
 // The floating-point functions, separate because they are the only part of the
 // runtime that needs the C library's maths, which a hosted build links apart.
@@ -184,9 +195,10 @@ var runtimeFragments = []RuntimeFragment{
 	{
 		Name:     "print",
 		Source:   printSource,
-		Provides: []string{"rho_print", "rho_print_i32", "rho_print_u32", "rho_print_i64"},
+		Provides: []string{"rho_print", "rho_print_i32", "rho_print_u32", "rho_print_i64", "rho_eprint"},
 		Decls: []string{
 			"void rho_print(const char* s);",
+			"void rho_eprint(const char* s);",
 			"void rho_print_i32(int32_t value);",
 			"void rho_print_u32(uint32_t value);",
 			"void rho_print_i64(int64_t value);",
@@ -217,7 +229,7 @@ var runtimeFragments = []RuntimeFragment{
 		Source: arenaSource,
 		Provides: []string{
 			"rho_str_alloc", "rho_str_dup", "rho_str_adopt",
-			"rho_arena_mark", "rho_arena_release", "rho_arena_keep", "rho_arena_release_cond", "rho_arena_used",
+			"rho_arena_mark", "rho_arena_release", "rho_arena_keep", "rho_arena_keep_many", "rho_arena_release_cond", "rho_arena_used",
 			"rho_env_alloc",
 		},
 		Needs: []string{"panicf"},
@@ -226,6 +238,7 @@ var runtimeFragments = []RuntimeFragment{
 			"size_t rho_arena_mark(void);",
 			"void rho_arena_release(size_t mark);",
 			"const char* rho_arena_keep(size_t mark, const char* s);",
+			"void rho_arena_keep_many(size_t mark, void** slots, size_t n);",
 			"bool rho_arena_release_cond(size_t mark, bool value);",
 			"size_t rho_arena_used(void);",
 			"void* rho_env_alloc(size_t n);",
@@ -238,7 +251,7 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_concat", "rho_string_from_i32", "rho_str_from_byte",
 			"rho_int_from_str", "rho_int_to_str", "rho_strlen", "rho_str_eq", "rho_str_cmp", "rho_str_starts_with",
 			"rho_str_trim_prefix", "rho_str_contains", "rho_str_at",
-			"rho_str_index_of", "rho_str_slice",
+			"rho_str_index_of", "rho_str_slice", "rho_str_to_bytes", "rho_str_from_bytes",
 		},
 		Needs: []string{"rho_str_alloc"},
 		Decls: []string{
@@ -256,6 +269,8 @@ var runtimeFragments = []RuntimeFragment{
 			"uint8_t rho_str_at(const char* s, uint32_t i);",
 			"int32_t rho_str_index_of(const char* haystack, const char* needle);",
 			"char* rho_str_slice(const char* s, uint32_t start, uint32_t length);",
+			"uint32_t rho_str_to_bytes(const char* s, uint8_t* out, uint32_t cap);",
+			"char* rho_str_from_bytes(const uint8_t* p, uint32_t n);",
 		},
 	},
 	{
@@ -263,7 +278,7 @@ var runtimeFragments = []RuntimeFragment{
 		Source: textSource,
 		Provides: []string{
 			"rho_str_trim", "rho_str_url_encode", "rho_str_url_decode", "rho_form_field",
-			"rho_milli_valid", "rho_milli_parse", "rho_milli_format", "rho_milli_round",
+			"rho_milli_valid", "rho_milli_parse", "rho_milli_format", "rho_milli_format_fixed", "rho_milli_round",
 			"rho_i64_to_str", "rho_i64_from_str", "rho_str_lower", "rho_str_upper", "rho_str_field", "rho_str_replace",
 			"rho_json_str_field", "rho_json_num_field", "rho_app_workspace",
 		},
@@ -276,6 +291,7 @@ var runtimeFragments = []RuntimeFragment{
 			"bool rho_milli_valid(const char* text);",
 			"int64_t rho_milli_parse(const char* text);",
 			"char* rho_milli_format(int64_t milli);",
+			"char* rho_milli_format_fixed(int64_t milli, uint32_t decimals);",
 			"int64_t rho_milli_round(int64_t milli, uint32_t places);",
 			"char* rho_i64_to_str(int64_t value);",
 			"int64_t rho_i64_from_str(const char* text);",
@@ -286,6 +302,16 @@ var runtimeFragments = []RuntimeFragment{
 			"char* rho_json_str_field(const char* doc, const char* key);",
 			"char* rho_json_num_field(const char* doc, const char* key);",
 			"char* rho_app_workspace(void);",
+		},
+	},
+	{
+		Name:     "float",
+		Source:   floatSource,
+		Provides: []string{"rho_f64_to_str", "rho_f32_to_str"},
+		Needs:    []string{"rho_str_dup"},
+		Decls: []string{
+			"char* rho_f64_to_str(double x, uint32_t decimals);",
+			"char* rho_f32_to_str(float x, uint32_t decimals);",
 		},
 	},
 	{
@@ -347,6 +373,18 @@ var runtimeFragments = []RuntimeFragment{
 		},
 	},
 	{
+		Name:     "args",
+		Source:   argsSource,
+		Provides: []string{"rho_arg", "rho_arg_count", "rho_get_args", "rho_args_init"},
+		Needs:    []string{"rho_str_alloc"},
+		Decls: []string{
+			"void rho_args_init(int argc, char** argv);",
+			"uint32_t rho_arg_count(void);",
+			"const char* rho_arg(int32_t index);",
+			"char* rho_get_args(void);",
+		},
+	},
+	{
 		Name:   "crypto",
 		Source: cryptoSource,
 		Provides: []string{
@@ -401,9 +439,11 @@ var runtimeFragments = []RuntimeFragment{
 			"rho_write_text",
 			"rho_write_secret",
 			"rho_append_text",
+			"rho_path_exists",
 		},
 		Needs: []string{"rho_strlen", "rho_str_adopt"},
 		Decls: []string{
+			"bool rho_path_exists(const char* path);",
 			"char* rho_read_text(const char* path);",
 			"int rho_write_text(const char* path, const char* text);",
 			"int rho_write_secret(const char* path, const char* text);",

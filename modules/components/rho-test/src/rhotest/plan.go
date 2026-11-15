@@ -256,12 +256,17 @@ func ResolveAll(declared []Declared, root string, resolvers ...Resolver) ([]Suit
 		}
 		suite, err := resolver.Resolve(entry, root)
 		if err != nil {
+			// A suite its runner could not resolve fails the run: its file is
+			// missing, or names no test. A suite with no runner at all (above) is
+			// a skip, because a manifest may describe a suite for a plugin that is
+			// not installed yet; a suite whose runner is here and cannot find it is
+			// a mistake.
 			suites = append(suites, Suite{
-				Name: entry.Name,
-				Kind: entry.Kind,
-				Tags: entry.Tags,
-				Root: root,
-				Skip: err.Error(),
+				Name:   entry.Name,
+				Kind:   entry.Kind,
+				Tags:   entry.Tags,
+				Root:   root,
+				Broken: err.Error(),
 			})
 			problems = append(problems, fmt.Errorf("suite %q: %w", entry.Name, err))
 			continue

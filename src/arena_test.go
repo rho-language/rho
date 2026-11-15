@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,16 +139,22 @@ func TestAFirmwareLoopRunsInAFixedStringArena(t *testing.T) {
 	}
 }
 
-// The same loop keeping each line in a variable declared outside it cannot be
-// released. On a host the build warns and the program runs out of a fixed
-// arena; for a board the build is refused before anything is flashed.
+// The same loop keeping each line in an element of a Slice over storage
+// declared outside it cannot be released: no name reaches the string as a
+// whole. On a host the
+// build warns and the program runs out of a fixed arena; for a board the build
+// is refused before anything is flashed.
 func TestALoopThatKeepsItsStringsWarnsOnAHostAndIsRefusedForABoard(t *testing.T) {
-	escaping := strings.Replace(arenaFirmware, `            state = "warm"`, `            state = line`, 1)
+	escaping := strings.Replace(arenaFirmware, `            state = "warm"`, `            seen[warm % 2] = line`, 1)
+	escaping = strings.Replace(escaping, `    var warm: u32 = 0`, `    var warm: u32 = 0
+    var seen = store[..]`, 1)
+	escaping = strings.Replace(escaping, `    var i: u32 = 0`, `    var store: string[2]
+    var i: u32 = 0`, 1)
 	entry := writeArenaProject(t, escaping)
 
 	var binary string
 	warnings := captureStderr(t, func() { binary = buildFirmwareOnHost(t, entry, "512") })
-	if !strings.Contains(warnings, "warning:") || !strings.Contains(warnings, `"state"`) || !strings.Contains(warnings, "line 12") {
+	if !strings.Contains(warnings, "warning:") || !strings.Contains(warnings, `"seen"`) || !strings.Contains(warnings, "line 14") {
 		t.Errorf("expected a warning naming the loop and the variable, got:\n%s", warnings)
 	}
 	result := runBinary(binary)
@@ -161,7 +168,7 @@ func TestALoopThatKeepsItsStringsWarnsOnAHostAndIsRefusedForABoard(t *testing.T)
 	if err == nil {
 		t.Fatal("expected a board build to be refused")
 	}
-	for _, want := range []string{"pico is a board", `"state"`, "line 12"} {
+	for _, want := range []string{"pico is a board", `"seen"`, "line 14"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal should say %q: %v", want, err)
 		}
@@ -170,6 +177,107 @@ func TestALoopThatKeepsItsStringsWarnsOnAHostAndIsRefusedForABoard(t *testing.T)
 	// A host — what the caller passes when the spec has no fixed arena — warns.
 	if _, err := GenerateAllTargetsDetailed(entry, "", nil, nil, nil, "c", "", ""); err != nil {
 		t.Errorf("a host build should only warn: %v", err)
+	}
+}
+
+// The loop that keeps its latest line in a variable declared outside it — the
+// last reading, the status text — is released every iteration except for that
+// line. It builds for a board without a word, runs a hundred thousand times in
+// 512 bytes, and the line it kept is there after the loop.
+const lastValueFirmware = `module app
+
+extern fn rho_arena_used() u64
+
+fn describe(t: u32, label: string) string {
+    return label + "=" + int_to_str(t) + "dC"
+}
+
+fn main() void {
+    var last: string = ""
+    var status: string = "idle"
+    var n: u32 = 0
+    var peak: u64 = 0
+    let start = rho_arena_used()
+    while n < ITERATIONS {
+        let line = describe(n % 600, "node" + int_to_str(n % 5))
+        last = line
+        if n % 1000 == 0 {
+            status = "ok " + int_to_str(n / 1000)
+        }
+        if rho_arena_used() - start > peak {
+            peak = rho_arena_used() - start
+        }
+        n = n + 1
+    }
+    print(last + " " + status + " peak " + i64_to_str(peak as i64) + "\n")
+}
+`
+
+func TestALoopKeepingItsLatestStringRunsInBoundedMemory(t *testing.T) {
+	source := strings.Replace(lastValueFirmware, "ITERATIONS", "100000", 1)
+	entry := writeArenaProject(t, source)
+	var binary string
+	warnings := captureStderr(t, func() { binary = buildFirmwareOnHost(t, entry, "512") })
+	if strings.Contains(warnings, "warning:") {
+		t.Errorf("a loop that replaces a string outside it should build without a warning:\n%s", warnings)
+	}
+	result := runBinary(binary)
+	if result.failed != "" {
+		t.Fatalf("the loop ran out of a 512-byte arena or misbehaved: %s\nstdout: %q", result.failed, result.stdout)
+	}
+	if !strings.HasPrefix(result.stdout, "node4=399dC ok 99 peak ") {
+		t.Fatalf("got %q", result.stdout)
+	}
+	if _, err := GenerateAllTargetsDetailed(entry, "", nil, nil, nil, "c", "", "pico"); err != nil {
+		t.Fatalf("a board build of the loop should not be refused: %v", err)
+	}
+}
+
+// Run long: a host's growing arena stays at the size of what is kept plus one
+// iteration's strings over two million iterations, and a board's 4096 bytes
+// last a million.
+func TestALoopKeepingItsLatestStringStaysFlatOverMillionsOfIterations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long run")
+	}
+	if _, err := exec.LookPath("gcc"); err != nil {
+		t.Skip("no C compiler available")
+	}
+	for _, run := range []struct {
+		name, iterations string
+		defines          []string
+	}{
+		{"host", "2000000", []string{"-DRHO_STRING_ARENA_GROWS"}},
+		{"board", "1000000", []string{"-DRHO_STRING_ARENA_BYTES=4096"}},
+	} {
+		t.Run(run.name, func(t *testing.T) {
+			entry := writeArenaProject(t, strings.Replace(lastValueFirmware, "ITERATIONS", run.iterations, 1))
+			targets, err := GenerateAllTargetsDetailed(entry, "", nil, nil, nil, "c", "", "")
+			if err != nil {
+				t.Fatalf("generate: %v", err)
+			}
+			dir := targets[0].Dir
+			binary := filepath.Join(t.TempDir(), "firmware")
+			args := append([]string{"-std=c11", "-O1"}, run.defines...)
+			args = append(args, "-o", binary, filepath.Join(dir, "main.c"), filepath.Join(dir, "app.c"),
+				filepath.Join(dir, "runtime.c"), "-I", dir, "-lm")
+			if out, err := exec.Command("gcc", args...).CombinedOutput(); err != nil {
+				t.Fatalf("gcc: %v\n%s", err, out)
+			}
+			result := runBinary(binary)
+			if result.failed != "" {
+				t.Fatalf("%s\nstdout: %q", result.failed, result.stdout)
+			}
+			fields := strings.Fields(result.stdout)
+			if len(fields) != 5 || fields[3] != "peak" {
+				t.Fatalf("got %q", result.stdout)
+			}
+			// Two kept strings of a dozen bytes and the strings one iteration
+			// builds: well under a hundred bytes, however long it ran.
+			if peak, err := strconv.Atoi(fields[4]); err != nil || peak > 128 {
+				t.Fatalf("the arena grew to %s bytes above where the loop started: %q", fields[4], result.stdout)
+			}
+		})
 	}
 }
 

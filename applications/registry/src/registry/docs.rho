@@ -82,7 +82,7 @@ fn doc_page(name: string, version: string, page: string) Response {
     if !valid_name(name) || !valid_version(version) {
         return doc_missing(name, version)
     }
-    let wanted: string = page
+    var wanted: string = page
     if strlen(wanted) == 0 {
         // A reader arrives at the directory, which answers the site's index:
         // for one module that is the module's own page of its documentation.

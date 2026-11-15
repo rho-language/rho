@@ -107,9 +107,11 @@ const char* rho_int_to_str(uint32_t value)
     return rho_digits(value, false);
 }
 
+/* Measured through the arena's memo (arena.c, rho_str_len), so `while i <
+ * len(s)` over one long string measures it once. */
 uint32_t rho_strlen(const char* s)
 {
-    return s != NULL ? (uint32_t)strlen(s) : 0;
+    return (uint32_t)rho_str_len(s);
 }
 
 /* A NULL string is the empty one, as everywhere else in the runtime: the zero
@@ -159,7 +161,7 @@ uint8_t rho_str_at(const char* s, uint32_t i)
     if (s == NULL) {
         return 0;
     }
-    size_t n = strlen(s);
+    size_t n = rho_str_len(s);
     return i < n ? (uint8_t)s[i] : 0;
 }
 
@@ -177,7 +179,7 @@ char* rho_str_slice(const char* s, uint32_t start, uint32_t length)
     if (s == NULL) {
         return "";
     }
-    size_t n = strlen(s);
+    size_t n = rho_str_len(s);
     if (start >= n) {
         return "";
     }
@@ -189,5 +191,41 @@ char* rho_str_slice(const char* s, uint32_t start, uint32_t length)
     }
     memcpy(out, s + start, take);
     out[take] = 0;
+    return out;
+}
+/* rho_str_to_bytes copies a string's bytes into a caller's buffer, as many as
+ * fit, and says how many it copied. No terminating 0 is written, and nothing is
+ * allocated. */
+uint32_t rho_str_to_bytes(const char* s, uint8_t* out, uint32_t cap)
+{
+    if (s == NULL || out == NULL) {
+        return 0;
+    }
+    uint32_t n = 0;
+    while (n < cap && s[n] != 0) {
+        out[n] = (uint8_t)s[n];
+        n++;
+    }
+    return n;
+}
+
+/* rho_str_from_bytes is a string of the bytes up to the first 0, or all `n` of
+ * them, in the arena. */
+char* rho_str_from_bytes(const uint8_t* p, uint32_t n)
+{
+    uint32_t len = 0;
+    if (p != NULL) {
+        while (len < n && p[len] != 0) {
+            len++;
+        }
+    }
+    char* out = rho_str_alloc((size_t)len + 1);
+    if (out == NULL) {
+        return (char*)"";
+    }
+    if (len > 0) {
+        memcpy(out, p, len);
+    }
+    out[len] = 0;
     return out;
 }

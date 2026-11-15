@@ -93,6 +93,9 @@ func main() {
 		// which Rho they have is asking before any of it exists.
 		fmt.Printf("rho %s\n", toolchainVersion())
 		return
+	} else if isCoreCommand(cmd) && clicore.WantsHelp(os.Args[2:]) {
+		// A command's own help is the binary's, and asking how to use a command
+		// before anything is installed is the ordinary order of things.
 	} else {
 		// Every other command needs an installation, because every other command
 		// reads or writes the local registry: it is where an installed module
@@ -180,6 +183,20 @@ func main() {
 	}
 }
 
+// isCoreCommand reports whether a command is the toolchain's own.
+func isCoreCommand(name string) bool {
+	for _, command := range clicore.Core() {
+		head := command.Invocation
+		if space := strings.IndexByte(head, ' '); space >= 0 {
+			head = head[:space]
+		}
+		if head == name {
+			return true
+		}
+	}
+	return false
+}
+
 // runDynamicModule dispatches a command a module published, so a component is
 // reachable by the name it installed itself under.
 func runDynamicModule(cmd string, args []string) bool {
@@ -263,8 +280,7 @@ func runDynamicModule(cmd string, args []string) bool {
 					}
 
 					if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
-						fmt.Fprintln(os.Stderr, "rho:", err)
-						os.Exit(1)
+						exitWithComponentError(err)
 					}
 
 					return true
@@ -291,11 +307,24 @@ func runDynamicModule(cmd string, args []string) bool {
 	}
 
 	if err := entry.Run(args, os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "rho:", err)
-		os.Exit(1)
+		exitWithComponentError(err)
 	}
 
 	return true
+}
+
+// exitWithComponentError ends rho as the component ended. A component that ran
+// and exited non-zero has said what went wrong itself, and its exit status is a
+// contract (1 for a finding or a failed test, 2 for a usage error, 77 for a build
+// this machine cannot try), so the status is passed on and nothing is added; a
+// component that could not be started is rho's to report.
+func exitWithComponentError(err error) {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() > 0 {
+		os.Exit(exit.ExitCode())
+	}
+	fmt.Fprintln(os.Stderr, "rho:", err)
+	os.Exit(1)
 }
 
 func buildRhoExecutables() error {
@@ -342,6 +371,12 @@ func installCLI(args []string) int {
 			force = true
 		case "--update", "-u":
 			update = true
+		case "-h", "-help", "--help":
+			fmt.Println("usage: rho install [--force] [--update]")
+			fmt.Println("  (none)     first time: build the toolchain and create the registry")
+			fmt.Println("  --update   rebuild the toolchain in place; nothing else is touched")
+			fmt.Println("  --force    remove the toolchain's directories, then install again")
+			return 0
 		default:
 			fmt.Printf("rho install: unknown option %q\n", arg)
 			fmt.Println("usage: rho install [--force] [--update]")
@@ -541,14 +576,24 @@ func configCLI(args []string) int {
 /* -------------------------------------------------------------------------- */
 
 func runCLI(args []string) {
-	if len(args) > 1 {
-		fmt.Println("Usage: rho run [file.rho|project-dir]")
+	fs := flag.NewFlagSet("rho run", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = runUsage
+	// The first argument that is not a flag is the project or the file; every
+	// argument after it is the program's, flags included, so `rho run . -v` gives
+	// the program `-v`. A `--` right after the path is the separator people write
+	// and is dropped, and a `--` with no path before it runs the project here.
+	path, programArgs, _, err := clicore.ParseUntilFirst(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
 		os.Exit(2)
 	}
 
 	// The argument may be a source file, a project directory, or omitted to
 	// run the project in the working directory.
-	abs, projectRoot, entryErr := src.ResolveEntryPoint(argOrCwd(args))
+	abs, projectRoot, entryErr := src.ResolveEntryPoint(argOrCwd([]string{path}))
 	if entryErr != nil {
 		fmt.Fprintln(os.Stderr, "rho run:", entryErr)
 		os.Exit(1)
@@ -579,24 +624,39 @@ func runCLI(args []string) {
 
 	// A Go or server target is a real project with its own toolchain, so it is
 	// built and run rather than compiled to a native binary.
-	if runGeneratedTarget(abs, projectRoot, dependencyRoots, includePaths, sourceFiles, nil) {
+	if runGeneratedTarget(abs, projectRoot, dependencyRoots, includePaths, sourceFiles, programArgs) {
 		return
 	}
 
 	// A C project: compile the C source files directly and run.
 	if filepath.Ext(abs) == ".c" {
-		runCProject(abs, projectRoot)
+		runCProject(abs, projectRoot, programArgs)
 		return
 	}
 
-	if err := RunFileWithDependencies(abs, dependencyRoots); err != nil {
+	if err := RunFileWithArguments(abs, dependencyRoots, programArgs); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			// The program ran and said how it ended; that is its exit status to
+			// pass on, not a failure of rho's to report.
+			os.Exit(exit.ExitCode())
+		}
 		reportError("rho run", err)
 		os.Exit(1)
 	}
 }
 
+func runUsage() {
+	fmt.Fprintln(os.Stderr, "usage: rho run [<project-dir>|<file.rho>] [--] [program arguments...]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Builds the project in the directory (default: the current one), or one file, and runs it.")
+	fmt.Fprintln(os.Stderr, "Every argument after the path is the program's; `--` after the path is optional.")
+	fmt.Fprintln(os.Stderr, "The program runs in the directory rho was run from, so a relative path in its")
+	fmt.Fprintln(os.Stderr, "arguments means what it means to the shell. Its exit status is rho's.")
+}
+
 // runCProject compiles a C source file with gcc and runs the binary.
-func runCProject(abs, projectRoot string) {
+func runCProject(abs, projectRoot string, programArgs []string) {
 	exe := filepath.Join(projectRoot, "build", "run", filepath.Base(replaceExt(abs, "")))
 	os.MkdirAll(filepath.Dir(exe), 0755)
 	defer os.Remove(exe)
@@ -628,15 +688,7 @@ func runCProject(abs, projectRoot string) {
 		os.Exit(1)
 	}
 
-	run := commandRunner(exe)
-	run.Dir = projectRoot
-	run.Stdin = os.Stdin
-	run.Stdout = os.Stdout
-	run.Stderr = os.Stderr
-	if err := run.Run(); err != nil {
-		reportError("rho run", err)
-		os.Exit(1)
-	}
+	runBinary(exe, "", programArgs)
 }
 
 // runGeneratedTarget builds and runs a generated project with its own
@@ -667,7 +719,9 @@ func runGeneratedTarget(abs, projectRoot string, dependencyRoots, includePaths, 
 			reportError("rho run", err)
 			os.Exit(1)
 		}
-		runBinary(binary, buildDir, passthrough)
+		// In the directory rho was run from, so the program's relative paths are
+		// the ones the person typed.
+		runBinary(binary, "", passthrough)
 		return true
 	}
 	return false
@@ -805,7 +859,19 @@ func buildCLI(args []string) int {
 	// for this did not have to be asked again on every build.
 	linkMapFlag := fs.Bool("link-map", true, "write the linker map beside the program")
 	noLinkMap := fs.Bool("no-link-map", false, "do not write the linker map")
-	fs.Parse(args)
+	// Only the translation: the entry translated to C at -o, and nothing else.
+	// No project is generated and nothing is compiled, so the project's own
+	// generated trees and binaries are left as they are — which is what the test
+	// runner needs, since it compiles the translation itself and a test program
+	// must never take the place of the application's binary.
+	emitC := fs.Bool("emit-c", false, "translate the entry to C at -o and stop: generate no project and build nothing")
+	// Flags are read wherever they are written: `rho build . --target go` is how
+	// the documentation writes it, and flags first works as it always did.
+	positional, passthrough, parseErr := clicore.ParseInterspersed(fs, args)
+	if parseErr != nil {
+		return 2
+	}
+	positional = append(positional, passthrough...)
 
 	// The exit code a caller reads, which is why it is written here rather than
 	// implied by which error happened.
@@ -824,14 +890,18 @@ func buildCLI(args []string) int {
 	// from an exit code that is 1 for everything.
 	const exitCannotRunHere = 77
 
-	if fs.NArg() > 1 {
-		fmt.Println("Usage: rho build [file.rho|project-dir] [-o out.c] [-target id]")
+	if len(positional) > 1 {
+		fmt.Fprintln(os.Stderr, "usage: rho build [flags] [<project-dir>|<file.rho>]")
 		return 2
+	}
+	path := ""
+	if len(positional) == 1 {
+		path = positional[0]
 	}
 
 	// The argument may be a source file, a project directory, or omitted to
 	// build the project in the working directory.
-	entry, projectRoot, entryErr := src.ResolveEntryPoint(fs.Arg(0))
+	entry, projectRoot, entryErr := src.ResolveEntryPoint(path)
 	if entryErr != nil {
 		fmt.Fprintln(os.Stderr, "rho build:", entryErr)
 		return 1
@@ -1020,6 +1090,26 @@ func buildCLI(args []string) int {
 	}
 	rhoDependencyRoots = append(rhoDependencyRoots, generatedModules)
 
+	// The translation alone, when that is all that was asked for: the entry in C
+	// at -o, with the dependencies and the generated interface this build would
+	// compile it against, and nothing generated or compiled beside it.
+	if *emitC {
+		if *out == "" {
+			fmt.Fprintln(os.Stderr, "rho build: --emit-c writes the translation to the file -o names; give -o")
+			return 2
+		}
+		if strings.HasSuffix(absIn, ".c") {
+			fmt.Fprintln(os.Stderr, "rho build: --emit-c translates a Rho entry, and this one is already C")
+			return 2
+		}
+		outC, _ := filepath.Abs(*out)
+		if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
+			reportError("rho build", err)
+			return 1
+		}
+		return 0
+	}
+
 	/* ---------------------------------------------------------------------- */
 	/*  7. Compile Rho → C                                                    */
 	/* ---------------------------------------------------------------------- */
@@ -1193,8 +1283,57 @@ func buildCLI(args []string) int {
 		return 1
 	}
 
+	// The binary, by the path a person runs it from, when the build put one where
+	// the manifest says binaries go; otherwise the build tree, which is all that
+	// can be said.
+	if binary, found := cBinaryPath(projectRoot, manifest, cExecutableName(generatedDir, moduleName)); found {
+		fmt.Println("Built binary:", binary)
+		return 0
+	}
 	fmt.Println("Build successful:", filepath.Join(generatedDir, "build", targetName))
 	return 0
+}
+
+// cExecutableName is the program the generated CMake project builds: the name
+// its add_executable gives, which is the Rho module's own name (the one
+// main.rho declares) rather than the manifest's. The manifest's name, when the
+// project file cannot be read.
+func cExecutableName(generatedDir, fallback string) string {
+	data, err := os.ReadFile(filepath.Join(generatedDir, "CMakeLists.txt"))
+	if err != nil {
+		return fallback
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "add_executable(") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "add_executable("))
+		if len(fields) > 0 {
+			return strings.TrimSuffix(fields[0], ")")
+		}
+	}
+	return fallback
+}
+
+// cBinaryPath is where a C build put the program, relative to the project: the
+// manifest's output directory (`build/output` unless it says otherwise), under
+// the module's name, with the suffix a board's image has when it has one.
+func cBinaryPath(projectRoot string, manifest *deps.Manifest, moduleName string) (string, bool) {
+	output := manifest.OutputDirectory()
+	if !filepath.IsAbs(output) {
+		output = filepath.Join(projectRoot, output)
+	}
+	for _, suffix := range []string{"", ".elf", ".exe"} {
+		candidate := filepath.Join(output, moduleName+suffix)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			if rel, relErr := filepath.Rel(projectRoot, candidate); relErr == nil {
+				return filepath.ToSlash(rel), true
+			}
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // resolveBuildTarget decides what a `-target` value means.

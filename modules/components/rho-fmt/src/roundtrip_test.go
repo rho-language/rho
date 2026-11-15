@@ -57,7 +57,7 @@ func repoSources(t *testing.T) []string {
 	t.Helper()
 	root := repoRoot(t)
 	var files []string
-	for _, dir := range []string{"std", "applications", "examples", "modules"} {
+	for _, dir := range []string{"std", "applications", "examples", "modules", "tests", "src", "docs"} {
 		found, err := rhoFilesUnder(filepath.Join(root, dir))
 		if err != nil {
 			t.Fatalf("walk %s: %v", dir, err)

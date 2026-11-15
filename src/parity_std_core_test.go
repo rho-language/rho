@@ -150,7 +150,7 @@ fn main() void {
 }
 `,
 		wantFailure: true,
-		want:        "before ASSERTION FAILED: assert_eq failed",
+		want:        "before ASSERTION FAILED: assert_eq failed\n",
 	},
 	{
 		name: "std.assert.assert: fail prints its message and aborts",
@@ -166,7 +166,7 @@ fn main() void {
 }
 `,
 		wantFailure: true,
-		want:        "ok ASSERTION FAILED: stop here",
+		want:        "ok ASSERTION FAILED: stop here\n",
 	},
 	{
 		name: "std.strings.utf8: is_ascii and first_codepoint",
@@ -189,11 +189,28 @@ fn main() void {
     if is_ascii(empty) { print("empty ascii ") }
     let c: Option[u32] = first_codepoint(all)
     print(int_to_str(c.value))
-    if !first_codepoint(tail).is_some { print(" tail none") }
+    print(" " + int_to_str(first_codepoint(tail).value))
     if !first_codepoint(empty).is_some { print(" empty none") }
+    // the euro sign, a four-byte emoji, and five malformed starts
+    var more: u8[12] = [226, 130, 172, 240, 159, 152, 128, 128, 195, 192, 128, 237]
+    let euro: String = String{ Ptr[u8](&more[0]), 3 }
+    let emoji: String = String{ Ptr[u8](&more[3]), 4 }
+    let stray: String = String{ Ptr[u8](&more[7]), 1 }
+    let truncated: String = String{ Ptr[u8](&more[8]), 1 }
+    let overlong: String = String{ Ptr[u8](&more[9]), 2 }
+    let cut: String = String{ Ptr[u8](&more[0]), 2 }
+    print(" " + int_to_str(first_codepoint(euro).value))
+    print(" " + int_to_str(first_codepoint(emoji).value))
+    if !first_codepoint(stray).is_some { print(" stray") }
+    if !first_codepoint(truncated).is_some { print(" short") }
+    if !first_codepoint(overlong).is_some { print(" overlong") }
+    if !first_codepoint(cut).is_some { print(" cut") }
+    var sur: u8[3] = [237, 160, 128]
+    let surrogate: String = String{ Ptr[u8](&sur[0]), 3 }
+    if !first_codepoint(surrogate).is_some { print(" surrogate") }
 }
 `,
-		want: "head ascii all not tail not empty ascii 104 tail none empty none",
+		want: "head ascii all not tail not empty ascii 104 233 empty none 8364 128512 stray short overlong cut surrogate",
 	},
 	// std.core.cmp: min, max and clamp over Ordered, each specialised for the
 	// type it is called with.

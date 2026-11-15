@@ -5,12 +5,11 @@ fn label(n: u32) string {
 }
 
 fn run() void {
-    var i: u32 = 0
-    var last: string = ""
+    var store: string[2]
+    var seen = store[..]
     while true {
-        let line = label(i) + "."
-        last = line
-        i = i + 1
-        print(last)
+        let line = label(7) + "."
+        seen[0] = line
+        print(seen[0])
     }
 }

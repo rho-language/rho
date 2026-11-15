@@ -557,3 +557,25 @@ Every std module says how stable it is (`// @stability stable|experimental`); th
 None.
 
 Known: `rho fmt` drops comments, tags included (#49); it is fixed before beta.
+
+## [0.19.0] - 2026-11-15
+
+What an outsider needed to write a command-line tool from the docs alone (`examples/csv-report`, with its findings in `FINDINGS.md`), and what a firmware-shaped soak showed.
+
+A loop that keeps its latest string in a variable declared outside it — a string, a struct, an enum, an `Option` or a fixed array of them, up to 32 strings — now runs in bounded memory on a host and on a board: each iteration releases what it built except what those variables hold, which is moved down (`acc = acc + x` keeps only the newest `acc`). A loop storing into a `Slice` element, through a pointer, or keeping a function value is still not released, and says so.
+
+A C program reads its command line: `rho_arg(i)`, `get_args()` and the new `arg_count()` work on both backends (on a board they are `""` and 0). New built-ins on both: `f64_to_str(x, decimals)` and `f32_to_str` (ties to even, identical digits on C and Go), `milli_format_fixed(m, decimals)`, `eprint(s)` to standard error, `str_to_bytes(s, out)` and `str_from_bytes(b)`; `rho_path_exists` works on C. `p.f` reaches a field through a `Ptr` to a struct. A struct literal is an expression inside an `if`/`while` header's parentheses and arguments. A qualified generic call (`slices.sort_by(xs, f)`, `mod.f[T](x)`) deduces like an unqualified one. A line starting with `(`, `[` or an operator starts a new statement, as in Go. `str_at`, `str_slice` and `len` no longer measure the whole string on C each call (a 1.3 MB scan: 78 s → 30 ms). `std.strings.utf8.first_codepoint` decodes UTF-8.
+
+The tools: flags may follow the path (`rho build . --target go`, as the docs write it); `rho run <dir> args…` passes arguments and runs the program in the directory `rho` was started from; `rho help <command>` works for every command; `rho` exits with a component's own status. `rho test` builds its programs under `build/test/` and never overwrites the application's binaries, a missing or empty suite fails the run, and printed `[PASS]`/`[FAIL]` lines report declared cases rather than replace them. `rho lint` reads test files, skips generated files under `build/` (`--include-generated` reads them), and no longer reports an import used by a bare call, a binding declared after a loop as shadowed, or the module name `rho init` writes. `rho fmt` keeps every comment, prints `test fn`, `namespace`, `message`, `rpc` and bit widths, and parenthesises a cast's operand (it printed `((n*37)%600) as i32` as `n * 37 % 600 as i32`). `rho init` uses `--description` and says when it renames a directory into a module name. A C build names its binary; the stack estimate is shown only for a board. YAML comments after list items are comments.
+
+Fixed: #49–#66 in `docs/tools/known-bugs.md`, among them array-of-struct fields on C, a Go-only build calling runtime functions under the wrong name, `arr[u32(i)]` read as a type argument, `ring[i % 4] = v` failing on Go, rho's own docsite refused by the backend check, and a `const` warning on every C build.
+
+### Breaking
+
+- Assigning to a `let` binding is deprecated and warns at the assignment, naming the binding; it becomes an error in the next minor release. Declare it with `var`.
+- A continuation line that starts with an operator, `(` or `[` is now a new statement (an operator there is an error): end the previous line with the operator instead.
+- `rho run` runs the program in the current directory, not in `build/` or the project root: pass paths relative to where you run it.
+- `rho` exits with a component's own status instead of 1.
+- `rho lint` no longer reads files under `build/`: pass `--include-generated` to keep the old behaviour.
+- A test suite that names no test file, or a file with no `test fn`, fails the run instead of being skipped.
+- A program function named `eprint`, `f64_to_str`, `f32_to_str`, `milli_format_fixed`, `str_to_bytes`, `str_from_bytes` or `arg_count` gives way to the built-in when called with the built-in's arguments: rename it.

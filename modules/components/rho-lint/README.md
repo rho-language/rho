@@ -271,10 +271,12 @@ project of its own has the opposite answer. Setting `include` on the platform an
 leaving `exclude` in the application is what makes the same code linted once by
 whoever owns it rather than once by everybody.
 
-`build/generated/` is **not** excluded by default. For a Rho application it holds the
-only C there is, and running clang-tidy over it with the build's own flags is the most
-valuable analysis in the run. The `rho` engine reads the sources that produced it, so
-the two do not report the same thing twice.
+What the build wrote — everything under the project's build directory (`build/`, or
+the manifest's `build.dir`), the generated C and its runtime included — is **excluded
+by default**. A finding there is not the project's to fix: the next build writes the
+file again, and the `rho` engine already reads the sources it came from.
+`--include-generated` reads it anyway, which is what a person working on the code
+generator wants.
 
 ## Related
 

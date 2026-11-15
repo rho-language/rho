@@ -42,6 +42,7 @@ import (
 	"rho/src/frontend/ast"
 	"rho/src/frontend/lexer"
 	"rho/src/frontend/parser"
+	"rho/src/scaffold"
 )
 
 // The rules over Rho sources.
@@ -172,11 +173,28 @@ func declarationLine(source Source, keyword string, name string) (int, int) {
 // report saying a file has a shadowed binding in it and has a syntax error in it at
 // the same time.
 func parseRho(source Source) (*ast.Module, error) {
-	tokens, err := lexer.Lex(source.Text)
+	tokens, err := lexer.Lex(compilerText(source))
 	if err != nil {
 		return nil, err
 	}
 	return parser.ParseFile(tokens, source.Path)
+}
+
+// testMarker is the `test` before a test file's `fn`, at the start of a line.
+var testMarker = regexp.MustCompile(`(?m)^([ \t]*)test([ \t]+fn[ \t])`)
+
+// compilerText is a source as the compiler is given it.
+//
+// A test file's `test fn` is the test runner's marker: rho-test removes it before
+// the file is compiled, and the compiler never sees it. The rules read the file
+// the same way, so a test file is linted as the program that is compiled rather
+// than reported as one the compiler cannot read. The marker becomes spaces, so
+// every line and column stays where it is in the file.
+func compilerText(source Source) string {
+	if !strings.Contains(source.Text, "test") {
+		return source.Text
+	}
+	return testMarker.ReplaceAllString(source.Text, "${1}    $2")
 }
 
 // rhoParse reports every place the compiler's parser stops, each where it is.
@@ -221,7 +239,7 @@ func rhoCheck(source Source) []Diagnostic {
 	}
 	set := RhoRules()
 	rule, _ := set.Find(RhoCheck)
-	found := rho.DiagnoseInProgram(source.Path, source.Text)
+	found := rho.DiagnoseInProgram(source.Path, compilerText(source))
 	out := []Diagnostic{}
 	for _, diagnostic := range found.Diagnostics {
 		if diagnostic.File != "" && diagnostic.File != found.Path {
@@ -285,10 +303,29 @@ func rhoModuleName(source Source) []Diagnostic {
 	if segment == stem {
 		return nil
 	}
+	// The name `rho new` and `rho init` write is the convention the documentation
+	// gives: the module's import name, then the file's place under src/ or tests/,
+	// and the import name alone for main.rho — which is how a program's entry
+	// declares the module it is. A file that declares that name is right.
+	expected, known := "", false
+	if source.Path != "" {
+		expected, known = scaffold.ModuleNameFor(source.Path)
+		if known && expected == declared {
+			return nil
+		}
+	}
 	line, column := declarationLine(source, "module", declared)
-	return []Diagnostic{set.Report(rule, source, line, column, fmt.Sprintf(
-		"this file is %s.rho and declares itself %s, so an import of %s cannot find it",
-		stem, declared, declared))}
+	message := fmt.Sprintf("this file is %s.rho and declares itself %s, so an import of %s cannot find it",
+		stem, declared, declared)
+	if known {
+		message = fmt.Sprintf("this file is %s.rho and declares itself %s; by its place in the module it is %s, "+
+			"the name rho new writes (or end the name in %s)", stem, declared, expected, stem)
+		if stem == "main" {
+			message = fmt.Sprintf("this file is the module's main.rho and declares itself %s; it is the module "+
+				"itself, %s, the name rho init and rho new write", declared, expected)
+		}
+	}
+	return []Diagnostic{set.Report(rule, source, line, column, message)}
 }
 
 // fileStem is a path without its directory or its extension.
@@ -341,6 +378,13 @@ func rhoUnusedImport(source Source) []Diagnostic {
 		countNamesIn(declaration, names)
 	}
 
+	// What each import declares, asked of the compiler's loader only when an
+	// import is not named by its own segment: a bare call `assert_eq(...)` is a
+	// use of `import std.assert.assert`, and only the loader knows that module
+	// declares assert_eq.
+	var provided map[string][]string
+	loaded, askedLoader := false, false
+
 	found := []Diagnostic{}
 	for _, imported := range module.Imports {
 		name := strings.TrimSpace(imported.Name)
@@ -356,11 +400,53 @@ func rhoUnusedImport(source Source) []Diagnostic {
 		if names[segment] || source.Generated[segment] || source.Generated[name] {
 			continue
 		}
+		if !askedLoader {
+			askedLoader = true
+			provided, loaded = importedNames(source)
+		}
+		if loaded && usesAny(names, provided[name]) {
+			continue
+		}
+		if !loaded && hasFile(source.Path) {
+			// The program is there and could not be loaded, so what the module
+			// declares is not known and neither is whether the file uses it;
+			// saying it is unused would be a guess. (A source with no file behind
+			// it has only its names to go on, and is judged by them.)
+			continue
+		}
 		line, column := declarationLine(source, "import", name)
 		found = append(found, set.Report(rule, source, line, column, fmt.Sprintf(
 			"%s is imported and nothing in this file names it", name)))
 	}
 	return found
+}
+
+// importedNames is what each import of a source declares, by import name, and
+// whether the program could be loaded to say.
+func importedNames(source Source) (map[string][]string, bool) {
+	if !hasFile(source.Path) {
+		return nil, false
+	}
+	return rho.ImportedNames(source.Path, compilerText(source))
+}
+
+// hasFile reports whether a source has a file behind it.
+func hasFile(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// usesAny reports whether a file names any of a module's declarations.
+func usesAny(names map[string]bool, declared []string) bool {
+	for _, name := range declared {
+		if names[name] {
+			return true
+		}
+	}
+	return false
 }
 
 // countNamesIn is every identifier a declaration mentions.
@@ -388,6 +474,12 @@ func countNamesIn(node any, names map[string]bool) {
 			countTypeNames(param.TypeExpr, names)
 		}
 		countTypeNames(ast.TypeExpr{Name: one.ReturnType}, names)
+		// `[T: Ordered]` names the constraint a module declares.
+		for _, bounds := range one.TypeParamBounds {
+			for _, bound := range bounds {
+				names[bound.Name] = true
+			}
+		}
 		for _, statement := range one.Body {
 			countNamesIn(statement, names)
 		}
@@ -420,7 +512,30 @@ func countNamesIn(node any, names map[string]bool) {
 		for _, statement := range one.Body {
 			countNamesIn(statement, names)
 		}
-	case ast.BreakStmt:
+	case ast.BreakStmt, ast.ContinueStmt:
+	case ast.ForStmt:
+		names[one.Name] = true
+		countNamesIn(one.Collection, names)
+		if one.Step != nil {
+			countNamesIn(one.Step, names)
+		}
+		for _, statement := range one.Body {
+			countNamesIn(statement, names)
+		}
+	case ast.MatchStmt:
+		countNamesIn(one.Value, names)
+		for _, arm := range one.Arms {
+			if arm.Pattern != nil {
+				countNamesIn(arm.Pattern, names)
+			}
+			for _, statement := range arm.Body {
+				countNamesIn(statement, names)
+			}
+		}
+	case ast.ConstDecl:
+		names[one.Name] = true
+		countTypeNames(one.Type, names)
+		countNamesIn(one.Value, names)
 	case ast.IdentifierExpr:
 		names[one.Name] = true
 	case ast.NumberExpr, ast.StringExpr, ast.BoolExpr:
@@ -440,6 +555,9 @@ func countNamesIn(node any, names map[string]bool) {
 	case ast.MemberExpr:
 		countNamesIn(one.Object, names)
 		names[one.Name] = true
+		for _, argument := range one.TypeArgs {
+			countTypeNames(argument, names)
+		}
 	case ast.IndexExpr:
 		countNamesIn(one.Object, names)
 		countNamesIn(one.Index, names)
@@ -466,6 +584,9 @@ func countNamesIn(node any, names map[string]bool) {
 	case ast.ArrayLiteralExpr:
 		for _, value := range one.Values {
 			countNamesIn(value, names)
+		}
+		if one.Repeat != nil {
+			countNamesIn(*one.Repeat, names)
 		}
 	case ast.IfExpr:
 		countNamesIn(one.Condition, names)
@@ -541,44 +662,49 @@ func rhoShadowedBinding(source Source) []Diagnostic {
 
 // shadowedIn is the `let`s in a list of statements that shadow an outer binding.
 //
-// Walked with the outer bindings threaded down rather than collected first: the
-// answer for a statement inside an `if` depends on what encloses that `if`, and
-// collecting every name in the function first would report every second `let` in it.
+// Walked in order, with the bindings threaded down as they are declared: a block
+// nested inside this one sees the bindings written above it and none of the ones
+// written below it, because those do not exist yet when it runs. A `let x` after
+// a loop that binds its own `x` shadows nothing — the loop's `x` is gone by then —
+// and reading every binding of the block first is what used to report it.
 func shadowedIn(statements []ast.Stmt, outer map[string]bool) []ast.LetStmt {
 	found := []ast.LetStmt{}
-	// The bindings this block introduces, kept apart from the ones it may shadow.
-	// A second `let x` in the *same* block is a redeclaration rather than a shadow,
-	// and neither rule here reports it: this parser accepts it, and asserting what
-	// the generator does with it is not something a lint tool should be claiming.
+	// The bindings this block has introduced so far. A second `let x` in the same
+	// block is reported too: from there on only the second is reachable.
 	here := map[string]bool{}
-	for _, statement := range statements {
-		binding, ok := statement.(ast.LetStmt)
-		if !ok {
-			continue
+	visible := func(extra ...string) map[string]bool {
+		out := make(map[string]bool, len(outer)+len(here)+len(extra))
+		for name := range outer {
+			out[name] = true
 		}
-		if outer[binding.Name] || here[binding.Name] {
-			found = append(found, binding)
+		for name := range here {
+			out[name] = true
 		}
-		here[binding.Name] = true
+		for _, name := range extra {
+			out[name] = true
+		}
+		return out
 	}
-
-	enclosing := map[string]bool{}
-	for name := range outer {
-		enclosing[name] = true
-	}
-	for name := range here {
-		enclosing[name] = true
-	}
-
 	for _, statement := range statements {
 		switch one := statement.(type) {
+		case ast.LetStmt:
+			if outer[one.Name] || here[one.Name] {
+				found = append(found, one)
+			}
+			here[one.Name] = true
 		case ast.IfStmt:
-			found = append(found, shadowedIn(one.Then, enclosing)...)
-			found = append(found, shadowedIn(one.Else, enclosing)...)
+			found = append(found, shadowedIn(one.Then, visible())...)
+			found = append(found, shadowedIn(one.Else, visible())...)
 		case ast.WhileStmt:
-			found = append(found, shadowedIn(one.Body, enclosing)...)
+			found = append(found, shadowedIn(one.Body, visible())...)
 		case ast.BlockStmt:
-			found = append(found, shadowedIn(one.Stmts, enclosing)...)
+			found = append(found, shadowedIn(one.Stmts, visible())...)
+		case ast.ForStmt:
+			found = append(found, shadowedIn(one.Body, visible(one.Name))...)
+		case ast.MatchStmt:
+			for _, arm := range one.Arms {
+				found = append(found, shadowedIn(arm.Body, visible())...)
+			}
 		}
 	}
 	return found

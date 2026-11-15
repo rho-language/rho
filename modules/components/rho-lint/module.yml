@@ -47,7 +47,7 @@
 module:
   name: rho-lint
   type: component
-  version: 0.2.3
+  version: 0.3.0
   author: Aurel Miron
   description: Runs every static analyzer over one compilation database, and writes the findings as SARIF
   command: lint

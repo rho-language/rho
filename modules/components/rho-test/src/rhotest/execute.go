@@ -251,6 +251,19 @@ func Execute(suites []Suite, options ExecuteOptions) RunReport {
 	report := RunReport{Suites: suites}
 
 	for _, suite := range suites {
+		if suite.Broken != "" {
+			report.Results = append(report.Results, Result{
+				Suite:  suite.Name,
+				Case:   Case{Name: suite.Name},
+				Status: StatusFail,
+				Reason: suite.Broken,
+				Output: suite.Broken,
+			})
+			if options.Verbose {
+				fmt.Printf("  fail   %s  (%s)\n", suite.Name, suite.Broken)
+			}
+			continue
+		}
 		if suite.Skipped() {
 			report.Results = append(report.Results, Result{
 				Suite:  suite.Name,
@@ -264,6 +277,14 @@ func Execute(suites []Suite, options ExecuteOptions) RunReport {
 			continue
 		}
 		results, output, failed, skipped, reason, diagnostics := runSuite(suite, runner, options)
+		// Every result names its suite, so a report and a plugin can say which
+		// suite a case belongs to — and so a failing case counts its suite as
+		// failed.
+		for index := range results {
+			if results[index].Suite == "" {
+				results[index].Suite = suite.Name
+			}
+		}
 		report.Results = append(report.Results, results...)
 		report.Diagnostics = append(report.Diagnostics, diagnostics...)
 
@@ -317,8 +338,12 @@ func Execute(suites []Suite, options ExecuteOptions) RunReport {
 				Output: output,
 			})
 		}
-		if options.Echo && output != "" {
-			fmt.Print(indentBlock(output, "    "))
+		// What the suite printed, without the result lines the report below prints
+		// again for each case: echoing both is every case twice.
+		if options.Echo {
+			if echoed := withoutResultLines(output); strings.TrimSpace(echoed) != "" {
+				fmt.Print(indentBlock(echoed, "    "))
+			}
 		}
 	}
 	report.Summary = Summarize(report.Suites, report.Results)
@@ -341,9 +366,26 @@ func runSuite(suite Suite, runner Runner, options ExecuteOptions) (results []Res
 			label = fmt.Sprintf("step %d", index+1)
 		}
 		if options.Verbose && step.Runs() {
-			fmt.Printf("    %s: %s\n", suite.Name, strings.Join(step.Command, " "))
+			what := strings.Join(step.Command, " ")
+			if what == "" {
+				what = label
+			}
+			fmt.Printf("    %s: %s\n", suite.Name, what)
 		}
 		outcome := runner.RunStep(step, suite)
+		// A Rho test file's cases are the `test fn`s it declares, and what the
+		// program printed reports their results; see mergeDeclaredCases.
+		if suite.Kind == KindRho && len(suite.Cases) > 0 && outcome.Err == nil && !outcome.Skipped && step.Action != nil {
+			output += outcome.Output
+			if outcome.Output != "" {
+				output += "\n"
+			}
+			cases, suiteFailed := mergeDeclaredCases(suite, outcome.Output, outcome.Failed)
+			if suiteFailed {
+				return cases, output, true, false, "", diagnostics
+			}
+			return cases, output, false, false, "", diagnostics
+		}
 		output += outcome.Output
 		if outcome.Output != "" {
 			// A step that only declares something has no output of its own, but the
@@ -376,6 +418,98 @@ func runSuite(suite Suite, runner Runner, options ExecuteOptions) (results []Res
 		}
 	}
 	return nil, output, false, false, "", diagnostics
+}
+
+// mergeDeclaredCases is the results of a Rho test file: one per declared
+// `test fn`, and nothing else.
+//
+// The declared cases are the cases. A `[PASS] name` or `[FAIL] name` line (or
+// TAP's `ok`/`not ok`) the program printed reports the result of the declared
+// case of that name, and a failure wins over a pass. A case nothing reported:
+//
+//   - failed, when the program stopped (a test asserts by stopping the program,
+//     so a case it never reached is not known to hold);
+//   - passed, when the program exited 0 and reported no case at all — it does
+//     not speak the protocol, and its exit status is the verdict;
+//   - is skipped, when the program exited 0 and reported other cases — it speaks
+//     the protocol and said nothing about this one, which is what a `test fn`
+//     that `main` never calls looks like. Not a pass, because nothing shows it
+//     ran; not a failure, because nothing failed.
+//
+// A printed name that is not a declared case does not become one and does not
+// replace the list. A `[FAIL]` for such a name still fails the suite, because a
+// failure the program reported is never dropped; a `[PASS]` for one is ignored.
+//
+// suiteFailed says the suite failed for a reason no case carries: the program
+// failed although every case reported a pass, or it reported a failure under a
+// name that is not a case. The caller adds the suite-level failure for it.
+func mergeDeclaredCases(suite Suite, output string, programFailed bool) (results []Result, suiteFailed bool) {
+	declared := map[string]bool{}
+	for _, testCase := range suite.Cases {
+		declared[testCase.Name] = true
+	}
+	reported := map[string]Result{}
+	for _, result := range ParseCases(output) {
+		name := result.Case.Name
+		if !declared[name] {
+			if result.Status == StatusFail {
+				suiteFailed = true
+			}
+			continue
+		}
+		if previous, seen := reported[name]; seen && previous.Status == StatusFail {
+			continue
+		}
+		reported[name] = result
+	}
+	anyCaseFailed := false
+	for _, testCase := range suite.Cases {
+		result := Result{Suite: suite.Name, Case: testCase}
+		if found, ok := reported[testCase.Name]; ok {
+			result.Status = found.Status
+			result.Output = found.Output
+		} else if programFailed {
+			result.Status = StatusFail
+			result.Reason = "the program failed before this case reported a result"
+			result.Output = output
+		} else if len(reported) > 0 {
+			result.Status = StatusSkip
+			result.Reason = "the program reported other cases and not this one; is it called from main?"
+		} else {
+			result.Status = StatusPass
+		}
+		if result.Status == StatusFail {
+			anyCaseFailed = true
+		}
+		results = append(results, result)
+	}
+	if programFailed && !anyCaseFailed {
+		suiteFailed = true
+	}
+	return results, suiteFailed
+}
+
+// withoutResultLines is a suite's output without the lines ParseCases reads as
+// results, which the report prints for each case anyway.
+func withoutResultLines(output string) string {
+	kept := []string{}
+	for _, line := range strings.Split(output, "\n") {
+		if isResultLine(strings.TrimSpace(line)) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+func isResultLine(line string) bool {
+	for _, format := range CommonCaseFormats {
+		if (format.PassPrefix != "" && strings.HasPrefix(line, format.PassPrefix)) ||
+			(format.FailPrefix != "" && strings.HasPrefix(line, format.FailPrefix)) {
+			return true
+		}
+	}
+	return false
 }
 
 func indentBlock(text, prefix string) string {
@@ -447,13 +581,13 @@ func parseCasesWith(format CaseFormat, lines []string) []Result {
 		switch {
 		case format.FailPrefix != "" && strings.HasPrefix(line, format.FailPrefix):
 			results = append(results, Result{
-				Case:   Case{Name: strings.TrimSpace(strings.TrimPrefix(line, format.FailPrefix))},
+				Case:   Case{Name: caseName(format, strings.TrimPrefix(line, format.FailPrefix))},
 				Status: StatusFail,
 				Output: strings.TrimSpace(line),
 			})
 		case format.PassPrefix != "" && strings.HasPrefix(line, format.PassPrefix):
 			results = append(results, Result{
-				Case:   Case{Name: strings.TrimSpace(strings.TrimPrefix(line, format.PassPrefix))},
+				Case:   Case{Name: caseName(format, strings.TrimPrefix(line, format.PassPrefix))},
 				Status: StatusPass,
 			})
 		default:
@@ -464,6 +598,37 @@ func parseCasesWith(format CaseFormat, lines []string) []Result {
 		}
 	}
 	return reverse(results)
+}
+
+// caseName is the name on a result line. TAP writes `ok 3 - name # directive`:
+// the number, the dash and a directive are TAP's, and the name is what is
+// between them. The other formats write the name alone.
+func caseName(format CaseFormat, rest string) string {
+	rest = strings.TrimSpace(rest)
+	if format.PassPrefix != "ok " {
+		return rest
+	}
+	if hash := strings.Index(rest, " # "); hash >= 0 {
+		rest = strings.TrimSpace(rest[:hash])
+	}
+	digits := 0
+	for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
+		digits++
+	}
+	number := ""
+	if digits > 0 && (digits == len(rest) || rest[digits] == ' ') {
+		number, rest = rest[:digits], strings.TrimSpace(rest[digits:])
+	}
+	if strings.HasPrefix(rest, "- ") {
+		rest = strings.TrimSpace(rest[2:])
+	} else if rest == "-" {
+		rest = ""
+	}
+	if rest == "" {
+		// A test with no description is known by its number.
+		return number
+	}
+	return rest
 }
 
 func reverse(results []Result) []Result {

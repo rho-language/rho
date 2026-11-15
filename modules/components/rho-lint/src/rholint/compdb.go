@@ -893,6 +893,11 @@ type Exclusions struct {
 	// Outside is `exclude` or `include`. Anything else is read as `exclude`, which
 	// is the answer that cannot overstate what was analysed.
 	Outside string
+	// Generated are directories whose files a build wrote — the project's build
+	// and output directories — and which are never read. A finding in a file the
+	// toolchain generated is not the project's to fix, and its next build writes
+	// the file again.
+	Generated []string
 }
 
 // Keeps reports whether a source is read.
@@ -902,6 +907,15 @@ type Exclusions struct {
 // came from is usually somewhere else on the disk entirely and only the absolute
 // path says so.
 func (e Exclusions) Keeps(unit Unit) bool {
+	for _, directory := range e.Generated {
+		if directory == "" {
+			continue
+		}
+		if relative, err := filepath.Rel(directory, unit.File); err == nil &&
+			relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return false
+		}
+	}
 	for _, fragment := range e.Fragments {
 		fragment = strings.Trim(strings.TrimSpace(fragment), "/")
 		if fragment == "" {

@@ -58,13 +58,15 @@ const usage = `Usage: rho test [path] [options]
     --report-dir DIR   where a plugin's report is written
 
   How to run
-    --target TARGET    the backend Rho tests run on (default c)
+    --target TARGET    the target a run reports to its plugins (default c);
+                       Rho test files always run on the C backend
     --rho PATH         the rho to build tests with
     --list-plugins     list the plugins that extend this runner
     --no-plugins       run without them
 
   A path names a project or a test file. Without one, the working directory is
-  the project, and its tests/tests.yml says what it has.`
+  the project, and its tests/tests.yml says what it has. Options may come before
+  or after the path, with one dash or two, and as --name value or --name=value.`
 
 func run(args []string) int {
 	options := rhotest.Options{Target: rhotest.DefaultTarget}
@@ -75,7 +77,17 @@ func run(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		// `--name=value` is `--name value`, as Go's flag package reads it.
+		inline, hasInline := "", false
+		if strings.HasPrefix(arg, "-") {
+			if name, value, found := strings.Cut(arg, "="); found {
+				arg, inline, hasInline = name, value, true
+			}
+		}
 		next := func(flag, example string) (string, bool) {
+			if hasInline {
+				return inline, true
+			}
 			if i+1 >= len(args) {
 				fmt.Printf("rho test: %s needs a value\n  %s\n", flag, example)
 				return "", false

@@ -122,6 +122,72 @@ int main(void) {
     CHECK(rho_arena_release_cond(m, rho_str_contains(rho_concat("ab", "cd"), "bc")));
     CHECK(rho_arena_used() == m);
 
+    /* Keeping many: the strings the slots point at are moved down to the mark in
+     * the order they lie in, whatever order the slots are in; two slots holding
+     * one string, and one holding another's tail, share its bytes; a literal, a
+     * NULL and a string from before the mark stay where they are. */
+    m = rho_arena_mark();
+    const char* before = rho_concat("from-", "before");
+    size_t m3 = rho_arena_mark();
+    const char* k1 = rho_concat("first-", "kept");
+    for (int i = 0; i < 20; i++) {
+        (void)rho_concat("garbage-", "garbage");
+    }
+    const char* k2 = rho_concat("second-", "kept-string");
+    const char* k2alias = k2;
+    const char* k2tail = rho_str_trim_prefix(k2, "second-");
+    (void)rho_concat("more-", "garbage");
+    const char* k3 = rho_concat("third", "");
+    const char* lit = "a literal";
+    const char* none = NULL;
+    const char* old = before;
+    void* slots[] = {(void*)&k3, (void*)&k2tail, (void*)&lit, (void*)&k1, (void*)&none, (void*)&k2, (void*)&old, (void*)&k2alias};
+    rho_arena_keep_many(m3, slots, sizeof slots / sizeof slots[0]);
+    CHECK(strcmp(k1, "first-kept") == 0);
+    CHECK(strcmp(k2, "second-kept-string") == 0);
+    CHECK(k2alias == k2);
+    CHECK(strcmp(k2tail, "kept-string") == 0 && k2tail == k2 + strlen("second-"));
+    CHECK(strcmp(k3, "third") == 0);
+    CHECK(lit != NULL && strcmp(lit, "a literal") == 0);
+    CHECK(none == NULL);
+    CHECK(old == before);
+    /* Nothing but the three strings is left, on a board exactly; on a host a
+     * string that did not fit at the end of a chunk starts the next one. */
+    size_t kept_bytes = strlen("first-kept") + strlen("second-kept-string") + strlen("third") + 3;
+    CHECK(rho_arena_used() >= m3 + kept_bytes);
+    CHECK(rho_arena_used() <= m3 + kept_bytes + 3 * 64);
+    /* Kept again and again, as a loop does, they stay where they are. */
+    size_t settled = rho_arena_used();
+    for (int i = 0; i < 1000; i++) {
+        const char* next = rho_concat(rho_concat("third", ""), "");
+        k3 = next;
+        void* again[] = {(void*)&k1, (void*)&k2, (void*)&k3, (void*)&k2tail};
+        rho_arena_keep_many(m3, again, 4);
+    }
+    CHECK(rho_arena_used() <= settled + 64);
+    CHECK(strcmp(k1, "first-kept") == 0 && strcmp(k2, "second-kept-string") == 0 && strcmp(k3, "third") == 0);
+    CHECK(strcmp(k2tail, "kept-string") == 0);
+    /* Nothing kept is a release. */
+    void* empty[] = {(void*)&lit};
+    rho_arena_keep_many(m3, empty, 1);
+    CHECK(rho_arena_used() == m3);
+    rho_arena_release(m);
+
+    /* An accumulator that outgrows a chunk: kept across chunks every time. */
+    m = rho_arena_mark();
+    const char* acc = "";
+    for (int i = 0; i < 200; i++) {
+        acc = rho_concat(acc, "ab");
+        (void)rho_concat("junk", acc);
+        void* one[] = {(void*)&acc};
+        rho_arena_keep_many(m, one, 1);
+    }
+    CHECK(strlen(acc) == 400 && acc[0] == 'a' && acc[399] == 'b');
+    /* Bounded by the accumulator, not by how many times it was built: the
+     * chunks it needs grow fourfold, so they add up to a few times its size. */
+    CHECK(rho_arena_used() <= m + 16 * 401);
+    rho_arena_release(m);
+
     /* Concatenation never answers NULL. */
     CHECK(strcmp(rho_concat(NULL, "x"), "x") == 0);
     CHECK(strcmp(rho_concat("y", NULL), "y") == 0);
@@ -134,7 +200,7 @@ int main(void) {
 // arenaRuntime is the runtime a program calling the arena and the strings gets.
 func arenaRuntime() string {
 	return "#include <stddef.h>\n#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n#include <stdlib.h>\n#include <stdio.h>\n" +
-		runtimeFor("rho_concat( rho_int_to_str( rho_str_trim_prefix( rho_str_contains( rho_arena_keep( rho_arena_used( rho_arena_release_cond(")
+		runtimeFor("rho_concat( rho_int_to_str( rho_str_trim_prefix( rho_str_contains( rho_arena_keep( rho_arena_keep_many( rho_arena_used( rho_arena_release_cond(")
 }
 
 // buildArenaProgram compiles a program against the runtime with the given

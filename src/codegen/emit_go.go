@@ -60,6 +60,7 @@ func EmitGo(m ir.ModuleIR) string {
 // not repeated here; every other target needs the definitions emitted.
 func EmitGoForTarget(m ir.ModuleIR, kind string) string {
 	isServer := kind == "server"
+	m.Funcs = renameRuntimeExterns(m.Funcs)
 	var body strings.Builder
 
 	if flags := goFeatureFlags(m.Features); len(flags) > 0 {
@@ -559,7 +560,11 @@ func emitGoInstr(b *strings.Builder, instr ir.Instr, depth int, declared map[str
 		target := goFieldName(strings.TrimSpace(dest))
 		// A store through a pointer, `((T*)(p))[i] = v`, is an expression
 		// and is translated as one.
-		if strings.Contains(dest, "*)(") {
+		//
+		// So is a target with a call in it — an index the checker lowered to
+		// `rho_index(rho_mod_u32(i, 4), 4)` — whose helpers have Go names of
+		// their own that renaming the words one by one does not reach.
+		if strings.Contains(dest, "*)(") || strings.Contains(dest, "(") {
 			target = ToGoExpr(strings.TrimSpace(dest))
 		}
 		fmt.Fprintf(b, "%s%s = %s\n", pad, target, ToGoExpr(instr.Args[0]))
@@ -1521,6 +1526,16 @@ func rhoYamlKeyLess(a, b string) bool {
 				"}\n",
 		},
 		{
+			// How many arguments there are, not counting the program's name.
+			call: "rhoArgCount(",
+			define: "func rhoArgCount() uint32 {\n" +
+				"\tif len(os.Args) < 2 {\n" +
+				"\t\treturn 0\n" +
+				"\t}\n" +
+				"\treturn uint32(len(os.Args) - 1)\n" +
+				"}\n",
+		},
+		{
 			// Whether a path is there. A program that walks a tree asks about
 			// every path it meets, and a program that cannot ask is a program
 			// that has to guess.
@@ -1719,6 +1734,45 @@ func rhoYamlKeyLess(a, b string) bool {
 		{
 			call:  "rhoMilliRound(",
 			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoMilliFormatFixed(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoF64ToStr(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			call:  "rhoF32ToStr(",
+			needs: []string{"rhoStrTrim("},
+		},
+		{
+			// Standard error, as print is standard output: no prefix, no
+			// newline.
+			call:    "rhoEprint(",
+			define:  "func rhoEprint(s string) { os.Stderr.WriteString(s) }\n",
+			imports: []string{"os"},
+		},
+		{
+			// A string's bytes into a caller's buffer, as many as fit.
+			call: "rhoStrToBytes(",
+			define: "func rhoStrToBytes(s string, ptr unsafe.Pointer, n uint32) uint32 {\n" +
+				"\tif ptr == nil || n == 0 {\n\t\treturn 0\n\t}\n" +
+				"\tcount := copy(unsafe.Slice((*byte)(ptr), n), s)\n" +
+				"\treturn uint32(count)\n}\n",
+			imports: []string{"unsafe"},
+		},
+		{
+			// A string of the bytes up to the first 0, or all of them: what a
+			// C string of them is on the C backend.
+			call: "rhoStrFromBytes(",
+			define: "func rhoStrFromBytes(ptr unsafe.Pointer, n uint32) string {\n" +
+				"\tif ptr == nil || n == 0 {\n\t\treturn \"\"\n\t}\n" +
+				"\tbytes := unsafe.Slice((*byte)(ptr), n)\n" +
+				"\tfor i, b := range bytes {\n\t\tif b == 0 {\n\t\t\treturn string(bytes[:i])\n\t\t}\n\t}\n" +
+				"\treturn string(bytes)\n}\n",
+			imports: []string{"unsafe"},
 		},
 		{
 			call:  "rhoI64ToStr(",

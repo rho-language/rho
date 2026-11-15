@@ -155,7 +155,10 @@ func Load(src string) (Value, error) {
 			if current.Kind != KindList {
 				return Value{}, fmt.Errorf("list item without a list: %q", line)
 			}
-			item := strings.TrimSpace(line[1:])
+			// A comment after an item is a comment, as it is after a key's value:
+			// `- name: tests/csv   # the parser` names tests/csv. A `#` inside quotes,
+			// or not after whitespace, is part of the value.
+			item := strings.TrimSpace(stripComment(line[1:]))
 			// A quoted item is a string, whatever it contains. A target name
 			// like `rho::sensor-lib` is quoted precisely because of its
 			// colons, and reading that as a key and a value turned a declared name

@@ -280,16 +280,17 @@ func TestASkippedSuiteIsCountedAsSkippedAndNotAsPassed(t *testing.T) {
 	}
 }
 
-// A suite that names cases, ran, and named none has tested nothing. Reporting it
-// as a pass is how a run claims to have tested something it did not — which is
-// why this is a failure and not a silence.
-func TestASuiteThatReportsNoCasesFails(t *testing.T) {
+// A Rho test file's cases are its `test fn`s and the exit status is the
+// verdict: a program that prints no result lines and exits 0 passed every case
+// it declares, as testing.md says. (A suite of another kind that names cases
+// and reports none still fails; that is TestAPluginSuiteThatReportsNoCasesFails.)
+func TestASilentRhoProgramPassesItsDeclaredCases(t *testing.T) {
 	root := project(t, `name: p
 suites:
   - name: silent
     kind: rho
 `)
-	if err := os.WriteFile(filepath.Join(root, "silent_test.rho"), []byte("test fn nothing() {\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "silent_test.rho"), []byte("test fn nothing() {\n}\ntest fn other() {\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	report := RunSuite(Options{
@@ -298,18 +299,8 @@ suites:
 		Runner: &fakeRunner{failing: -1},
 		Out:    discard(),
 	})
-
-	if report.Summary.Failed == 0 {
-		t.Fatalf("expected a silent suite to fail, got %+v", report.Summary)
-	}
-	found := false
-	for _, result := range report.Results {
-		if strings.Contains(result.Reason, "no cases") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected the reason to say the suite reported nothing, got %+v", report.Results)
+	if report.Summary.Failed != 0 || report.Summary.Passed != 2 {
+		t.Fatalf("expected the two declared cases to pass, got %+v", report.Summary)
 	}
 }
 

@@ -29,7 +29,7 @@ says so in its header, with a line the build reads:
 supplies its foreign functions on a Go target. A program that imports such a
 module for a target it is not for is refused before anything is generated,
 with the module, the backend and the file that imported it named. A built-in
-function only some backends supply (`get_args`, `escape_html`, `store_list` …)
+function only some backends supply (`read_file`, `escape_html`, `store_list` …)
 is refused the same way, at the line that calls it; the
 {ref}`built-in functions <language/builtins>` page lists which backends supply
 each.
@@ -315,7 +315,7 @@ the template renderer whether or not its target carries template files, so
 
 `std.assert.assert` is what a test asserts with: `assert`, `assert_true`,
 `assert_false`, `assert_eq`, `assert_ne` and `fail`. A failure prints
-`ASSERTION FAILED: ` and the message on standard output, then aborts: `rho:
+`ASSERTION FAILED: `, the message and a newline on standard output, then aborts: `rho:
 aborted` on standard error and status 1, on both backends. It is a module rather than a
 keyword, so a program that does not test does not carry it, and what a test
 asserts is a call a person can read in the diff. {ref}`tools/testing` covers the

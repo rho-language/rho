@@ -156,14 +156,17 @@ func stateOf(found []deps.InstalledModule, one deps.InstalledModule) string {
 // off. It is a command of its own rather than three, so that the plugins a
 // machine has are one thing a person asks about.
 func PluginCommand(args []string) error {
+	const usage = "usage: rho plugin <list|enable|disable> [name]\n\n" +
+		"  list      what is installed, what each plugin provides, and what runs\n" +
+		"  enable    a plugin runs; a version may be named, as name@version\n" +
+		"  disable   a plugin stays installed and is not used"
 	if len(args) == 0 {
-		return fmt.Errorf(
-			"usage: rho plugin <list|enable|disable> [name]\n\n" +
-				"  list      what is installed, what each plugin provides, and what runs\n" +
-				"  enable    a plugin runs; a version may be named, as name@version\n" +
-				"  disable   a plugin stays installed and is not used")
+		return fmt.Errorf("%s", usage)
 	}
 	switch args[0] {
+	case "-h", "-help", "--help", "help":
+		fmt.Println(usage)
+		return nil
 	case "list":
 		return PluginList(args[1:])
 	case "enable":

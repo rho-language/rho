@@ -86,9 +86,9 @@ fn start_cards() string {
 // release_rows renders the first `limit` release notes, newest first as the
 // changelog lists them.
 fn release_rows(notes: string, limit: u32) string {
-    let out: string = ""
-    let count: u32 = 0
-    let rest: string = notes
+    var out: string = ""
+    var count: u32 = 0
+    var rest: string = notes
     while guard_of(count) < 4096 {
         if count >= limit {
             break
@@ -139,8 +139,8 @@ fn after_first_line(text: string) string {
 }
 
 fn field_of(line: string, wanted: u32) string {
-    let at: u32 = 0
-    let seen: u32 = 0
+    var at: u32 = 0
+    var seen: u32 = 0
     let length: u32 = strlen(line)
     while at <= length {
         if seen == wanted {
@@ -159,8 +159,8 @@ fn field_of(line: string, wanted: u32) string {
 }
 
 fn line_count(listing: string) u32 {
-    let count: u32 = 0
-    let rest: string = listing
+    var count: u32 = 0
+    var rest: string = listing
     while guard_of(count) < 4096 {
         if strlen(first_line(rest)) == 0 {
             break

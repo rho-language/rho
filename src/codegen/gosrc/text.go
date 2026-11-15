@@ -313,3 +313,56 @@ func rhoAppWorkspace() string {
 	}
 	return filepath.Join(home, ".rho", "apps", app)
 }
+
+// rhoMilliFormatFixed writes thousandths with exactly decimals digits after
+// the point (at most 20): fewer than three rounds the half away from zero, and
+// more pads with zeros. A value that rounds to zero has no sign.
+func rhoMilliFormatFixed(milli int64, decimals uint32) string {
+	if decimals > 20 {
+		decimals = 20
+	}
+	value := uint64(milli)
+	if milli < 0 {
+		value = uint64(0) - uint64(milli)
+	}
+	kept := decimals
+	if kept > 3 {
+		kept = 3
+	}
+	scale := uint64(1)
+	for i := kept; i < 3; i++ {
+		scale *= 10
+	}
+	rounded := value / scale
+	if scale > 1 && (value%scale)*2 >= scale {
+		rounded++
+	}
+	unit := uint64(1)
+	for i := uint32(0); i < kept; i++ {
+		unit *= 10
+	}
+	out := strconv.FormatUint(rounded/unit, 10)
+	if decimals > 0 {
+		fraction := strconv.FormatUint(rounded%unit+unit, 10)[1:]
+		out += "." + fraction + strings.Repeat("0", int(decimals-kept))
+	}
+	if milli < 0 && rounded != 0 {
+		out = "-" + out
+	}
+	return out
+}
+
+// rhoF64ToStr writes x in fixed notation with decimals digits (at most 20),
+// rounded to nearest from the exact binary value, a tie to even — the C
+// runtime's float.c gives the same text.
+func rhoF64ToStr(x float64, decimals uint32) string {
+	if decimals > 20 {
+		decimals = 20
+	}
+	return strconv.FormatFloat(x, 'f', int(decimals), 64)
+}
+
+// rhoF32ToStr is rhoF64ToStr of the same value.
+func rhoF32ToStr(x float32, decimals uint32) string {
+	return rhoF64ToStr(float64(x), decimals)
+}

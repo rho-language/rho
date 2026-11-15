@@ -1,0 +1,84 @@
+//
+// @file csv.rho
+// @brief Splitting one CSV record into its fields.
+//
+// @module csv_report.csv
+// @project csv_report
+// @author Aurel Miron
+// @date 2026-11-15
+//
+// SPDX-License-Identifier: NOASSERTION
+//
+
+module csv_report.csv
+
+// The most fields one record may have. A record with more is malformed.
+const MAX_FIELDS: u32 = 32
+
+// parse_record splits one line of CSV into out, and answers how many fields it
+// had, or what is wrong with it.
+//
+// Fields are separated by commas. A field that begins with a double quote runs
+// to the matching closing quote, may hold commas, and writes a double quote as
+// two (`""`). A quote that is never closed, text after a closing quote, or more
+// fields than out can hold is an error. A trailing carriage return is dropped,
+// so a file with CRLF line endings reads the same.
+fn parse_record(line: string, out: Slice[string]) Result[u32, string] {
+    var n: u32 = strlen(line)
+    if n > 0 && str_at(line, n - 1) == 13 {
+        n = n - 1
+    }
+    var count: u32 = 0
+    var i: u32 = 0
+    while true {
+        var field: string = ""
+        if i < n && str_at(line, i) == 34 {
+            // A quoted field: copy runs of text between quotes.
+            i = i + 1
+            var closed: bool = false
+            while i < n {
+                let c: u8 = str_at(line, i)
+                if c == 34 {
+                    if i + 1 < n && str_at(line, i + 1) == 34 {
+                        field = field + "\""
+                        i = i + 2
+                        continue
+                    }
+                    closed = true
+                    i = i + 1
+                    break
+                }
+                let start: u32 = i
+                while i < n && str_at(line, i) != 34 {
+                    i = i + 1
+                }
+                field = field + str_slice(line, start, i - start)
+            }
+            if !closed {
+                return Err[u32, string]("unterminated quoted field " + int_to_str(count + 1))
+            }
+            if i < n && str_at(line, i) != 44 {
+                return Err[u32, string]("text after the closing quote of field " + int_to_str(count + 1))
+            }
+        } else {
+            let start: u32 = i
+            while i < n && str_at(line, i) != 44 {
+                if str_at(line, i) == 34 {
+                    return Err[u32, string]("a quote inside unquoted field " + int_to_str(count + 1))
+                }
+                i = i + 1
+            }
+            field = str_slice(line, start, i - start)
+        }
+        if count >= out.len {
+            return Err[u32, string]("more than " + int_to_str(out.len) + " fields")
+        }
+        out[count] = field
+        count = count + 1
+        if i >= n {
+            break
+        }
+        i = i + 1   // the comma
+    }
+    return Ok[u32, string](count)
+}

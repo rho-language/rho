@@ -146,12 +146,15 @@ func (t backendTarget) allows(backends []string, port string) (bool, string) {
 		}
 	}
 	if port != "" && t.Emitter == "go" {
+		wanted := strings.Split(port, "|")
 		for _, rendered := range t.Ports {
-			if rendered == port {
-				return true, ""
+			for _, one := range wanted {
+				if rendered == one {
+					return true, ""
+				}
 			}
 		}
-		return false, "needs the " + port + " port, which this target does not render"
+		return false, "needs the " + strings.Join(wanted, " or ") + " port, which this target does not render"
 	}
 	return true, ""
 }

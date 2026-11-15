@@ -44,13 +44,22 @@ fn main() void {
 }
 ```
 
-The runner strips the `test` marker, builds the file to C, compiles it with `cc`
-and runs it. The exit status is the verdict, and the cases a report lists are
-the `test fn` declarations with their lines.
+The runner strips the `test` marker, translates the file to C
+(`rho build --emit-c`, which builds nothing else), compiles it with `cc` under
+`build/test/` and runs it — on the C backend only, whatever targets the project
+declares, and never over the application's own binaries. The exit status is the
+verdict, and the cases a report lists are the `test fn` declarations with their
+lines: a `[PASS] name` / `[FAIL] name` line (or TAP's `ok N - name`) reports the
+declared case of that name; a case nothing reported fails if the program
+stopped, passes if the program exited 0 and reported nothing at all, and is
+skipped if the program reported other cases (a `test fn` `main` never calls); a
+printed name that is not a `test fn` never becomes a case (a `[FAIL]` under one
+still fails the suite).
 
 The built-in kinds are `rho`, `command` and `build`. Any other kind is resolved
 by a plugin, and a kind that no installed plugin resolves is reported as skipped
-with a reason rather than dropped.
+with a reason rather than dropped. A suite whose file cannot be found, or names
+no `test fn`, fails the run.
 
 ## Plugins
 

@@ -1,0 +1,93 @@
+//
+// @file csv_test.rho
+// @brief The CSV record parser: plain, quoted and malformed records.
+//
+// @module csv_report.csv_test
+// @project csv_report
+// @date 2026-11-15
+//
+// SPDX-License-Identifier: NOASSERTION
+//
+
+module csv_report.csv_test
+
+include "../src/csv.rho"
+
+import std.assert.assert
+
+// fields parses line and answers its fields joined by "|", or "ERR: <why>".
+fn fields(line: string) string {
+    var out: string[MAX_FIELDS]
+    match parse_record(line, out) {
+        Ok(n) => {
+            var joined: string = ""
+            var i: u32 = 0
+            while i < n {
+                if i > 0 {
+                    joined = joined + "|"
+                }
+                joined = joined + out[i]
+                i = i + 1
+            }
+            return joined
+        }
+        Err(e) => { return "ERR: " + e }
+    }
+}
+
+fn expect(line: string, want: string) void {
+    let got: string = fields(line)
+    if got != want {
+        print("mismatch for " + line + "\n  got:  " + got + "\n  want: " + want + "\n")
+        fail("parse_record")
+    }
+}
+
+test fn plain_fields() void {
+    expect("a,b,c", "a|b|c")
+    expect("one", "one")
+    expect("12,-3.5,x y", "12|-3.5|x y")
+    print("[PASS] plain_fields\n")
+}
+
+test fn empty_fields() void {
+    expect("a,,c", "a||c")
+    expect(",", "|")
+    expect("a,b,", "a|b|")
+    expect("\"\",x", "|x")
+    print("[PASS] empty_fields\n")
+}
+
+test fn quoted_fields() void {
+    expect("\"Smith, Jones\",3", "Smith, Jones|3")
+    expect("\"say \"\"hi\"\"\",2", "say \"hi\"|2")
+    expect("\"\"\"\"", "\"")
+    expect("x,\"a,b,c\"", "x|a,b,c")
+    print("[PASS] quoted_fields\n")
+}
+
+test fn carriage_return_is_dropped() void {
+    expect("a,b\r", "a|b")
+    expect("\"a\",\"b\"\r", "a|b")
+    print("[PASS] carriage_return_is_dropped\n")
+}
+
+test fn malformed_records() void {
+    expect("a,\"open", "ERR: unterminated quoted field 2")
+    expect("\"a\"b,c", "ERR: text after the closing quote of field 1")
+    expect("ab\"c", "ERR: a quote inside unquoted field 1")
+    var small: string[2]
+    match parse_record("a,b,c", small) {
+        Ok(_) => { fail("three fields fitted in two") }
+        Err(e) => { assert_eq(e, "more than 2 fields") }
+    }
+    print("[PASS] malformed_records\n")
+}
+
+fn main() void {
+    plain_fields()
+    empty_fields()
+    quoted_fields()
+    carriage_return_is_dropped()
+    malformed_records()
+}

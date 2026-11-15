@@ -30,6 +30,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"rho/src/deps"
 	"rho/src/yaml"
@@ -46,7 +47,8 @@ type Options struct {
 	Name string
 	// Description is the manifest's one line about what the program is.
 	Description string
-	// Language is the build language: "go" (the default) or "c".
+	// Language is build.language: "go" or "c". Empty means the language of the
+	// first target, and "go" when no target is named either.
 	Language string
 	// Targets are the build targets to declare. Empty means a single target for
 	// the language, which is a command-line program.
@@ -59,6 +61,12 @@ type Result struct {
 	Dir string
 	// Name is the module name that was written.
 	Name string
+	// NameFrom is what the name was made from — the directory's base name, or
+	// the --name given — so a caller can say when the two differ.
+	NameFrom string
+	// Language and Targets are what the manifest declares under build:.
+	Language string
+	Targets  []string
 	// Files are the paths written, relative to Dir, in the order they were.
 	Files []string
 }
@@ -104,23 +112,27 @@ func Application(opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("invalid directory path")
 	}
 
-	name := strings.TrimSpace(opts.Name)
-	if name == "" {
-		name = validName(filepath.Base(dir))
-	} else {
-		name = validName(name)
+	nameFrom := strings.TrimSpace(opts.Name)
+	if nameFrom == "" {
+		nameFrom = filepath.Base(dir)
 	}
+	name := validName(nameFrom)
 
 	manifestPath := filepath.Join(dir, "module.yml")
 	if _, err := os.Stat(manifestPath); err == nil {
 		return Result{}, fmt.Errorf("%s already holds a module.yml; choose another directory", dir)
 	}
 
+	targets := opts.Targets
 	language := strings.TrimSpace(opts.Language)
 	if language == "" {
+		// The language of the first target the project names: a project that
+		// asks for c first is a C program first. go-server is Go.
 		language = "go"
+		if len(targets) > 0 {
+			language = languageOf(targets[0])
+		}
 	}
-	targets := opts.Targets
 	if len(targets) == 0 {
 		targets = []string{language}
 	}
@@ -145,7 +157,7 @@ func Application(opts Options) (Result, error) {
 		content string
 	}{
 		{"module.yml", manifest(name, description, language, targets)},
-		{filepath.Join("src", "main.rho"), program(name)},
+		{filepath.Join("src", "main.rho"), program(name, description, dir)},
 		{"README.md", readme(name, language, targets)},
 		{".gitignore", gitignore()},
 	}
@@ -159,7 +171,19 @@ func Application(opts Options) (Result, error) {
 		written = append(written, file.path)
 	}
 
-	return Result{Dir: dir, Name: name, Files: written}, nil
+	return Result{Dir: dir, Name: name, NameFrom: nameFrom, Language: language, Targets: targets, Files: written}, nil
+}
+
+// languageOf is the build language a target is written in: c for the C
+// backend, go for the Go ones. A target that is neither (a board) is built from
+// the C backend.
+func languageOf(target string) string {
+	switch strings.TrimSpace(target) {
+	case "go", "go-server":
+		return "go"
+	default:
+		return "c"
+	}
 }
 
 // manifest is the module.yml a new application starts with. Its shape is what
@@ -169,7 +193,9 @@ func manifest(name, description, language string, targets []string) string {
 	var b strings.Builder
 	b.WriteString("#\n# @file module.yml\n# @brief ")
 	b.WriteString(name)
-	b.WriteString(" — a Rho application.\n#\n\n")
+	b.WriteString(" — ")
+	b.WriteString(description)
+	b.WriteString("\n#\n\n")
 	b.WriteString("module:\n")
 	fmt.Fprintf(&b, "  name: %s\n", name)
 	b.WriteString("  type: rho\n")
@@ -177,6 +203,9 @@ func manifest(name, description, language string, targets []string) string {
 	fmt.Fprintf(&b, "  description: %s\n", description)
 	b.WriteString("\nmain: src/main.rho\n\n")
 	b.WriteString("build:\n")
+	b.WriteString("  # What is built is `targets`: a project per target under build/generated/.\n")
+	b.WriteString("  # `language` is the language the module is built as, c or go; for an\n")
+	b.WriteString("  # application it is informational, and it should be one of the targets'.\n")
 	fmt.Fprintf(&b, "  language: %s\n", language)
 	b.WriteString("  targets:\n")
 	for _, target := range targets {
@@ -187,8 +216,16 @@ func manifest(name, description, language string, targets []string) string {
 
 // program is the entry point. It prints one line and returns, which is the
 // smallest thing that compiles to every backend and runs everywhere.
-func program(name string) string {
+func program(name, description, dir string) string {
 	var b strings.Builder
+	author := gitUser(dir)
+	if author == "" {
+		author = gitUser(filepath.Dir(dir))
+	}
+	b.WriteString(sourceHeader(header{
+		file: "main.rho", description: description, module: name, project: name,
+		author: author, date: time.Now().Format("2006-01-02"), license: "NOASSERTION",
+	}))
 	fmt.Fprintf(&b, "module %s\n\n", name)
 	b.WriteString("// main is where the program starts. Every backend \u2014 the native one and\n")
 	b.WriteString("// the generated service \u2014 reaches it the same way, so this is the one place\n")

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/format"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"rho/internal/paths"
+	clicore "rho/src/cli"
 	"rho/src/integration"
 	"rho/src/plugins"
 	"rho/src/protocol"
@@ -33,6 +35,9 @@ func protocolCLI(args []string) int {
 		return 2
 	}
 	switch args[0] {
+	case "-h", "-help", "--help", "help":
+		fmt.Println("usage: rho protocol generate [--target c|go|rho] [--out DIR] [--package NAME] [--bus FILE] [--transport FILE] [--platform NAME] <file-or-dir>...")
+		return 0
 	case "generate":
 		return protocolGenerate(args[1:])
 	default:
@@ -49,11 +54,14 @@ func protocolGenerate(args []string) int {
 	busFile := fs.String("bus", "", "a bus binding file: generates the event-bus files for the c target")
 	transportFile := fs.String("transport", "", "a framing file: adds the wire framing to the rho target")
 	platform := fs.String("platform", "", "a platform whose integration plugin provides the bindings")
-	if err := fs.Parse(args); err != nil {
+	paths, passthrough, err := clicore.ParseInterspersed(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
-
-	paths := fs.Args()
+	paths = append(paths, passthrough...)
 	if len(paths) == 0 {
 		fmt.Fprintln(os.Stderr, "protocol generate: a file or directory is required")
 		return 2

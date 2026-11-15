@@ -1,0 +1,18 @@
+#
+# @file module.yml
+# @brief csv_report — a Rho application.
+#
+
+module:
+  name: csv_report
+  type: rho
+  version: 0.1.0
+  description: Summarises a CSV file and groups its rows.
+
+main: src/main.rho
+
+build:
+  language: go
+  targets:
+    - c
+    - go

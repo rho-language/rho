@@ -11,7 +11,14 @@ rho help              # the CLI's commands, then the enabled components'
 rho help build        # one command's own help, as `rho build --help`
 ```
 
-`help`, `version`, `init`, `new` and `install` work before anything is installed.
+`rho help <command>` runs `rho <command> --help`, for the CLI's own commands and
+a component's alike, and asking for help exits 0. A flag may be written before
+the path a command takes or after it — `rho build . --target go` and
+`rho build --target go .` are the same — with one dash or two, and as
+`--name value` or `--name=value`; `--` ends the flags.
+
+`help`, `version`, `init`, `new` and `install` work before anything is installed,
+and so does any of the CLI's own commands asked for its `--help`.
 Every other command reads the local registry, and on a machine without one it
 says `The local registry is not installed` and exits 1.
 
@@ -19,7 +26,7 @@ says `The local registry is not installed` and exits 1.
 
 | Command | What it does |
 |---|---|
-| `rho run [<project-dir>\|<file.rho>]` | Build and run a project, or one file |
+| `rho run [<project-dir>\|<file.rho>] [args...]` | Build and run a project, or one file, with the program's arguments |
 | `rho build [<project-dir>\|<file.rho>]` | Generate and build every target the project declares |
 | `rho init [<generator>] <directory>` | Start a Rho application, or a project a module knows how to generate |
 | `rho new <file.rho>` | Start a Rho source file with its header |
@@ -37,14 +44,23 @@ says `The local registry is not installed` and exits 1.
 ## rho run
 
 ```sh
-rho run hello.rho     # one file
-rho run .             # the project in this directory (the default)
+rho run hello.rho                 # one file
+rho run .                         # the project in this directory (the default)
+rho run . sample.csv --sum price  # the program's own arguments follow the path
+rho run . -- --help               # `--` after the path is optional
+rho run -- sample.csv             # the project here, with arguments
 ```
 
 A project whose manifest declares a Go target (`go` or `go-server`) is generated,
 built with Go and run; the first Go target the manifest names is the one that
 runs. Otherwise the program is translated to C and compiled with `gcc`, with the
 C sources the manifest lists, and run. The program's exit status is passed on.
+
+Every argument after the path is the program's, flags included: `rho run . -v`
+gives the program `-v`. A `--` straight after the path is dropped, and a `--`
+before any path runs the project in the working directory with what follows.
+The program runs in the directory `rho run` was started from, so a relative path
+among its arguments means what it means to the shell.
 
 ## rho build
 
@@ -64,10 +80,14 @@ rho build --clean                   # remove the build directory and stop
 | `--build-type TYPE` | `Release` | `Release`, `Debug`, `RelWithDebInfo` or `MinSizeRel`, matched without regard to case |
 | `--link-map` / `--no-link-map` | the manifest's `build.link_map`, else on | Whether the link writes its map |
 | `-o FILE` | none | Also write the translated C of a Rho entry to this file, when the project generates a C target |
+| `--emit-c` | off | With `-o`: write only the translation and stop — no project is generated and nothing is built (what `rho test` uses) |
 | `--clean` | off | Remove the project's build directory and stop |
 
 There is no `--output` flag: where a generated project and its binary go is the
-project descriptor's (`output_dir`, `build_dir`), not a flag's.
+project descriptor's (`output_dir`, `build_dir`), not a flag's. By default a Go
+target's program is `build/<name>`, named after the manifest's `module.name`, and
+the C program is `build/output/<name>`, named after the module `src/main.rho`
+declares; the build's last line names it (`Built binary: build/output/csv_report`).
 
 A build resolves the dependencies and writes `rho.lock`, generates a project per
 declared target under `build/generated/<target>/`, builds each Go project with Go,
@@ -87,7 +107,7 @@ problem matcher read it alike:
 src/helper.rho:4:18: error: cannot use a string as u32 in `let y`; parse it with int_from_str(...) or i64_from_str(...) and convert the result, or change the declared type
 src/main.rho:18:22: error: area takes 1 argument, and this call passes 2; it is called with (Point)
 src/main.rho:8:1: note: area is declared here
-src/loop.rho:10:5: warning: loop.run: the loop at line 10 keeps a string it builds in "last", ...
+src/loop.rho:10:5: warning: loop.run: the loop at line 10 keeps a string it builds in "history", ...
 ```
 
 - **The place is the mistake's.** The file is the one the mistake is written in —
@@ -125,9 +145,13 @@ zero as the protocol counts, with the notes as related information.
 ## rho init and rho new
 
 `rho init <directory>` writes a new application: `module.yml`, `src/main.rho`, a
-`README.md` and a `.gitignore`. In a repository whose manifest declares
-generators, it writes what a generator describes instead. Its flags and the
-generator format are in {ref}`documentation/generating`.
+`README.md` and a `.gitignore`. The module name is the directory's, made into a
+name (`csv-report` becomes `csv_report`, and `rho init` says so);
+`--description` is the manifest's description and the `@brief` of both files;
+`--target c,go` declares both targets and takes `build.language` from the first.
+In a repository whose manifest declares generators, it writes what a generator
+describes instead. Its flags and the generator format are in
+{ref}`documentation/generating`.
 
 `rho new src/storage/cache.rho --description "What the cache keeps."` writes a
 source file that starts with what its module already knows:
@@ -155,8 +179,10 @@ or `tests/`; a folder that repeats the name's last part is not repeated, and
 author, or the git user), the date is today, and the licence is the manifest's
 `license`, or `NOASSERTION` when it states none. A file named `*_test.rho`
 starts as a test file — a `check`, one `test fn` and a `main` that calls it — and
-is added to the module's `tests/tests.yml` when it has one. `--author`, `--date`
-and `--force` (replace a file that is there) change what it writes.
+is added to the module's `tests/tests.yml` when it has one. Its opening comment
+names the module's sources under `src/` to `include`, never `src/main.rho`, whose
+`main` would clash with the test's own. `--author`, `--date` and `--force`
+(replace a file that is there) change what it writes.
 
 ## rho install
 
@@ -304,7 +330,7 @@ when the workspace is not a directory.
 
 A command that is not in the table above is a component's: the component
 publishes the command in its manifest, and `rho` runs the enabled version of it
-with the rest of the arguments. {ref}`tools/components` lists every one, and each
+with the rest of the arguments, and exits with the component's exit status. {ref}`tools/components` lists every one, and each
 component has its own page:
 
 | Command | Component |

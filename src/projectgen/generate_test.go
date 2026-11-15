@@ -91,7 +91,7 @@ func TestEmitCProjectFillsEveryRole(t *testing.T) {
 	if !strings.Contains(artifacts.Interface, "int app_main(void);") {
 		t.Error("C interface should declare app_main")
 	}
-	if !strings.Contains(artifacts.Entrypoint, "int main(void)") {
+	if !strings.Contains(artifacts.Entrypoint, "int main(int argc, char** argv)") || !strings.Contains(artifacts.Entrypoint, "app_args(argc, argv);") {
 		t.Error("C entrypoint should define main")
 	}
 	if !strings.Contains(artifacts.Build, "add_executable") {

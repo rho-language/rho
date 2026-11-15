@@ -809,7 +809,11 @@ func goTypeForIR(t ir.Type) string {
 	if t.ArrayLen > 0 {
 		element := t
 		element.ArrayLen = 0
-		if open := strings.IndexByte(t.Name, '['); open >= 0 {
+		// Only the trailing length is the array's: `Box[i32][2]` is two
+		// Box[i32], whose own brackets are its type arguments.
+		if base, dims, ok := goNameArrayDims(t.Name); ok && len(dims) == 1 && dims[0] == t.ArrayLen {
+			element.Name = base
+		} else if open := strings.IndexByte(t.Name, '['); open >= 0 {
 			element.Name = t.Name[:open]
 		}
 		return "[" + strconv.Itoa(t.ArrayLen) + "]" + goTypeForIR(element)

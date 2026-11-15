@@ -25,3 +25,11 @@ Rules read function types and literals; an import used only in a type is not rep
 ## [0.2.3] - 2026-11-15
 
 Rules read constraints and explicit type arguments.
+
+## [0.3.0] - 2026-11-15
+
+Test files (`test fn`) are read. Files under the build and output directories are skipped; `--include-generated` reads them. `rho-module-name` accepts the name `rho init` writes and says what the name should be; `rho-unused-import` counts a bare call of what the import declares; `rho-shadowed-binding` ignores a binding declared after the inner scope.
+
+### Breaking
+
+- Generated files are no longer linted by default: pass `--include-generated`.

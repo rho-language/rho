@@ -209,6 +209,11 @@ type Suite struct {
 	// whose toolchain is not installed has not been satisfied, and reporting it as
 	// satisfied is the one way a smoke suite lies.
 	Skip string
+	// Broken is why this suite could not be made runnable, when it could not: the
+	// test file it names is not there, or declares no tests. Unlike Skip it fails
+	// the run — a suite nobody can find has not passed, and a run that reported it
+	// as skipped would exit 0 over a test that never ran.
+	Broken string
 	// Output is anything a run produced from the suite's own steps, kept so a
 	// report can show why a suite failed without the run having to have printed
 	// it at the time.

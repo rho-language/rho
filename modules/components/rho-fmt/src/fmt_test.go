@@ -248,7 +248,7 @@ fn main() void {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"enum Level {\n    Low = -2\n    Mid\n    High = 10\n}", "enum Shape[T = u32] {", "    Circle(T)\n", "    Rect { w: T, h: T }\n", "    Empty\n",
-		"Shape.Rect{ w, h } => {", "Option[u32].None", "if let Some(x) = none {", "} else {"} {
+		"Shape.Rect { w, h } => {", "Option[u32].None", "if let Some(x) = none {", "} else {"} {
 		if !strings.Contains(once, want) {
 			t.Errorf("the formatted source has no %q:\n%s", want, once)
 		}

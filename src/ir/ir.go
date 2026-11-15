@@ -298,6 +298,10 @@ const (
 	OpContinue
 	// OpArenaMark declares Dest as a mark of the string arena, taken here.
 	// OpArenaRelease gives back every string built since the mark Dest names.
+	// With Args it keeps some first: each is the address of a variable's string
+	// (a `(void*)&x`), and those strings are moved down to the mark and the
+	// variables pointed at where they now are — what a loop that replaces a
+	// variable declared outside it releases each iteration with.
 	//
 	// They are what the C backend frees strings with: a mark at the top of a
 	// loop and a release at the end of each iteration, and the same around a

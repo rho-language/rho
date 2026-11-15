@@ -89,6 +89,14 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 		initCall = "    init();\n"
 	}
 	appC += "\nvoid app_init(void)\n{\n" + initCall + "}\n\n"
+	// The command line, which a hosted `main` hands over and the runtime keeps
+	// for rho_arg, arg_count and get_args. A board's entry point does not call
+	// this, and a program there has no arguments.
+	if strings.Contains(compiled.Runtime, "void rho_args_init(") {
+		appC += "void app_args(int argc, char** argv)\n{\n    rho_args_init(argc, argv);\n}\n\n"
+	} else {
+		appC += "void app_args(int argc, char** argv)\n{\n    (void)argc;\n    (void)argv;\n}\n\n"
+	}
 
 	// The runtime comes from the code generator as its own translation unit.
 	//
@@ -109,7 +117,10 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 	// diverged.
 	runtimeBody := compiled.Runtime
 	runtimeBody = strings.ReplaceAll(runtimeBody, "static char* rho_", "char* rho_")
-	runtimeBody = strings.ReplaceAll(runtimeBody, "static const char* rho_", "char* rho_")
+	// The const stays: a function that returns a pointer into its argument
+	// returns it as const, and dropping the qualifier here made gcc warn on
+	// every C build (FINDINGS #23).
+	runtimeBody = strings.ReplaceAll(runtimeBody, "static const char* rho_", "const char* rho_")
 
 	// The stack, computed rather than guessed.
 	//
@@ -155,9 +166,9 @@ func EmitCProject(ctx Context) (Artifacts, error) {
 	artifacts.Interface = cBanner(ctx.ModuleName, "app.h", "Generated Rho application interface.") +
 		"#pragma once\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n" +
 		"#include <stdint.h>\n#include <stdbool.h>\n#include <stddef.h>\n" + connectionIncludes + configInclude +
-		"\nint app_main(void);\nvoid app_init(void);\n\n#ifdef __cplusplus\n}\n#endif\n"
+		"\nint app_main(void);\nvoid app_init(void);\nvoid app_args(int argc, char** argv);\n\n#ifdef __cplusplus\n}\n#endif\n"
 	artifacts.Entrypoint = cBanner(ctx.ModuleName, "main.c", "Generated native system entry point for a Rho application.") +
-		"#include \"app.h\"\n\nint main(void)\n{\n    app_init();\n    return app_main();\n}\n"
+		"#include \"app.h\"\n\nint main(int argc, char** argv)\n{\n    app_args(argc, argv);\n    app_init();\n    return app_main();\n}\n"
 	if artifacts.Extra == nil {
 		artifacts.Extra = map[string]string{}
 	}

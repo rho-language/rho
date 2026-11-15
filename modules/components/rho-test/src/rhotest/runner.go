@@ -162,6 +162,10 @@ func RunSuite(options Options) Report {
 
 	// (2) Which of those did this run ask for?
 	declared := Expand(manifest, options.Selection)
+	// A test file named on the command line is that file's suite and no other.
+	if file, isFile := namedTestFile(options.Path); isFile {
+		declared = onlyFile(declared, file, projectRootOf(options, manifest))
+	}
 	if len(declared) == 0 {
 		fmt.Fprintf(out, "No suites matched %s.\n", options.Selection.Describes())
 		if len(manifest.Declared) > 0 {
@@ -211,6 +215,42 @@ func RunSuite(options Options) Report {
 	}
 	writeReports(out, options, root, outcome)
 	return report
+}
+
+// namedTestFile is the Rho test file a run was pointed at, absolute, when the
+// path it was given is one.
+func namedTestFile(path string) (string, bool) {
+	if path == "" || !IsRhoTestFile(path) {
+		return "", false
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	if info, err := os.Stat(absolute); err != nil || info.IsDir() {
+		return "", false
+	}
+	return absolute, true
+}
+
+// onlyFile narrows the declared suites to the one for a test file: the declared
+// `rho` suite that names it, or a suite for it when the manifest names none.
+func onlyFile(declared []Declared, file string, root string) []Declared {
+	for _, entry := range declared {
+		if entry.Kind != KindRho {
+			continue
+		}
+		if path, err := resolveSourcePath(entry, root, KindRho); err == nil {
+			if absolute, absErr := filepath.Abs(path); absErr == nil && absolute == file {
+				return []Declared{entry}
+			}
+		}
+	}
+	name := strings.TrimSuffix(filepath.Base(file), TestFileSuffix)
+	if rel, err := filepath.Rel(root, file); err == nil && !strings.HasPrefix(rel, "..") {
+		name = strings.TrimSuffix(filepath.ToSlash(rel), TestFileSuffix)
+	}
+	return []Declared{{Name: name, Kind: KindRho, Tags: []string{KindRho}}}
 }
 
 // loadManifestFor reads the project's declaration, or falls back to the tests it

@@ -105,8 +105,8 @@ the same for a change to its documented commands.
 **Mechanical edits.** There is no `rho fix` yet, and `rho fmt` does not rewrite
 code: an edit in a Breaking section is made by hand, which is why each one is
 written out in full. A tool that applies the mechanical ones is future work.
-`rho fmt` also does not yet keep comments, so formatting a file drops its doc
-comments and the `@deprecated` and `@stability` tags in them.
+`rho fmt` keeps every comment, so formatting a file keeps its doc comments and
+the `@deprecated` and `@stability` tags in them where the toolchain reads them.
 
 ## After 1.0
 

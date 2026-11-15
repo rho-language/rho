@@ -43,3 +43,11 @@ A suite may say `enabled: false`, which keeps it from being run. A suite that
 is not enabled is not a suite that failed: it is there, and the reason it is
 not run is that somebody said so. The listing shows it as skipped, with the
 reason.
+
+## [0.2.0] - 2026-11-15
+
+Test programs are built under `build/test/` (through `rho build --emit-c`) and never overwrite the application's binaries. A suite that finds no test file, or no `test fn`, fails the run. Declared `test fn`s are the cases: a printed `[PASS]`/`[FAIL]` (or TAP) line reports the case of that name, a case nothing reported fails if the program stopped and is skipped with a hint if others reported; TAP `ok 3 - name` is the case `name`. `--echo` no longer repeats result lines. `rho test path/x_test.rho` runs only that suite. Flags take `--x=value`.
+
+### Breaking
+
+- A missing or empty suite fails the run instead of being skipped.

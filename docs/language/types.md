@@ -236,6 +236,11 @@ specialisation they name: `let f = identity[u32]`, `apply(doubled[u32], 21)`.
 Without them it is a value only where a function type says which
 specialisation is meant.
 
+A generic function of another module deduces the same way when it is called
+by the module's name, and takes its type arguments there too:
+`slices.sort_by(groups, fn(a: Group, b: Group) -> bool { ... })` and
+`slices.sort_by[Group](groups, less)`.
+
 ## Arrays, slices and pointers
 
 There are three sequence types, each with one job.
@@ -327,6 +332,9 @@ the same on each. `Slice.from_raw(p, n)` is how a `[T]` gets a length.
 
 A fixed array's length may be a module constant: with `const MAX: u32 = 32`,
 `u32[MAX]` is the type `u32[32]`, in a local, a parameter or a struct field.
+The element may be any type, a struct, an enum or a generic specialisation
+included: `stats: ColumnStats[MAX]`, `items: Box[u32][4]`, and in a generic
+struct `values: T[4]`.
 
 ## Structs
 
@@ -550,7 +558,10 @@ iteration lives until the end of that iteration unless the closure is stored in
 something declared outside the loop; one kept by a `let` lives as long as the
 string would; one returned from a function reaches the caller, as a returned
 string does. A loop that keeps the closures it makes is not released, and on a
-board that is refused as it is for strings. What makes this sound is what a
+board that is refused as it is for strings — including a loop that only
+replaces a function value declared outside it, which for a string would be kept
+and the rest released: an environment carries no length the runtime could move
+it by. What makes this sound is what a
 closure may capture: values only, never a reference into a frame (a pointer, a
 `[T]`, a `Slice[T]`), and nothing it can change after it was made. A call
 through a function value is counted as building strings, because its body is

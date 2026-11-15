@@ -1,0 +1,114 @@
+//
+// @file report_test.rho
+// @brief Column statistics, number formatting, grouping and the whole report.
+//
+// @module csv_report.report_test
+// @project csv_report
+// @date 2026-11-15
+//
+// SPDX-License-Identifier: NOASSERTION
+//
+
+module csv_report.report_test
+
+include "../src/csv.rho"
+include "../src/report.rho"
+
+import std.assert.assert
+
+fn expect_text(what: string, got: string, want: string) void {
+    if got != want {
+        print("mismatch in " + what + "\n--- got:\n" + got + "\n--- want:\n" + want + "\n")
+        fail(what)
+    }
+}
+
+test fn hundredths_are_rounded_half_away_from_zero() void {
+    expect_text("2345", format_hundredths(2345), "2.35")
+    expect_text("3000", format_hundredths(3000), "3.00")
+    expect_text("-1500", format_hundredths(-1500), "-1.50")
+    expect_text("-5", format_hundredths(-5), "-0.01")
+    expect_text("-4", format_hundredths(-4), "0.00")
+    expect_text("7", format_hundredths(7), "0.01")
+    expect_text("mean 7/2", format_hundredths(mean_milli(7000, 2)), "3.50")
+    expect_text("mean -1/3", format_hundredths(mean_milli(-1000, 3)), "-0.33")
+    print("[PASS] hundredths_are_rounded_half_away_from_zero\n")
+}
+
+test fn a_column_is_numeric_only_when_every_value_is() void {
+    var s: ColumnStats
+    s = observe(s, "4")
+    s = observe(s, "")
+    s = observe(s, "-2.5")
+    s = observe(s, "10")
+    assert_true(s.numeric)
+    assert_eq(s.values, 3)
+    assert_eq(s.min, -2500)
+    assert_eq(s.max, 10000)
+    assert_eq(s.sum, 11500)
+    s = observe(s, "n/a")
+    assert_false(s.numeric)
+    s = observe(s, "5")
+    assert_false(s.numeric)
+    print("[PASS] a_column_is_numeric_only_when_every_value_is\n")
+}
+
+test fn groups_are_counted_summed_and_sorted() void {
+    var storage: Group[4]
+    var used: u32 = 0
+    used = add_to_group(storage, used, "b", 1000)
+    used = add_to_group(storage, used, "a", 5000)
+    used = add_to_group(storage, used, "b", 7000)
+    used = add_to_group(storage, used, "c", 8000)
+    assert_eq(used, 3)
+    let found = storage[..used]
+    sort_groups(found)
+    assert_eq(found[0].key, "b")
+    assert_eq(found[0].count, 2)
+    assert_eq(found[0].sum, 8000)
+    assert_eq(found[1].key, "c")
+    assert_eq(found[2].key, "a")
+    used = add_to_group(storage, used, "d", 0)
+    used = add_to_group(storage, used, "e", 0)
+    assert_eq(used, 5)  // one more than fits: the caller reports it
+    print("[PASS] groups_are_counted_summed_and_sorted\n")
+}
+
+test fn the_whole_report() void {
+    let csv: string = "name,city,amount\nann,\"Paris, FR\",10.5\nbob,Oslo,2\n\ncid,\"Paris, FR\",1.25\n"
+    match report(csv, "city", "amount") {
+        Ok(out) => {
+            expect_text("report", out, "rows: 3\ncolumns (3): name city amount\n  amount: min 1.25, max 10.5, mean 4.58\n\nby city:\n  Paris, FR: count 2, sum of amount 11.75\n  Oslo: count 1, sum of amount 2.00\n")
+        }
+        Err(e) => { fail("report failed: " + e) }
+    }
+    print("[PASS] the_whole_report\n")
+}
+
+test fn malformed_input_names_the_line() void {
+    match report("a,b\n1,2\n3\n", "", "") {
+        Ok(_) => { fail("a short row was accepted") }
+        Err(e) => { expect_text("short row", e, "line 3: expected 2 fields, found 1") }
+    }
+    match report("a,b\n1,\"2\n", "", "") {
+        Ok(_) => { fail("an open quote was accepted") }
+        Err(e) => { expect_text("open quote", e, "line 2: unterminated quoted field 2") }
+    }
+    match report("k,v\nx,1\n\ny,abc\n", "k", "v") {
+        Ok(_) => { fail("a word was summed") }
+        Err(e) => { expect_text("bad number", e, "line 4: \"abc\" in column v is not a number") }
+    }
+    match report("k,v\nx,1\n", "nope", "") {
+        Ok(_) => { fail("an unknown column was accepted") }
+        Err(e) => { expect_text("unknown column", e, "no column named \"nope\" in the header") }
+    }
+    print("[PASS] malformed_input_names_the_line\n")
+}
+
+fn main() void {
+    hundredths_are_rounded_half_away_from_zero()
+    a_column_is_numeric_only_when_every_value_is()
+    groups_are_counted_summed_and_sorted()
+    the_whole_report()
+    malformed_input_names_the_line()
+}

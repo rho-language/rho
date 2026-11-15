@@ -1,0 +1,17 @@
+# The suites of csv-report. tests/csv_test.rho checks the record parser,
+# tests/report_test.rho the statistics and the grouping, and parity that the
+# C and the Go program print the same thing.
+name: csv_report
+suites:
+  - name: tests/csv
+    kind: rho
+    tags: [unit]
+
+  - name: tests/report
+    kind: rho
+    tags: [unit]
+
+  - name: parity
+    kind: command
+    command: sh tests/parity.sh
+    tags: [parity]

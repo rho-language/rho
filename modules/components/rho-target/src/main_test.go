@@ -201,3 +201,26 @@ func TestAProjectsOwnTargetsAreRead(t *testing.T) {
 		t.Fatalf("dirs = %v", dirs)
 	}
 }
+
+// pins reads its flags after the board's name as well as before it.
+func TestPinsReadsAFlagAfterTheName(t *testing.T) {
+	root := specTree(t)
+	if code := run([]string{"pins", "board", "-project", root}); code != 0 {
+		t.Fatalf("expected the pin map, got %d", code)
+	}
+}
+
+// A host is given its stack by whatever starts it, so the stack figure is not
+// said on a host build; a board, which has a memory map, is.
+func TestTheStackFigureIsForABoard(t *testing.T) {
+	specTree(t)
+	library := library(false)
+	board, _ := library.Resolve("board")
+	arch, _ := library.Resolve("arm-cortex-m")
+	if hosted(board) {
+		t.Error("a board with a memory map is taken for a host")
+	}
+	if !hosted(arch) {
+		t.Error("a target with no memory map is not taken for a host")
+	}
+}

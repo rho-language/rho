@@ -1,0 +1,12 @@
+module:
+  name: soak-firmware
+  type: rho
+  version: 0.1.0
+  description: A firmware-shaped loop for the 72-hour soak - strings, closures, enums and slices built and dropped forever
+
+main: src/main.rho
+
+build:
+  language: c
+  targets:
+    - c

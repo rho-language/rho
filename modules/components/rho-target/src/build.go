@@ -109,6 +109,7 @@ func build(args []string) int {
 	// where the flag is.
 	kind := fs.String("type", "Release", "the build type: Release, Debug, RelWithDebInfo or MinSizeRel")
 	quiet := fs.Bool("quiet", false, "print nothing; the exit code is the answer")
+	verbose := fs.Bool("v", false, "also say what is only of interest on a host: the stack the program was computed to need")
 	treePlugins := fs.Bool("tree-plugins", false, "also read the plugins the tree carries")
 	// Whether the link writes its map. On by default, because the map is how a
 	// build is explained: which region a byte landed in and which object put it
@@ -162,7 +163,10 @@ func build(args []string) int {
 		return 2
 	}
 	spec.LinkMap = *linkMap
-	applyStackRequirement(*project, &spec)
+	// The stack figure is said for a board, where it sizes the stack the linker
+	// script reserves. A hosted program is given its stack by whatever starts it,
+	// so on a host the line is noise on every build, and is said only under -v.
+	applyStackRequirement(*project, &spec, !*quiet && (*verbose || !hosted(spec)))
 
 	// Checked before the project's files are written: a target whose compiler is
 	// not installed cannot be built by anything that follows, and finding out
@@ -297,7 +301,7 @@ func knownBuildType(name string) bool {
 // than an honest default, and using one quietly would leave a program believing
 // its stack had been measured when it had been guessed, which is the situation
 // this whole exercise exists to end.
-func applyStackRequirement(project string, spec *rhtarget.Spec) {
+func applyStackRequirement(project string, spec *rhtarget.Spec, say bool) {
 	if spec.Linker.StackBytes != 0 {
 		return
 	}
@@ -317,11 +321,22 @@ func applyStackRequirement(project string, spec *rhtarget.Spec) {
 		}
 	}
 	if !bound {
-		fmt.Fprintf(os.Stderr, "rho target: %s; the target's own stack size stands\n", requirement.Describe())
+		if say {
+			fmt.Fprintf(os.Stderr, "rho target: %s; the target's own stack size stands\n", requirement.Describe())
+		}
 		return
 	}
 	spec.Linker.StackBytes = bytes
-	fmt.Fprintf(os.Stderr, "rho target: %d bytes of stack, %s\n", bytes, requirement.Basis(spec.Linker.ForeignFrames))
+	if say {
+		fmt.Fprintf(os.Stderr, "rho target: %d bytes of stack, %s\n", bytes, requirement.Basis(spec.Linker.ForeignFrames))
+	}
+}
+
+// hosted reports whether a target is a host: a spec with no memory map, whose
+// programs are given their memory by an operating system rather than by a
+// linker script. `native` is one.
+func hosted(spec rhtarget.Spec) bool {
+	return len(spec.Regions()) == 0
 }
 
 // correctForForeignFrames is the analysis's own total plus what the target declares

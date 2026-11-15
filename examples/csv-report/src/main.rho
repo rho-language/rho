@@ -1,0 +1,213 @@
+//
+// @file main.rho
+// @brief csv-report: summarise a CSV file, and group its rows by a column.
+//
+// @module csv_report
+// @project csv_report
+// @author Aurel Miron
+// @date 2026-11-15
+//
+// SPDX-License-Identifier: NOASSERTION
+//
+
+module csv_report
+
+include "csv.rho"
+include "report.rho"
+
+import std.os.sys
+import std.os.fs
+
+const USAGE: string = "usage: csv-report <input.csv> [--group-by <column>] [--sum <column>]"
+const MAX_ARGS: u32 = 16
+
+// The longest line the program reads, in bytes.
+const MAX_LINE: u32 = 65536
+
+// to_bytes copies s into out, as many bytes as fit, and answers how many.
+fn to_bytes(s: string, out: Slice[u8]) u32 {
+    let n: u32 = strlen(s)
+    var i: u32 = 0
+    while i < n && i < out.len {
+        out[i] = str_at(s, i)
+        i = i + 1
+    }
+    return i
+}
+
+// say_error writes "csv-report: <msg>" and a newline to standard error.
+fn say_error(msg: string) void {
+    let text: string = "csv-report: " + msg + "\n"
+    var buf: u8[512]
+    let total: u32 = strlen(text)
+    var done: u32 = 0
+    while done < total {
+        let n: u32 = to_bytes(str_slice(text, done, 512), buf)
+        sys.write(2, buf[..n])
+        done = done + n
+    }
+}
+
+// fail reports msg and ends the program with status 1.
+fn fail(msg: string) void {
+    say_error(msg)
+    sys.exit(1)
+}
+
+// read_args fills out with the command-line arguments after the program's
+// name and answers how many there were. Neither backend has a built-in for
+// this that the C target supplies, so it reads /proc/self/cmdline, where the
+// kernel keeps them NUL-separated: Linux only.
+fn read_args(out: Slice[string]) u32 {
+    var path: u8[32]
+    let plen: u32 = to_bytes("/proc/self/cmdline", path)
+    path[plen] = 0
+    var fd: u32 = 0
+    match fs.open(&path[0], 0) {
+        Ok(f) => { fd = f }
+        Err(_) => { return 0 }
+    }
+    var raw: u8[8192]
+    let got: u32 = sys.read(fd, raw)
+    fs.close(fd)
+    if got == 0xFFFFFFFF {
+        return 0
+    }
+    var count: u32 = 0
+    var index: u32 = 0
+    var current: string = ""
+    var i: u32 = 0
+    while i < got {
+        let b: u8 = raw[i]
+        if b == 0 {
+            if index > 0 && count < out.len {
+                out[count] = current
+                count = count + 1
+            }
+            index = index + 1
+            current = ""
+        } else {
+            current = current + str_from_byte(b)
+        }
+        i = i + 1
+    }
+    return count
+}
+
+// from_bytes answers the bytes of b as a string.
+fn from_bytes(b: Slice[u8]) string {
+    var text: string = ""
+    for c in b {
+        text = text + str_from_byte(c)
+    }
+    return text
+}
+
+// summarise_file reads the CSV file at path a buffer at a time, handing each
+// line to a Summary, and answers the report or what is wrong with the file.
+//
+// rho_read_text would read the file in one call, but then every line has to be
+// cut out of one large string, and str_at and str_slice measure the whole
+// string on every call on the C backend, which makes a large file quadratic.
+fn summarise_file(path: string, group_by: string, sum_column: string) Result[string, string] {
+    var cpath: u8[4096]
+    let plen: u32 = to_bytes(path, cpath[..4095])
+    cpath[plen] = 0
+    var fd: u32 = 0
+    match fs.open(&cpath[0], 0) {
+        Ok(f) => { fd = f }
+        Err(_) => { return Err[string, string]("cannot be opened") }
+    }
+    var stats: ColumnStats[MAX_FIELDS]
+    var groups: Group[MAX_GROUPS]
+    var s: Summary = summary(group_by, sum_column, stats, groups)
+    var buf: u8[16384]
+    var pending: u8[MAX_LINE]
+    var held: u32 = 0
+    var line_no: u32 = 0
+    var problem: string = ""
+    var at_end: bool = false
+    while !at_end && strlen(problem) == 0 {
+        let got: u32 = sys.read(fd, buf)
+        if got == 0xFFFFFFFF {
+            fs.close(fd)
+            return Err[string, string]("cannot be read")
+        }
+        if got == 0 {
+            at_end = true
+            if held > 0 {
+                line_no = line_no + 1
+                problem = take_line(&s, from_bytes(pending[..held]), line_no)
+            }
+            break
+        }
+        var i: u32 = 0
+        while i < got {
+            let b: u8 = buf[i]
+            if b == 10 {
+                line_no = line_no + 1
+                problem = take_line(&s, from_bytes(pending[..held]), line_no)
+                held = 0
+                if strlen(problem) > 0 {
+                    break
+                }
+            } else {
+                if held >= MAX_LINE {
+                    fs.close(fd)
+                    return Err[string, string]("line " + int_to_str(line_no + 1) + ": longer than " + int_to_str(MAX_LINE) + " bytes")
+                }
+                pending[held] = b
+                held = held + 1
+            }
+            i = i + 1
+        }
+    }
+    fs.close(fd)
+    if strlen(problem) > 0 {
+        return Err[string, string](problem)
+    }
+    return finish(&s)
+}
+
+fn main() void {
+    var args: string[MAX_ARGS]
+    let argc: u32 = read_args(args)
+    var input: string = ""
+    var group_by: string = ""
+    var sum_column: string = ""
+    var i: u32 = 0
+    while i < argc {
+        let a: string = args[i]
+        if a == "--group-by" || a == "--sum" {
+            if i + 1 >= argc {
+                fail(a + " needs a column name\n" + USAGE)
+            }
+            if a == "--group-by" {
+                group_by = args[i + 1]
+            } else {
+                sum_column = args[i + 1]
+            }
+            i = i + 2
+            continue
+        }
+        if a == "-h" || a == "--help" {
+            print(USAGE + "\n")
+            return
+        }
+        if str_starts_with(a, "-") || strlen(input) > 0 {
+            fail("unexpected argument \"" + a + "\"\n" + USAGE)
+        }
+        input = a
+        i = i + 1
+    }
+    if strlen(input) == 0 {
+        fail("no input file\n" + USAGE)
+    }
+    if strlen(sum_column) > 0 && strlen(group_by) == 0 {
+        fail("--sum needs --group-by\n" + USAGE)
+    }
+    match summarise_file(input, group_by, sum_column) {
+        Ok(out) => print(out)
+        Err(e) => fail(input + ": " + e)
+    }
+}

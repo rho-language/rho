@@ -13,6 +13,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+
+/* rho_path_exists says whether anything — a file, a directory — is at a path,
+ * as Go's os.Stat does. It is what tells a file that is missing from one that is
+ * empty, which rho_read_text answers "" for alike (FINDINGS #17). */
+bool rho_path_exists(const char* path)
+{
+    struct stat info;
+    return path != NULL && stat(path, &info) == 0;
+}
 
 /* rho_read_text reads a whole file, or "" when it cannot be read.
  *

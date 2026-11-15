@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"rho/internal/paths"
+	clicore "rho/src/cli"
 )
 
 // envCLI is `rho env`: what the toolchain resolved about this machine and this
@@ -12,6 +13,15 @@ import (
 // against these, so a build that cannot find a sibling is answered here first.
 func envCLI(args []string) int {
 	base := "."
+	if clicore.WantsHelp(args) {
+		fmt.Println("usage: rho env [<project-dir>]")
+		fmt.Println("Prints RHO_HOME and RHO_WORKSPACE, with where each value came from.")
+		return 0
+	}
+	if len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "usage: rho env [<project-dir>]")
+		return 2
+	}
 	if len(args) > 0 {
 		base = args[0]
 	}

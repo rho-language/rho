@@ -45,7 +45,7 @@ fn valid_name(name: string) bool {
         return false
     }
     // Everything left has to be a letter, a digit or a separator.
-    let index: u32 = 0
+    var index: u32 = 0
     while index < length {
         let byte: u8 = str_at(name, index)
         let allowed: bool = is_digit(byte) || is_alpha(byte) || is_separator(byte)

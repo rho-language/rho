@@ -712,6 +712,13 @@ func (cg *Codegen) emitInstr(instr ir.Instr) {
 		cg.b.EmitLine("size_t " + instr.Dest + " = rho_arena_mark();")
 
 	case ir.OpArenaRelease:
+		if len(instr.Args) > 0 {
+			// The strings the loop keeps are moved down to the mark, and the
+			// variables holding them updated; everything else is given back.
+			cg.b.EmitLine(fmt.Sprintf("rho_arena_keep_many(%s, (void*[]){%s}, %d);",
+				instr.Dest, strings.Join(instr.Args, ", "), len(instr.Args)))
+			break
+		}
 		cg.b.EmitLine("rho_arena_release(" + instr.Dest + ");")
 
 	case ir.OpRaw:
@@ -805,7 +812,14 @@ func cTypeFor(t ir.Type) string {
 		return "const char*" + suffix
 	case ir.TypeStruct:
 		if t.Name != "" {
-			return strings.NewReplacer("[", "_", "]", "", ",", "_").Replace(t.Name) + suffix
+			// The written name of an array of structs carries its length,
+			// `P[4]`; the element is P and the length follows the declared
+			// name, so the length is cut from the name before it is mangled.
+			name := t.Name
+			if t.ArrayLen > 0 {
+				name = strings.TrimSuffix(name, suffix)
+			}
+			return strings.NewReplacer("[", "_", "]", "", ",", "_", " ", "").Replace(name) + suffix
 		}
 		return "struct /* anonymous */"
 	case ir.TypeSlice:
@@ -866,21 +880,78 @@ func (cg *Codegen) renameForeignInFuncs(funcs []ir.FuncIR) []ir.FuncIR {
 
 // renameForeignInInstr renames every piece of lowered text one instruction
 // carries.
+//
+// The instruction's slices are copied before they are written: the IR is
+// shared with every other backend emitted from it, and renaming in place made
+// a Go build see C's names when C was emitted first, and its own when it was
+// not — which is how a Go-only build lost the runtime's names.
 func (cg *Codegen) renameForeignInInstr(instr *ir.Instr) {
-	for i := range instr.Args {
-		instr.Args[i] = cg.rewriteForeign(instr.Args[i])
+	renameForeignIn(instr, cg.rewriteForeign)
+}
+
+// renameForeignIn rewrites every piece of lowered text an instruction carries,
+// on copies of its slices.
+func renameForeignIn(instr *ir.Instr, rewrite func(string) string) {
+	if len(instr.Args) > 0 {
+		args := make([]string, len(instr.Args))
+		for i, arg := range instr.Args {
+			args[i] = rewrite(arg)
+		}
+		instr.Args = args
 	}
-	instr.Condition = cg.rewriteForeign(instr.Condition)
-	for i := range instr.Then {
-		inner := instr.Then[i]
-		cg.renameForeignInInstr(&inner)
-		instr.Then[i] = inner
+	instr.Condition = rewrite(instr.Condition)
+	if len(instr.Then) > 0 {
+		then := make([]ir.Instr, len(instr.Then))
+		copy(then, instr.Then)
+		for i := range then {
+			renameForeignIn(&then[i], rewrite)
+		}
+		instr.Then = then
 	}
-	for i := range instr.Else {
-		inner := instr.Else[i]
-		cg.renameForeignInInstr(&inner)
-		instr.Else[i] = inner
+	if len(instr.Else) > 0 {
+		otherwise := make([]ir.Instr, len(instr.Else))
+		copy(otherwise, instr.Else)
+		for i := range otherwise {
+			renameForeignIn(&otherwise[i], rewrite)
+		}
+		instr.Else = otherwise
 	}
+}
+
+// renameRuntimeExterns is the Go backend's half: a runtime function an
+// imported module declares extern (`rho_fd_read` of std.os.sys) is called by
+// its own name, which the Go runtime supplies as rhoFdRead, not by the
+// qualified name its call site was lowered with.
+func renameRuntimeExterns(funcs []ir.FuncIR) []ir.FuncIR {
+	names := map[string]string{}
+	for qualified, plain := range foreignCallNames(funcs) {
+		if strings.HasPrefix(plain, "rho_") {
+			names[qualified] = plain
+		}
+	}
+	if len(names) == 0 {
+		return funcs
+	}
+	rewrite := func(text string) string {
+		if !strings.Contains(text, "_") {
+			return text
+		}
+		for qualified, plain := range names {
+			text = replaceWord(text, qualified, plain)
+		}
+		return text
+	}
+	out := make([]ir.FuncIR, len(funcs))
+	copy(out, funcs)
+	for index := range out {
+		body := make([]ir.Instr, len(out[index].Body))
+		copy(body, out[index].Body)
+		for i := range body {
+			renameForeignIn(&body[i], rewrite)
+		}
+		out[index].Body = body
+	}
+	return out
 }
 
 // rewriteForeign reads a lowered expression as C.

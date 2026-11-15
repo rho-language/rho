@@ -12,10 +12,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 
+	clicore "rho/src/cli"
 	"rho/src/scaffold"
 )
 
@@ -35,15 +37,22 @@ func newCLI(args []string) int {
 		fmt.Fprintln(os.Stderr, "The module name, the author and the licence come from the nearest module.yml;")
 		fmt.Fprintln(os.Stderr, "a file named *_test.rho starts as a test suite and is listed in tests/tests.yml.")
 	}
-	if err := fs.Parse(args); err != nil {
+	// Flags are read wherever they are written: `rho new src/x.rho --description
+	// "..."` is how the documentation writes it.
+	positional, passthrough, err := clicore.ParseInterspersed(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
-	if fs.NArg() != 1 {
+	positional = append(positional, passthrough...)
+	if len(positional) != 1 {
 		fs.Usage()
 		return 2
 	}
 	result, err := scaffold.NewSource(scaffold.SourceRequest{
-		Path:        fs.Arg(0),
+		Path:        positional[0],
 		Description: *description,
 		Author:      *author,
 		Date:        *date,

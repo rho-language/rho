@@ -9,7 +9,7 @@ import std.strings.string
 import std.core.option
 
 fn is_ascii(s: String) bool {
-    let i: u32 = 0
+    var i: u32 = 0
     while i < s.len {
         if s[i] > 0x7F {
             return false
@@ -19,13 +19,50 @@ fn is_ascii(s: String) bool {
     return true
 }
 
+// first_codepoint is the code point a string starts with, decoded from UTF-8,
+// or None when the string is empty or does not start with a well-formed
+// sequence: a stray continuation byte, a sequence cut short, an overlong
+// encoding, a UTF-16 surrogate or a value past U+10FFFF.
 fn first_codepoint(s: String) Option[u32] {
     if s.len == 0 {
         return None[u32]()
     }
-    // simplu: doar ASCII pentru Rho 0.1
-    if s[0] <= 0x7F {
-        return Some[u32](u32(s[0]))
+    let b0: u32 = u32(s[0])
+    if b0 <= 0x7F {
+        return Some[u32](b0)
     }
-    return None[u32]()
+    var need: u32 = 0
+    var cp: u32 = 0
+    var least: u32 = 0
+    if b0 >= 0xC2 && b0 <= 0xDF {
+        need = 1
+        cp = b0 & 0x1F
+        least = 0x80
+    } else if b0 >= 0xE0 && b0 <= 0xEF {
+        need = 2
+        cp = b0 & 0x0F
+        least = 0x800
+    } else if b0 >= 0xF0 && b0 <= 0xF4 {
+        need = 3
+        cp = b0 & 0x07
+        least = 0x10000
+    } else {
+        return None[u32]()
+    }
+    if s.len < need + 1 {
+        return None[u32]()
+    }
+    var i: u32 = 1
+    while i <= need {
+        let b: u32 = u32(s[i])
+        if (b & 0xC0) != 0x80 {
+            return None[u32]()
+        }
+        cp = (cp << 6) | (b & 0x3F)
+        i = i + 1
+    }
+    if cp < least || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+        return None[u32]()
+    }
+    return Some[u32](cp)
 }

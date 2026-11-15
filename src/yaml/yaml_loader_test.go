@@ -453,3 +453,31 @@ func TestLoaderKeepsAHashInsideAQuotedValue(t *testing.T) {
 		t.Errorf("unexpected name: %q", got)
 	}
 }
+
+// A comment after a list item is a comment, as it is after a key's value; a `#`
+// inside quotes or not after whitespace is part of the value.
+func TestACommentAfterAListItemIsNotPartOfIt(t *testing.T) {
+	v, err := Load("suites:\n  - name: tests/csv   # the record parser\n    kind: rho # built in\n  - plain  # a note\n  - \"a # b\"\n  - c#d\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := v.Map["suites"].List
+	if len(list) != 4 {
+		t.Fatalf("got %d items: %+v", len(list), list)
+	}
+	if got := list[0].Map["name"].Str; got != "tests/csv" {
+		t.Errorf("name = %q", got)
+	}
+	if got := list[0].Map["kind"].Str; got != "rho" {
+		t.Errorf("kind = %q", got)
+	}
+	if got := list[1].Str; got != "plain" {
+		t.Errorf("plain item = %q", got)
+	}
+	if got := list[2].Str; got != "a # b" {
+		t.Errorf("quoted item = %q", got)
+	}
+	if got := list[3].Str; got != "c#d" {
+		t.Errorf("item with an inner # = %q", got)
+	}
+}

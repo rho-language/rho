@@ -464,15 +464,18 @@ func pins(args []string) int {
 		withDeclaredSpecs(root)
 	}
 	fs := flag.NewFlagSet("rho target pins", flag.ExitOnError)
-	if err := fs.Parse(args); err != nil {
+	fs.String("project", ".", "the project whose platform declares the target")
+	// Flags are read wherever they appear, as `show` reads them.
+	flagArgs, rest := splitArgs(args, map[string]bool{"project": true})
+	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rho target pins <name>")
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: rho target pins [-project dir] <name>")
 		return 2
 	}
 	library := library(false)
-	spec, diagnostics := library.Resolve(fs.Arg(0))
+	spec, diagnostics := library.Resolve(rest[0])
 	report(append(library.Diagnostics, diagnostics...))
 	if spec.Name == "" {
 		return 1

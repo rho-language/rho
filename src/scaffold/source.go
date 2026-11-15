@@ -97,30 +97,13 @@ func NewSource(req SourceRequest) (SourceResult, error) {
 	test := strings.HasSuffix(filepath.Base(path), "_test.rho")
 
 	var b strings.Builder
-	b.WriteString("//\n")
-	fmt.Fprintf(&b, "// @file %s\n", filepath.Base(path))
-	for i, line := range wrapWords(description, 70) {
-		if i == 0 {
-			fmt.Fprintf(&b, "// @brief %s\n", line)
-		} else {
-			fmt.Fprintf(&b, "//        %s\n", line)
-		}
-	}
-	b.WriteString("//\n")
-	fmt.Fprintf(&b, "// @module %s\n", module)
-	if facts.project != "" {
-		fmt.Fprintf(&b, "// @project %s\n", facts.project)
-	}
-	if author != "" {
-		fmt.Fprintf(&b, "// @author %s\n", author)
-	}
-	fmt.Fprintf(&b, "// @date %s\n", date)
-	b.WriteString("//\n")
-	fmt.Fprintf(&b, "// SPDX-License-Identifier: %s\n", license)
-	b.WriteString("//\n\n")
+	b.WriteString(sourceHeader(header{
+		file: filepath.Base(path), description: description, module: module,
+		project: facts.project, author: author, date: date, license: license,
+	}))
 	fmt.Fprintf(&b, "module %s\n", module)
 	if test {
-		b.WriteString(testSkeleton)
+		b.WriteString(testSkeleton(root, path))
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -136,12 +119,103 @@ func NewSource(req SourceRequest) (SourceResult, error) {
 	return result, nil
 }
 
-const testSkeleton = `
-// The functions under test are included rather than imported, so a test sees
-// the module's private names too:
-//
-//   include "../src/main.rho"
+// header is what a source file's opening comment says.
+type header struct {
+	file, description, module, project, author, date, license string
+}
 
+// sourceHeader is the opening comment `rho new` and `rho init` write: the file,
+// what it is for, its module, project, author, date and licence.
+func sourceHeader(h header) string {
+	var b strings.Builder
+	b.WriteString("//\n")
+	fmt.Fprintf(&b, "// @file %s\n", h.file)
+	for i, line := range wrapWords(h.description, 70) {
+		if i == 0 {
+			fmt.Fprintf(&b, "// @brief %s\n", line)
+		} else {
+			fmt.Fprintf(&b, "//        %s\n", line)
+		}
+	}
+	b.WriteString("//\n")
+	fmt.Fprintf(&b, "// @module %s\n", h.module)
+	if h.project != "" {
+		fmt.Fprintf(&b, "// @project %s\n", h.project)
+	}
+	if h.author != "" {
+		fmt.Fprintf(&b, "// @author %s\n", h.author)
+	}
+	fmt.Fprintf(&b, "// @date %s\n", h.date)
+	b.WriteString("//\n")
+	fmt.Fprintf(&b, "// SPDX-License-Identifier: %s\n", h.license)
+	b.WriteString("//\n\n")
+	return b.String()
+}
+
+// testSkeleton is the body of a new test file: the files under test to
+// include, a check helper, one test and the main that calls it.
+//
+// The files suggested are the module's own sources under src/ other than
+// main.rho. main.rho holds the program's `main`, and a test file has a `main`
+// of its own, so including it is two `main`s; a module whose code is all in
+// main.rho is told to move what the test checks into a file of its own.
+func testSkeleton(root, path string) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	includes := testIncludes(root, path)
+	switch {
+	case len(includes) > 0:
+		b.WriteString("// The functions under test are included rather than imported, so a test sees\n")
+		b.WriteString("// the module's private names too. Keep the ones this test checks:\n")
+		b.WriteString("//\n")
+		for _, include := range includes {
+			fmt.Fprintf(&b, "//   include \"%s\"\n", include)
+		}
+	default:
+		b.WriteString("// The functions under test are included rather than imported, so a test sees\n")
+		b.WriteString("// the module's private names too. Not src/main.rho: its `main` and this\n")
+		b.WriteString("// file's would clash, so what a test checks lives in a file of its own\n")
+		b.WriteString("// (src/<name>.rho), included here as\n")
+		b.WriteString("//\n")
+		b.WriteString("//   include \"../src/<name>.rho\"\n")
+	}
+	b.WriteString(testBody)
+	return b.String()
+}
+
+// testIncludes are the include paths, relative to the test file, of the
+// module's sources under src/ other than main.rho, in path order.
+func testIncludes(root, path string) []string {
+	if root == "" {
+		return nil
+	}
+	sources := filepath.Join(root, "src")
+	found := []string{}
+	_ = filepath.WalkDir(sources, func(file string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if name := entry.Name(); file != sources && (name == "build" || strings.HasPrefix(name, ".")) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(file) != ".rho" || strings.HasSuffix(file, "_test.rho") {
+			return nil
+		}
+		if rel, relErr := filepath.Rel(sources, file); relErr == nil && rel == "main.rho" {
+			return nil
+		}
+		if rel, relErr := filepath.Rel(filepath.Dir(path), file); relErr == nil {
+			found = append(found, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return found
+}
+
+const testBody = `
 extern fn abort()
 
 fn check(condition: bool, what: string) void {
@@ -224,6 +298,34 @@ func moduleRootOf(dir string) string {
 		}
 		current = parent
 	}
+}
+
+// ModuleNameFor is the module name `rho new` would write for a source file:
+// the module's import name followed by the file's folders and name under src/
+// or tests/, and the import name alone for main.rho. False when no module.yml is
+// found above the file, which leaves nothing to name it after.
+//
+// It is the convention a linter holds a file to, so a file `rho new` or
+// `rho init` wrote is never reported for its own module line.
+func ModuleNameFor(path string) (string, bool) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	root := moduleRootOf(filepath.Dir(abs))
+	if root == "" {
+		return "", false
+	}
+	if filepath.Base(root) == "tests" {
+		if parent := moduleRootOf(filepath.Dir(root)); parent != "" {
+			root = parent
+		}
+	}
+	facts := readSourceFacts(root)
+	if facts.base == "" {
+		return "", false
+	}
+	return sourceModuleName(root, abs, facts.base), true
 }
 
 // sourceModuleName is the dotted name a file declares: the module's import

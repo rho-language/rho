@@ -157,9 +157,9 @@ fn page_shell(title: string, query: string, body: string) string {
 
 // module_rows renders one row per module, with its newest version badged.
 fn module_rows(listing: string) string {
-    let out: string = ""
-    let count: u32 = 0
-    let rest: string = listing
+    var out: string = ""
+    var count: u32 = 0
+    var rest: string = listing
     while guard_of(count) < 4096 {
         let line: string = first_line(rest)
         if strlen(line) == 0 {
@@ -185,9 +185,9 @@ fn module_rows(listing: string) string {
 
 // version_rows renders one row per version, each linking to its detail page.
 fn version_rows(listing: string, when_empty: string) string {
-    let out: string = ""
-    let count: u32 = 0
-    let rest: string = listing
+    var out: string = ""
+    var count: u32 = 0
+    var rest: string = listing
     while guard_of(count) < 4096 {
         let line: string = first_line(rest)
         if strlen(line) == 0 {
@@ -243,8 +243,8 @@ fn empty(message: string) string {
 
 // find_version returns the listing line for one version, or "" when absent.
 fn find_version(listing: string, version: string) string {
-    let rest: string = listing
-    let count: u32 = 0
+    var rest: string = listing
+    var count: u32 = 0
     while guard_of(count) < 4096 {
         let line: string = first_line(rest)
         if strlen(line) == 0 {
@@ -287,8 +287,8 @@ fn after_first_line(text: string) string {
 
 // field_of returns one tab-separated field of a line.
 fn field_of(line: string, wanted: u32) string {
-    let at: u32 = 0
-    let seen: u32 = 0
+    var at: u32 = 0
+    var seen: u32 = 0
     let length: u32 = strlen(line)
     while at <= length {
         if seen == wanted {
@@ -308,8 +308,8 @@ fn field_of(line: string, wanted: u32) string {
 
 // line_count counts the entries in a listing.
 fn line_count(listing: string) u32 {
-    let count: u32 = 0
-    let rest: string = listing
+    var count: u32 = 0
+    var rest: string = listing
     while guard_of(count) < 4096 {
         if strlen(first_line(rest)) == 0 {
             break

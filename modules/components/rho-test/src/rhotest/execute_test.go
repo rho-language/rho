@@ -532,8 +532,8 @@ func TestARhoSuiteWithNoTestsIsReported(t *testing.T) {
 		t.Fatal(err)
 	}
 	suites, problems := ResolveAll([]Declared{{Name: "empty", Kind: KindRho}}, root, BuiltinResolvers()...)
-	if len(suites) != 1 || !suites[0].Skipped() {
-		t.Fatalf("expected the suite to be skipped, got %+v", suites)
+	if len(suites) != 1 || suites[0].Broken == "" || suites[0].Skipped() {
+		t.Fatalf("expected the suite to fail, not be skipped, got %+v", suites)
 	}
 	if len(problems) != 1 || !strings.Contains(problems[0].Error(), "declares no tests") {
 		t.Errorf("expected the empty file to be reported, got %+v", problems)
@@ -582,10 +582,24 @@ func TestACommandSuiteWithNothingToRunIsReported(t *testing.T) {
 		t.TempDir(),
 		BuiltinResolvers()...,
 	)
-	if !suites[0].Skipped() {
-		t.Errorf("expected the suite to be skipped, got %+v", suites[0])
+	if suites[0].Broken == "" || suites[0].Skipped() {
+		t.Errorf("expected the suite to fail, not be skipped, got %+v", suites[0])
 	}
 	if len(problems) != 1 || !strings.Contains(problems[0].Error(), "declares no command") {
 		t.Errorf("expected the missing command to be reported, got %+v", problems)
+	}
+}
+
+// A suite whose test file is not there fails the run: a test nobody can find has
+// not passed, and a run that reported it as skipped would exit 0.
+func TestAMissingTestFileFailsTheRun(t *testing.T) {
+	root := t.TempDir()
+	suites, _ := ResolveAll([]Declared{{Name: "tests/csv", Kind: KindRho}}, root, BuiltinResolvers()...)
+	report := Execute(suites, ExecuteOptions{Runner: &fakeRunner{failing: -1}})
+	if report.Summary.Failed != 1 || report.Summary.FailedSuites != 1 || report.Summary.OK() {
+		t.Fatalf("a missing test file did not fail the run: %+v", report.Summary)
+	}
+	if !strings.Contains(report.Results[0].Reason, "no test file") {
+		t.Errorf("the reason does not say what is missing: %q", report.Results[0].Reason)
 	}
 }

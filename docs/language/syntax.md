@@ -247,6 +247,20 @@ var total: u32 = 0
 total = total + seconds
 ```
 
+Assigning to a name a `let` bound (`seconds = 1`, `seconds += 1`) is a
+deprecation warning in this release, at the assignment, and an error in the
+next; the fix is to declare the name with `var`:
+
+```text
+src/main.rho:6:5: warning: assigning to seconds, which is bound by `let`, is deprecated: a `let` binds a name that does not change, and the next release refuses this; declare seconds with `var` to assign to it
+src/main.rho:4:5: note: seconds is bound by `let` here
+```
+
+What a `let` binds is the name: an element or a field of the value it holds
+(`buf[i] = b`, `p.x = 1`) can still be written, and its address taken, as Go
+leaves a value's parts writable. A parameter, a `for` variable and a name a
+pattern binds may be assigned.
+
 A binding may be declared without a value and assigned later:
 
 ```rho
@@ -723,6 +737,19 @@ fn fill(out: Ptr[u8], count: u32) void {
 }
 ```
 
+A field of the struct a pointer points at is reached through the pointer,
+read or written, as Go's selector does: `p.f` with `p` a `Ptr[S]` is `(*p).f`
+(and `p[0].f`). One level only: a `Ptr[Ptr[S]]` is dereferenced by the program.
+
+```rho
+struct Counter { n: u32, name: string }
+
+fn bump(c: Ptr[Counter]) void {
+    c.n = c.n + 1
+    c.name = c.name + "!"
+}
+```
+
 A string passed where an `extern fn` takes a `Ptr[u8]` is its bytes, ended by a
 zero byte as a C string is.
 
@@ -807,8 +834,8 @@ deprecated by a `// @deprecated ...` line in its header, the comments above its
 the protocol's deprecated tag). {ref}`Stability <documentation/stability>` says
 how long a deprecated name is kept.
 
-`rho fmt` does not keep comments yet, so formatting a file drops its doc
-comments and their tags with them.
+`rho fmt` keeps comments where they were written: a doc comment stays directly
+above its declaration, so formatting a file never loses a tag.
 
 ### Layout
 
@@ -816,6 +843,34 @@ A semicolon is optional at the end of a statement, and a comma separates fields
 and arguments. A type name is written with a leading capital; a value with a
 lower-case letter. That convention is what the parser uses to tell a struct
 literal from an index.
+
+A newline ends a statement wherever the statement could end, which is Go's
+rule: after a name, a literal, `)`, `]` or `}`, and after `return`, `break` or
+`continue`. So a line that starts with `(` or `[` begins a new statement, and
+does not call or index the line above:
+
+```rho
+var header: string = fields
+(*s).header = header        // a statement of its own, not `fields(*s)`
+```
+
+A long expression continues onto the next line when its line ends with
+something that cannot end it — a binary operator, a `,` or an opening bracket:
+
+```rho
+let ok: bool = a > 0 &&
+    b < 9
+```
+
+A line that starts with an operator is an error that says so. A line that
+starts with `.` continues the line above, so a chain of field reads may be
+broken before each `.`. A `return` at the end of its line returns nothing.
+
+A struct literal is an expression wherever one can stand: an argument,
+an array element, an operand, a value returned. In the header of an `if`,
+`while`, `for` or `match` the `{` opens the body, so a literal there is written
+inside parentheses, as in Go: `if (P { 1, 2 }).x == 1 {`, or
+`if sum(P { 1, 1 }) == 2 {` — a call's arguments are parenthesised already.
 
 ## Known limitations
 
@@ -837,8 +892,6 @@ literal from an index.
   `s` declared in the same function from a fixed array, starting at its first
   element (`var s = buf[..0]`), and changed only by `append` or by a cut back
   from its start; anything else is refused with what to write.
-- **No casts as an index.** `values[u32(i)]` does not parse; `values[i as u32]`
-  does.
 - **`test fn` is not syntax.** A `_test.rho` file marks its cases `test fn`,
   and {ref}`rho-test <tools/testing>` removes the marker before compiling. The
   compiler itself does not accept `test fn`.

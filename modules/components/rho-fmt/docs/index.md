@@ -2,7 +2,8 @@
 
 `rho fmt` parses Rho source with the compiler's own parser and prints it back in
 canonical form: one statement per line, one declaration per block, includes and
-imports kept with the module they belong to.
+imports kept with the module they belong to, and a struct literal written as the
+language reference writes it, `Point { 0, 0 }`.
 
 ```sh
 rho fmt src/main.rho              # print the canonical form
@@ -25,6 +26,29 @@ in CI gets the names of the files to fix and a failing exit code.
 
 A file that cannot be read or parsed stops the run with exit 1 and the parser's
 message; no file names at all is a usage error, exit 2.
+
+## Comments
+
+Every comment is kept, `//` and `/* */` alike, where it was written:
+
+- the header above `module`, with its `@file`, `@stability`, `@deprecated`,
+  `@backends` and `@port` tags, exactly as it was;
+- a doc comment directly above its declaration, with nothing put between them;
+- a comment above or at the end of the line of a field, an enum variant, a
+  statement or a match arm, at the end of a block, and inside a closure;
+- a blank line next to a comment, kept as one, so a comment that stood apart
+  from the declaration below it still does.
+
+The printer puts a call, an array or a struct literal on one line, so a comment
+written between its elements goes on a line of its own above the statement, in
+the order it was written; the comment after its last element stays at the end of
+the line. A file whose comments would not come back exactly is refused with
+exit 1 and left as it was, rather than formatted without one.
+
+## Test files
+
+A test file's `test fn` declarations are formatted like any function and keep
+their marker, so `rho fmt -w tests/*_test.rho` is safe.
 
 ## Round-trip safety
 

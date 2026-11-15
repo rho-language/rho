@@ -16,10 +16,23 @@ cd my-app && rho run .
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--name NAME` | the directory's name | The module name |
-| `--description TEXT` | `A Rho application.` | The manifest's one-line description |
-| `--language go\|c` | `go` | The build language |
+| `--name NAME` | the directory's name | The module name, made into one (see below) |
+| `--description TEXT` | `A Rho application.` | The manifest's one-line description, and the `@brief` of `module.yml` and `src/main.rho` |
 | `--target a,b` | the language | The build targets, comma-separated (`c`, `go`, `go-server`) |
+| `--language go\|c` | the first target's language, else `go` | `build.language` |
+
+Flags may come before or after the directory. A module name holds lower-case
+letters, digits and `_`, so the directory's name is made into one — `my-app`
+becomes `my_app` — and `rho init` says so when the two differ. The name is what
+`src/main.rho` declares, what the binaries are called and what an import of the
+module is written as; `--name` chooses another.
+
+What is built is `build.targets`: a project per target under
+`build/generated/<target>/`. `build.language` is the language the module is
+built as (`c` or `go`): a project that depends on a module whose language is `c`
+treats it as a C library, and for an application it is informational. `rho init`
+takes it from the first target, so `--target c,go` writes `language: c`; the
+manifest check warns when it is not the language of any target.
 
 A directory that already holds a `module.yml` is refused rather than written
 over. The manifest it writes, without its header comment:
@@ -27,7 +40,7 @@ over. The manifest it writes, without its header comment:
 ```yaml
 # my-app/module.yml
 module:
-  name: my-app
+  name: my_app
   type: rho
   version: 0.1.0
   description: A Rho application.
@@ -39,6 +52,25 @@ build:
   targets:
     - go
 ```
+
+`src/main.rho` starts with the same header `rho new` writes — the file, the
+description, the module, the author and the date — and declares `module my_app`:
+`main.rho` is the module itself.
+
+## Where a build puts the program
+
+`rho build` writes each target's generated project under
+`build/generated/<target>/` and then builds it:
+
+| Target | The program | Named after |
+|---|---|---|
+| `go`, `go-server` | `build/<name>` | the manifest's `module.name` |
+| `c` (and a board) | `build/output/<name>` | the module `src/main.rho` declares |
+
+The build's last line names the program (`Built binary: build/output/my_app`).
+These are the defaults: the manifest's `build.dir` and `build.output_dir`, and a
+project's own descriptor (`project.yml`), can move them.
+`rho test` never writes there: a test program is built under `build/test/`.
 
 ## A project a module knows how to generate
 

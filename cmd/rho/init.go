@@ -22,12 +22,14 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
+	clicore "rho/src/cli"
 	"rho/src/scaffold"
 )
 
@@ -53,15 +55,29 @@ func initCLI(args []string) int {
 	name := fs.String("name", "", "the name of what is generated")
 	category := fs.String("category", "", "the category, such as temperature")
 	description := fs.String("description", "", "one line about what is generated")
-	language := fs.String("language", "go", "the build language for a Rho application: go or c")
-	targets := fs.String("target", "", "comma-separated build targets for a Rho application")
+	language := fs.String("language", "", "build.language for a Rho application: go or c (default: the first target's, else go)")
+	targets := fs.String("target", "", "comma-separated build targets for a Rho application (default: the language)")
 	set := setFlags{}
 	fs.Var(set, "set", "a generator variable, as key=value; may be repeated")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: rho init [--name NAME] [--description TEXT] [--target c,go] [--language go|c] <directory>")
+		fmt.Fprintln(os.Stderr, "       rho init [--project DIR] [--category C] [--name N] [--set k=v] [<generator>] <directory>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Writes a Rho application, or what a generator the project declares describes.")
+		fmt.Fprintln(os.Stderr, "Flags may come before or after the directory.")
+		fmt.Fprintln(os.Stderr, "")
+		fs.PrintDefaults()
+	}
 
-	if err := fs.Parse(args); err != nil {
+	// Flags are read wherever they are written, before the directory or after it.
+	rest, passthrough, err := clicore.ParseInterspersed(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
-	rest := fs.Args()
+	rest = append(rest, passthrough...)
 
 	// Whether generation is active here is read from the manifest, so the
 	// listing and the writing agree about what this directory is.
@@ -135,6 +151,18 @@ func report(results []scaffold.Result, generator string) {
 	if generator == "" {
 		for _, result := range results {
 			fmt.Printf("Created a Rho application in %s\n", result.Dir)
+			// A module name holds letters, digits and underscores, so a directory
+			// called csv-report makes a module called csv_report. Said, because the
+			// name is what the binary and every import are called.
+			if result.NameFrom != "" && result.NameFrom != result.Name {
+				fmt.Printf("  module name: %s (from %q; a module name is lower case letters, digits and _; --name sets another)\n",
+					result.Name, result.NameFrom)
+			} else {
+				fmt.Printf("  module name: %s\n", result.Name)
+			}
+			if result.Language != "" {
+				fmt.Printf("  targets: %s; build.language: %s\n", strings.Join(result.Targets, ", "), result.Language)
+			}
 			for _, file := range result.Files {
 				fmt.Println("  ", file)
 			}

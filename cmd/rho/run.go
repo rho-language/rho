@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,13 @@ func RunFile(path string) error {
 }
 
 func RunFileWithDependencies(path string, dependencyRoots []string) error {
+	return RunFileWithArguments(path, dependencyRoots, nil)
+}
+
+// RunFileWithArguments compiles a Rho source file to C, builds a host
+// executable, and runs it with the arguments given, in the directory rho was run
+// from. An error that is an *exec.ExitError is the program's own exit status.
+func RunFileWithArguments(path string, dependencyRoots []string, programArgs []string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve source path: %w", err)
@@ -77,12 +85,15 @@ func RunFileWithDependencies(path string, dependencyRoots []string) error {
 		return fmt.Errorf("C compilation failed: %w", err)
 	}
 
-	run := commandRunner(exe)
-	run.Dir = workDir
+	run := commandRunner(exe, programArgs...)
 	run.Stdin = os.Stdin
 	run.Stdout = os.Stdout
 	run.Stderr = os.Stderr
 	if err := run.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exit
+		}
 		return fmt.Errorf("execution failed: %w", err)
 	}
 

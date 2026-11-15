@@ -20,10 +20,20 @@
 // no heap objects, and a closure's environment is treated as a string itself
 // (closures.go): a function value is kept wherever a string would be, and a
 // closure captures no reference a string could be written through. So those
-// are all of the ways. A loop whose body
-// stores a string outside itself is not reset; a statement that passes a pointer
-// is not released. A C function is given a string for the duration of the call
-// and copies what it keeps.
+// are all of the ways. A statement that passes a pointer is not released. A C
+// function is given a string for the duration of the call and copies what it
+// keeps.
+//
+// A loop whose body stores a string in a variable declared outside it is still
+// reset when all it does is replace what such variables hold: assign a string, a
+// struct, an enum or a small fixed array of them to one, or to a field or an
+// element of one, through no pointer. What they
+// hold at the end of an iteration is all the iteration keeps, so the release
+// that ends it — and the one before a `continue`, and the one after the loop —
+// moves those strings down to the mark and points the variables at their new
+// place (rho_arena_keep_many) and gives back the rest (loopKeeps). A loop that
+// stores a string anywhere else outside itself — an element of a Slice, through
+// a pointer, by address, or a function value — is not reset.
 //
 // A loop that cannot be reset keeps every string its iterations build. On a host
 // that is memory that grows; on a board it is a fixed arena that runs out. So the
@@ -46,6 +56,7 @@ package types
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 
 	"rho/src/frontend/ast"
@@ -64,6 +75,10 @@ type ArenaEscape struct {
 	Column int
 	// Variable is what the string is kept in, as the program names it.
 	Variable string
+	// Endless says the loop can never end, so what it keeps is kept for as
+	// long as the program runs. A loop that ends keeps its strings until what
+	// called its function releases them.
+	Endless bool
 }
 
 // String is the escape as a sentence.
@@ -72,7 +87,11 @@ func (e ArenaEscape) String() string {
 	if e.Module != "" {
 		where = e.Module + "." + e.Function
 	}
-	return fmt.Sprintf("%s: the loop at line %d keeps a string it builds in %q, which is declared outside the loop, so none of the strings its iterations build is ever released",
+	if !e.Endless {
+		return fmt.Sprintf("%s: the loop at line %d keeps a string it builds in %q, which is declared outside the loop where the loop cannot keep it by replacing it (a Slice element, a write through a pointer or an address, a function value, or more than 32 strings), so none of the strings its iterations build is released while it runs",
+			where, e.Line, e.Variable)
+	}
+	return fmt.Sprintf("%s: the loop at line %d keeps a string it builds in %q, which is declared outside the loop where the loop cannot keep it by replacing it (a Slice element, a write through a pointer or an address, a function value, or more than 32 strings), so none of the strings its iterations build is ever released",
 		where, e.Line, e.Variable)
 }
 
@@ -80,6 +99,11 @@ func (e ArenaEscape) String() string {
 type arenaLoop struct {
 	// mark is the arena mark the loop releases to, or "" when it is not reset.
 	mark string
+	// keep are the C lvalues of the strings the loop keeps across its
+	// iterations — every string held by a variable declared outside it that an
+	// iteration replaces — which each release moves down to the mark instead
+	// of giving back. Empty for a loop that keeps nothing.
+	keep []string
 	// declared is every name declared anywhere in its body.
 	declared map[string]bool
 }
@@ -124,6 +148,14 @@ type arenaState struct {
 	entries map[string]bool
 	// root is the program's own module, which its functions name as "".
 	root string
+	// fresh are the variables declared outside the loop being analysed that it
+	// keeps across iterations: a value read out of one is a string an iteration
+	// built, not one from before the loop (olderValue).
+	fresh map[string]bool
+	// older are the names a loop being analysed binds once, with `let`, to a
+	// value from before the loop (`let key = s[i]`): what they hold is not a
+	// string an iteration built, so storing it outside keeps nothing alive.
+	older map[string]bool
 }
 
 const (
@@ -239,12 +271,19 @@ func (tc *TypeChecker) arenaMarkName() string {
 	return "rho_mark_" + strconv.Itoa(tc.lowerSeq)
 }
 
-// innermostLoopMark is the mark of the loop a `continue` continues, or "".
-func (tc *TypeChecker) innermostLoopMark() string {
+// innermostLoop is the loop a `continue` continues: its mark ("" when it is
+// not reset) and what it keeps.
+func (tc *TypeChecker) innermostLoop() arenaLoop {
 	if n := len(tc.arena.loops); n > 0 {
-		return tc.arena.loops[n-1].mark
+		return tc.arena.loops[n-1]
 	}
-	return ""
+	return arenaLoop{}
+}
+
+// arenaReleaseTo is the instruction that ends an iteration of a loop: a release
+// to its mark, which moves what the loop keeps down to the mark first.
+func arenaReleaseTo(loop arenaLoop) ir.Instr {
+	return ir.Instr{Op: ir.OpArenaRelease, Dest: loop.mark, Args: loop.keep}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -257,11 +296,11 @@ func (tc *TypeChecker) innermostLoopMark() string {
 // own (for a loop that is not reset). lower lowers the body, and is called with
 // the loop pushed, so a `continue` in it knows where to release to.
 func (tc *TypeChecker) lowerLoop(at ast.Position, kind string, body []ast.Stmt, condition ast.Expr, loopVar string, scope map[string]ir.Type, lower func() []ir.Instr) (before []ir.Instr, lowered []ir.Instr, after []ir.Instr, conditionMark string) {
-	escapes := tc.loopEscapes(body, scope, loopVar)
+	escapes, keep, kept := tc.loopKeeps(body, scope, loopVar)
 	allocates := tc.stmtsAllocate(body, scope) || (condition != nil && tc.exprAllocates(condition, scope))
-	reset := len(escapes) == 0 && allocates
+	reset := (len(escapes) == 0 || kept) && allocates
 
-	if len(escapes) > 0 && kind == "while" {
+	if len(escapes) > 0 && !kept && allocates && kind == "while" {
 		// Reported only for a string that no enclosing loop releases: one kept in
 		// a variable an enclosing loop's body declares lives until that loop's
 		// iteration ends, and that loop is reset.
@@ -269,10 +308,12 @@ func (tc *TypeChecker) lowerLoop(at ast.Position, kind string, body []ast.Stmt, 
 			if tc.declaredByEnclosingLoop(escape) {
 				continue
 			}
+			endless := loopEndless(condition, body)
 			tc.arena.candidates = append(tc.arena.candidates, arenaCandidate{
 				function: tc.arena.function,
-				endless:  loopEndless(condition, body),
+				endless:  endless,
 				escape: ArenaEscape{
+					Endless:  endless,
 					Module:   tc.arenaModule(),
 					Function: tc.arena.name,
 					File:     at.File,
@@ -285,18 +326,22 @@ func (tc *TypeChecker) lowerLoop(at ast.Position, kind string, body []ast.Stmt, 
 		}
 	}
 
-	mark := ""
+	loop := arenaLoop{declared: declaredNames(body, loopVar)}
 	if reset {
-		mark = tc.arenaMarkName()
+		loop.mark = tc.arenaMarkName()
+		loop.keep = keep
 	}
-	tc.arena.loops = append(tc.arena.loops, arenaLoop{mark: mark, declared: declaredNames(body, loopVar)})
+	tc.arena.loops = append(tc.arena.loops, loop)
 	lowered = lower()
 	tc.arena.loops = tc.arena.loops[:len(tc.arena.loops)-1]
 
 	if reset {
-		before = []ir.Instr{{Op: ir.OpArenaMark, Dest: mark}}
-		lowered = append(lowered, ir.Instr{Op: ir.OpArenaRelease, Dest: mark})
-		after = []ir.Instr{{Op: ir.OpArenaRelease, Dest: mark}}
+		// The same instruction ends every iteration and follows the loop, so a
+		// loop left by its condition or by a `break` keeps what it keeps too: a
+		// kept string outlives the loop in the variable that holds it.
+		before = []ir.Instr{{Op: ir.OpArenaMark, Dest: loop.mark}}
+		lowered = append(lowered, arenaReleaseTo(loop))
+		after = []ir.Instr{arenaReleaseTo(loop)}
 		return before, lowered, after, ""
 	}
 	if condition != nil && tc.exprAllocates(condition, scope) && !tc.passesReference(condition, scope) {
@@ -304,6 +349,203 @@ func (tc *TypeChecker) lowerLoop(at ast.Position, kind string, body []ast.Stmt, 
 		before = []ir.Instr{{Op: ir.OpArenaMark, Dest: conditionMark}}
 	}
 	return before, lowered, nil, conditionMark
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Keeping across iterations                                                 */
+/* -------------------------------------------------------------------------- */
+
+// arenaKeepMax is the most strings a loop keeps across its iterations; the
+// runtime sorts them on its stack (rho_arena_keep_many). A loop that would keep
+// more is not reset, and is reported as one that keeps a string.
+const arenaKeepMax = 32
+
+// loopKeeps decides what a loop keeps across its iterations. escapes are the
+// variables declared outside it that a string an iteration builds can reach
+// (loopEscapes). When every one of them is a variable the loop only replaces —
+// assigned a whole value, never given by address or passed as a reference —
+// and of a type whose strings sit at places the compiler can name, kept is
+// true and keep is the C lvalue of each string they hold: the loop is released
+// every iteration except for those, which are moved down to its mark.
+//
+// A variable the loop keeps holds a string an iteration built, so a value read
+// out of it and stored in another outer variable is one too: the analysis is
+// run again with the kept variables counted as built in the loop, until the set
+// stops growing.
+func (tc *TypeChecker) loopKeeps(body []ast.Stmt, scope map[string]ir.Type, loopVar string) (escapes []string, keep []string, kept bool) {
+	saved := tc.arena.fresh
+	defer func() { tc.arena.fresh = saved }()
+	fresh := map[string]bool{}
+	for name := range saved {
+		fresh[name] = true
+	}
+	declared := declaredNames(body, loopVar)
+	for {
+		tc.arena.fresh = fresh
+		var replaced map[string]bool
+		escapes, replaced = tc.loopEscapes(body, scope, loopVar)
+		if len(escapes) == 0 {
+			return nil, nil, false
+		}
+		// The variables that cannot be kept come first, so the one a report
+		// names is one that stopped the loop being released.
+		blocked := []string{}
+		grew := false
+		for _, name := range escapes {
+			typ, inScope := scope[name]
+			if !replaced[name] || !inScope || declared[name] || tc.keepSlots(tc.lowerExpr(ast.IdentifierExpr{Name: name}, scope), typ, nil, 0) == nil {
+				blocked = append(blocked, name)
+				continue
+			}
+			if !fresh[name] {
+				fresh[name] = true
+				grew = true
+			}
+		}
+		if len(blocked) > 0 {
+			ordered := append([]string{}, blocked...)
+			for _, name := range escapes {
+				if !contains(blocked, name) {
+					ordered = append(ordered, name)
+				}
+			}
+			return ordered, nil, false
+		}
+		if grew {
+			continue
+		}
+		keep = []string{}
+		for _, name := range escapes {
+			keep = tc.keepSlots(tc.lowerExpr(ast.IdentifierExpr{Name: name}, scope), scope[name], keep, 0)
+		}
+		if len(keep) > arenaKeepMax {
+			return escapes, nil, false
+		}
+		return escapes, keep, true
+	}
+}
+
+// keepSlots appends to slots the address of every string a value of a type
+// holds, as the runtime is handed it: the value itself when it is a string,
+// each field of a struct that holds one, and each value an enum's variant
+// carries — guarded by its tag, so a variant that is not there hands the
+// runtime an empty slot rather than the bytes of another variant's payload.
+// value is the C lvalue. Each element of a fixed array is a place too, up to
+// arenaKeepMax of them. It answers nil when a string is not at a place a name
+// reaches: a Slice's elements (somewhere else, of a length known only when it
+// runs), a larger array, or a function value, whose environment is not a
+// string the runtime can measure.
+func (tc *TypeChecker) keepSlots(value string, typ ir.Type, slots []string, depth int) []string {
+	if slots == nil {
+		slots = []string{}
+	}
+	if !tc.containsString(typ, 0) {
+		return slots
+	}
+	if depth > 8 {
+		return nil
+	}
+	if typ.Kind == ir.TypeString && typ.ArrayLen == 0 && !isFixedArray(typ) {
+		return append(slots, "(void*)&("+value+")")
+	}
+	if isFixedArray(typ) && typ.Kind != ir.TypeSlice {
+		// A fixed array declared outside the loop is storage of its own: every
+		// element is a place a name reaches, so each is kept, up to the most a
+		// loop keeps.
+		length := typ.ArrayLen
+		if length == 0 {
+			if _, dims, ok := nameArrayDims(typ.Name); ok && len(dims) > 0 {
+				length = dims[0]
+			}
+		}
+		element, ok := arrayElementOf(typ)
+		if !ok || length <= 0 || length > arenaKeepMax {
+			return nil
+		}
+		for i := 0; i < length; i++ {
+			slots = tc.keepSlots(fmt.Sprintf("(%s)[%d]", value, i), element, slots, depth+1)
+			if slots == nil || len(slots) > arenaKeepMax {
+				return nil
+			}
+		}
+		return slots
+	}
+	if typ.Kind != ir.TypeStruct || isArrayValue(typ) {
+		return nil
+	}
+	if _, isSlice := tc.sliceElement(typ); isSlice {
+		return nil
+	}
+	if info, args := tc.enumOf(typ); info != nil {
+		if info.Plain || info.TagField == "" || IsOptionalPointer(mangleTypeName(typ.Name)) {
+			return nil
+		}
+		for i := range info.Variants {
+			variant := &info.Variants[i]
+			payload := tc.payloadTypes(info, args, variant, true)
+			guard := "(" + value + ")." + info.TagField + " == " + info.tagValue(variant)
+			for j, field := range variant.Fields {
+				inner := tc.keepSlots("("+value+")."+info.payloadField(variant, field), payload[j], nil, depth+1)
+				if inner == nil {
+					return nil
+				}
+				for _, slot := range inner {
+					slots = append(slots, "("+guard+" ? "+slot+" : (void*)&(const char*){0})")
+				}
+			}
+		}
+		return slots
+	}
+	names, types := tc.namedStructFields(typ.Name)
+	if names == nil {
+		return nil
+	}
+	for i, name := range names {
+		slots = tc.keepSlots("("+value+")."+name, types[i], slots, depth+1)
+		if slots == nil {
+			return nil
+		}
+	}
+	return slots
+}
+
+// namedStructFields are the fields of a struct with their names, in a fixed
+// order, by any name the struct is known by. nil when it is not one.
+func (tc *TypeChecker) namedStructFields(name string) ([]string, []ir.Type) {
+	if layout, laid := tc.monomorphicStructs[mangleTypeName(name)]; laid {
+		names, types := []string{}, []ir.Type{}
+		for _, field := range layout.Fields {
+			names = append(names, field.Name)
+			types = append(types, field.Type)
+		}
+		return names, types
+	}
+	fields, ok := tc.fields[name]
+	if !ok {
+		fields, ok = tc.fields[mangleTypeName(name)]
+	}
+	if !ok {
+		return nil, nil
+	}
+	names := make([]string, 0, len(fields))
+	for field := range fields {
+		names = append(names, field)
+	}
+	sort.Strings(names)
+	types := make([]ir.Type, 0, len(names))
+	for _, field := range names {
+		types = append(types, fields[field])
+	}
+	return names, types
+}
+
+func contains(list []string, name string) bool {
+	for _, item := range list {
+		if item == name {
+			return true
+		}
+	}
+	return false
 }
 
 // loopEndless is whether a `while` loop can never end: its condition is `true`,
@@ -379,6 +621,48 @@ func (tc *TypeChecker) declaredByEnclosingLoop(name string) bool {
 	return false
 }
 
+// countBindings counts, by name, every binding a body makes at any depth: each
+// `let`, each `for` variable.
+//
+// It counts what may change a name too, under "=name" for an assignment to it
+// or a part of it and "&name" for its address taken: a `let` is not proof
+// against either.
+func countBindings(body []ast.Stmt, counts map[string]int) {
+	for _, statement := range body {
+		visitExprs(statement, func(e ast.Expr) {
+			if unary, ok := e.(ast.UnaryExpr); ok && unary.Op == "&" {
+				counts["&"+rootName(unary.Value)]++
+			}
+		})
+		switch stmt := statement.(type) {
+		case ast.AssignStmt:
+			counts["="+rootName(stmt.Target)]++
+		case ast.LetStmt:
+			counts[stmt.Name]++
+		case ast.IfStmt:
+			countBindings(stmt.Then, counts)
+			countBindings(stmt.Else, counts)
+		case ast.WhileStmt:
+			countBindings(stmt.Body, counts)
+		case ast.ForStmt:
+			counts[stmt.Name]++
+			countBindings(stmt.Body, counts)
+		case ast.MatchStmt:
+			for _, arm := range stmt.Arms {
+				// An arm's bindings are names too, and may shadow a `let`.
+				visitExpr(arm.Pattern, func(e ast.Expr) {
+					if identifier, ok := e.(ast.IdentifierExpr); ok {
+						counts[identifier.Name]++
+					}
+				})
+				countBindings(arm.Body, counts)
+			}
+		case ast.BlockStmt:
+			countBindings(stmt.Stmts, counts)
+		}
+	}
+}
+
 // declaredNames is every name a body declares, at any depth, and the loop's own
 // variable.
 func declaredNames(body []ast.Stmt, loopVar string) map[string]bool {
@@ -417,10 +701,23 @@ func declaredNames(body []ast.Stmt, loopVar string) map[string]bool {
 // built in an iteration can reach: assigned one, given by address, or passed
 // as a reference to a function Rho emits. Each is named once, in the order
 // found. An empty answer means the loop may be released every iteration.
-func (tc *TypeChecker) loopEscapes(body []ast.Stmt, scope map[string]ir.Type, loopVar string) []string {
+//
+// replaced says which of them the loop only replaces: every way it reaches the
+// variable is an assignment to it, or to a part of it, that goes through no
+// pointer or slice. What such a variable holds at the end of an iteration is
+// all it keeps, which is what lets the loop keep it and release the rest.
+func (tc *TypeChecker) loopEscapes(body []ast.Stmt, scope map[string]ir.Type, loopVar string) (escapes []string, replaced map[string]bool) {
 	found := []string{}
 	seen := map[string]bool{}
+	other := map[string]bool{}
 	note := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			found = append(found, name)
+		}
+		other[name] = true
+	}
+	noteReplaced := func(name string) {
 		if name != "" && !seen[name] {
 			seen[name] = true
 			found = append(found, name)
@@ -430,8 +727,20 @@ func (tc *TypeChecker) loopEscapes(body []ast.Stmt, scope map[string]ir.Type, lo
 	if loopVar != "" {
 		inner[loopVar] = true
 	}
+	// A name bound once in the body by a `let` to a value from before the loop
+	// holds that value, and is as old as it is.
+	bindings := map[string]int{}
+	countBindings(body, bindings)
+	savedOlder := tc.arena.older
+	tc.arena.older = map[string]bool{}
+	defer func() { tc.arena.older = savedOlder }()
 	tc.walkStatements(body, cloneScope(scope), inner, func(statement ast.Stmt, local map[string]ir.Type, declared map[string]bool) {
 		outer := func(name string) bool { return name != "" && !declared[name] }
+		if let, isLet := statement.(ast.LetStmt); isLet && !let.Mutable && let.Value != nil &&
+			bindings[let.Name] == 1 && bindings["="+let.Name] == 0 && bindings["&"+let.Name] == 0 &&
+			let.Name != loopVar && tc.olderValue(let.Value, declared, local) {
+			tc.arena.older[let.Name] = true
+		}
 		visitExprs(statement, func(expr ast.Expr) {
 			switch e := expr.(type) {
 			case ast.UnaryExpr:
@@ -494,39 +803,61 @@ func (tc *TypeChecker) loopEscapes(body []ast.Stmt, scope map[string]ir.Type, lo
 		if err == nil && !tc.containsString(target, 0) {
 			return
 		}
-		if tc.olderValue(assign.Value, declared) {
+		if tc.olderValue(assign.Value, declared, local) {
+			return
+		}
+		if outer(root) && !tc.throughReference(assign.Target, local) {
+			noteReplaced(root)
 			return
 		}
 		note(root)
 	})
-	return found
+	replaced = map[string]bool{}
+	for _, name := range found {
+		if !other[name] {
+			replaced[name] = true
+		}
+	}
+	return found, replaced
 }
 
 // olderValue is whether a value is one that was there before the loop began, or
 // a literal: a string the iteration did not build, which storing outside the loop
 // does not keep alive.
-func (tc *TypeChecker) olderValue(value ast.Expr, declared map[string]bool) bool {
+func (tc *TypeChecker) olderValue(value ast.Expr, declared map[string]bool, scope map[string]ir.Type) bool {
 	switch v := value.(type) {
 	case ast.StringExpr, ast.NumberExpr, ast.BoolExpr:
 		return true
+	case ast.BinaryExpr:
+		// Arithmetic and comparisons answer numbers and bools; only a `+` of
+		// strings builds one.
+		if v.Op != "+" {
+			return true
+		}
+		typ, err := tc.exprType(v, scope)
+		return err == nil && !tc.containsString(typ, 0)
+	case ast.UnaryExpr:
+		if v.Op == "-" || v.Op == "!" || v.Op == "~" {
+			return true
+		}
 	case ast.IdentifierExpr, ast.MemberExpr, ast.IndexExpr, ast.SliceExpr:
 		root := rootName(v)
-		if root == "" || declared[root] {
+		if root == "" || (declared[root] && !tc.arena.older[root]) || tc.arena.fresh[root] {
 			return false
 		}
 		// An index is computed in the iteration, but what it selects is not.
 		return true
 	case ast.IfExpr:
-		return tc.olderValue(v.Then, declared) && tc.olderValue(v.Else, declared)
+		return tc.olderValue(v.Then, declared, scope) && tc.olderValue(v.Else, declared, scope)
 	case ast.StructLiteralExpr:
 		for _, field := range v.Values {
-			if !tc.olderValue(field, declared) {
+			if !tc.olderValue(field, declared, scope) {
 				return false
 			}
 		}
 		return true
 	case ast.CastExpr:
-		return tc.olderValue(v.Value, declared)
+		return tc.olderValue(v.Value, declared, scope)
 	}
 	return false
 }
@@ -1069,7 +1400,7 @@ func (tc *TypeChecker) walkStatements(body []ast.Stmt, scope map[string]ir.Type,
 			// A name an arm binds is a part of the matched value: a string the
 			// iteration built when the value is one, and one from before the
 			// loop when the value is.
-			fresh := !tc.olderValue(stmt.Value, declared)
+			fresh := !tc.olderValue(stmt.Value, declared, scope)
 			for _, arm := range stmt.Arms {
 				armScope, armNames := cloneScope(scope), cloneNames(declared)
 				if !arm.Wildcard {

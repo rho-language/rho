@@ -72,7 +72,7 @@ fn default_token_days() u32 {
 fn issue_token(req: Request) Response {
     let user: string = request_query_param(req, "user")
     let host: string = request_query_param(req, "host")
-    let days: u32 = parse_days(request_query_param(req, "days"))
+    var days: u32 = parse_days(request_query_param(req, "days"))
     let scopes: string = request_query_param(req, "scopes")
 
     if user == "" {

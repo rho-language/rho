@@ -1,0 +1,309 @@
+//
+// @file report.rho
+// @brief Column statistics and grouping over parsed CSV records.
+//
+// @module csv_report.report
+// @project csv_report
+// @author Aurel Miron
+// @date 2026-11-15
+//
+// SPDX-License-Identifier: NOASSERTION
+//
+
+module csv_report.report
+
+import std.collections.slices
+
+// The most distinct values --group-by may meet.
+const MAX_GROUPS: u32 = 256
+
+// What one column has held so far. Every value is kept as thousandths
+// (milli_parse), so 12.5 is 12500.
+struct ColumnStats {
+    values: u32
+    numeric: bool
+    min: i64
+    max: i64
+    sum: i64
+}
+
+// One distinct value of the --group-by column, how many rows had it and the
+// sum of the --sum column over them, in thousandths.
+struct Group {
+    key: string
+    count: u32
+    sum: i64
+}
+
+// observe adds one value to a column's statistics. An empty value is missing
+// and changes nothing; a value that is not a number makes the column
+// non-numeric for good.
+fn observe(s: ColumnStats, value: string) ColumnStats {
+    if strlen(str_trim(value)) == 0 {
+        return s
+    }
+    if s.values > 0 && !s.numeric {
+        return ColumnStats { s.values + 1, false, 0, 0, 0 }
+    }
+    if !milli_valid(value) {
+        return ColumnStats { s.values + 1, false, 0, 0, 0 }
+    }
+    let v: i64 = milli_parse(value)
+    if s.values == 0 {
+        return ColumnStats { 1, true, v, v, v }
+    }
+    var lo: i64 = s.min
+    var hi: i64 = s.max
+    if v < lo {
+        lo = v
+    }
+    if v > hi {
+        hi = v
+    }
+    return ColumnStats { s.values + 1, true, lo, hi, s.sum + v }
+}
+
+// format_hundredths writes thousandths as a decimal with exactly two places,
+// rounding half away from zero: 2345 is "2.35", -5 is "-0.01", 3000 is "3.00".
+fn format_hundredths(milli: i64) string {
+    var sign: string = ""
+    var m: i64 = milli
+    if m < 0 {
+        sign = "-"
+        m = -m
+    }
+    let hundredths: i64 = (m + 5) / 10
+    let whole: i64 = hundredths / 100
+    let frac: i64 = hundredths % 100
+    var frac_text: string = i64_to_str(frac)
+    if frac < 10 {
+        frac_text = "0" + frac_text
+    }
+    if hundredths == 0 {
+        sign = ""
+    }
+    return sign + i64_to_str(whole) + "." + frac_text
+}
+
+// mean_milli is sum / count in thousandths, rounded half away from zero.
+fn mean_milli(sum: i64, count: u32) i64 {
+    if count == 0 {
+        return 0
+    }
+    let c: i64 = i64(count)
+    if sum < 0 {
+        return -((-sum * 2 + c) / (2 * c))
+    }
+    return (sum * 2 + c) / (2 * c)
+}
+
+// add_to_group counts one row under key, adding amount (thousandths) to its
+// sum, and answers how many groups are in use afterwards. A new key that does
+// not fit answers groups.len + 1.
+fn add_to_group(groups: Slice[Group], used: u32, key: string, amount: i64) u32 {
+    var i: u32 = 0
+    while i < used {
+        if groups[i].key == key {
+            groups[i] = Group { key, groups[i].count + 1, groups[i].sum + amount }
+            return used
+        }
+        i = i + 1
+    }
+    if used >= groups.len {
+        return groups.len + 1
+    }
+    groups[used] = Group { key, 1, amount }
+    return used + 1
+}
+
+// sort_groups orders groups by sum, largest first; equal sums by count,
+// largest first, then by key.
+fn sort_groups(groups: Slice[Group]) void {
+    sort_by(groups, fn(a: Group, b: Group) -> bool {
+        if a.sum != b.sum {
+            return a.sum > b.sum
+        }
+        if a.count != b.count {
+            return a.count > b.count
+        }
+        return a.key < b.key
+    })
+}
+
+// column_index answers where name is among the first count header fields.
+fn column_index(header: Slice[string], count: u32, name: string) Option[u32] {
+    var i: u32 = 0
+    while i < count {
+        if header[i] == name {
+            return Some[u32](i)
+        }
+        i = i + 1
+    }
+    return None[u32]()
+}
+
+// Summary is everything the report has learned from the lines it was given.
+// A program makes one with summary, hands it every line with take_line, and
+// asks finish for the text.
+//
+// The statistics and the groups live in arrays the caller declares, which the
+// Summary holds as Slices: a struct field that is an array of structs
+// (ColumnStats[32]) does not compile on the C backend (see FINDINGS.md).
+struct Summary {
+    group_by: string
+    sum_column: string
+    header: string[MAX_FIELDS]
+    columns: u32
+    rows: u32
+    stats: Slice[ColumnStats]
+    groups: Slice[Group]
+    used: u32
+    group_at: u32
+    sum_at: u32
+}
+
+// summary starts a Summary for the options the program was given, keeping its
+// statistics in stats (one per column, MAX_FIELDS of them) and its groups in
+// groups. Both must be zero and outlive the Summary.
+fn summary(group_by: string, sum_column: string, stats: Slice[ColumnStats], groups: Slice[Group]) Summary {
+    var s: Summary
+    s.group_by = group_by
+    s.sum_column = sum_column
+    s.stats = stats
+    s.groups = groups
+    return s
+}
+
+// take_line adds one line of the file (without its newline) to s. line_no is
+// where it is in the file, from 1, for the message. It answers what is wrong
+// with the line, or "" when nothing is. A blank line is skipped.
+fn take_line(s: Ptr[Summary], line: string, line_no: u32) string {
+    if strlen(str_trim(line)) == 0 {
+        return ""
+    }
+    let where: string = "line " + int_to_str(line_no) + ": "
+    var fields: string[MAX_FIELDS]
+    var n: u32 = 0
+    match parse_record(line, fields) {
+        Ok(count) => { n = count }
+        Err(e) => { return where + e }
+    }
+    if s[0].columns == 0 {
+        // The header.
+        var i: u32 = 0
+        while i < n {
+            s[0].header[i] = fields[i]
+            i = i + 1
+        }
+        s[0].columns = n
+        if strlen(s[0].group_by) > 0 {
+            match column_index(fields, n, s[0].group_by) {
+                Some(i) => { s[0].group_at = i }
+                None => { return "no column named \"" + s[0].group_by + "\" in the header" }
+            }
+        }
+        if strlen(s[0].sum_column) > 0 {
+            match column_index(fields, n, s[0].sum_column) {
+                Some(i) => { s[0].sum_at = i }
+                None => { return "no column named \"" + s[0].sum_column + "\" in the header" }
+            }
+        }
+        return ""
+    }
+    let columns: u32 = s[0].columns
+    if n != columns {
+        return where + "expected " + int_to_str(columns) + " fields, found " + int_to_str(n)
+    }
+    var c: u32 = 0
+    while c < columns {
+        s[0].stats[c] = observe(s[0].stats[c], fields[c])
+        c = c + 1
+    }
+    s[0].rows = s[0].rows + 1
+    if strlen(s[0].group_by) > 0 {
+        var amount: i64 = 0
+        if strlen(s[0].sum_column) > 0 {
+            let raw: string = fields[s[0].sum_at]
+            if !milli_valid(raw) {
+                return where + "\"" + raw + "\" in column " + s[0].sum_column + " is not a number"
+            }
+            amount = milli_parse(raw)
+        }
+        let used: u32 = add_to_group(s[0].groups, s[0].used, fields[s[0].group_at], amount)
+        if used > s[0].groups.len {
+            return where + "more than " + int_to_str(s[0].groups.len) + " distinct values in column " + s[0].group_by
+        }
+        s[0].used = used
+    }
+    return ""
+}
+
+// finish answers the text the program prints for what s has been given, or
+// why there is nothing to report.
+fn finish(s: Ptr[Summary]) Result[string, string] {
+    let columns: u32 = s[0].columns
+    if columns == 0 {
+        return Err[string, string]("the file is empty: there is no header row")
+    }
+    let header: Slice[string] = s[0].header
+    let stats: Slice[ColumnStats] = s[0].stats
+    var out: string = "rows: " + int_to_str(s[0].rows) + "\n"
+    out = out + "columns (" + int_to_str(columns) + "):"
+    var col: u32 = 0
+    while col < columns {
+        out = out + " " + header[col]
+        col = col + 1
+    }
+    out = out + "\n"
+    col = 0
+    while col < columns {
+        let st: ColumnStats = stats[col]
+        if st.numeric {
+            out = out + "  " + header[col] + ": min " + milli_format(st.min) + ", max " + milli_format(st.max) + ", mean " + format_hundredths(mean_milli(st.sum, st.values)) + "\n"
+        }
+        col = col + 1
+    }
+    if strlen(s[0].group_by) > 0 {
+        let all: Slice[Group] = s[0].groups
+        let used: u32 = s[0].used
+        let found = all[..used]
+        sort_groups(found)
+        out = out + "\nby " + s[0].group_by + ":\n"
+        for g in found {
+            out = out + "  " + g.key + ": count " + int_to_str(g.count)
+            if strlen(s[0].sum_column) > 0 {
+                out = out + ", sum of " + s[0].sum_column + " " + format_hundredths(g.sum)
+            }
+            out = out + "\n"
+        }
+    }
+    return Ok[string, string](out)
+}
+
+// report reads a whole CSV document held in one string and answers the text
+// the program prints, or the error it stops with ("line 7: ..."). group_by
+// and sum_column are column names, or "" when not asked for. It is for a
+// document that is small: str_at measures the string on the C backend, so a
+// large file is read through take_line a buffer at a time (see main.rho).
+fn report(text: string, group_by: string, sum_column: string) Result[string, string] {
+    var stats: ColumnStats[MAX_FIELDS]
+    var groups: Group[MAX_GROUPS]
+    var s: Summary = summary(group_by, sum_column, stats, groups)
+    let size: u32 = strlen(text)
+    var line_no: u32 = 0
+    var pos: u32 = 0
+    while pos < size {
+        let start: u32 = pos
+        while pos < size && str_at(text, pos) != 10 {
+            pos = pos + 1
+        }
+        let line: string = str_slice(text, start, pos - start)
+        pos = pos + 1
+        line_no = line_no + 1
+        let problem: string = take_line(&s, line, line_no)
+        if strlen(problem) > 0 {
+            return Err[string, string](problem)
+        }
+    }
+    return finish(&s)
+}

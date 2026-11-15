@@ -14,8 +14,8 @@
 module main
 
 fn crc32_byte(crc: u32, byte: u8) u32 {
-    let c: u32 = crc ^ u32(byte)
-    let i: u32 = 0
+    var c: u32 = crc ^ u32(byte)
+    var i: u32 = 0
     while i < 8 {
         if (c & 1) != 0 {
             c = (c >> 1) ^ 0xEDB88320
@@ -28,8 +28,8 @@ fn crc32_byte(crc: u32, byte: u8) u32 {
 }
 
 fn crc32_buffer(data: u8[1024], length: u32) u32 {
-    let crc: u32 = 0xFFFFFFFF
-    let i: u32 = 0
+    var crc: u32 = 0xFFFFFFFF
+    var i: u32 = 0
     while i < length {
         crc = crc32_byte(crc, data[i])
         i = i + 1
@@ -41,14 +41,14 @@ fn main() void {
     let buf_raw: u8[1024]
 
     // Fill the buffer with deterministic data.
-    let i: u32 = 0
+    var i: u32 = 0
     while i < 1024 {
         buf_raw[i] = u8(i & 0xFF)
         i = i + 1
     }
 
-    let result: u32 = 0
-    let n: u32 = 0
+    var result: u32 = 0
+    var n: u32 = 0
     while n < 10000 {
         result = result ^ crc32_buffer(buf_raw, 1024)
         n = n + 1

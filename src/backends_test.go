@@ -88,13 +88,13 @@ func TestAModuleOrBuiltinIsRefusedByNameOnABackendThatCannotSupplyIt(t *testing.
 		},
 		{
 			name: "a Go runtime built-in on C", target: "c", language: "c",
-			source: "module app\n\nfn main() void {\n    print(get_args())\n}\n",
-			want:   []string{"the c target", "get_args is for the go backend", "main.rho:4:11: error: "},
+			source: "module app\n\nfn main() void {\n    write_file(\"x\", read_file(\"y\"))\n}\n",
+			want:   []string{"the c target", "write_file is for the go backend", "main.rho:4:5: error: "},
 		},
 		{
 			name: "a runtime function declared extern on C", target: "c", language: "c",
-			source: "module app\n\nextern fn rho_path_exists(path: string) bool\n\nfn main() void {\n    if rho_path_exists(\"/\") {\n        print(\"y\")\n    }\n}\n",
-			want:   []string{"rho_path_exists is for the go backend"},
+			source: "module app\n\nextern fn rho_list_dir(path: string) string\n\nfn main() void {\n    print(rho_list_dir(\"/\"))\n}\n",
+			want:   []string{"rho_list_dir is for the go backend"},
 		},
 		{
 			name: "a service built-in on a Go command-line target", target: "go", language: "go",

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"rho/src/frontend/ast"
+	"rho/src/frontend/lexer"
 )
 
 // precedence returns the binding strength of an expression, mirroring the
@@ -55,17 +56,27 @@ func precedence(e ast.Expr) int {
 			return 4
 		}
 	case ast.UnaryExpr:
-		// A unary binds tighter than any binary but looser than a call.
-		return 6
+		// A unary binds tighter than any binary but looser than a call: its
+		// operand is read by the prefix parser, which takes no binary.
+		return unaryLevel
 	case ast.CallExpr, ast.IndexExpr, ast.SliceExpr, ast.MemberExpr, ast.CastExpr, ast.StructLiteralExpr, ast.FuncLitExpr:
-		return 7
+		// `as` is a postfix, read straight after its operand like a call, so
+		// `(a % b) as i32` keeps its parentheses.
+		return postfixLevel
 	case ast.IfExpr:
 		return 0
 	default:
 		// Names, literals and grouping parentheses never need their own.
-		return 8
+		return postfixLevel + 1
 	}
 }
+
+// unaryLevel and postfixLevel are the strengths of a unary and of a postfix
+// (call, index, member, cast): both above every binary operator.
+const (
+	unaryLevel   = 8
+	postfixLevel = 9
+)
 
 // printExpr writes an expression, adding parentheses when the surrounding
 // context binds more loosely than the expression itself.
@@ -107,8 +118,9 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 
 	case ast.UnaryExpr:
 		b.WriteString(x.Op)
-		// A unary operand must not absorb the operator itself.
-		printExpr(b, x.Value, 6)
+		// A unary's operand is a prefix expression: a binary in it keeps its
+		// parentheses.
+		printExpr(b, x.Value, unaryLevel)
 
 	case ast.BinaryExpr:
 		own := precedence(x)
@@ -121,7 +133,7 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 		printExpr(b, x.Right, own+1)
 
 	case ast.CallExpr:
-		printExpr(b, x.Callee, 7)
+		printExpr(b, x.Callee, postfixLevel)
 		if len(x.TypeArgs) > 0 {
 			b.WriteString("[")
 			printTypeArgs(b, x.TypeArgs)
@@ -132,7 +144,7 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 		b.WriteString(")")
 
 	case ast.MemberExpr:
-		printExpr(b, x.Object, 7)
+		printExpr(b, x.Object, postfixLevel)
 		// `Option[u32].None`: the type arguments the variant is named with.
 		if len(x.TypeArgs) > 0 {
 			args := make([]string, len(x.TypeArgs))
@@ -145,7 +157,7 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 		b.WriteString(x.Name)
 
 	case ast.IndexExpr:
-		printExpr(b, x.Object, 7)
+		printExpr(b, x.Object, postfixLevel)
 		// `pair[u32, string]`: a generic function named with its type
 		// arguments, every one of them.
 		if len(x.TypeArgs) > 0 {
@@ -160,7 +172,7 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 
 	case ast.SliceExpr:
 		// A cut, `s[a..b]`, with either bound left out as it was written.
-		printExpr(b, x.Object, 7)
+		printExpr(b, x.Object, postfixLevel)
 		b.WriteString("[")
 		if x.Low != nil {
 			printExpr(b, x.Low, 0)
@@ -175,12 +187,14 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 		// The cast is written `value as T`, which is what the parser reads. A
 		// C-style `(T) value` would come back as a call to T, so it is not
 		// interchangeable here.
-		printExpr(b, x.Value, 6)
+		printExpr(b, x.Value, postfixLevel)
 		b.WriteString(" as " + x.Type.String())
 
 	case ast.StructLiteralExpr:
+		// `Point { 0, 0 }`: the brace is spaced from the type, as the
+		// language reference writes it.
 		b.WriteString(typeWithArgs(x.Type))
-		b.WriteString("{ ")
+		b.WriteString(" { ")
 		printExprList(b, x.Values)
 		b.WriteString(" }")
 
@@ -211,9 +225,16 @@ func printExprBare(b *strings.Builder, e ast.Expr) {
 		if x.ReturnType != "" && x.ReturnType != "void" {
 			b.WriteString(" -> " + x.ReturnType)
 		}
-		b.WriteString(" {\n")
 		depth := statementDepth
-		printStmts(b, x.Body, depth+1)
+		// The body's comments are its own: the brace that opens it is found
+		// from the `fn` the literal begins with.
+		open := -1
+		if start := tokOf(x.Pos); kindAt(start) == lexer.TokenFn {
+			open = braceFrom(start)
+		}
+		b.WriteString(" {")
+		endLine(b, open, depth+1)
+		printStmts(b, x.Body, depth+1, pairOf(open))
 		b.WriteString(strings.Repeat(indent, depth) + "}")
 
 	default:

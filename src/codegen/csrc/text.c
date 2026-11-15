@@ -264,6 +264,51 @@ char* rho_milli_format(int64_t milli)
     return rho_text_copy(buf + j, sizeof(buf) - 1 - j);
 }
 
+/* rho_milli_format_fixed writes thousandths with exactly `decimals` digits
+ * after the point (at most 20): fewer than three rounds the half away from
+ * zero, as rho_milli_round does, and more pads with zeros. A value that rounds
+ * to zero has no sign. */
+char* rho_milli_format_fixed(int64_t milli, uint32_t decimals)
+{
+    if (decimals > 20u) {
+        decimals = 20u;
+    }
+    uint64_t value = milli < 0 ? (uint64_t)0 - (uint64_t)milli : (uint64_t)milli;
+    uint32_t kept = decimals < 3u ? decimals : 3u;
+    uint64_t scale = 1;
+    for (uint32_t i = kept; i < 3u; i++) {
+        scale *= 10u;
+    }
+    uint64_t rounded = (value / scale) + ((value % scale) * 2u >= scale && scale > 1u ? 1u : 0u);
+    uint64_t unit = 1;
+    for (uint32_t i = 0; i < kept; i++) {
+        unit *= 10u;
+    }
+    uint64_t whole = rounded / unit;
+    uint64_t fraction = rounded % unit;
+    char buf[48];
+    size_t j = sizeof(buf);
+    buf[--j] = 0;
+    for (uint32_t i = kept; i < decimals; i++) {
+        buf[--j] = '0';
+    }
+    for (uint32_t i = 0; i < kept; i++) {
+        buf[--j] = (char)('0' + fraction % 10u);
+        fraction /= 10u;
+    }
+    if (decimals > 0u) {
+        buf[--j] = '.';
+    }
+    do {
+        buf[--j] = (char)('0' + whole % 10u);
+        whole /= 10u;
+    } while (whole != 0);
+    if (milli < 0 && rounded != 0) {
+        buf[--j] = '-';
+    }
+    return rho_text_copy(buf + j, sizeof(buf) - 1 - j);
+}
+
 /* rho_milli_round keeps `places` decimals of thousandths, the half away from
  * zero: 2.345 to two places is 2.35, -2.345 is -2.35. Three places or more
  * leaves the value as it is. */

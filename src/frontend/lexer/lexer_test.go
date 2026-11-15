@@ -253,3 +253,34 @@ func TestAColumnCountsCharactersNotBytes(t *testing.T) {
 	}
 	t.Fatal("the accented name was not lexed as one token")
 }
+
+// The comments a formatter keeps are every comment, as written, where it is;
+// and keeping them changes none of the tokens.
+func TestLexCommentsKeepsEveryComment(t *testing.T) {
+	src := "// head\nmodule m\n\nfn f() { /* a\n b */ x() // tail\n}\n/* end */"
+	tokens, comments, err := LexComments(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := Lex(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != len(plain) {
+		t.Fatalf("keeping comments changed the tokens: %d then %d", len(plain), len(tokens))
+	}
+	want := []Comment{
+		{Text: "// head", Offset: 0, Line: 1, Column: 1, EndLine: 1},
+		{Text: "/* a\n b */", Offset: 27, Line: 4, Column: 10, EndLine: 5},
+		{Text: "// tail", Offset: 42, Line: 5, Column: 11, EndLine: 5},
+		{Text: "/* end */", Offset: 52, Line: 7, Column: 1, EndLine: 7},
+	}
+	if len(comments) != len(want) {
+		t.Fatalf("got %d comments, want %d: %#v", len(comments), len(want), comments)
+	}
+	for i := range want {
+		if comments[i] != want[i] {
+			t.Errorf("comment %d: got %#v, want %#v", i, comments[i], want[i])
+		}
+	}
+}
