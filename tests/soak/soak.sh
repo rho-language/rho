@@ -41,7 +41,7 @@ if [ "$kind" = firmware ]; then
   "$here/firmware/build/output/soak" > "$here/logs/$kind-$start.out" &
   target=$!; pids+=("$target")
 else
-  port="${SOAK_PORT:-18080}"
+  port="${SOAK_PORT:-28411}"
   (cd "$root" && "$rho" build applications/docsite >/dev/null)
   (cd "$root" && RHO_HTTP_ADDR="127.0.0.1:$port" RHO_DOCS_ROOT=. RHO_DOCS_TREE=docs \
      RHO_SITE_RELEASES=CHANGELOG.md exec ./applications/docsite/build/docsite) \

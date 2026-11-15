@@ -22,4 +22,4 @@ warm-up is more than 1.5 times the smallest. A run that is stopped early, or
 whose program exits, says so and fails.
 
 `SOAK_INTERVAL` changes the sampling interval (seconds) and `SOAK_PORT` the
-service's port (18080).
+service's port (28411, clear of the ports RoboHub's smoke tests use).
