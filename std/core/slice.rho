@@ -1,3 +1,8 @@
+//
+// @file slice.rho
+// @stability stable
+//
+
 module std.core.slice
 
 struct Slice[T] {

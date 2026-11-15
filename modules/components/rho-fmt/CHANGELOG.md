@@ -30,6 +30,11 @@ formatted.
 
 `-check` names the files that need formatting and exits 1, and prints no source; it used to print the formatted file. A plain run prints every file it is given, formatted or already formatted, where a file that needed no change printed nothing.
 
+### Breaking
+
+- `rho fmt -check FILE` no longer prints the formatted source: a script that captured it runs `rho fmt FILE` for the source, and reads `-check` only for the names of the files that need formatting and its exit status (1 when any does).
+- A plain `rho fmt FILE` prints a file that is already formatted, where it printed nothing: a script that took empty output to mean "already formatted" uses `-check` instead.
+
 ## [0.1.4] - 2026-11-14
 
 Enums are printed (they were dropped as an unprinted declaration).

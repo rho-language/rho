@@ -54,3 +54,65 @@ enum Shape[T] {
 		t.Error("no page was rendered")
 	}
 }
+
+// A module's `@stability` tag and a `@deprecated` line are on its reference
+// page: the stability in the sentence it opens with, a deprecation beside the
+// declaration it is about.
+func TestTheReferenceSaysHowSettledAModuleIsAndWhatIsDeprecated(t *testing.T) {
+	root := t.TempDir()
+	source := `//
+// @file files.rho
+// @stability experimental
+//
+module files
+
+// read_all answers the file.
+// @deprecated use read_bytes instead
+fn read_all(path: string) string {
+    return path
+}
+
+fn read_bytes(path: string) string {
+    return path
+}
+
+// @deprecated use Size instead
+struct OldSize {
+    w: u32
+}
+
+enum Mode {
+    Off
+    // @deprecated use On
+    Lit
+    On
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "files.rho"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modules, diagnostics := ReadApiSources(root)
+	if len(diagnostics) != 0 || len(modules) != 1 {
+		t.Fatalf("modules %v, diagnostics %v", modules, diagnostics)
+	}
+	module := modules[0]
+	if module.Stability != "experimental" {
+		t.Errorf("the stability is %q", module.Stability)
+	}
+	if module.Functions[0].Name != "read_all" || module.Functions[0].Deprecation == nil || module.Functions[1].Deprecation != nil {
+		t.Errorf("functions: %+v", module.Functions)
+	}
+	html := renderedText(RenderApiModule(module))
+	for _, want := range []string{"Stability: experimental.", "Deprecated: use read_bytes instead", "OldSize (deprecated: use Size instead)", "<code>Lit = 1</code> (deprecated: use On)"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the page has no %q:\n%s", want, html)
+		}
+	}
+	if index := renderedText(RenderApiIndex(modules, "api")); !strings.Contains(index, "experimental") {
+		t.Errorf("the index does not list the stability:\n%s", index)
+	}
+}
+
+func renderedText(document *Document) string {
+	return RenderPage(document).Body
+}

@@ -47,6 +47,60 @@ The functions a program calls without importing anything (text, numbers,
 files, processes, time) are not in `std/`. They are the
 {ref}`built-in functions <language/builtins>`.
 
+## How stable a module is
+
+Each module says in its header how settled its API is, with a line the
+reference reads and shows at the top of the module's page:
+
+```rho
+// @stability stable
+```
+
+`stable` means a change that breaks a program using the module arrives as a
+deprecation warning for at least one minor release before it arrives as a
+refusal; `experimental` means the module may change in any minor release, and
+the release notes say how. {ref}`Stability <documentation/stability>` has the
+whole policy. Every module carries the line, and a module without it fails the
+test suite, so a new module has to choose.
+
+| Module | Stability | Why |
+|---|---|---|
+| `std.assert.assert` | stable | what `rho test` programs use; unchanged since it was written |
+| `std.collections.array` | experimental | `Array[T, N]` carries its length as a type parameter nothing checks; the shape is not settled |
+| `std.collections.bitset` | experimental | its constructor changed in 0.11.0 and again in 0.14.0 (it takes a `Slice[u64]`) |
+| `std.collections.map` | experimental | a key is hashed through `u32(key)`, so it must convert to one ({ref}`known limitations <tools/known-bugs>`) |
+| `std.collections.slices` | experimental | new in 0.17.0, written over constraints that are new in 0.17.0 |
+| `std.core.builtin` | stable | the compiler's own functions, written down |
+| `std.core.cmp` | experimental | new in 0.17.0 |
+| `std.core.maybe_uninit` | experimental | a placeholder for uninitialised storage with no use in the tree yet |
+| `std.core.option` | stable | an enum since 0.13.0, with the struct's field reads kept |
+| `std.core.ptr` | stable | the functions over `Ptr[T]`, one type on both backends since 0.10.0 |
+| `std.core.range` | stable | unchanged since it was written |
+| `std.core.result` | stable | an enum since 0.13.0, with the struct's field reads kept |
+| `std.core.slice` | stable | declares the language's own `Slice[T]`, which the language reference describes |
+| `std.embedded.gpio` | experimental | the embedded drivers are C-only and tested against stubs, not boards |
+| `std.embedded.i2c` | experimental | as above |
+| `std.embedded.modbus` | experimental | as above |
+| `std.embedded.rs485` | experimental | as above |
+| `std.embedded.spi` | experimental | as above |
+| `std.embedded.timer` | experimental | as above |
+| `std.embedded.uart` | experimental | as above |
+| `std.math.basic` | stable | integer and float basics |
+| `std.math.control` | experimental | a PID and filters whose parameters are still being chosen |
+| `std.math.embedded` | experimental | overlaps `std.math.basic`; one of the two will go |
+| `std.math.fast` | experimental | overlaps `std.math.float`; one of the two will go |
+| `std.math.fixed` | experimental | Q16.16 arithmetic whose set of operations is not settled |
+| `std.math.float` | stable | the C library's functions over `f64` |
+| `std.math.linear` | stable | vectors of `f64` |
+| `std.os.fs` | experimental | opens a path given as a `Ptr[u8]`, which is likely to become a string |
+| `std.os.sys` | stable | `read` and `write` over a `Slice[u8]` since 0.14.0 |
+| `std.os.time` | stable | the realtime clock |
+| `std.sql` | experimental | Go only, through a port whose interface is still growing |
+| `std.strings.string` | stable | text as `String = Slice[u8]` |
+| `std.strings.utf8` | stable | UTF-8 decoding over a `String` |
+| `std.web.http` | experimental | the responses of a generated service, which grows with the server target |
+| `std.web.template` | experimental | the template engine's interface, as above |
+
 ## core
 
 The types every other module is built out of.

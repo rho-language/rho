@@ -430,6 +430,9 @@ func (p *Parser) locate(node *ast.Decl, at ast.Position) {
 	case ast.EnumDecl:
 		n.Pos = at
 		*node = n
+	case ast.ConstDecl:
+		n.Pos = at
+		*node = n
 	}
 }
 
@@ -1080,11 +1083,14 @@ func (p *Parser) parseFuncDeclWithExtern() ast.Decl {
 	p.readToken()
 	params := []ast.Param{}
 	for p.current.Kind != lexer.TokenRParen {
+		paramAt := p.position()
 		paramName := p.name()
 		p.expect(lexer.TokenColon)
 		p.readToken()
 		paramType := p.parseType()
-		params = append(params, ast.Param{Name: paramName, Type: paramType.String(), TypeExpr: paramType})
+		param := ast.Param{Name: paramName, Type: paramType.String(), TypeExpr: paramType}
+		param.Pos = paramAt
+		params = append(params, param)
 		if p.current.Kind == lexer.TokenComma {
 			p.readToken()
 		}

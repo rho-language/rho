@@ -1,3 +1,8 @@
+//
+// @file fixed.rho
+// @stability experimental
+//
+
 module std.math.fixed
 
 struct Q16_16 { raw: i32 }

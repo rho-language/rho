@@ -74,7 +74,14 @@ type Diagnostic struct {
 	// RelatedInformation are the diagnostic's notes: where a function called
 	// wrongly is declared, which line includes the file a mistake is in.
 	RelatedInformation []DiagnosticRelatedInformation `json:"relatedInformation,omitempty"`
+	// Tags are what an editor draws beside the severity: DiagnosticTagDeprecated
+	// strikes the use of something deprecated through.
+	Tags []int `json:"tags,omitempty"`
 }
+
+// DiagnosticTagDeprecated is the protocol's tag for a use of something
+// deprecated.
+const DiagnosticTagDeprecated = 2
 
 // DiagnosticRelatedInformation is one further place a diagnostic points at.
 type DiagnosticRelatedInformation struct {

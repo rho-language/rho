@@ -255,6 +255,9 @@ func fromTypeError(path string, err *types.Error) Diagnostic {
 		Message:  err.Error(),
 		Scope:    err.Scope,
 	}
+	if err.Code != "" {
+		diagnostic.Code = err.Code
+	}
 	if !err.Position.Valid() {
 		diagnostic.Line, diagnostic.Column = 0, 0
 	}
@@ -485,6 +488,7 @@ func ParseSource(path, source string) DocumentDiagnostics {
 		out.Diagnostics = append(out.Diagnostics, sourceDiagnostics(path, source, "parse", err)...)
 		return out
 	}
+	parser.AttachDocTags(module, source)
 	module.Name = filepath.Base(path)
 	if len(module.Imports) > 0 || len(module.Includes) > 0 {
 		return out

@@ -449,6 +449,19 @@ What an integer operation means is the same on both backends. Signed `+ - *` and
 
 A panic on a hosted C program goes to stderr as `rho: <message>`, as on Go, and `abort()` is a panic. A program's own `extern fn` gets a C prototype. Standard-library function bodies are type-checked when their module is loaded. `std.collections.bitset` is built from a pointer and a size (`bitset(&words[0], n)`); `std.sql.ok` returns `Result[T, string]`. Fixed along the way: float literals meeting integers, fixed-point multiplication in 64 bits, value parameters of generics (`Array[u32, 4]`), arrays of generic structs, `std.core.range`, std externs without C prototypes, a Go server without templates, narrow `-`/`~`, and shift promotion.
 
+### Breaking
+
+These were refused or changed at once, without a deprecation first, because the old behaviour was wrong code on at least one backend.
+
+- `std.collections.bitset`: `BitSet[N]` holding its own `u64[N]` is gone; a bitset is built over words the caller owns. `let b: BitSet[4] = ...` becomes `var words: u64[4]` and `let b: BitSet = bitset(&words[0], 4)`, and `set[N](b, i)`, `clear[N](b, i)`, `get[N](b, i)` become `set(b, i)`, `clear(b, i)`, `get(b, i)`. (0.14.0 changed the constructor again; see there.)
+- `std.sql.ok[T, E](value, code, message)` is `ok[T](value, code, message)` and returns `Result[T, string]`: drop the second type argument, and declare what it returns as `Result[T, string]`.
+- A constant that does not fit the type it becomes is refused (`constant -3 overflows u32`): write a value the type holds (`let b: u8 = 44` for `300`), or do the arithmetic in a wider type and convert the result.
+- A shift by a constant of the type's width or more is refused (`shift count 32 overflows type u32`): write the result (`0`), or shift a wider type: `u64(x) << 32`.
+- A division or remainder by a constant zero, and a constant index outside a fixed array, are refused: remove the expression; it stopped or misbehaved at run time.
+- An index past the end of a fixed array or a `Slice` stops the program with `rho: index i out of range [0,n)` instead of reading past it: check the index before using it.
+- A panic on a hosted C program, and `abort()` on both backends, write `rho: <message>` to standard error and exit with status 1 (`abort()` used to stop C with SIGABRT, status 134): a script that tested for 134 tests for 1, and reads the message from standard error.
+- `std.core.builtin` no longer declares the pointer, memory and arithmetic helpers (`ptr_null`, `ptr_add`, `load_u8`, `add_i32`, `str_concat`, …), none of which compiled or linked on any backend: use `Ptr[T]` and the operators.
+
 ## [0.12.0] - 2026-11-14
 
 Errors point at the mistake. Every position keeps the file it came from, through `include` and `import`, so an error in an included file, an imported module or the standard library is reported at that file's line and column — the column of the offending expression. Every independent error in a program is reported in one run (up to 20 shown, "and N more"), without cascades: an undefined name once, nothing that follows from a failed `let`. A parse error recovers at the next declaration.
@@ -457,6 +470,10 @@ One diagnostic, everywhere: `file:line:col: error|warning: message`, with notes 
 
 Fixed: columns were one too far right on every line after the first; the language server published every diagnostic one line low.
 
+### Breaking
+
+- `rho build` and `rho run` print a program's mistakes as `file:line:col: error: message`, with paths relative to the working directory, instead of `rho build: <message>`: a script that matched the `rho build:` prefix on a compile error matches `: error: ` instead. The exit status is unchanged.
+
 ## [0.13.0] - 2026-11-14
 
 Enums, with or without data. `enum Shape { Circle(i32), Rect { w: i32, h: i32 }, Empty }` and plain enums with numbers (`enum Mode { Off = 0, Auto = 2 }`); generic enums with default type arguments. A value is built as `Shape.Circle(3)` and taken apart with `match` or `if let`: variants bind their payloads, patterns nest, literals compare, and a `match` that misses a variant is refused with the missing ones named (an arm that can never be reached is a warning). Plain enums are the narrowest integer on both backends and convert to and from numbers (`Mode(n)` stops the program if `n` is not a value); data enums are a tag and a union, copied as values, and follow the string arena's rules. `==` works on plain enums.
@@ -464,6 +481,10 @@ Enums, with or without data. `enum Shape { Circle(i32), Rect { w: i32, h: i32 },
 `Option` and `Result` are language enums now (`enum Option[T] { None, Some(T) }`, `enum Result[T, E = Unit] { Err(E), Ok(T) }`), with their helpers; the field-style reads (`.is_some`, `.value`, `.is_ok`, `.ok`, `.err`) and struct-style literals keep working, and `Option[Ptr[T]]` is still a bare pointer in C. A protocol schema or a SQL column takes a plain enum as a number and refuses a data enum.
 
 Warnings reach `rho build` and the editor. Fixed: Go if-expressions over a call, `Option[Ptr[T]].value`'s type, nested prelude generics, and `rho fmt` dropping enums.
+
+### Breaking
+
+- `==` and `!=` between two `Option` or two `Result` values are refused, since each is an enum that carries data (on Go they compared field by field; on C they did not compile): test the variant with `match` or `if let`, as in `if let Option.Some(x) = a { ... }`, or compare `a.is_some` and `a.value`.
 
 ## [0.14.0] - 2026-11-14
 
@@ -501,6 +522,10 @@ A literal captures the names it uses by value, when it runs. On C a function val
 
 Refused, each with what to write instead: assigning to or taking the address of a captured name; capturing a `Ptr`, `[T]`, `Slice[T]` or a value holding one (pass it as a parameter); capturing a fixed array; fixed arrays in a function type; comparing or printing a function value; a built-in used as a value.
 
+### Breaking
+
+None. The refusals above apply to function values, which are new; `return None` for `None()` (#41) never built, and now says so at the line.
+
 Fixed: type arguments containing commas were split wrongly, so `Slice[fn(u32) -> u32]` and nested applications got the wrong element type (#39); a bare generic function as a value (`return None`) produced invalid C and Go and is now refused with the fix (#41). rho-lint no longer reports an import used only in a type as unused (#40).
 
 ## [0.17.0] - 2026-11-15
@@ -518,3 +543,17 @@ New in std: `std.core.cmp` (`min`, `max`, `clamp`) and `std.collections.slices` 
 - `==` and `!=` between two structs are refused on every backend (C could not compile them; Go compared field by field): compare the fields.
 
 Fixed: string ordering compared pointers on C (#42); `x as T` and `T` locals in a specialisation kept the name `T` (#43, #44), which made an `i32` `+` in a generic plain C `+`; a nested generic call deduced `add_T` (#45); a fixed array of a plain enum did not become a `Slice` (#46); #47 and #48 above.
+
+## [0.18.0] - 2026-11-15
+
+A written promise about change: `docs/stability.md` says what is stable (the language as documented, std modules tagged stable, the `module.yml` keys, the documented CLI and its exit codes, the diagnostic format), what is experimental, and how a change arrives — a deprecation warning in one minor release, then a `### Breaking` section with the exact edit in a later one; a patch release never breaks a program, and wrong code or unsound behaviour is refused at once with the fix spelled out. Every release note from 0.11.0 has a Breaking section.
+
+`// @deprecated use X instead` in the doc comment of a function, struct, enum, variant, constant or alias — or in a module's header — makes every use from another module a warning that names the replacement and points at the declaration (`file:line:col: warning: old is deprecated: use new instead`), in `rho build`, `rho lint` and the editor, which strikes the use through. The build still succeeds.
+
+Every std module says how stable it is (`// @stability stable|experimental`); the API reference shows it on each page and in its index, and `docs/language/stdlib.md` lists every module with its tag and the reason.
+
+### Breaking
+
+None.
+
+Known: `rho fmt` drops comments, tags included (#49); it is fixed before beta.

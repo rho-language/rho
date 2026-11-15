@@ -19,9 +19,12 @@
 package state
 
 import (
-	"github.com/rho/rho-lsp/src/protocol"
 	"strings"
 	"testing"
+
+	"github.com/rho/rho-lsp/src/protocol"
+	"rho/src"
+	"rho/src/types"
 )
 
 func TestDocumentCreate(t *testing.T) {
@@ -90,5 +93,23 @@ func TestDocumentNodeAt(t *testing.T) {
 	}
 	if node.Name != "test" {
 		t.Errorf("found %q, want test", node.Name)
+	}
+}
+
+// A use of something deprecated is a warning the editor strikes through: the
+// compiler's code for it becomes the protocol's Deprecated tag.
+func TestADeprecationWarningCarriesTheDeprecatedTag(t *testing.T) {
+	published := publishable([]rho.Diagnostic{
+		{File: "/p/src/main.rho", Line: 6, Column: 18, Severity: rho.SeverityWarning, Code: types.DeprecatedCode, Message: "old_area is deprecated: use area instead"},
+		{File: "/p/src/main.rho", Line: 7, Column: 1, Severity: rho.SeverityWarning, Code: "type", Message: "never runs"},
+	}, "/p/src/main.rho", true, "module main\n\n\n\n\n    let a: u32 = lib.old_area(2, 3)\n_ => {}\n")
+	if len(published) != 2 {
+		t.Fatalf("published %d diagnostics, want 2", len(published))
+	}
+	if len(published[0].Tags) != 1 || published[0].Tags[0] != protocol.DiagnosticTagDeprecated || published[0].Severity != 2 {
+		t.Errorf("the deprecation is %+v, want a warning tagged deprecated", published[0])
+	}
+	if len(published[1].Tags) != 0 {
+		t.Errorf("an ordinary warning was tagged: %+v", published[1])
 	}
 }

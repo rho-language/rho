@@ -1,3 +1,8 @@
+//
+// @file array.rho
+// @stability experimental
+//
+
 module std.collections.array
 
 import std.core.ptr

@@ -90,6 +90,33 @@ type Module struct {
 	// module's import path. A module with no entry exports everything, which is
 	// what a module written before export lists does.
 	Exports map[string][]string
+	// DeprecatedImports are the imports of a module whose header says it is
+	// deprecated, collected while the program is loaded, so the checker can warn
+	// at each one. An import is not a declaration the checker otherwise sees.
+	DeprecatedImports []DeprecatedImport
+}
+
+// Deprecation is what a `// @deprecated` line in a declaration's doc comment
+// says: that the declaration is on its way out, and usually what to use
+// instead. Note is the text after the tag, empty when the tag stands alone.
+//
+//	// @deprecated use read_bytes instead
+//	fn read_all(path: string) -> Slice[u8] { ... }
+//
+// A deprecated declaration still compiles and still works; every use of it
+// from outside its own module is a warning naming the replacement.
+type Deprecation struct {
+	Note string
+}
+
+// DeprecatedImport is one import of a module whose header carries
+// `// @deprecated`: where the import is, the module imported, and where the
+// module's own declaration is.
+type DeprecatedImport struct {
+	Pos    Position
+	Module string
+	Note   string
+	Decl   Position
 }
 
 // TypeExpr represents a named type with optional generic arguments and array
@@ -162,6 +189,8 @@ type TypeDecl struct {
 	Name  string
 	Owner string
 	Type  TypeExpr
+	// Deprecated is set by a `// @deprecated` line in its doc comment.
+	Deprecated *Deprecation
 }
 
 func (TypeDecl) declNode() {}
@@ -182,6 +211,8 @@ type ConstDecl struct {
 	Owner string
 	Type  TypeExpr
 	Value Expr
+	// Deprecated is set by a `// @deprecated` line in its doc comment.
+	Deprecated *Deprecation
 }
 
 func (ConstDecl) declNode() {}
@@ -235,6 +266,8 @@ type StructDecl struct {
 	// carries data: its tag, then each variant's values (Field.Variant). It is
 	// never written; the enum it stands for is checked in its place.
 	Enum bool
+	// Deprecated is set by a `// @deprecated` line in its doc comment.
+	Deprecated *Deprecation
 }
 
 func (StructDecl) declNode() {}
@@ -296,6 +329,8 @@ type EnumDecl struct {
 	// for them.
 	TypeParams        []string
 	TypeParamDefaults map[string]string
+	// Deprecated is set by a `// @deprecated` line in its doc comment.
+	Deprecated *Deprecation
 }
 
 func (EnumDecl) declNode() {}
@@ -316,6 +351,8 @@ type EnumVariant struct {
 	Fields []Field
 	// Named says the fields were written with names, in braces.
 	Named bool
+	// Deprecated is set by a `// @deprecated` line in the comment above it.
+	Deprecated *Deprecation
 }
 
 // CarriesData reports whether any variant of an enum carries a value.
@@ -391,6 +428,8 @@ type FuncDecl struct {
 	// with no entry is unconstrained.
 	TypeParamBounds map[string][]TypeBound
 	Extern          bool
+	// Deprecated is set by a `// @deprecated` line in its doc comment.
+	Deprecated *Deprecation
 }
 
 // TypeBound is one constraint written on a type parameter: `Number` in

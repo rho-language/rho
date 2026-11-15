@@ -1,3 +1,8 @@
+//
+// @file utf8.rho
+// @stability stable
+//
+
 module std.strings.utf8
 
 import std.strings.string

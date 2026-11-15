@@ -31,6 +31,7 @@ import (
 	"github.com/rho/rho-lsp/src/protocol"
 	"rho/src"
 	"rho/src/frontend/lexer"
+	"rho/src/types"
 )
 
 /* -------------------------------------------------------------------------- */
@@ -216,6 +217,9 @@ func publishable(diagnostics []rho.Diagnostic, path string, onDisk bool, text st
 			Code:     diagnostic.Code,
 			Source:   "rho",
 			Message:  message,
+		}
+		if diagnostic.Code == types.DeprecatedCode {
+			published.Tags = []int{protocol.DiagnosticTagDeprecated}
 		}
 		for _, note := range diagnostic.Notes {
 			if note.File == "" || note.Line == 0 {

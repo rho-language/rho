@@ -1,3 +1,8 @@
+//
+// @file fast.rho
+// @stability experimental
+//
+
 module std.math.fast
 
 extern fn rho_sin(x: f64) f64

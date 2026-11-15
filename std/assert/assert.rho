@@ -13,6 +13,8 @@
 //   - On failure, prints a message and aborts execution.
 //   - Exact mechanism (panic/abort) depends on runtime.
 //
+// @stability stable
+//
 // @project Rho Programming Language
 // @version 0.1
 // @date 2026

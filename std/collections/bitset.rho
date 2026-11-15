@@ -11,6 +11,8 @@
 //
 // Pure Rho, the same on every backend.
 //
+// @stability experimental
+//
 // @project Rho Programming Language
 // @version 0.3
 // @date 2026

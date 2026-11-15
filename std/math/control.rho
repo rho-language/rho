@@ -1,3 +1,8 @@
+//
+// @file control.rho
+// @stability experimental
+//
+
 module std.math.control
 
 import std.math.basic

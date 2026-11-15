@@ -70,7 +70,7 @@ An open entry is a row of `#`, where, what is wrong and a reproduction.
 
 | # | Where | What is wrong | Reproduction |
 |---|---|---|---|
-| — | | Nothing is open. | |
+| 49 | rho-fmt | `rho fmt` prints a file from its syntax tree and drops every comment, so formatting a file loses its documentation and its `@file`, `@stability` and `@deprecated` tags. Blocks beta. | `rho fmt -w` on any `std/` file |
 
 A case added to the cross-backend suite with `diverges:` is a new open entry
 here.

@@ -1,3 +1,8 @@
+//
+// @file result.rho
+// @stability stable
+//
+
 module std.core.result
 
 // Result carries either a success value or an error: Ok(value) or Err(error).

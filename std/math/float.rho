@@ -1,3 +1,8 @@
+//
+// @file float.rho
+// @stability stable
+//
+
 module std.math.float
 
 extern fn rho_sqrt(x: f64) f64

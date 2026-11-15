@@ -1,3 +1,8 @@
+//
+// @file sys.rho
+// @stability stable
+//
+
 module std.os.sys
 
 import std.core.slice

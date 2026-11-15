@@ -52,6 +52,13 @@ type ApiModule struct {
 	Enums []ApiEnum
 	// Externs are the functions the host supplies, which is what a port does.
 	Externs []ApiExtern
+	// Stability is what the module's header says with `@stability`: `stable`
+	// or `experimental`, or empty when it says nothing.
+	Stability string
+	// Deprecated is the note of a `@deprecated` line in the module's header,
+	// and IsDeprecated says there was one.
+	Deprecated   string
+	IsDeprecated bool
 }
 
 // ApiFunction is one declared function.
@@ -66,6 +73,8 @@ type ApiFunction struct {
 	Constraints map[string]string
 	Parameters  []ApiParameter
 	Result      string
+	// Deprecation is what a `@deprecated` line in its doc comment says, or nil.
+	Deprecation *ast.Deprecation
 }
 
 // ApiParameter is one parameter, with its name and its type.
@@ -114,6 +123,8 @@ type ApiStruct struct {
 	// TypeParams are the type parameters the struct declares.
 	TypeParams []string
 	Fields     []ApiParameter
+	// Deprecation is what a `@deprecated` line in its doc comment says, or nil.
+	Deprecation *ast.Deprecation
 }
 
 // Name is the struct as it is written, with its type parameters.
@@ -125,6 +136,32 @@ type ApiEnum struct {
 	Name       string
 	TypeParams []string
 	Variants   []string
+	// Deprecation is what a `@deprecated` line in its doc comment says, or nil.
+	Deprecation *ast.Deprecation
+	// VariantDeprecations are the variants' own, by position in Variants: nil
+	// for a variant that is not deprecated.
+	VariantDeprecations []*ast.Deprecation
+}
+
+// variantList is the variants as a table cell lists them, each as code and a
+// deprecated one followed by what its comment says.
+func (e ApiEnum) variantList() string {
+	parts := make([]string, len(e.Variants))
+	for i, variant := range e.Variants {
+		parts[i] = "`" + variant + "`"
+		if i < len(e.VariantDeprecations) {
+			parts[i] += deprecatedSuffix(e.VariantDeprecations[i])
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func variantDeprecations(decl ast.EnumDecl) []*ast.Deprecation {
+	out := make([]*ast.Deprecation, len(decl.Variants))
+	for i, variant := range decl.Variants {
+		out[i] = variant.Deprecated
+	}
+	return out
 }
 
 // NameWithParams is the enum as it is written, with its type parameters.
@@ -241,7 +278,12 @@ func readApiModule(path string) (ApiModule, Diagnostic, bool) {
 		return ApiModule{}, Diagnostic{Path: path, Line: lineOf(err), Message: "parsing: " + err.Error()}, false
 	}
 
+	rhoparser.AttachDocTags(module, string(data))
 	entry := ApiModule{Name: module.Name, Path: path}
+	entry.Stability, _ = rhoparser.HeaderTag(string(data), rhoparser.StabilityTag)
+	if deprecation := rhoparser.ModuleDeprecation(string(data)); deprecation != nil {
+		entry.Deprecated, entry.IsDeprecated = deprecation.Note, true
+	}
 	for _, declaration := range module.Decls {
 		switch decl := declaration.(type) {
 		case ast.FuncDecl:
@@ -271,18 +313,23 @@ func readApiModule(path string) (ApiModule, Diagnostic, bool) {
 				Constraints: constraints,
 				Parameters:  parameters(decl.Params),
 				Result:      decl.ReturnType,
+				Deprecation: decl.Deprecated,
 			})
 		case ast.StructDecl:
 			entry.Structs = append(entry.Structs, ApiStruct{
-				Name:       decl.Name,
-				TypeParams: decl.TypeParams,
-				Fields:     fields(decl.Fields),
+				Name:        decl.Name,
+				TypeParams:  decl.TypeParams,
+				Fields:      fields(decl.Fields),
+				Deprecation: decl.Deprecated,
 			})
 		case ast.EnumDecl:
 			entry.Enums = append(entry.Enums, ApiEnum{
-				Name:       decl.Name,
-				TypeParams: decl.TypeParams,
-				Variants:   enumVariants(decl),
+				Name:        decl.Name,
+				TypeParams:  decl.TypeParams,
+				Variants:    enumVariants(decl),
+				Deprecation: decl.Deprecated,
+				// Each variant's own, beside it.
+				VariantDeprecations: variantDeprecations(decl),
 			})
 		}
 	}
@@ -341,12 +388,21 @@ func RenderApiModule(module ApiModule) *Document {
 		heading(1, module.Name, document.Target),
 		paragraph("The module `module "+module.Name+"`, read from `"+module.Path+"`. This page is generated from the source, so it describes what the code declares."),
 	)
+	if text := stabilityText(module.Stability); text != "" {
+		document.Blocks = append(document.Blocks, paragraph(text))
+	}
+	if module.IsDeprecated {
+		document.Blocks = append(document.Blocks, paragraph("**This module is "+deprecatedText(&ast.Deprecation{Note: module.Deprecated})+".**"))
+	}
 
 	if len(module.Functions) > 0 {
 		document.Blocks = append(document.Blocks, heading(2, "Functions", ""))
 		for _, function := range module.Functions {
 			document.Blocks = append(document.Blocks, heading(3, function.Name+"()", ""))
 			document.Blocks = append(document.Blocks, codeBlock("rho", function.Signature()))
+			if function.Deprecation != nil {
+				document.Blocks = append(document.Blocks, paragraph("**"+capitalised(deprecatedText(function.Deprecation))+"**"))
+			}
 		}
 	}
 	if len(module.Structs) > 0 {
@@ -358,7 +414,7 @@ func RenderApiModule(module ApiModule) *Document {
 		for _, structure := range module.Structs {
 			row := &Node{Kind: BlockRow}
 			row.Children = []*Node{
-				cell(structure.NameWithParams()),
+				cell(structure.NameWithParams() + deprecatedSuffix(structure.Deprecation)),
 				cell(fieldList(structure.Fields)),
 			}
 			table.Children = append(table.Children, row)
@@ -374,8 +430,8 @@ func RenderApiModule(module ApiModule) *Document {
 		for _, enum := range module.Enums {
 			row := &Node{Kind: BlockRow}
 			row.Children = []*Node{
-				cell(enum.NameWithParams()),
-				cell("`" + strings.Join(enum.Variants, "`, `") + "`"),
+				cell(enum.NameWithParams() + deprecatedSuffix(enum.Deprecation)),
+				cell(enum.variantList()),
 			}
 			table.Children = append(table.Children, row)
 		}
@@ -427,12 +483,13 @@ func RenderApiIndex(modules []ApiModule, section string) *Document {
 	}
 	table := &Node{Kind: BlockTable}
 	header := &Node{Kind: BlockRow, Text: "header"}
-	header.Children = []*Node{cell("Module"), cell("Functions"), cell("Structs"), cell("Externs"), cell("Source")}
+	header.Children = []*Node{cell("Module"), cell("Stability"), cell("Functions"), cell("Structs"), cell("Externs"), cell("Source")}
 	table.Children = append(table.Children, header)
 	for _, module := range modules {
 		row := &Node{Kind: BlockRow}
 		row.Children = []*Node{
 			cell("{ref}`" + module.Name + " <" + ApiTarget(module.Name) + ">`"),
+			cell(indexStability(module)),
 			cell(itoa(len(module.Functions))),
 			cell(itoa(len(module.Structs))),
 			cell(itoa(len(module.Externs))),
@@ -444,6 +501,56 @@ func RenderApiIndex(modules []ApiModule, section string) *Document {
 	document.collectHeadings()
 	_ = section
 	return document
+}
+
+// stabilityText is the sentence a reference page opens with about how settled
+// the module is, from its `@stability` tag.
+func stabilityText(stability string) string {
+	switch stability {
+	case "stable":
+		return "**Stability: stable.** A change that breaks a program using this module is a deprecation warning for at least one minor release first; see {ref}`stability <documentation/stability>`."
+	case "experimental":
+		return "**Stability: experimental.** This module may change in any minor release, without a deprecation first; see {ref}`stability <documentation/stability>`."
+	}
+	return ""
+}
+
+// indexStability is a module's stability as the index lists it.
+func indexStability(module ApiModule) string {
+	text := module.Stability
+	if module.IsDeprecated {
+		if text != "" {
+			text += ", "
+		}
+		text += "deprecated"
+	}
+	return text
+}
+
+// deprecatedText is `deprecated: <note>`, or `deprecated` with no note.
+func deprecatedText(deprecation *ast.Deprecation) string {
+	if deprecation == nil {
+		return ""
+	}
+	if deprecation.Note == "" {
+		return "deprecated"
+	}
+	return "deprecated: " + deprecation.Note
+}
+
+// deprecatedSuffix is what a table cell adds after a deprecated name.
+func deprecatedSuffix(deprecation *ast.Deprecation) string {
+	if deprecation == nil {
+		return ""
+	}
+	return " (" + deprecatedText(deprecation) + ")"
+}
+
+func capitalised(text string) string {
+	if text == "" {
+		return text
+	}
+	return strings.ToUpper(text[:1]) + text[1:]
 }
 
 // cell is one table cell. The text is read as inline markup, so a cell holding

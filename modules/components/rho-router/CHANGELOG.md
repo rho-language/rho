@@ -13,7 +13,3 @@ Initial release.
 ## [0.1.1] - 2026-11-14
 
 Handlers that cut a slice are read.
-
-## [0.1.1] - 2026-11-14
-
-Handlers that cut a slice are read.

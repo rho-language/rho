@@ -1,0 +1,11 @@
+//
+// @file legacy.rho
+// @brief What this program used before lib.
+//
+// @deprecated use lib instead
+//
+module legacy
+
+fn legacy_area(width: u32, height: u32) u32 {
+    return width * height
+}

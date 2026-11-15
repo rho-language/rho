@@ -777,6 +777,41 @@ A comment runs to the end of the line:
 let x: u32 = 1 // and one after code
 ```
 
+### Doc comments and deprecation
+
+The `//` lines directly above a declaration, with no blank line between, are
+its doc comment. A line of it that begins with `@deprecated` marks the
+declaration deprecated, and the rest of the line says what to use instead:
+
+```rho
+// read_all answers every byte of a file.
+// @deprecated use read_bytes instead
+fn read_all(path: string) Slice[u8] { ... }
+```
+
+The tag works on a function, a struct, an enum, a variant (the comment line
+above the variant, in an enum written one variant per line), a constant and a
+type alias. A deprecated declaration still compiles and behaves as before; every
+use of it from another module is a warning at the use, with the declaration as
+a note:
+
+```text
+src/main.rho:7:18: warning: read_all is deprecated: use read_bytes instead
+lib/files.rho:12:1: note: read_all is declared here
+```
+
+The module that declares it is not warned about its own uses. A whole module is
+deprecated by a `// @deprecated ...` line in its header, the comments above its
+`module` line, and each `import` of it is the warning. The warning reaches
+`rho build`, `rho lint` and the editor (struck through, where the editor draws
+the protocol's deprecated tag). {ref}`Stability <documentation/stability>` says
+how long a deprecated name is kept.
+
+`rho fmt` does not keep comments yet, so formatting a file drops its doc
+comments and their tags with them.
+
+### Layout
+
 A semicolon is optional at the end of a statement, and a comma separates fields
 and arguments. A type name is written with a leading capital; a value with a
 lower-case letter. That convention is what the parser uses to tell a struct

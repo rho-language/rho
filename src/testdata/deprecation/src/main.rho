@@ -1,0 +1,14 @@
+module main
+import lib
+import legacy
+
+fn main() void {
+    let a: u32 = lib.old_area(2, 3)
+    let s: OldSize = OldSize { 1, 2 }
+    let m: Mode = Mode.Lit
+    let k: u32 = OLD_SCALE
+    let fine: u32 = area(4, 5) + legacy_area(1, 1)
+    if lib.is_on(m) {
+        print(int_to_str(a + size_of(s) + k + fine))
+    }
+}

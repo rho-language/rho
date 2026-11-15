@@ -1,3 +1,8 @@
+//
+// @file time.rho
+// @stability stable
+//
+
 module std.os.time
 
 // The realtime clock, read once in nanoseconds since the Unix epoch so the

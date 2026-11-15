@@ -1,3 +1,8 @@
+//
+// @file linear.rho
+// @stability stable
+//
+
 module std.math.linear
 
 import std.math.float

@@ -9,7 +9,7 @@ api: std
 sections:
   - name: documentation
     title: Start
-    pages: [index, installing, getting-started, generating]
+    pages: [index, installing, getting-started, generating, stability]
   - name: language
     title: Language
     pages: [index, syntax, types, builtins, stdlib, protocol]

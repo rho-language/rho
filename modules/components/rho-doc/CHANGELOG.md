@@ -50,3 +50,7 @@ The API reference lists enums and their variants.
 ## [0.2.2] - 2026-11-15
 
 API signatures show the constraints on type parameters.
+
+## [0.2.3] - 2026-11-15
+
+Each API page says how stable its module is, the index has a Stability column, and deprecated declarations and modules carry their deprecation note.

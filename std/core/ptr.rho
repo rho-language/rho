@@ -1,3 +1,8 @@
+//
+// @file ptr.rho
+// @stability stable
+//
+
 module std.core.ptr
 
 // Ptr[T] is the language's pointer, and not a struct: it is one type wherever it

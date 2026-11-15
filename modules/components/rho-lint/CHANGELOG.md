@@ -18,10 +18,6 @@ A new `rho-check` rule reports what the type checker refuses; `rho-parse` report
 
 Rules walk into slice cuts (`s[a..b]`).
 
-## [0.2.1] - 2026-11-14
-
-Rules walk into slice cuts (`s[a..b]`).
-
 ## [0.2.2] - 2026-11-15
 
 Rules read function types and literals; an import used only in a type is not reported as unused.

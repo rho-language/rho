@@ -241,6 +241,7 @@ func New() *TypeChecker {
 func (tc *TypeChecker) CheckModule(m ast.Module) error {
 	// An enum that carries data is checked as the struct it is laid out as,
 	// beside the declaration that says what it is (enums.go).
+	original := m
 	m = tc.expandEnums(m)
 
 	if len(m.Exports) > 0 {
@@ -467,6 +468,7 @@ func (tc *TypeChecker) CheckModule(m ast.Module) error {
 			tc.collect.add(err)
 		}
 	}
+	tc.warnDeprecations(original)
 	if tc.collect.omitted > 0 && len(tc.collect.errors) > 0 {
 		last := tc.collect.errors[len(tc.collect.errors)-1]
 		last.Notes = append(last.Notes, Note{Message: fmt.Sprintf("and %d more errors not listed", tc.collect.omitted)})

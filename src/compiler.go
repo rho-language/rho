@@ -1078,6 +1078,7 @@ func loadFeatureModules(module *ast.Module, sourcePath, projectRoot string, depe
 			return fmt.Errorf("load feature %q: %w", feature, err)
 		}
 		module.Decls = append(module.Decls, featureModule.Decls...)
+		module.DeprecatedImports = append(module.DeprecatedImports, featureModule.DeprecatedImports...)
 	}
 	return nil
 }
@@ -1289,6 +1290,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 	if err != nil {
 		return nil, sourceDiagnostic(abs, string(source), "parsing", err)
 	}
+	parser.AttachDocTags(mod, string(source))
 
 	merged := &ast.Module{Name: mod.Name, Imports: nil, Includes: nil, Features: append([]string{}, mod.Features...), Decls: append([]ast.Decl{}, mod.Decls...)}
 	// A prelude generic is a language type, so `Slice[u8]` resolves whether or
@@ -1333,6 +1335,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		}
 		merged.Decls = append(merged.Decls, included.Decls...)
 		merged.Features = append(merged.Features, included.Features...)
+		merged.DeprecatedImports = append(merged.DeprecatedImports, included.DeprecatedImports...)
 	}
 	recordFileCalls(visited, abs, mod.Decls)
 	for _, imp := range mod.Imports {
@@ -1356,6 +1359,9 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		// it includes — is already part of the program, and so is its binding.
 		absolute, _ := filepath.Abs(importPath)
 		alreadyLoaded := visited[absolute]
+		if deprecated, ok := deprecatedImport(abs, imp, absolute); ok {
+			merged.DeprecatedImports = append(merged.DeprecatedImports, deprecated)
+		}
 		imported, err := loadModuleFile(importPath, projectRoot, dependencyRoots, components, visited)
 		if err != nil {
 			if noted := withIncludeNote(err, Note{File: abs, Line: imp.Pos.Line, Column: imp.Pos.Column, Message: fmt.Sprintf("%s is imported here", imp.Name)}); noted != nil {
@@ -1390,6 +1396,7 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		markModuleOwnership(imported, owner)
 		merged.Decls = append(merged.Decls, imported.Decls...)
 		merged.Features = append(merged.Features, imported.Features...)
+		merged.DeprecatedImports = append(merged.DeprecatedImports, imported.DeprecatedImports...)
 		if merged.Exports == nil {
 			merged.Exports = map[string][]string{}
 		}
@@ -1404,6 +1411,39 @@ func loadModuleFile(path, projectRoot string, dependencyRoots []string, componen
 		return nil, err
 	}
 	return merged, nil
+}
+
+// deprecatedImport is an import of a module whose header says `@deprecated`,
+// for the checker to warn at. An import is always from another module, so it
+// is always told.
+func deprecatedImport(importer string, imp ast.Import, imported string) (ast.DeprecatedImport, bool) {
+	source, err := readSourceFile(imported)
+	if err != nil {
+		return ast.DeprecatedImport{}, false
+	}
+	deprecation := parser.ModuleDeprecation(string(source))
+	if deprecation == nil {
+		return ast.DeprecatedImport{}, false
+	}
+	at := imp.Pos
+	if at.File == "" {
+		at.File = importer
+	}
+	decl := ast.Position{File: imported}
+	if line := moduleLine(string(source)); line > 0 {
+		decl.Line, decl.Column = line, 1
+	}
+	return ast.DeprecatedImport{Pos: at, Module: imp.Name, Note: deprecation.Note, Decl: decl}, true
+}
+
+// moduleLine is the line a source's `module` declaration is on, or 0.
+func moduleLine(source string) int {
+	for i, line := range strings.Split(source, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "module ") {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // importDiagnostic is an import that could not be resolved, at the import.

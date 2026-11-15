@@ -106,6 +106,11 @@ src/loop.rho:10:5: warning: loop.run: the loop at line 10 keeps a string it buil
 - **A note** is a second place worth seeing: where a function called wrongly is
   declared (and, for a generic, what it was specialised with at that call), or
   the line that includes or imports a file that does not parse.
+- **A use of something deprecated** is a warning at the use, naming what to
+  use instead, with the declaration as a note (code `deprecated`;
+  {ref}`language/syntax` has the `@deprecated` tag). A warning does not change
+  the exit status of `rho build`; `rho lint --fail-on warning` fails a run on
+  one, for a pipeline that wants deprecations gone.
 - **Refusals after the check** use the same form: a C build refusing `len` of a
   `[T]`, a target that cannot supply an imported module or a built-in (at the
   `import` or the call), a board refusing a loop that keeps its strings (at the

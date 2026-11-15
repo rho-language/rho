@@ -1,0 +1,51 @@
+//
+// @file lib.rho
+// @brief A module keeping old names working while its callers move.
+//
+module lib
+
+// The old scale.
+// @deprecated use SCALE instead
+const OLD_SCALE: u32 = 3
+
+const SCALE: u32 = 3
+
+// old_area answers width times height.
+// @deprecated use area instead
+fn old_area(width: u32, height: u32) u32 {
+    return area(width, height) * OLD_SCALE / SCALE
+}
+
+fn area(width: u32, height: u32) u32 {
+    return width * height
+}
+
+// @deprecated use Size instead
+struct OldSize {
+    w: u32
+    h: u32
+}
+
+struct Size {
+    w: u32
+    h: u32
+}
+
+enum Mode {
+    Off
+    // @deprecated use Mode.On instead
+    Lit
+    On
+}
+
+fn size_of(s: OldSize) u32 {
+    return old_area(s.w, s.h)
+}
+
+fn is_on(m: Mode) bool {
+    match m {
+        Mode.Lit => { return true }
+        Mode.On => { return true }
+        _ => { return false }
+    }
+}

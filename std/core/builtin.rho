@@ -28,6 +28,8 @@
 // backends that supply them on the built-in functions page of the language
 // reference (docs/language/builtins.md).
 //
+// @stability stable
+//
 // @project Rho Programming Language
 // @version 0.2
 // @date 2026

@@ -1,3 +1,8 @@
+//
+// @file option.rho
+// @stability stable
+//
+
 module std.core.option
 
 // Option carries a value that may be absent: None, or Some(value).

@@ -47,6 +47,9 @@ type Error struct {
 	// Notes are other places worth seeing beside this one: where a function
 	// called wrongly is declared, or where a generic was specialised from.
 	Notes []Note
+	// Code names the kind of finding when it is not an ordinary type error:
+	// DeprecatedCode for a use of something deprecated. Empty otherwise.
+	Code string
 	// undefined is the name, when the error is a name nothing declares, so a
 	// run reports it once rather than at every use.
 	undefined string
