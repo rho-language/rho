@@ -109,7 +109,9 @@ type ExecutableDep struct {
 	// Required says whether the module works without it.
 	Required bool `yaml:"required" json:"required"`
 	// Install is how to get it, by package manager: `apt`, `brew`, `pacman`, `dnf`,
-	// `choco`, and `manual` for the ones nothing installs.
+	// `choco`, and `manual` for the ones nothing installs. A value may name several
+	// packages separated by spaces (`apt: gcc-avr avr-libc`), installed in one
+	// command, for a program that is no use without another package.
 	//
 	// Declared rather than executed. A manifest is a statement about a requirement
 	// and the machine's package manager is a thing that changes; what is written here

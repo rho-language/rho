@@ -568,6 +568,28 @@ func TestAStepRunsItsProgramWithItsArguments(t *testing.T) {
 	}
 }
 
+// A recipe may name several packages, as a compiler and its C library: each is an
+// argument of one install command.
+func TestARecipeOfSeveralPackagesInstallsEach(t *testing.T) {
+	current := detectHost()
+	if current.Manager == "" {
+		t.Skip("this machine has no package manager, so there is nothing to plan")
+	}
+	report := sysdep.Report{Results: []sysdep.CheckResult{{
+		Module: "robohub-avr", Dep: "avr-gcc", Kind: sysdep.KindExecutable, Required: true,
+		Status: sysdep.StatusMissing, Message: "not installed",
+		Install: map[string]string{current.Manager: "gcc-avr avr-libc"},
+	}}}
+	plan := PlanFor(report)
+	if len(plan.Steps) != 1 {
+		t.Fatalf("expected one step, got:\n%s", plan.Text())
+	}
+	args := plan.Steps[0].Args
+	if len(args) < 2 || args[len(args)-2] != "gcc-avr" || args[len(args)-1] != "avr-libc" {
+		t.Errorf("expected both packages as their own arguments, got %q", args)
+	}
+}
+
 // A fetch is preferred over a package manager, always: it needs no privileges, it
 // belongs to the person rather than to the machine, and it does not change when the
 // machine's package manager does.

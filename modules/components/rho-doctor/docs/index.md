@@ -49,6 +49,10 @@ system_deps:
       optional: true
 ```
 
+An `install` entry may name several packages, separated by spaces, which are
+installed in one command: `apt: gcc-avr avr-libc` for a compiler that is no use
+without its C library.
+
 Everything in `deps` is another module of this toolchain. Everything in
 `system_deps` is a program or a permission on the machine, and no amount of
 resolving this toolchain's own graph produces it.
