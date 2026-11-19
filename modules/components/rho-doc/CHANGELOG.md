@@ -54,3 +54,11 @@ API signatures show the constraints on type parameters.
 ## [0.2.3] - 2026-11-15
 
 Each API page says how stable its module is, the index has a Stability column, and deprecated declarations and modules carry their deprecation note.
+
+## [0.2.4] - 2026-11-19
+
+A module that keeps process artefacts beside its pages keeps the pages in `docs/doc/`: when it exists, only it is read by the convention, and `docs/doc/` is left out of a page's address exactly as `docs/` is, so a page keeps its address and every reference to it when it moves there. `docs/requirements/` and `docs/architecture/` are not read as pages.
+
+## [0.2.5] - 2026-11-19
+
+A new hook, `sources` (contract `sources`): before any page is read, a plugin is given the modules the build found and answers with Markdown pages for them, which are read like the modules' own — parsed, cross-referenced, searched — and follow them in their section, in the order given; a page may be `unlisted` (out of the menu unless it is being read). This is how rho-doc-req puts requirements and architecture decisions on a site. A label qualified by its module (`robohub-gateway:ADR-0009`) is reached by its short name from that module's pages, and by either of a module's names — its manifest name or its directory. Decision records under `docs/architecture/adr/` are not read as pages even without `docs/doc/`. A tree that keeps requirements or decisions and has no plugin to show them gets one note in the build output; the site is built without them and `-strict` is not affected.

@@ -64,6 +64,9 @@ type ModuleDoc struct {
 	Index string
 	// Manifest is the parsed manifest, for the fields a page reports.
 	Manifest *deps.Manifest
+	// Generated are the pages a plugin wrote for the module from what it
+	// carries (the sources hook). They follow the module's own pages.
+	Generated []GeneratedPage
 }
 
 // DiscoverModules reads every module in a tree, so a site can be built from a
@@ -146,12 +149,12 @@ const RepositorySection = "documentation"
 // subdirectory: `docs/handbook/` is the handbook, and the pages written
 // directly in `docs/` are the overview.
 func discoverRepositoryDocs(root string) []ModuleDoc {
-	docs := filepath.Join(root, "docs")
+	docs := filepath.Join(root, filepath.FromSlash(pagesRoot(root)))
 	if info, err := os.Stat(docs); err != nil || !info.IsDir() {
 		return nil
 	}
 	modules := []ModuleDoc{}
-	for _, source := range markdownTree(docs) {
+	for _, source := range withoutProcessArtefacts(root, markdownTree(docs)) {
 		relative, err := filepath.Rel(docs, source)
 		if err != nil {
 			continue
@@ -219,7 +222,7 @@ func readModule(root string, options SourceOptions) (ModuleDoc, bool) {
 	// The convention applies whether or not the manifest says anything, so a
 	// module that drops a file into docs/ gets it documented.
 	if len(module.Sources) == 0 {
-		module.Sources = expandSources(root, []string{"docs"})
+		module.Sources = withoutProcessArtefacts(root, expandSources(root, []string{pagesRoot(root)}))
 	}
 	// A module whose prose did not travel still has the README it published.
 	if len(module.Sources) == 0 && options.Readme {
@@ -355,4 +358,52 @@ func sortModules(modules []ModuleDoc) {
 		}
 		return left.Name < right.Name
 	})
+}
+
+// pagesDir is where a module or repository keeps its pages when it also keeps
+// process artefacts beside them: docs/doc/ holds the documentation, and
+// docs/requirements/ and docs/architecture/ hold requirements and architecture
+// decisions, which are not pages a reader browses as prose.
+const pagesDir = "docs/doc"
+
+// pagesRoot is the directory a module's pages are read from: docs/doc when the
+// module has one, docs otherwise.
+func pagesRoot(root string) string {
+	if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(pagesDir))); err == nil && info.IsDir() {
+		return pagesDir
+	}
+	return "docs"
+}
+
+// The process artefacts a module or repository may keep beside its pages:
+// requirements (YAML, never a page) and architecture decision records (Markdown
+// with a front matter, which a plugin renders as pages of their own).
+const (
+	requirementsDir = "docs/requirements"
+	adrDir          = "docs/architecture/adr"
+)
+
+// withoutProcessArtefacts drops the architecture decision records from the pages
+// a convention found. Without docs/doc/ the convention reads all of docs/, and an
+// ADR there is a record a plugin renders (with its status and links), not prose.
+func withoutProcessArtefacts(root string, sources []string) []string {
+	skip := filepath.Join(root, filepath.FromSlash(adrDir)) + string(filepath.Separator)
+	kept := []string{}
+	for _, source := range sources {
+		if !strings.HasPrefix(source, skip) {
+			kept = append(kept, source)
+		}
+	}
+	return kept
+}
+
+// HasProcessArtefacts reports whether a module root keeps requirements or
+// architecture decisions, which only a plugin puts on a site.
+func HasProcessArtefacts(root string) bool {
+	for _, dir := range []string{requirementsDir, adrDir} {
+		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir))); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
 }

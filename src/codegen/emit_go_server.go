@@ -324,6 +324,12 @@ func goServerShutdown() string {
 		cert := os.Getenv("RHO_TLS_CERT")
 		key := os.Getenv("RHO_TLS_KEY")
 		var err error
+		if (cert == "") != (key == "") {
+			// Half a pair is a deployment that meant TLS and would get plain
+			// HTTP: refused, rather than served unencrypted.
+			errCh <- fmt.Errorf("RHO_TLS_CERT and RHO_TLS_KEY must be set together; only one is set, so the service does not start")
+			return
+		}
 		if cert != "" && key != "" {
 			err = server.ListenAndServeTLS(cert, key)
 		} else {

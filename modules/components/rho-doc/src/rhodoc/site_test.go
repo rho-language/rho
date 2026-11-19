@@ -101,6 +101,36 @@ func TestDiscoverModulesReadsTheDocsConvention(t *testing.T) {
 	}
 }
 
+// A module that keeps process artefacts beside its pages keeps the pages in
+// docs/doc/: only those are read by the convention, and each keeps the address it
+// had in docs/, so no reference has to change when a module moves its pages.
+func TestDocsDocIsThePageRootAndKeepsAddresses(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
+	writeFile(t, root, "app/docs/doc/index.md", "# App\n\nSee {ref}`app/architecture/security`.\n")
+	writeFile(t, root, "app/docs/doc/architecture/security.md", "# Security\n")
+	writeFile(t, root, "app/docs/architecture/adr/0001-a-decision.md", "---\nid: ADR-0001\n---\n# A decision\n")
+	writeFile(t, root, "app/docs/requirements/app.yml", "level: NODE\n")
+
+	modules, _ := DiscoverModules(root)
+	if len(modules) != 1 || len(modules[0].Sources) != 2 {
+		t.Fatalf("expected the two pages under docs/doc and nothing else, got %+v", modules)
+	}
+	site := BuildSite(modules, ApiSet{}, SiteOptions{Title: "T", Out: filepath.Join(root, "out")})
+	targets := map[string]bool{}
+	for _, page := range site.Pages {
+		targets[page.Target] = true
+	}
+	for _, want := range []string{"app/index", "app/architecture/security"} {
+		if !targets[want] {
+			t.Errorf("expected the page %q, got %v", want, targets)
+		}
+	}
+	if len(site.Requests) != 0 {
+		t.Errorf("expected the reference to resolve, got %v", site.Requests)
+	}
+}
+
 func TestDiscoverModulesExpandsAGlob(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndocs:\n  sources:\n    - docs/*.md\n")

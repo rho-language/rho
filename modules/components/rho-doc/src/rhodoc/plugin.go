@@ -148,6 +148,64 @@ type PluginDiagnostic struct {
 	Message string `json:"message"`
 }
 
+// SourcesPayload is this component's part of a sources request: the modules a
+// build found, before any page is read, so a plugin can contribute pages for them
+// written from what they carry.
+//
+//	{"version":1,"hook":"sources","command":"requirements","component":"rho-doc",
+//	 "payload":{"site":"RoboHub","root":"/src/robohub",
+//	            "modules":[{"name":"robohub-gateway","root":"/src/robohub-gateway","section":"devices"}]}}
+type SourcesPayload struct {
+	Site    string         `json:"site"`
+	Root    string         `json:"root,omitempty"`
+	Modules []SourceModule `json:"modules"`
+}
+
+// SourceModule is one module as a sources request describes it.
+type SourceModule struct {
+	Name    string `json:"name"`
+	Root    string `json:"root"`
+	Section string `json:"section,omitempty"`
+	Version string `json:"version,omitempty"`
+	Type    string `json:"type,omitempty"`
+}
+
+// SourcesAnswer is the payload a plugin answers a sources request with: pages
+// written as doc-as-code, each belonging to a module of the request. They are
+// read like any page the module carries — parsed, cross-referenced, searched —
+// so a reference to one resolves and one of their references is checked.
+//
+//	{"version":1,"payload":{"pages":[{"module":"robohub-gateway",
+//	  "path":"requirements/index","title":"Requirements","markdown":"# ...",
+//	  "order":1}],"notes":["..."]}}
+type SourcesAnswer struct {
+	Pages []GeneratedPage `json:"pages"`
+	// Notes are lines the build prints as they are: things a person running the
+	// build should know that are not problems with the pages.
+	Notes []string `json:"notes,omitempty"`
+}
+
+// GeneratedPage is one page a plugin wrote for a module.
+type GeneratedPage struct {
+	// Module is the name of the module the page belongs to.
+	Module string `json:"module"`
+	// Path is the page's address inside the module, without an extension:
+	// `requirements/index` is addressed `<module>/requirements/index`.
+	Path string `json:"path"`
+	// Title is used when the Markdown has no heading.
+	Title    string `json:"title,omitempty"`
+	Markdown string `json:"markdown"`
+	// Source is the file the page was written from, when there is one, so an
+	// image it names is found beside it and a diagnostic names a real file.
+	Source string `json:"source,omitempty"`
+	// Order places the page among the module's generated pages, which come after
+	// the pages the module's authors wrote.
+	Order int `json:"order,omitempty"`
+	// Unlisted keeps the page out of the menu (it is still on the site, in the
+	// search and reachable by link): one page of many that an index page lists.
+	Unlisted bool `json:"unlisted,omitempty"`
+}
+
 // HookIndex is the whole-site hook: a plugin that builds something over the
 // finished set of pages, such as a table of contents.
 const HookIndex = "index"
@@ -161,12 +219,17 @@ const HookPage = "page"
 // does not have to be told.
 const ComponentName = "rho-doc"
 
+// HookSources is the hook that runs before any page is read: a plugin that
+// writes pages for a module from what the module carries, such as its
+// requirements and architecture decisions.
+const HookSources = "sources"
+
 // OfferedHooks are the hooks a run of this generator goes through, and so the
 // hooks a plugin may answer. They are declared in the component's manifest as
 // well, because that is what a plugin is validated against; the test beside
 // this file checks the two agree, so the list is written once in the manifest
 // and read here.
-var OfferedHooks = []string{HookIndex, HookPage}
+var OfferedHooks = []string{HookSources, HookIndex, HookPage}
 
 // offers reports whether this generator runs a hook at all. A run asks for
 // nothing it does not run, whatever a plugin claims.

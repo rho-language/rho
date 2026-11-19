@@ -1,0 +1,5 @@
+# Who approves in the fixture workspace.
+maintainers:
+  - name: Ada Maintainer
+    github: ada
+    email: ada@example.org

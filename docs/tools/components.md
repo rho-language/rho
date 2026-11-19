@@ -48,6 +48,7 @@ a map rather than a second copy. A first install has only `rho-lsp`;
 | {ref}`rho-mem <rho-mem/index>` | `rho mem` | Where a linked program's memory went, checked against the budgets a project declares |
 | {ref}`rho-bench <rho-bench/index>` | `rho bench` | How long code takes, what stack and heap it uses, compared with a baseline |
 | {ref}`rho-lint <rho-lint/index>` | `rho lint` | Every static analyzer over one compilation database, written as SARIF |
+| {ref}`rho-req <rho-req/index>` | `rho req` | Requirements and architecture decisions, checked and traced to the code and tests across a workspace |
 
 ## Writing code
 
@@ -84,6 +85,7 @@ turned on with `rho plugin enable <name>`.
 |---|---|---|
 | {ref}`rho-doc-api <rho-doc-api/index>` | `rho-doc` | A service's HTTP API reference, in its documentation site |
 | {ref}`rho-doc-toc <rho-doc-toc/index>` | `rho-doc` | A table of contents and a generation notice |
+| {ref}`rho-doc-req <rho-doc-req/index>` | `rho-doc` | A module's requirements, architecture decisions and their trace, on its documentation site |
 | {ref}`rho-sql-sqlite <rho-sql-sqlite/index>` | `rho-sql` | A sqlite engine for a service's SQL |
 | {ref}`rho-test-gtest <rho-test-gtest/index>` | `rho-test` | Runs a project's GoogleTest suites |
 | {ref}`rho-test-ctest <rho-test-ctest/index>` | `rho-test` | Runs a project's CTest suites: configure, build, run, read the JUnit report |

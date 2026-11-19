@@ -137,6 +137,12 @@ type SitePage struct {
 	// Generated marks a page the generator wrote rather than one an author
 	// wrote, such as an API reference page.
 	Generated bool
+	// Unlisted keeps a page out of the menu unless it is the page being read:
+	// one of many pages an index page lists, such as a single decision record.
+	Unlisted bool
+	// root is the module root the page came from, which names the module in a
+	// qualified label as its directory does.
+	root string
 	// ambiguous records, per target, the pages that answer to it, so a
 	// reference that needs to tell them apart can be reported.
 	ambiguous map[string][]string
@@ -255,6 +261,44 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 			documents = append(documents, page)
 		}
 	}
+	// The pages a plugin wrote for a module are read like its own, after them.
+	// One that would take an authored page's address is dropped: the page a
+	// person wrote is the one a reader was sent to.
+	authored := map[string]bool{}
+	for _, page := range documents {
+		authored[page.document.Target] = true
+	}
+	for _, module := range modules {
+		for _, generated := range module.Generated {
+			path := generated.Source
+			if path == "" {
+				path = filepath.Join(module.Root, filepath.FromSlash(generated.Path)+".md")
+			}
+			document := Parse(path, generated.Markdown)
+			if document.Title == "" {
+				document.Title = generated.Title
+				document.Diagnostics = nil
+			}
+			document.Target = module.Name + "/" + generated.Path
+			if authored[document.Target] {
+				site.Diagnostics = append(site.Diagnostics, Diagnostic{Path: path,
+					Message: fmt.Sprintf("a plugin's page %s has the address of a page the module carries; the module's own page is kept", document.Target)})
+				continue
+			}
+			authored[document.Target] = true
+			site.Diagnostics = append(site.Diagnostics, document.Diagnostics...)
+			documents = append(documents, &parsedPage{
+				document:  document,
+				section:   module.Section,
+				module:    module.Name,
+				root:      module.Root,
+				generated: true,
+				sourced:   true,
+				order:     generated.Order,
+				unlisted:  generated.Unlisted,
+			})
+		}
+	}
 	sortParsedPages(documents, modules, options.Sections)
 
 	// Targets are resolved before anything is rendered, because a page is
@@ -289,6 +333,8 @@ func buildSite(modules []ModuleDoc, api ApiSet, options SiteOptions, found []Plu
 			Sections:  page.document.Sections,
 			Plain:     indexText(page),
 			Generated: page.generated,
+			Unlisted:  page.unlisted,
+			root:      page.root,
 			assets:    assets,
 		})
 	}
@@ -312,6 +358,11 @@ type parsedPage struct {
 	searchText string
 	// landing marks the page a reader arrives on within its module.
 	landing bool
+	// sourced marks a page a plugin wrote for the module (the sources hook),
+	// which follows the module's own pages in the order the plugin gave.
+	sourced  bool
+	order    int
+	unlisted bool
 }
 
 // readSource reads one doc-as-code file. A file that cannot be read is still
@@ -436,7 +487,11 @@ func pageTarget(module, section, source, root string) string {
 	}
 	relative = filepath.ToSlash(relative)
 	relative = strings.TrimSuffix(relative, filepath.Ext(relative))
-	if strip := stripDocsRoot + "/"; strings.HasPrefix(relative, strip) {
+	// docs/doc/ is stripped whole, so a page keeps its address when it moves
+	// there from docs/: `{ref}`architecture/security“ reaches it either way.
+	if strip := pagesDir + "/"; strings.HasPrefix(relative, strip) {
+		relative = relative[len(strip):]
+	} else if strip := stripDocsRoot + "/"; strings.HasPrefix(relative, strip) {
 		relative = relative[len(strip):]
 	}
 	// A README is the page a module leads with, so it is named index: a module
@@ -487,6 +542,13 @@ func sortParsedPages(pages []*parsedPage, modules []ModuleDoc, specs []SectionSp
 		}
 		if left.module != right.module {
 			return order[left.module] < order[right.module]
+		}
+		// What a plugin wrote for a module follows what its authors wrote.
+		if left.sourced != right.sourced {
+			return right.sourced
+		}
+		if left.sourced && left.order != right.order {
+			return left.order < right.order
 		}
 		// A module lands on its index, so the index is read first and the
 		// rest follow in the order a reader would look for them.
@@ -575,10 +637,13 @@ func resolveReferences(site *Site, documents []*parsedPage, targets map[string]*
 	for _, page := range site.Pages {
 		byTarget[page.Target] = page
 	}
+	allAliases := siteAliases(site.Pages)
 
 	for index, page := range site.Pages {
 		document := documents[index]
+		aliases := moduleAliases(page)
 		resolved := resolveInBody(page.Body, rootPrefix(page.Href), byTarget, fragments, labels)
+		resolved = resolveQualified(resolved, rootPrefix(page.Href), aliases, allAliases, labels)
 		page.Body = resolved
 		page.ambiguous = ambiguous
 		// A reference inside a page names a target; a reference that names
@@ -608,6 +673,9 @@ func resolveReferences(site *Site, documents []*parsedPage, targets map[string]*
 				continue
 			}
 			if _, ok := labels[node.Href]; ok {
+				continue
+			}
+			if qualifiedLabel(aliases, allAliases, node.Href, labels) != "" {
 				continue
 			}
 			if _, ok := fragments[node.Href]; ok {
@@ -666,6 +734,95 @@ func resolveInBody(body string, root string, targets map[string]*SitePage, fragm
 		rewrite(label, href)
 	}
 	return out
+}
+
+// moduleAliases are the names a page's module goes by in a qualified label
+// (`module:label`): its manifest name and the name of its directory, which is
+// what a repository is called by the tools that name it from outside, such as
+// `robohub-keeper:ADR-0009` for the module called `keeper`.
+func moduleAliases(page *SitePage) []string {
+	aliases := []string{}
+	if page.Module != "" {
+		aliases = append(aliases, page.Module)
+	}
+	if page.root != "" && page.Module != "" {
+		if base := filepath.Base(page.root); base != page.Module && base != "." && base != string(filepath.Separator) {
+			aliases = append(aliases, base)
+		}
+	}
+	return aliases
+}
+
+// siteAliases maps each name a module goes by to all of them, so a label
+// qualified by one of a module's names is reached by any of the others.
+func siteAliases(pages []*SitePage) map[string][]string {
+	out := map[string][]string{}
+	for _, page := range pages {
+		names := moduleAliases(page)
+		for _, name := range names {
+			if _, seen := out[name]; !seen {
+				out[name] = names
+			}
+		}
+	}
+	return out
+}
+
+// qualifiedLabel is the address of a label a reference names by another of its
+// module's names: on a page of module M, `{ref}`ADR-0009“ reaches the label
+// `M:ADR-0009`, and `{ref}`D:ADR-0009“ reaches `M:ADR-0009` when D is another
+// name of M (its directory). It is "" when there is no such label.
+func qualifiedLabel(own []string, all map[string][]string, name string, labels map[string]string) string {
+	if strings.Contains(name, "/") || strings.Contains(name, "#") {
+		return ""
+	}
+	if module, short, qualified := strings.Cut(name, ":"); qualified {
+		for _, alias := range all[module] {
+			if href := labels[alias+":"+short]; href != "" {
+				return href
+			}
+		}
+		return ""
+	}
+	for _, alias := range own {
+		if href := labels[alias+":"+name]; href != "" {
+			return href
+		}
+	}
+	return ""
+}
+
+// resolveQualified rewrites the references a page makes to a module's label by
+// another of the module's names, or to its own module's label by its short name.
+// A reference that already resolved is not touched: only an `href="#..."` that
+// is still a placeholder is rewritten.
+func resolveQualified(body, root string, own []string, all map[string][]string, labels map[string]string) string {
+	const marker = "class=\"xref\" href=\"#"
+	var b strings.Builder
+	rest := body
+	for {
+		at := strings.Index(rest, marker)
+		if at < 0 {
+			b.WriteString(rest)
+			break
+		}
+		b.WriteString(rest[:at])
+		rest = rest[at+len(marker):]
+		end := strings.IndexByte(rest, '"')
+		if end < 0 {
+			b.WriteString(marker)
+			b.WriteString(rest)
+			break
+		}
+		name := html.UnescapeString(rest[:end])
+		if href := qualifiedLabel(own, all, name, labels); href != "" && labels[name] == "" {
+			b.WriteString("class=\"xref\" href=\"" + html.EscapeString(root+href))
+		} else {
+			b.WriteString(marker + rest[:end])
+		}
+		rest = rest[end:]
+	}
+	return b.String()
 }
 
 // collectRoles gathers every cross-reference in a document, so the site can

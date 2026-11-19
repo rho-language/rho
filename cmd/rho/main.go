@@ -865,6 +865,10 @@ func buildCLI(args []string) int {
 	// runner needs, since it compiles the translation itself and a test program
 	// must never take the place of the application's binary.
 	emitC := fs.Bool("emit-c", false, "translate the entry to C at -o and stop: generate no project and build nothing")
+	// A test build, which `rho test` asks for: each function named here writes
+	// `[PASS] <name>` when it returns, so a test that main never calls says
+	// nothing and the runner can tell it apart from one that passed.
+	testReport := fs.String("test-report", "", "with --emit-c: comma-separated `test fn` names that report `[PASS] <name>` when they return")
 	// Flags are read wherever they are written: `rho build . --target go` is how
 	// the documentation writes it, and flags first works as it always did.
 	positional, passthrough, parseErr := clicore.ParseInterspersed(fs, args)
@@ -1093,6 +1097,10 @@ func buildCLI(args []string) int {
 	// The translation alone, when that is all that was asked for: the entry in C
 	// at -o, with the dependencies and the generated interface this build would
 	// compile it against, and nothing generated or compiled beside it.
+	if *testReport != "" && !*emitC {
+		fmt.Fprintln(os.Stderr, "rho build: --test-report is for a test build; give --emit-c and -o with it")
+		return 2
+	}
 	if *emitC {
 		if *out == "" {
 			fmt.Fprintln(os.Stderr, "rho build: --emit-c writes the translation to the file -o names; give -o")
@@ -1103,7 +1111,13 @@ func buildCLI(args []string) int {
 			return 2
 		}
 		outC, _ := filepath.Abs(*out)
-		if err := src.CompileFileToWithDependencies(absIn, outC, rhoDependencyRoots); err != nil {
+		var testNames []string
+		for _, name := range strings.Split(*testReport, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				testNames = append(testNames, name)
+			}
+		}
+		if err := src.CompileTestFileTo(absIn, outC, rhoDependencyRoots, testNames); err != nil {
 			reportError("rho build", err)
 			return 1
 		}

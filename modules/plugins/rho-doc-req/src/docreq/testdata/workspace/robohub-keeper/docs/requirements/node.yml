@@ -1,0 +1,21 @@
+level: NODE
+prefix: KEEP
+title: Keeper
+requirements:
+  - id: KEEP-0001
+    title: Sign in survives a restart
+    statement: The keeper shall keep a signed-in session across a restart.
+    satisfies: [SYS-0001]
+    status: implemented
+    verification: test
+    decided_by: [ADR-0001, robohub:ADR-0001]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [auth]
+
+  - id: KEEP-0002
+    title: Report the version
+    statement: The keeper shall report its version.
+    status: proposed
+    verification: test
+    changed: 2026-11-19

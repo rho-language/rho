@@ -66,6 +66,18 @@ func CompileFileToWithDependencies(path, outPath string, dependencyRoots []strin
 	return compileModule(*mod, outPath, path)
 }
 
+// CompileTestFileTo is CompileFileToWithDependencies for a test run: each
+// function testNames lists reports `[PASS] <name>` when it returns (see
+// codegen.WithTestReports), so a test the program never calls is told apart
+// from one that passed.
+func CompileTestFileTo(path, outPath string, dependencyRoots, testNames []string) error {
+	mod, err := loadModuleGraphWithDependencies(path, dependencyRoots)
+	if err != nil {
+		return err
+	}
+	return compileModuleReporting(*mod, outPath, testNames, path)
+}
+
 // CompileProjectTo compiles an entry file and all of its imports/includes.
 func CompileProjectTo(path, outPath string) error {
 	return CompileFileTo(path, outPath)
@@ -932,6 +944,10 @@ func ProjectOutputPath(path string) string {
 }
 
 func compileModule(mod ast.Module, outPath string, from ...string) error {
+	return compileModuleReporting(mod, outPath, nil, from...)
+}
+
+func compileModuleReporting(mod ast.Module, outPath string, testNames []string, from ...string) error {
 	tc := types.New()
 	if err := tc.CheckModule(mod); err != nil {
 		// The module was handed over rather than read here, so when the caller
@@ -953,6 +969,10 @@ func compileModule(mod ast.Module, outPath string, from ...string) error {
 		return err
 	}
 	if err := checkArenaEscapes(tc.ArenaEscapes(), ""); err != nil {
+		return err
+	}
+	lowered, err := codegen.WithTestReports(lowered, testNames)
+	if err != nil {
 		return err
 	}
 	if err := codegen.EmitCToFile(outPath, lowered); err != nil {

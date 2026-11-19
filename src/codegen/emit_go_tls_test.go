@@ -34,3 +34,11 @@ func TestGeneratedServerSupportsTLS(t *testing.T) {
 		}
 	}
 }
+// Half a certificate pair is a deployment that meant TLS: the service refuses to
+// start rather than serve plain HTTP.
+func TestGeneratedServerRefusesHalfATLSPair(t *testing.T) {
+	lifecycle := goServerLifecycle(ServerConfig{})
+	if !strings.Contains(lifecycle, `(cert == "") != (key == "")`) || !strings.Contains(lifecycle, "must be set together") {
+		t.Fatalf("expected the lifecycle to refuse half a TLS pair:\n%s", lifecycle)
+	}
+}

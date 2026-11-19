@@ -1,0 +1,32 @@
+# Gateway requirements.
+level: NODE
+prefix: GW
+title: Gateway
+requirements:
+  - id: GW-0001
+    title: Sessions survive a gateway restart
+    statement: After a restart the gateway shall re-establish a session with every enrolled board within 30 s, without re-enrollment.
+    rationale: A power cut must not need a person.
+    satisfies: [SYS-0001]
+    status: approved
+    verification: test
+    decided_by: [ADR-0001, robohub:ADR-0001]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security]
+
+  - id: GW-0002
+    title: Enroll a board once
+    statement: The gateway shall keep a board's enrollment across restarts.
+    satisfies:
+      - SYS-0002
+    status: verified
+    verification: test
+    changed: 2026-11-10
+
+  - id: GW-0003
+    title: Report the uptime
+    statement: The gateway shall report its uptime.
+    status: approved
+    verification: test
+    changed: 2026-11-10

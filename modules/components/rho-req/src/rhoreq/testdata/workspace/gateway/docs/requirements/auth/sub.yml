@@ -1,0 +1,11 @@
+level: SUB
+prefix: GW-AUTH
+title: Gateway authentication
+requirements:
+  - id: GW-AUTH-0001
+    title: Tokens are checked
+    statement: The auth subsystem shall refuse an expired token.
+    satisfies: [GW-0001]
+    status: implemented
+    verification: test
+    changed: 2026-11-12

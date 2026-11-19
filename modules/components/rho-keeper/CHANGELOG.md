@@ -73,3 +73,7 @@ version rather than always showing the newest installed one.
 ## [0.1.9] - 2026-11-15
 
 `sync` runs each install step as a program with its arguments: it ran the whole line (`sudo apt-get install -y gcc-avr`) as one program name, which no machine has, so a sync on a CI runner failed after printing a correct plan. A fetch step runs `rho keeper fetch`.
+
+## [0.1.10] - 2026-11-19
+
+A module whose pages are in `docs/doc/` has documentation: its badge and its page find `docs/doc/index.md`.

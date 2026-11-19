@@ -47,6 +47,10 @@ func fragmentSite(root, title, home, homeTitle string) (*rhodoc.Site, []rhodoc.P
 		found = rhodoc.Source{RhoHome: rhodocHome}.Discover(rhodoc.ComponentName)
 	}
 	config, _ := rhodoc.ReadSiteConfig(root)
+	modules, sources := rhodoc.GatherSources(modules, title, root, found)
+	for _, diagnostic := range sources.Diagnostics {
+		fmt.Fprintf(os.Stderr, "rho doc: %s\n", diagnostic)
+	}
 	site := rhodoc.BuildSiteWithPlugins(modules, rhodoc.ReadApiSet(apiRoot(root, config), "api"), rhodoc.SiteOptions{
 		Title:     title,
 		Root:      root,

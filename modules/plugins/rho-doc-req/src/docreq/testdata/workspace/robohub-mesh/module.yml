@@ -1,0 +1,7 @@
+module:
+  name: mesh
+  type: rho
+  version: 0.1.0
+  description: A member of the family that is not on the site
+
+requirements: { prefix: MESH, parent: robohub }

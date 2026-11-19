@@ -1,0 +1,9 @@
+{
+  "schema": 1, "runner": "rho-test", "runner_version": "0.3.0", "rho": "0.19.1",
+  "run": "2026-11-19T18:30:00Z", "seconds": 0.5, "project": "keeper", "target": "c",
+  "summary": {"suites": 1, "cases": 1, "passed": 1, "failed": 0, "skipped": 0},
+  "suites": [
+    {"name": "tests/session", "kind": "rho", "status": "pass", "seconds": 0.5, "cases": [
+      {"name": "session_survives_restart", "status": "pass", "file": "tests/session_test.rho", "line": 4}]}
+  ]
+}

@@ -1,0 +1,3 @@
+levels:
+  - { name: SYS,  title: System }
+  - { name: NODE, title: Node }

@@ -1,0 +1,10 @@
+level: NODE
+prefix: MESH
+requirements:
+  - id: MESH-0001
+    title: Rejoin after a power cut
+    statement: A mesh node shall rejoin within a minute.
+    satisfies: [SYS-0001]
+    status: approved
+    verification: test
+    changed: 2026-11-19

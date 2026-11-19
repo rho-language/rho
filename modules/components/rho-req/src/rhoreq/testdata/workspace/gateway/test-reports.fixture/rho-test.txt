@@ -1,0 +1,2 @@
+[PASS] smoke
+2 suites, 3 cases: 2 passed, 1 failed

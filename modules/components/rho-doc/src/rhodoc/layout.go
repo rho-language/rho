@@ -154,6 +154,11 @@ func (site *Site) renderSidebar(current *SitePage, root string) string {
 		if current != nil && current.Section == group.Name && len(group.Pages) > 0 {
 			b.WriteString("<h2 class=\"nav-title\">" + html.EscapeString(label) + "</h2>\n<ul>\n")
 			for _, page := range group.Pages {
+				// A page an index lists is reached from the index, and is shown
+				// here only while it is the one being read.
+				if page.Unlisted && page.Target != current.Target {
+					continue
+				}
 				class := "nav-link"
 				if page.Target == current.Target {
 					class += " current"

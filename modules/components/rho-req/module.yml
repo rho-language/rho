@@ -1,0 +1,59 @@
+# rho-req — requirements, architecture decisions, and the trace between them,
+# the code and the tests.
+#
+# Every feature goes requirement -> ADR (when it changes the architecture) ->
+# implementation tagged `@req ID` -> tests tagged `@verifies ID`. This component
+# is the tool that checks the chain holds: it reads docs/requirements/**/*.yml,
+# docs/architecture/adr/NNNN-slug.md and the tags in the sources, validates them
+# against each other across a workspace of repositories, traces each requirement
+# to the results of the tests that verify it, and makes the edits a person would
+# otherwise make by hand without disturbing the rest of the file.
+#
+# It lives at the toolchain's level, not in one ecosystem, so any repository
+# built with Rho can carry requirements the same way.
+module:
+  name: rho-req
+  type: component
+  version: 0.4.0
+  author: Aurel Miron
+  description: Requirements, architecture decisions and their trace to code and tests, checked across a workspace
+  command: req
+
+main: rho-req
+
+features:
+  - requirements
+  - traceability
+  - adr
+  - process
+
+# It reads files and runs git; it depends on nothing but the toolchain, whose
+# YAML loader reads module.yml and whose flag parse reads the command line.
+
+commands:
+  - name: req
+    description: Check, trace, render and edit requirements and architecture decisions
+    run: rho-req
+    hook: req
+
+package:
+  kind: component
+  binary: true
+  include:
+    - module.yml
+    - README.md
+    - CHANGELOG.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+docs:
+  title: Requirements and traceability
+  section: components
+  order: "47"
+  index: docs/index.md
+  sources:
+    - docs/index.md

@@ -115,6 +115,12 @@ type Step struct {
 	// A plugin cannot be handed a function — it is a separate program — which is
 	// exactly why a plugin describes its steps as commands instead.
 	Action func(suite Suite) (output string, failed bool, err error) `json:"-"`
+	// CompilerReports is set by a Rho test file's Action to whether the compiler
+	// made each `test fn` report `[PASS] <name>` itself (`rho build
+	// --test-report`). When it did, a case nothing reported did not run; when it
+	// did not (an older rho), the cases are read the old way. Nil for every other
+	// step.
+	CompilerReports *bool `json:"-"`
 	// Env is set for the programs this step runs, on top of the process's own.
 	//
 	// For a step that hands a path to what it has just fetched: a plugin that

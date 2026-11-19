@@ -1,0 +1,8 @@
+module:
+  name: tool
+  type: rho
+  version: 0.1.0
+  description: A standalone repository (a fixture)
+
+requirements:
+  prefix: TOOL

@@ -1,0 +1,7 @@
+name: gateway
+suites:
+  - name: tests/session
+    kind: rho
+  - name: smoke
+    kind: command
+    command: python3 tests/smoke.py

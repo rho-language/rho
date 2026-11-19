@@ -23,11 +23,13 @@ use (
 	./modules/components/rho-log
 	./modules/components/rho-lsp
 	./modules/components/rho-openapi
+	./modules/components/rho-req
 	./modules/components/rho-router
 	./modules/components/rho-sql
 	./modules/components/rho-target
 	./modules/components/rho-test
 	./modules/plugins/rho-doc-api
+	./modules/plugins/rho-doc-req
 	./modules/plugins/rho-doc-toc
 	./modules/plugins/rho-robohub
 	./modules/plugins/rho-robohub/ports
@@ -66,11 +68,13 @@ replace (
 	github.com/rho/rho-log v0.0.0 => ./modules/components/rho-log
 	github.com/rho/rho-lsp v0.0.0 => ./modules/components/rho-lsp
 	github.com/rho/rho-openapi v0.0.0 => ./modules/components/rho-openapi
+	github.com/rho/rho-req v0.0.0 => ./modules/components/rho-req
 	github.com/rho/rho-router v0.0.0 => ./modules/components/rho-router
 	github.com/rho/rho-sql v0.0.0 => ./modules/components/rho-sql
 	github.com/rho/rho-target v0.0.0 => ./modules/components/rho-target
 	github.com/rho/rho-test v0.0.0 => ./modules/components/rho-test
 	github.com/rho/rho-doc-api v0.0.0 => ./modules/plugins/rho-doc-api
+	github.com/rho/rho-doc-req v0.0.0 => ./modules/plugins/rho-doc-req
 	github.com/rho/rho-doc-toc v0.0.0 => ./modules/plugins/rho-doc-toc
 	github.com/rho/rho-robohub v0.0.0 => ./modules/plugins/rho-robohub
 	github.com/rho/rho-sql-sqlite v0.0.0 => ./modules/plugins/rho-sql-sqlite

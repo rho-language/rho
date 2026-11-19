@@ -1,0 +1,59 @@
+module:
+  name: rho-doc-req
+  type: plugin
+  version: 0.1.1
+  author: Aurel Miron
+  description: Puts a module's requirements, architecture decisions and their trace on its documentation site
+
+main: rho-doc-req
+
+features:
+  - documentation
+  - requirements
+  - adr
+
+# The component this plugin plugs into, and the hook of that component it
+# answers. The sources hook rather than the whole-site one, because these pages
+# are Markdown written for a module before the site is built: they are then read
+# like the module's own pages, so a reference to a requirement or a decision from
+# any page resolves, and one of theirs that names nothing is reported.
+extends: rho-doc
+
+implements:
+  - sources
+
+hooks:
+  - sources
+
+commands:
+  - name: requirements
+    run: rho-doc-req
+    hook: sources
+
+# The model — the files, the family of repositories, the trace and its evidence —
+# is rho-req's, built into this program from rho-req's Go package (see go.mod),
+# so a site needs this plugin and not rho-req installed to show what rho-req
+# reads. It is not a `deps:` entry for the same reason: nothing is resolved from
+# the registry at run time.
+
+package:
+  kind: plugin
+  interface: []
+  include:
+    - module.yml
+    - README.md
+    - CHANGELOG.md
+    - docs
+    - src
+  require:
+    - module.yml
+    - README.md
+    - src
+
+docs:
+  title: Requirements on documentation sites
+  section: plugins
+  order: "12"
+  index: docs/index.md
+  sources:
+    - docs/index.md

@@ -1,0 +1,10 @@
+module session
+
+// restore re-establishes every enrolled board's session.
+// @req GW-0001
+fn restore() void {
+}
+
+// @req GW-0002, SYS-0002
+fn enroll() void {
+}

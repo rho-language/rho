@@ -26,7 +26,7 @@ func statusOf(results []Result) map[string]Status {
 // A printed [FAIL] line reports the declared case of that name; it does not
 // replace the list of cases.
 func TestAPrintedFailReportsItsCaseAndKeepsTheRest(t *testing.T) {
-	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b", "c"), "[PASS] a\n[FAIL] b\n[PASS] c\n", false)
+	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b", "c"), "[PASS] a\n[FAIL] b\n[PASS] c\n", false, false)
 	got := statusOf(results)
 	if len(results) != 3 || got["a"] != StatusPass || got["b"] != StatusFail || got["c"] != StatusPass || suiteFailed {
 		t.Fatalf("got %+v suiteFailed=%v", results, suiteFailed)
@@ -41,11 +41,11 @@ func TestAPrintedFailReportsItsCaseAndKeepsTheRest(t *testing.T) {
 // A name that is not a declared case does not become one; a failure under such
 // a name still fails the suite.
 func TestAnUnknownNameNeverBecomesACase(t *testing.T) {
-	results, suiteFailed := mergeDeclaredCases(declaredSuite("a"), "[PASS] a\n[PASS] extra\n", false)
+	results, suiteFailed := mergeDeclaredCases(declaredSuite("a"), "[PASS] a\n[PASS] extra\n", false, false)
 	if len(results) != 1 || suiteFailed {
 		t.Fatalf("an unknown [PASS] changed the cases: %+v %v", results, suiteFailed)
 	}
-	results, suiteFailed = mergeDeclaredCases(declaredSuite("a"), "[PASS] a\n[FAIL] extra\n", false)
+	results, suiteFailed = mergeDeclaredCases(declaredSuite("a"), "[PASS] a\n[FAIL] extra\n", false, false)
 	if len(results) != 1 || results[0].Status != StatusPass || !suiteFailed {
 		t.Fatalf("an unknown [FAIL] was dropped: %+v %v", results, suiteFailed)
 	}
@@ -54,7 +54,7 @@ func TestAnUnknownNameNeverBecomesACase(t *testing.T) {
 // A program that stopped fails the cases it never reported, and a program that
 // failed after reporting every case a pass fails the suite.
 func TestAStoppedProgramFailsWhatItDidNotReport(t *testing.T) {
-	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b"), "[PASS] a\nASSERTION FAILED", true)
+	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b"), "[PASS] a\nASSERTION FAILED", true, false)
 	got := statusOf(results)
 	if got["a"] != StatusPass || got["b"] != StatusFail || suiteFailed {
 		t.Fatalf("got %+v suiteFailed=%v", results, suiteFailed)
@@ -62,7 +62,7 @@ func TestAStoppedProgramFailsWhatItDidNotReport(t *testing.T) {
 	if !strings.Contains(results[1].Reason, "before this case reported") {
 		t.Errorf("the reason does not say why: %q", results[1].Reason)
 	}
-	_, suiteFailed = mergeDeclaredCases(declaredSuite("a"), "[PASS] a\n", true)
+	_, suiteFailed = mergeDeclaredCases(declaredSuite("a"), "[PASS] a\n", true, false)
 	if !suiteFailed {
 		t.Fatal("a failing program whose cases all passed did not fail its suite")
 	}
@@ -72,21 +72,59 @@ func TestAStoppedProgramFailsWhatItDidNotReport(t *testing.T) {
 // it ran — a test fn main never calls — so that case is skipped, with the reason;
 // a program that reports none is judged by its exit status.
 func TestAnUnreportedCaseOfAReportingProgramIsSkipped(t *testing.T) {
-	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b"), "[PASS] a\n", false)
+	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b"), "[PASS] a\n", false, false)
 	got := statusOf(results)
 	if got["a"] != StatusPass || got["b"] != StatusSkip || suiteFailed {
 		t.Fatalf("got %+v suiteFailed=%v", results, suiteFailed)
 	}
-	results, _ = mergeDeclaredCases(declaredSuite("a", "b"), "hello\n", false)
+	results, _ = mergeDeclaredCases(declaredSuite("a", "b"), "hello\n", false, false)
 	got = statusOf(results)
 	if got["a"] != StatusPass || got["b"] != StatusPass {
 		t.Fatalf("a silent program that exited 0 did not pass its cases: %+v", results)
 	}
 }
 
+// With the compiler reporting each test fn, a case nothing reported never ran —
+// a test fn main never calls — and it fails, whether or not other cases reported.
+func TestATestFnMainNeverCallsFails(t *testing.T) {
+	for _, output := range []string{"[PASS] a\n", "hello\n", ""} {
+		results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b"), output, false, true)
+		got := statusOf(results)
+		if got["b"] != StatusFail || suiteFailed {
+			t.Fatalf("output %q: got %+v suiteFailed=%v", output, results, suiteFailed)
+		}
+		if results[1].Reason != "never ran: main() does not call it" {
+			t.Errorf("output %q: the reason does not say why: %q", output, results[1].Reason)
+		}
+	}
+}
+
+// A program that stopped fails what it did not report, with a reason that says
+// it stopped rather than that main forgot the case.
+func TestAStoppedReportingProgramFailsWithItsOwnReason(t *testing.T) {
+	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b"), "[PASS] a\nrho: check failed\n", true, true)
+	got := statusOf(results)
+	if got["a"] != StatusPass || got["b"] != StatusFail || suiteFailed {
+		t.Fatalf("got %+v suiteFailed=%v", results, suiteFailed)
+	}
+	if results[1].Reason != "did not run: the program stopped before it" {
+		t.Errorf("the reason does not say the program stopped: %q", results[1].Reason)
+	}
+}
+
+// A test fn the compiler reported as passing passes; a [FAIL] the program printed
+// fails its case even when the wrapper reported a pass for it afterwards.
+func TestAReportedTestFnPassesAndAPrintedFailWins(t *testing.T) {
+	results, suiteFailed := mergeDeclaredCases(declaredSuite("a", "b"), "[PASS] a\n[FAIL] b\n[PASS] b\n", false, true)
+	got := statusOf(results)
+	if got["a"] != StatusPass || got["b"] != StatusFail || suiteFailed {
+		t.Fatalf("got %+v suiteFailed=%v", results, suiteFailed)
+	}
+}
+
 // A failure wins over a pass for the same name, whichever was printed last.
 func TestAFailureWinsOverAPass(t *testing.T) {
-	results, _ := mergeDeclaredCases(declaredSuite("a"), "[FAIL] a\n[PASS] a\n", false)
+	results, _ := mergeDeclaredCases(declaredSuite("a"), "[FAIL] a\n[PASS] a\n", false, false)
 	if results[0].Status != StatusFail {
 		t.Fatalf("got %+v", results)
 	}
@@ -166,5 +204,36 @@ func writeTest(t *testing.T, path, text string) {
 	}
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The runner asks for a test build that names the test fns, and with a rho that
+// refuses the flag it asks again without it and says the cases are read the old
+// way.
+func TestTranslateAsksForATestReportAndFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	fake := filepath.Join(dir, "rho")
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\n" +
+		"case \"$*\" in *--test-report*) if [ -n \"$OLD\" ]; then echo 'flag provided but not defined: -test-report'; exit 2; fi;; esac\n" +
+		"exit 0\n"
+	if err := os.WriteFile(fake, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(RhoBinaryEnv, fake)
+
+	_, reports, err := translate("x_test.rho", filepath.Join(dir, "x.c"), []string{"a", "b"})
+	if err != nil || !reports {
+		t.Fatalf("reports=%v err=%v", reports, err)
+	}
+	recorded, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(recorded), "build --emit-c --test-report a,b -o") {
+		t.Fatalf("the build was not asked to report the test fns: %q", recorded)
+	}
+
+	t.Setenv("OLD", "1")
+	_, reports, err = translate("x_test.rho", filepath.Join(dir, "x.c"), []string{"a"})
+	if err != nil || reports {
+		t.Fatalf("an older rho: reports=%v err=%v", reports, err)
 	}
 }

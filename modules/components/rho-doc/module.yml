@@ -1,7 +1,7 @@
 module:
   name: rho-doc
   type: component
-  version: 0.2.3
+  version: 0.2.5
   author: Aurel Miron
   description: Documentation generator
   command: doc
@@ -40,11 +40,18 @@ provides:
   # What a plugin is here for. Every enabled one contributes, because a set of
   # pages is finished by what each adds to it rather than chosen between.
   contracts:
+    - name: sources
+      description: Writes pages for a module from what it carries, before the site is built: its requirements and architecture decisions.
+      one: false
+      hooks: [sources]
     - name: contents
       description: Adds to a finished set of pages: a table of contents, an API reference, an index.
       one: false
       hooks: [index, page]
   hooks:
+    # Once, before any page is read, over the modules the build found: pages a
+    # plugin writes as Markdown for a module, read like the module's own.
+    - sources
     # Once, over the finished set of pages: a table of contents, an index.
     - index
     # Once per page, with that page in the request: a rewritten body.

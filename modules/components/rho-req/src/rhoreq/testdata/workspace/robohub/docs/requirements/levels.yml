@@ -1,0 +1,6 @@
+# The levels of the fixture workspace.
+levels:
+  - { name: SYS,  title: System }
+  - { name: NODE, title: Node }
+  - { name: SUB,  title: Subsystem }
+  - { name: UNIT, title: Unit }

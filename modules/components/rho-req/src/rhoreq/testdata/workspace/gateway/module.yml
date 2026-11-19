@@ -1,0 +1,7 @@
+module:
+  name: robohub-gateway
+  type: rho
+  version: 0.1.0
+  description: A node (a fixture)
+
+requirements: { prefix: GW, parent: robohub }

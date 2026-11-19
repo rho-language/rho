@@ -81,6 +81,7 @@ and reads JSON from its standard output.
 
 | Hook | When it runs | What a plugin answers with |
 |------|--------------|---------------------------|
+| `sources` | Once, before any page is read, with the modules found | Markdown pages for those modules, read like their own |
 | `index` | Once, over the finished set of pages | Pages to add |
 | `page` | Once per page, with that page in the request | Rewritten bodies, keyed by the page's target |
 

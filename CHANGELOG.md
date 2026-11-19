@@ -587,3 +587,16 @@ In a container or a pipeline, where root is the default, the "running as root" l
 ### Breaking
 
 None.
+
+## [0.19.2] - 2026-11-19
+
+A generated Go service given only one of `RHO_TLS_CERT` and `RHO_TLS_KEY` refuses to start, saying both must be set; it used to serve plain HTTP, so a deployment that meant TLS and mistyped one variable sent everything unencrypted.
+
+`rho doc` reads a module's pages from `docs/doc/` when it has one, and leaves its requirements and architecture decisions to the rho-doc-req plugin; `rho req` (component rho-req) checks, traces, renders and edits requirements and ADRs across a workspace, modules nested in a repository included; `rho test` writes `build/test-reports/results.json` on every run.
+
+`rho build --emit-c --test-report a,b` is a test build: each named function prints `[PASS] <name>` every time it returns (its body moves to `<name>__rho_test_body`; arguments and return value unchanged), and an ordinary build is untouched. `rho test` (rho-test 0.4.0) builds every Rho test file this way, so a `test fn` nothing reported did not run and fails — "never ran: main() does not call it", or "did not run: the program stopped before it" — and a failed case's reason is printed beside it. A test that `main` forgot used to pass whenever the program printed no result lines.
+
+### Breaking
+
+- A service started with only one of `RHO_TLS_CERT` / `RHO_TLS_KEY` exits 1: set both, or neither.
+- A `test fn` that `main` never calls now fails `rho test`; call it from `main`. A test no longer needs to print its own `[PASS]` line.

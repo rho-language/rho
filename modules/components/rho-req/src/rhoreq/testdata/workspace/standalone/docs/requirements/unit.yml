@@ -1,0 +1,9 @@
+level: UNIT
+prefix: TOOL
+requirements:
+  - id: TOOL-0001
+    title: Parse a flag
+    statement: The tool shall read --verbose.
+    status: draft
+    verification: test
+    changed: 2026-11-19

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="session_test.rho" tests="2" failures="1" errors="0" skipped="0" time="0" package="tests/session_test.rho">
+    <testcase name="sessions_survive_restart" classname="tests/session_test.rho" time="0"></testcase>
+    <testcase name="enroll_once" classname="tests/session_test.rho" time="0">
+      <failure message="test failed" type="failure">expected 1, got 2</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

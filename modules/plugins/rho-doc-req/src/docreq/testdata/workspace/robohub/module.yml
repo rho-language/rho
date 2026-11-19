@@ -1,0 +1,8 @@
+module:
+  name: robohub
+  type: rho
+  version: 0.1.0
+  description: The root of the fixture family
+
+requirements:
+  prefix: RH

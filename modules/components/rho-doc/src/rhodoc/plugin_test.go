@@ -356,6 +356,26 @@ func TestPluginHelperProcess(t *testing.T) {
 		}
 		encoded, _ := json.Marshal(response)
 		os.Stdout.Write(encoded)
+	case "sources":
+		// Pages written for every module the request names, as Markdown, plus
+		// one for a module that is not on the site and one that climbs out.
+		var request2 SourcesPayload
+		if err := json.Unmarshal(request.Payload, &request2); err != nil {
+			os.Exit(6)
+		}
+		answer := SourcesAnswer{Notes: []string{"sources-note"}}
+		for _, module := range request2.Modules {
+			answer.Pages = append(answer.Pages,
+				GeneratedPage{Module: module.Name, Path: "adr/index", Markdown: "# Decisions of " + module.Name + "\n\nSee {ref}`ADR-0001 <" + module.Name + ":ADR-0001>`.\n", Order: 2},
+				GeneratedPage{Module: module.Name, Path: "adr/0001-one", Markdown: "# ADR-0001: One {#" + module.Name + ":ADR-0001}\n\nFrom " + module.Root + ".\n", Order: 3, Unlisted: true},
+				GeneratedPage{Module: module.Name, Path: "requirements/index", Markdown: "# Requirements\n\n### APP-0001: First {#APP-0001}\n\nShall.\n", Order: 1})
+		}
+		answer.Pages = append(answer.Pages,
+			GeneratedPage{Module: "elsewhere", Path: "x", Markdown: "# X\n"},
+			GeneratedPage{Module: request2.Modules[0].Name, Path: "../escape", Markdown: "# Escape\n"})
+		encoded, _ := json.Marshal(answer)
+		response, _ := json.Marshal(plugins.Response{Version: plugins.ProtocolVersion, Payload: encoded})
+		os.Stdout.Write(response)
 	case "banner":
 		// The page a per-page hook is asked about, which the shared envelope
 		// carries in the payload.
@@ -419,5 +439,107 @@ func TestACommandCannotLeaveThePluginDirectory(t *testing.T) {
 	result := plugins.RunHooks(discovered, ComponentName, HookIndex, sitePayload{})
 	if len(result.Diagnostics) == 0 || !strings.Contains(result.Diagnostics[0].Message, "leaves the plugin directory") {
 		t.Fatalf("expected the escape to be refused, got %+v", result.Diagnostics)
+	}
+}
+
+// A plugin answering the sources hook writes pages for the modules a build found,
+// before the build: they follow the module's own pages in the order it gave, are
+// addressed inside the module, resolve references (a label qualified by the
+// module is reachable by its short name from the module's pages), and a page for
+// a module that is not on the site, or that leaves its module, is reported.
+func TestASourcesPluginWritesPagesForAModule(t *testing.T) {
+	isolate(t)
+	root, pluginRoot := t.TempDir(), t.TempDir()
+	writePlugin(t, pluginRoot, "req", ComponentName, "  - "+HookSources+"\n",
+		"\ncommands:\n"+aCommand(t, "requirements", HookSources, "sources"))
+	writeFile(t, root, "robohub-app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\ndocs:\n  section: guides\n")
+	writeFile(t, root, "robohub-app/docs/doc/index.md", "# App\n\nDecided by {ref}`ADR-0001`, also {ref}`robohub-app:ADR-0001`; meets {ref}`APP-0001`.\n")
+	writeFile(t, root, "robohub-app/docs/doc/zeta.md", "# Zeta\n")
+
+	modules, _ := DiscoverModules(root)
+	found := discover(pluginRoot).Discover(ComponentName)
+	modules, outcome := GatherSources(modules, "T", root, found)
+	if !outcome.Answered || len(outcome.Notes) != 1 || outcome.Notes[0] != "sources-note" {
+		t.Fatalf("unexpected outcome %+v", outcome)
+	}
+	if len(outcome.Diagnostics) != 2 {
+		t.Errorf("expected the stray and the escaping page reported, got %+v", outcome.Diagnostics)
+	}
+	site := BuildSiteWithPlugins(modules, ApiSet{}, SiteOptions{Title: "T"}, found)
+	order := []string{}
+	for _, page := range site.Pages {
+		order = append(order, page.Target)
+	}
+	want := "app/index app/zeta app/requirements/index app/adr/index app/adr/0001-one"
+	if got := strings.Join(order, " "); got != want {
+		t.Fatalf("page order:\n%s\nwant\n%s", got, want)
+	}
+	if len(site.Requests) != 0 {
+		t.Fatalf("expected every reference to resolve, got %v", site.Requests)
+	}
+	index := findPage(site, "app/index")
+	for _, link := range []string{`href="../app/adr/0001-one.html#app:ADR-0001">ADR-0001</a>`, `href="../app/adr/0001-one.html#app:ADR-0001">robohub-app:ADR-0001`, `href="../app/requirements/index.html#APP-0001"`} {
+		if !strings.Contains(index.Body, link) {
+			t.Errorf("expected %s in\n%s", link, index.Body)
+		}
+	}
+	adr := findPage(site, "app/adr/0001-one")
+	if !adr.Generated || !adr.Unlisted || adr.Section != "guides" || !strings.Contains(adr.Body, filepath.Join(root, "robohub-app")) {
+		t.Errorf("unexpected decision page %+v", adr)
+	}
+	// An unlisted page is out of the menu, except while it is being read.
+	menu := site.renderSidebar(index, "../")
+	if strings.Contains(menu, "0001-one.html") || !strings.Contains(menu, "adr/index.html") {
+		t.Errorf("the menu lists the index and not the record:\n%s", menu)
+	}
+	if !strings.Contains(site.renderSidebar(adr, "../../"), "0001-one.html") {
+		t.Error("the record is in the menu while it is read")
+	}
+}
+
+// Without a plugin that answers the hook, nothing is asked and nothing added.
+func TestWithoutASourcesPluginNothingIsGathered(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
+	writeFile(t, root, "app/docs/requirements/app.yml", "level: NODE\n")
+	modules, _ := DiscoverModules(root)
+	modules, outcome := GatherSources(modules, "T", root, nil)
+	if outcome.Answered || len(modules[0].Generated) != 0 {
+		t.Fatalf("unexpected %+v", outcome)
+	}
+	if !HasProcessArtefacts(modules[0].Root) {
+		t.Error("the module keeps requirements")
+	}
+}
+
+// A plugin's page that takes the address of a page the module carries is dropped
+// and reported.
+func TestAGeneratedPageDoesNotReplaceAnAuthoredOne(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
+	writeFile(t, root, "app/docs/requirements/index.md", "# Written by hand\n")
+	modules, _ := DiscoverModules(root)
+	modules[0].Generated = []GeneratedPage{{Module: "app", Path: "requirements/index", Markdown: "# Generated\n"}}
+	site := BuildSite(modules, ApiSet{}, SiteOptions{Title: "T"})
+	if page := findPage(site, "app/requirements/index"); page == nil || page.Title != "Written by hand" || len(site.Pages) != 1 {
+		t.Fatalf("expected the authored page alone, got %+v", site.Pages)
+	}
+	if len(site.Diagnostics) != 1 || !strings.Contains(site.Diagnostics[0].Message, "the module's own page is kept") {
+		t.Errorf("expected the drop reported, got %+v", site.Diagnostics)
+	}
+}
+
+// Without docs/doc/ the convention reads docs/, and the decision records there are
+// left to a plugin rather than published as prose.
+func TestTheConventionLeavesDecisionRecordsOut(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "app/module.yml", "module:\n  name: app\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\n")
+	writeFile(t, root, "app/docs/index.md", "# App\n")
+	writeFile(t, root, "app/docs/architecture/overview.md", "# Overview\n")
+	writeFile(t, root, "app/docs/architecture/adr/0001-a.md", "---\nid: ADR-0001\n---\n# A\n")
+	modules, _ := DiscoverModules(root)
+	if len(modules) != 1 || len(modules[0].Sources) != 2 {
+		t.Fatalf("expected the two pages and no record, got %+v", modules[0].Sources)
 	}
 }

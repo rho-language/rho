@@ -110,6 +110,8 @@ type Report struct {
 	Notes []string
 	// Seconds is how long the run took.
 	Seconds float64
+	// SuiteSeconds is how long each suite took, by name.
+	SuiteSeconds map[string]float64
 	// Selection is what the run was asked for.
 	Selection Selection
 	// Err is a failure of the run itself — a manifest that could not be read, a
@@ -202,8 +204,14 @@ func RunSuite(options Options) Report {
 	report.Summary = executed.Summary
 	report.Diagnostics = append(report.Diagnostics, executed.Diagnostics...)
 	report.Seconds = executed.Seconds
+	report.SuiteSeconds = executed.SuiteSeconds
 
 	printReport(out, report, options)
+
+	// The run's own record, whatever plugins are enabled: a tool that reads the
+	// results of the last run (`rho req trace`) reads this file rather than the
+	// text a person reads, which says nothing about a pass unless --verbose.
+	writeResultsFile(options, root, report)
 
 	// A plugin is told what the run actually did rather than what it was asked to
 	// do, which is the only thing a reporter can honestly write down.
@@ -511,7 +519,13 @@ func printReport(out io.Writer, report Report, options Options) {
 			fmt.Fprintf(out, "[SKIP] %s  (%s)\n", caseLabel(result), result.Reason)
 		default:
 			failed++
-			fmt.Fprintf(out, "[FAIL] %s\n", caseLabel(result))
+			if result.Reason != "" {
+				// Why a case failed when nothing it printed says so: a test fn
+				// main never calls has no output of its own.
+				fmt.Fprintf(out, "[FAIL] %s  (%s)\n", caseLabel(result), result.Reason)
+			} else {
+				fmt.Fprintf(out, "[FAIL] %s\n", caseLabel(result))
+			}
 			if result.Output != "" {
 				fmt.Fprintf(out, "       %s\n", tailOf(result.Output, 16))
 			}

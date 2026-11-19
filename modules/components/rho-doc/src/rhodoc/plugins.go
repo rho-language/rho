@@ -24,7 +24,10 @@
 package rhodoc
 
 import (
+	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 
 	"rho/src/plugins"
 )
@@ -217,4 +220,92 @@ func plainFromHTML(body string) string {
 		}
 	}
 	return string(out)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Pages a plugin writes before the build                                    */
+/* -------------------------------------------------------------------------- */
+
+// SourcesOutcome is what the sources pass produced besides the pages.
+type SourcesOutcome struct {
+	// Answered is whether any plugin answers the sources hook at all.
+	Answered bool
+	// Notes are lines the plugins asked the build to print.
+	Notes []string
+	// Diagnostics are problems with what the plugins answered.
+	Diagnostics []Diagnostic
+}
+
+// GatherSources asks the plugins that answer the sources hook for pages to add to
+// the modules a build found, and attaches each page to its module. It runs before
+// the site is built, so the pages are read like the modules' own: parsed,
+// cross-referenced and searched.
+//
+// A page for a module the request did not name, or with an address that leaves
+// its module, is reported and dropped.
+func GatherSources(modules []ModuleDoc, site, root string, found []Plugin) ([]ModuleDoc, SourcesOutcome) {
+	outcome := SourcesOutcome{}
+	for _, plugin := range found {
+		if plugin.AnswersFor(ComponentName, HookSources) {
+			outcome.Answered = true
+		}
+	}
+	if !outcome.Answered {
+		return modules, outcome
+	}
+	payload := SourcesPayload{Site: site, Root: root, Modules: []SourceModule{}}
+	byName := map[string]int{}
+	for index, module := range modules {
+		if module.Name == "" {
+			continue
+		}
+		if _, seen := byName[module.Name]; seen {
+			continue
+		}
+		byName[module.Name] = index
+		payload.Modules = append(payload.Modules, SourceModule{
+			Name: module.Name, Root: module.Root, Section: module.Section, Version: module.Version, Type: module.Type,
+		})
+	}
+	answer := plugins.RunHooks(found, ComponentName, HookSources, payload)
+	for _, diagnostic := range answer.Diagnostics {
+		outcome.Diagnostics = append(outcome.Diagnostics, Diagnostic{Message: diagnostic.String()})
+	}
+	for _, raw := range answer.Payload {
+		var contributed SourcesAnswer
+		if err := json.Unmarshal(raw, &contributed); err != nil {
+			outcome.Diagnostics = append(outcome.Diagnostics, Diagnostic{Message: "a sources answer could not be read: " + err.Error()})
+			continue
+		}
+		outcome.Notes = append(outcome.Notes, contributed.Notes...)
+		for _, page := range contributed.Pages {
+			index, ok := byName[page.Module]
+			if !ok {
+				outcome.Diagnostics = append(outcome.Diagnostics, Diagnostic{
+					Message: fmt.Sprintf("a plugin wrote the page %q for %q, which is not a module of this site", page.Path, page.Module)})
+				continue
+			}
+			if !validGeneratedPath(page.Path) {
+				outcome.Diagnostics = append(outcome.Diagnostics, Diagnostic{
+					Message: fmt.Sprintf("a plugin wrote a page for %s at %q, which is not an address inside the module", page.Module, page.Path)})
+				continue
+			}
+			modules[index].Generated = append(modules[index].Generated, page)
+		}
+	}
+	return modules, outcome
+}
+
+// validGeneratedPath reports whether a generated page's address stays inside its
+// module: relative, clean, and not an absolute path or a climb.
+func validGeneratedPath(path string) bool {
+	if path == "" || strings.HasPrefix(path, "/") || strings.Contains(path, "\\") {
+		return false
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }

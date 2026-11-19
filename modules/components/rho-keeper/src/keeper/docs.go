@@ -404,9 +404,15 @@ func ModuleDocFile(name string) string {
 	if _, err := os.Stat(readme); err == nil {
 		return readme
 	}
-	docs := filepath.Join(dir, "docs", "index.md")
-	if _, err := os.Stat(docs); err == nil {
-		return docs
+	// A module that keeps process artefacts beside its pages keeps the pages in
+	// docs/doc/; one that does not keeps them in docs/.
+	for _, docs := range []string{
+		filepath.Join(dir, "docs", "doc", "index.md"),
+		filepath.Join(dir, "docs", "index.md"),
+	} {
+		if _, err := os.Stat(docs); err == nil {
+			return docs
+		}
 	}
 	return ""
 }

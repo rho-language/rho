@@ -42,11 +42,11 @@ by hand.
 - `src/yaml/` - Minimal YAML loader
 - `internal/paths/` - Shared path utilities
 - `docs/` - The language reference and the handbook, in doc-as-code
-- `modules/components/` - Components: `rho-artifact`, `rho-auth`, `rho-bench`, `rho-bootstrap`, `rho-cimport`, `rho-dbg`, `rho-deploy`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-lint`, `rho-log`, `rho-lsp`, `rho-mem`, `rho-monitor`, `rho-openapi`, `rho-router`, `rho-sql`, `rho-target`, `rho-test`
+- `modules/components/` - Components: `rho-artifact`, `rho-auth`, `rho-bench`, `rho-bootstrap`, `rho-cimport`, `rho-dbg`, `rho-deploy`, `rho-doc`, `rho-doctor`, `rho-flash`, `rho-fmt`, `rho-kconfig`, `rho-keeper`, `rho-lint`, `rho-log`, `rho-lsp`, `rho-mem`, `rho-monitor`, `rho-openapi`, `rho-req`, `rho-router`, `rho-sql`, `rho-target`, `rho-test`
 - `src/ide/` - What an editor reads, rendered from what a project declares (`rho ide`)
 - `src/sysdep/` - What a module needs from the machine: `system_deps`, versions, the fetched-toolchain layout
 - `src/privilege/` - Saying something when a run has more authority than it needs
-- `modules/plugins/` - Plugins: `rho-doc-api`, `rho-doc-toc`, `rho-robohub` (an example integration plugin), `rho-sql-sqlite`, `rho-test-ctest`, `rho-test-gtest`, `rho-test-junit`
+- `modules/plugins/` - Plugins: `rho-doc-api`, `rho-doc-req`, `rho-doc-toc`, `rho-robohub` (an example integration plugin), `rho-sql-sqlite`, `rho-test-ctest`, `rho-test-gtest`, `rho-test-junit`
 - `applications/` - Applications written in Rho: `registry` (the module registry) and `docsite` (the documentation site)
 - `std/` - The standard library, as Rho sources
 - `editors/rho-language/` - The VS Code extension

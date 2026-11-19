@@ -81,6 +81,7 @@ rho build --clean                   # remove the build directory and stop
 | `--link-map` / `--no-link-map` | the manifest's `build.link_map`, else on | Whether the link writes its map |
 | `-o FILE` | none | Also write the translated C of a Rho entry to this file, when the project generates a C target |
 | `--emit-c` | off | With `-o`: write only the translation and stop — no project is generated and nothing is built (what `rho test` uses) |
+| `--test-report` | none | With `--emit-c`: comma-separated function names; each prints `[PASS] <name>` every time it returns, so `rho test` can tell a test that never ran from one that passed |
 | `--clean` | off | Remove the project's build directory and stop |
 
 There is no `--output` flag: where a generated project and its binary go is the

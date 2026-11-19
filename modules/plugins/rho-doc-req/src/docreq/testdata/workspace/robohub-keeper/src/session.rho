@@ -1,0 +1,5 @@
+module keeper.session
+
+// @req KEEP-0001
+fn restore() void {
+}

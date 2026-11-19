@@ -170,6 +170,7 @@ func resolveRho(declared Declared, root string) (Suite, error) {
 		// alternative is a green run over an empty file.
 		return Suite{}, fmt.Errorf("%s declares no tests: no %q in it", path, strings.TrimSpace(TestMarker))
 	}
+	compilerReports := new(bool)
 	return Suite{
 		Name:  declared.Name,
 		Kind:  KindRho,
@@ -178,8 +179,9 @@ func resolveRho(declared Declared, root string) (Suite, error) {
 		Cases: cases,
 		Steps: []Step{
 			{
-				Name:   "build and run " + filepath.Base(path),
-				Action: rhoTestAction(path),
+				Name:            "build and run " + filepath.Base(path),
+				Action:          rhoTestAction(path, compilerReports),
+				CompilerReports: compilerReports,
 			},
 		},
 	}, nil
@@ -190,7 +192,11 @@ func resolveRho(declared Declared, root string) (Suite, error) {
 // The compiled program is what reports the cases, and its exit status is the
 // verdict: a test asserts by failing, so a run that reached the end produced
 // output rather than a list, and the cases come from what it said.
-func rhoTestAction(path string) func(Suite) (string, bool, error) {
+//
+// compilerReports, when not nil, is set to whether the compiler reported each
+// `test fn` itself (see translate), which decides how mergeDeclaredCases reads a
+// case nothing reported.
+func rhoTestAction(path string, compilerReports *bool) func(Suite) (string, bool, error) {
 	return func(suite Suite) (string, bool, error) {
 		source, err := os.ReadFile(path)
 		if err != nil {
@@ -224,35 +230,67 @@ func rhoTestAction(path string) func(Suite) (string, bool, error) {
 		// The name the runner used to pass was not a target a spec declares — a
 		// project that declares a Go target and no C one had no such target, and
 		// the build was asked for a board that does not exist.
-		if out, err := translate(stripped, cFile); err != nil {
+		names := make([]string, 0, len(suite.Cases))
+		for _, testCase := range suite.Cases {
+			names = append(names, testCase.Name)
+		}
+		out, reports, err := translate(stripped, cFile, names)
+		if err != nil {
 			return out, false, err
+		}
+		if compilerReports != nil {
+			*compilerReports = reports
+		}
+		prefix := ""
+		if !reports {
+			prefix = legacyReportWarning + "\n"
 		}
 		compile := exec.Command("cc", cFile, "-o", binary)
 		if out, err := compile.CombinedOutput(); err != nil {
 			return string(out), false, fmt.Errorf("cc: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 		run := exec.Command(binary)
-		out, err := run.CombinedOutput()
-		return string(out), err != nil, nil
+		ran, err := run.CombinedOutput()
+		return prefix + string(ran), err != nil, nil
 	}
 }
 
 // translate writes the C translation of a Rho file, and nothing else.
 //
-// A rho from before `--emit-c` refuses the flag; it is then asked the old way,
-// a full build with `-o`, so a newer runner still works with an older toolchain.
-func translate(source, cFile string) (string, error) {
-	build := exec.Command(rhoBinary(), "build", "--emit-c", "-o", cFile, source)
-	out, err := build.CombinedOutput()
-	if err != nil && strings.Contains(string(out), "flag provided but not defined: -emit-c") {
-		build = exec.Command(rhoBinary(), "build", "-o", cFile, source)
-		out, err = build.CombinedOutput()
+// The build is a test build: `--test-report` names the file's `test fn`s, and the
+// compiler makes each one print `[PASS] <name>` when it returns, so a test that
+// main never calls reports nothing and is failed for it. reports says whether the
+// compiler did that.
+//
+// A rho from before `--test-report` refuses the flag; it is then asked without
+// it, and the cases are merged the old way. A rho from before `--emit-c` refuses
+// that too; it is then asked the oldest way, a full build with `-o`, so a newer
+// runner still works with an older toolchain.
+func translate(source, cFile string, testNames []string) (out string, reports bool, err error) {
+	args := []string{"build", "--emit-c"}
+	if len(testNames) > 0 {
+		args = append(args, "--test-report", strings.Join(testNames, ","))
+		reports = true
+	}
+	args = append(args, "-o", cFile, source)
+	raw, err := exec.Command(rhoBinary(), args...).CombinedOutput()
+	if err != nil && reports && strings.Contains(string(raw), "flag provided but not defined: -test-report") {
+		reports = false
+		raw, err = exec.Command(rhoBinary(), "build", "--emit-c", "-o", cFile, source).CombinedOutput()
+	}
+	if err != nil && strings.Contains(string(raw), "flag provided but not defined: -emit-c") {
+		reports = false
+		raw, err = exec.Command(rhoBinary(), "build", "-o", cFile, source).CombinedOutput()
 	}
 	if err != nil {
-		return string(out), fmt.Errorf("rho build: %w: %s", err, strings.TrimSpace(string(out)))
+		return string(raw), false, fmt.Errorf("rho build: %w: %s", err, strings.TrimSpace(string(raw)))
 	}
-	return "", nil
+	return "", reports, nil
 }
+
+// legacyReportWarning is the line a run carries when the compiler could not
+// report the test fns itself.
+const legacyReportWarning = "rho-test: warning: this rho has no `rho build --test-report`, so a test fn main never calls cannot be told from one that passed; update rho"
 
 func workDirFor(root string) string {
 	return filepath.Join(root, "build", "test")

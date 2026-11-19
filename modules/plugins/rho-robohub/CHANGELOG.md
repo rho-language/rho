@@ -117,3 +117,7 @@ The telemetry port is gone from here: Mesh's telemetry store is Mesh's, and live
 ## [0.5.3] - 2026-11-14
 
 The gateway port's uplink has limits: a number of connections (`UPLINK_MAX_CONNECTIONS`, 32), an idle timeout (`UPLINK_IDLE_TIMEOUT_S`, 300 s), a cap on what one connection may send without a frame end, a queue cap and write deadlines; `UPLINK_BIND` falls back to the host of `RHO_HTTP_ADDR`. Refusals are logged at most once a minute. A serial read times out as it says, so a gateway's background work runs on a quiet line.
+
+## [0.5.4] - 2026-11-19
+
+The gateway port no longer follows a redirect when it calls a device, and an error page is not read as a device's status. A device on the LAN could answer with a redirect and send the gateway to an address its registration check refuses (loopback, a metadata endpoint); now the redirect itself is the answer, and it counts as no status.

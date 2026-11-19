@@ -51,3 +51,19 @@ Test programs are built under `build/test/` (through `rho build --emit-c`) and n
 ### Breaking
 
 - A missing or empty suite fails the run instead of being skipped.
+
+## [0.3.0] - 2026-11-19
+
+Every run that runs something writes its own record, `build/test-reports/results.json` (or under `--report-dir`), replacing the one before it: the run time, the rho version, the runner's version, and per suite its name, kind, status and duration with every case's name, status (`pass`, `fail`, `skip`), message and file:line. A tool that reads the last run — `rho req trace` — reads it rather than the text a person reads, so evidence no longer depends on `--verbose`, a redirect or the JUnit plugin. What a run prints is unchanged.
+
+## [0.3.1] - 2026-11-19
+
+A skipped case is read from the runner's output — `[SKIP] name  (reason)`, GoogleTest's `[  SKIPPED ]`, TAP's `# SKIP` — and reported skipped with its reason; a suite whose cases were all skipped is skipped, where it was failed as a suite that "ran but reported no cases".
+
+## [0.4.0] - 2026-11-19
+
+A Rho test file is built as a test build, `rho build --emit-c --test-report <names>`, which makes every `test fn` print `[PASS] <name>` when it returns. A declared `test fn` nothing reported therefore did not run, and it fails: "never ran: main() does not call it" when the program exited 0, "did not run: the program stopped before it" when the program stopped. A printed `[FAIL]` still fails its case, and a failure still wins over a pass. With a rho older than `--test-report` the runner warns in one line and reads the cases the old way. A failed case prints its reason beside it: `[FAIL] suite: name  (reason)`.
+
+### Breaking
+
+- A `test fn` that `main` never calls fails. It used to pass when the program printed no result lines, and be skipped when it printed others — a test that never ran was reported green.

@@ -220,6 +220,9 @@ type RunReport struct {
 	Diagnostics []string
 	// Seconds is how long the run took, for a report that says more than a count.
 	Seconds float64
+	// SuiteSeconds is how long each suite took, by name: its steps, from the
+	// first to the last. A suite that was not run took none.
+	SuiteSeconds map[string]float64
 }
 
 /* -------------------------------------------------------------------------- */
@@ -248,7 +251,7 @@ func Execute(suites []Suite, options ExecuteOptions) RunReport {
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	report := RunReport{Suites: suites}
+	report := RunReport{Suites: suites, SuiteSeconds: map[string]float64{}}
 
 	for _, suite := range suites {
 		if suite.Broken != "" {
@@ -276,7 +279,9 @@ func Execute(suites []Suite, options ExecuteOptions) RunReport {
 			}
 			continue
 		}
+		suiteStarted := time.Now()
 		results, output, failed, skipped, reason, diagnostics := runSuite(suite, runner, options)
+		report.SuiteSeconds[suite.Name] += time.Since(suiteStarted).Seconds()
 		// Every result names its suite, so a report and a plugin can say which
 		// suite a case belongs to — and so a failing case counts its suite as
 		// failed.
@@ -380,7 +385,8 @@ func runSuite(suite Suite, runner Runner, options ExecuteOptions) (results []Res
 			if outcome.Output != "" {
 				output += "\n"
 			}
-			cases, suiteFailed := mergeDeclaredCases(suite, outcome.Output, outcome.Failed)
+			compilerReports := step.CompilerReports != nil && *step.CompilerReports
+			cases, suiteFailed := mergeDeclaredCases(suite, outcome.Output, outcome.Failed, compilerReports)
 			if suiteFailed {
 				return cases, output, true, false, "", diagnostics
 			}
@@ -425,16 +431,22 @@ func runSuite(suite Suite, runner Runner, options ExecuteOptions) (results []Res
 //
 // The declared cases are the cases. A `[PASS] name` or `[FAIL] name` line (or
 // TAP's `ok`/`not ok`) the program printed reports the result of the declared
-// case of that name, and a failure wins over a pass. A case nothing reported:
+// case of that name, and a failure wins over a pass.
 //
-//   - failed, when the program stopped (a test asserts by stopping the program,
-//     so a case it never reached is not known to hold);
-//   - passed, when the program exited 0 and reported no case at all — it does
-//     not speak the protocol, and its exit status is the verdict;
-//   - is skipped, when the program exited 0 and reported other cases — it speaks
-//     the protocol and said nothing about this one, which is what a `test fn`
-//     that `main` never calls looks like. Not a pass, because nothing shows it
-//     ran; not a failure, because nothing failed.
+// compilerReports says the program was built with `rho build --test-report`,
+// which makes every `test fn` print `[PASS] <name>` when it returns. Then a case
+// nothing reported did not run to the end, and it fails:
+//
+//   - "did not run: the program stopped before it" when the program stopped —
+//     a test asserts by stopping the program, so this is the case that stopped
+//     it or one it never reached;
+//   - "never ran: main() does not call it" when the program exited 0 — a test
+//     that is never called asserts nothing, and is not a pass.
+//
+// Without compilerReports (a rho older than the flag) the cases are read the old
+// way: a case nothing reported fails when the program stopped, passes when the
+// program exited 0 and reported no case at all, and is skipped when it reported
+// other cases.
 //
 // A printed name that is not a declared case does not become one and does not
 // replace the list. A `[FAIL]` for such a name still fails the suite, because a
@@ -443,7 +455,7 @@ func runSuite(suite Suite, runner Runner, options ExecuteOptions) (results []Res
 // suiteFailed says the suite failed for a reason no case carries: the program
 // failed although every case reported a pass, or it reported a failure under a
 // name that is not a case. The caller adds the suite-level failure for it.
-func mergeDeclaredCases(suite Suite, output string, programFailed bool) (results []Result, suiteFailed bool) {
+func mergeDeclaredCases(suite Suite, output string, programFailed, compilerReports bool) (results []Result, suiteFailed bool) {
 	declared := map[string]bool{}
 	for _, testCase := range suite.Cases {
 		declared[testCase.Name] = true
@@ -468,10 +480,17 @@ func mergeDeclaredCases(suite Suite, output string, programFailed bool) (results
 		if found, ok := reported[testCase.Name]; ok {
 			result.Status = found.Status
 			result.Output = found.Output
+		} else if programFailed && compilerReports {
+			result.Status = StatusFail
+			result.Reason = "did not run: the program stopped before it"
+			result.Output = output
 		} else if programFailed {
 			result.Status = StatusFail
 			result.Reason = "the program failed before this case reported a result"
 			result.Output = output
+		} else if compilerReports {
+			result.Status = StatusFail
+			result.Reason = "never ran: main() does not call it"
 		} else if len(reported) > 0 {
 			result.Status = StatusSkip
 			result.Reason = "the program reported other cases and not this one; is it called from main?"
@@ -536,6 +555,9 @@ type CaseFormat struct {
 	PassPrefix string
 	// FailPrefix starts a line that reports a failing case.
 	FailPrefix string
+	// SkipPrefix starts a line that reports a case the runner did not run, and
+	// says why; empty for a format with no such line.
+	SkipPrefix string
 }
 
 // CommonCaseFormats are the shapes a test runner prints its cases in.
@@ -548,9 +570,9 @@ var CommonCaseFormats = []CaseFormat{
 	// `[  PASSED  ] N tests.` summary is deliberately not here: that line is a
 	// count, not a case, and reading it as one adds a test called "2 tests" to
 	// every run.
-	{PassPrefix: "[       OK ] ", FailPrefix: "[  FAILED  ] "},
-	// A runner of this toolchain's own.
-	{PassPrefix: "[PASS] ", FailPrefix: "[FAIL] "},
+	{PassPrefix: "[       OK ] ", FailPrefix: "[  FAILED  ] ", SkipPrefix: "[  SKIPPED ] "},
+	// A runner of this toolchain's own: `[SKIP] name  (reason)`.
+	{PassPrefix: "[PASS] ", FailPrefix: "[FAIL] ", SkipPrefix: "[SKIP] "},
 	// TAP.
 	{PassPrefix: "ok ", FailPrefix: "not ok "},
 }
@@ -585,9 +607,31 @@ func parseCasesWith(format CaseFormat, lines []string) []Result {
 				Status: StatusFail,
 				Output: strings.TrimSpace(line),
 			})
-		case format.PassPrefix != "" && strings.HasPrefix(line, format.PassPrefix):
+		case format.SkipPrefix != "" && strings.HasPrefix(line, format.SkipPrefix):
+			name, reason := skipNameAndReason(strings.TrimPrefix(line, format.SkipPrefix))
 			results = append(results, Result{
-				Case:   Case{Name: caseName(format, strings.TrimPrefix(line, format.PassPrefix))},
+				Case:   Case{Name: name},
+				Status: StatusSkip,
+				Reason: reason,
+			})
+		case format.PassPrefix != "" && strings.HasPrefix(line, format.PassPrefix):
+			rest := strings.TrimPrefix(line, format.PassPrefix)
+			// TAP marks a case it did not run with a SKIP directive on an ok line.
+			if format.PassPrefix == "ok " {
+				if hash := strings.Index(rest, " # "); hash >= 0 {
+					directive := strings.TrimSpace(rest[hash+3:])
+					if strings.HasPrefix(strings.ToUpper(directive), "SKIP") {
+						results = append(results, Result{
+							Case:   Case{Name: caseName(format, rest)},
+							Status: StatusSkip,
+							Reason: strings.TrimSpace(directive[4:]),
+						})
+						continue
+					}
+				}
+			}
+			results = append(results, Result{
+				Case:   Case{Name: caseName(format, rest)},
 				Status: StatusPass,
 			})
 		default:
@@ -670,4 +714,17 @@ func killTree(process *exec.Cmd) {
 		}
 	}
 	_ = process.Process.Kill()
+}
+
+// skipNameAndReason splits `name  (reason)` — the shape this toolchain's runners
+// print a skipped case in — into the name and the reason; a line with no
+// parenthesised reason is all name.
+func skipNameAndReason(rest string) (string, string) {
+	rest = strings.TrimSpace(rest)
+	if strings.HasSuffix(rest, ")") {
+		if open := strings.LastIndex(rest, " ("); open > 0 {
+			return strings.TrimSpace(rest[:open]), strings.TrimSpace(rest[open+2 : len(rest)-1])
+		}
+	}
+	return rest, ""
 }

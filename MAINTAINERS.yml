@@ -1,0 +1,12 @@
+# Who may approve a requirement or accept an ADR in this repository.
+#
+# `rho req check --base <ref>` refuses an approval committed by anyone not listed
+# here. That is a guard, not an authority: commit authors can be faked. What
+# makes it real is branch protection on main and the CODEOWNERS entry for
+# docs/requirements/ and docs/architecture/ (.github/CODEOWNERS).
+#
+# Rho has one maintainer for now. A commit is recognised as theirs by its author
+# name or by their GitHub noreply address.
+maintainers:
+  - name: Aurel Miron
+    github: miraur

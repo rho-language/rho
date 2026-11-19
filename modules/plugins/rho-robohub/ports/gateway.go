@@ -38,12 +38,16 @@ import (
 // device for its status; the timeout is the caller's, because a handler shares
 // the process with the serial reader.
 func gatewayHttpGet(url string, timeoutMS int) string {
-	client := &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond}
-	resp, err := client.Get(url)
+	resp, err := deviceClient(timeoutMS).Get(url)
 	if err != nil {
 		return ""
 	}
 	defer resp.Body.Close()
+	// Only a device's own answer is a status: an error page, or anything a
+	// redirect would have led to, is not.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return ""
@@ -51,9 +55,23 @@ func gatewayHttpGet(url string, timeoutMS int) string {
 	return string(body)
 }
 
+// deviceClient is the client the gateway calls a device's address with. It
+// never follows a redirect: the gateway checks a device's address when it is
+// registered, and a device that answered with a redirect would otherwise send
+// the gateway to an address that check refused — loopback, or a metadata
+// endpoint.
+func deviceClient(timeoutMS int) *http.Client {
+	return &http.Client{
+		Timeout: time.Duration(timeoutMS) * time.Millisecond,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // gatewayHttpPost sends a body to a URL, for an RPC that changes a device.
 func gatewayHttpPost(url string, body string, timeoutMS int) bool {
-	client := &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond}
+	client := deviceClient(timeoutMS)
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
 		return false

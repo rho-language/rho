@@ -1,0 +1,7 @@
+module:
+  name: keeper
+  type: rho
+  version: 0.1.0
+  description: A member of the fixture family whose module name is not its directory
+
+requirements: { prefix: KEEP, parent: robohub }

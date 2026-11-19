@@ -1,0 +1,6 @@
+module:
+  name: notes
+  type: rho
+  version: 0.1.0
+  description: A module with pages and no requirements
+

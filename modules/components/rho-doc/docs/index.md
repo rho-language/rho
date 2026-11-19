@@ -73,6 +73,18 @@ cross-reference that names nothing is reported with the file and the line.
 A page is named for the module it documents and its path inside that module, so
 `{ref}`rho-log/index`` reaches one component's page from another's.
 
+A heading's explicit target is a label any page can name. A label may be
+qualified by the module it belongs to, `module:label` — the decision records
+rho-doc-req writes are labelled `robohub-gateway:ADR-0009` — and then:
+
+- a page of that module may name it without the qualifier (`{ref}`ADR-0009``);
+- a module is known by its manifest name and by its directory's name, which may
+  differ (the module `keeper` in `robohub-keeper/`), and either qualifies its
+  labels: `{ref}`keeper:ADR-0009`` and `{ref}`robohub-keeper:ADR-0009`` reach the
+  same label.
+
+A label that is not qualified (a requirement's `GW-0012`) is the same on every page.
+
 ## The API reference
 
 The reference is generated from the Rho sources with the compiler's own front
@@ -91,8 +103,29 @@ and reads JSON from its standard output.
 
 | Hook | When it runs | What a plugin answers with |
 |------|--------------|---------------------------|
+| `sources` | Once, before any page is read, with the modules the build found | Markdown pages for some of those modules |
 | `index` | Once, over the finished set of pages | Pages to add |
 | `page` | Once per page, with that page in the request | Rewritten bodies, keyed by the page's target |
+
+A `sources` request's payload names each module — `name`, `root`, `section`,
+`version`, `type` — and the answer's payload is `{"pages": [...], "notes": [...]}`.
+Each page names its `module`, its `path` inside the module (the page is addressed
+`<module>/<path>`), its `markdown`, and optionally a `title`, the `source` file it
+was written from (images and diagnostics resolve against it), an `order` and
+`unlisted`. Those pages are read like the module's own — parsed, cross-referenced,
+searched and checked — and follow them in its section of the menu, in the order
+given; an unlisted page is left out of the menu except while it is being read,
+because an index page lists it. A page for a module the request did not name, an
+address that leaves the module, or one an authored page already has, is reported
+and dropped. A note is printed as it is and does not fail `-strict`.
+
+{ref}`rho-doc-req <rho-doc-req/index>` answers `sources` with a module's
+requirements and architecture decisions.
+
+A module that keeps `docs/requirements/` or `docs/architecture/adr/` has them shown
+only by such a plugin; without one, the build says so once (a note, not a
+diagnostic) and the site is built without them. Decision records are never read
+as prose pages, even from a module that has no `docs/doc/`.
 
 A plugin that fails is reported and skipped. One broken extension must not cost
 a reader the documentation of everything else. A plugin is loaded by the

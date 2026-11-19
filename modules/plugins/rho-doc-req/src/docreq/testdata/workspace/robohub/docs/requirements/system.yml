@@ -1,0 +1,21 @@
+level: SYS
+prefix: SYS
+title: System
+requirements:
+  - id: SYS-0001
+    title: Survive a power cut
+    statement: >
+      After a power cut every node shall return to service
+      without a person.
+    rationale: Nobody is there at night.
+    status: approved
+    verification: test
+    decided_by: [ADR-0001]
+    changed: 2026-11-01
+
+  - id: SYS-0002
+    title: Keep a week of logs
+    statement: "Logs shall be kept for 7 days | no less."
+    status: draft
+    verification: inspection
+    changed: 2026-11-02

@@ -1,0 +1,5 @@
+level: SYS
+prefix: SYS
+requirements:
+  - id: SYS-0001
+    title: a decoy that must never be read

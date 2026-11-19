@@ -172,10 +172,22 @@ func runCommand(args []string) int {
 	}
 	api := rhodoc.ReadApiSet(apiDirOr(absolute, *apiDir), *apiSection)
 
+	// Pages a plugin writes for a module from what it carries — its
+	// requirements and architecture decisions — are gathered first, so they
+	// are read, cross-referenced and searched like the module's own.
+	modules, sources := rhodoc.GatherSources(modules, *title, absolute, plugins)
+
 	site := rhodoc.BuildSiteWithPlugins(modules, api, options, plugins)
+	site.Diagnostics = append(sources.Diagnostics, site.Diagnostics...)
 	site.RunPlugins(options.Out)
 
 	report(site, unreadable)
+	for _, note := range sources.Notes {
+		fmt.Println("rho doc:", note)
+	}
+	if !sources.Answered {
+		noteUnrendered(modules)
+	}
 	if *strict && (len(site.Diagnostics) > 0 || len(site.Requests) > 0) {
 		return 1
 	}
@@ -288,6 +300,28 @@ func report(site *rhodoc.Site, unreadable []string) {
 	for _, request := range site.Requests {
 		fmt.Fprintf(os.Stderr, "rho doc: %s\n", request)
 	}
+}
+
+// noteUnrendered says, once, that the tree keeps requirements or architecture
+// decisions and no plugin puts them on the site. It is a note and not a
+// diagnostic: the site is complete without them, and -strict does not fail.
+func noteUnrendered(modules []rhodoc.ModuleDoc) {
+	count := 0
+	seen := map[string]bool{}
+	for _, module := range modules {
+		if module.Name == "" || seen[module.Root] {
+			continue
+		}
+		seen[module.Root] = true
+		if rhodoc.HasProcessArtefacts(module.Root) {
+			count++
+		}
+	}
+	if count == 0 {
+		return
+	}
+	fmt.Printf("rho doc: note: %d module(s) keep requirements or architecture decisions (docs/requirements, docs/architecture/adr); "+
+		"no installed plugin renders them, so they are not on the site (install and enable rho-doc-req)\n", count)
 }
 
 // projectName is the name of the root module of a tree, which is what a site

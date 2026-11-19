@@ -25,6 +25,25 @@ code. See `AGENTS.md` for the module-by-module commands.
 - Where the C and Go backends could differ, add a program to
   `src/parity_cases_test.go`. A known difference is listed there with what differs.
 
+## Requirements and decisions
+
+Rho follows the process RoboHub describes in
+[How a change is made](https://github.com/RoboHubPlatform/robohub/blob/main/docs/doc/process/index.md),
+with the same tool: a change serves a requirement in `docs/requirements/`, a
+change to how the toolchain is built is recorded as an ADR in
+`docs/architecture/adr/`, the code that meets a requirement is tagged
+`// @req <ID>` and its tests `// @verifies <ID>`, and `rho req check` passes. The
+pull request template asks for each.
+
+## Who decides
+
+Anyone may propose a change by pull request. The maintainer, named in
+`MAINTAINERS.yml`, approves requirements, accepts ADRs and merges to `main`.
+`main` is protected and `.github/CODEOWNERS` requires the maintainer's review;
+`rho req check --base` also refuses an approval not made by the maintainer, as a
+guard on top — a commit's author can be written by anyone, so the protected
+branch is what makes it hold.
+
 ## Commits
 
 `type(scope): summary`, then a body that says what was wrong and why the change is

@@ -1,0 +1,5 @@
+module keeper.session_test
+
+// @verifies KEEP-0001
+test fn session_survives_restart() void {
+}

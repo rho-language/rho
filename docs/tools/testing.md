@@ -17,7 +17,8 @@ and what came of it.
 
 A test is a function declared with `test fn` instead of `fn`, in a file whose
 name ends in `_test.rho`. Apart from the marker it is an ordinary Rho program,
-with a `main` that calls its tests:
+with a `main` that calls its tests. **`main` must call every `test fn`**: a test
+it never calls fails.
 
 ```rho
 module greeting_test
@@ -28,12 +29,10 @@ import std.assert.assert
 
 test fn prefix_is_hello() void {
     assert_eq(prefix(), "Hello ")
-    print("[PASS] prefix_is_hello\n")
 }
 
 test fn greeting_names_the_person() void {
     assert_true(str_eq(greet("Ada"), "Hello Ada"))
-    print("[PASS] greeting_names_the_person\n")
 }
 
 fn main() void {
@@ -46,7 +45,8 @@ The code under test is usually `include`d rather than imported, so the test sees
 the module's private functions as well as its exports.
 
 To run a file, the runner removes the `test` marker, translates what is left to
-C with `rho build --emit-c -o`, compiles it with `cc`, and runs it; the C file
+C with `rho build --emit-c --test-report <names> -o`, compiles it with `cc`, and
+runs it; the C file
 and the program are written under `build/test/` and removed afterwards. Nothing
 else is built: the project's generated trees and its binaries (`build/<name>`,
 `build/output/<name>`) are left as they are, so a test run never replaces the
@@ -57,18 +57,30 @@ declares. A difference between the C and the Go program is not something
 `rho test` can see; a `command` suite that builds both and compares their output
 is how a project checks that.
 
-A test fails by stopping the program: the exit status is the verdict. The cases
-a report lists are the `test fn` declarations in the file, with their lines, and
-only those:
+`--test-report` makes it a test build: the compiler wraps each `test fn` it names
+so that, every time the function returns, it prints `[PASS] <name>` on standard
+output (unbuffered, so a later test that stops the program cannot lose it). The
+function's body, arguments and return value are unchanged; it moves to a function
+of its own (`<name>__rho_test_body` in the C) and the wrapper keeps the name. A
+test does not print its own `[PASS]` line; it may, and a second pass line changes
+nothing. An ordinary `rho build` never does this.
 
-- A `[PASS] name` or `[FAIL] name` line the program prints (or TAP's
-  `ok N - name` / `not ok N - name`, read as `name`) reports the result of the
-  declared case called `name`. A failure wins over a pass for the same name.
-- A case nothing reported failed when the program stopped (a test asserts by
-  stopping the program). When the program exited 0, it passed if the program
-  reported no case at all — its exit status is the verdict — and it is
-  **skipped** if the program reported other cases: that is what a `test fn` that
-  `main` never calls looks like, and nothing shows it ran.
+A test fails by stopping the program: an assertion that fails panics, so the
+wrapper never reaches its `[PASS]`. The cases a report lists are the `test fn`
+declarations in the file, with their lines, and only those:
+
+- A `[PASS] name` or `[FAIL] name` line (or TAP's `ok N - name` /
+  `not ok N - name`, read as `name`) reports the result of the declared case
+  called `name`. A failure wins over a pass for the same name, so a test that
+  prints `[FAIL] name` and returns still fails.
+- A case nothing reported **fails**. When the program stopped, the reason is
+  "did not run: the program stopped before it" — it is the test that stopped the
+  program, or one after it. When the program exited 0, the reason is "never ran:
+  main() does not call it". A test that never ran asserted nothing, so it is never
+  a pass.
+- With a `rho` older than `--test-report` the runner prints a one-line warning
+  and reads the cases the old way: a case nothing reported passes if the program
+  exited 0 and reported nothing, and is skipped if it reported other cases.
 - A printed name that is not a `test fn` never becomes a case. A `[FAIL]` under
   such a name still fails the suite, so a failure the program reported is not
   lost; a `[PASS]` under one is ignored.
@@ -227,6 +239,41 @@ printed at the end of the run, which is where a CI job picks it up.
 rho plugin enable rho-test-junit
 rho test --report-dir build/test-reports
 ```
+
+## The run's own results
+
+Every run that runs something also writes its own record,
+`build/test-reports/results.json` (under `--report-dir` when one is given),
+replacing the previous one, whatever plugins are enabled. What the run prints is
+unchanged; the file is for a tool that asks what the last run found, such as
+`rho req trace`, which reads it before any other report.
+
+```json
+{
+  "schema": 1,
+  "runner": "rho-test", "runner_version": "0.3.0",
+  "rho": "0.19.1",
+  "run": "2026-11-19T18:30:00Z", "seconds": 4.2,
+  "project": "gateway", "target": "c",
+  "summary": {"suites": 2, "cases": 3, "passed": 2, "failed": 1, "skipped": 0},
+  "suites": [
+    {"name": "tests/session", "kind": "rho", "status": "fail", "seconds": 1.3,
+     "cases": [
+       {"name": "sessions_survive_restart", "status": "pass", "file": "tests/session_test.rho", "line": 12},
+       {"name": "table_is_bounded", "status": "fail", "message": "...", "file": "tests/session_test.rho", "line": 20}]},
+    {"name": "smoke", "kind": "command", "status": "pass", "seconds": 2.9,
+     "cases": [{"name": "smoke", "status": "pass"}]}
+  ]
+}
+```
+
+A case's `status` is `pass`, `fail` or `skip`; `message` says why a case failed
+(its reason, or the end of what it printed) or was skipped; `file` is relative to
+the project. A Rho `test fn` is its case, by name; a suite whose verdict is its
+exit status — a `command` suite — has one case named for the suite; a suite
+expanded from a matrix is named `base!axis=value`. A suite's `status` is `fail`
+when a case failed, `skip` when it was not run, `pass` otherwise. A list or a dry
+run writes nothing. `schema` grows only by adding fields.
 
 ## Testing the toolchain itself
 

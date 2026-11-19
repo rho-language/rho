@@ -1,0 +1,30 @@
+# System requirements of the fixture ecosystem.
+level: SYS
+prefix: SYS
+title: RoboHub system
+requirements:
+  - id: SYS-0001
+    title: Survive a power cut
+    statement: >
+      After a power cut every node shall return to service
+      without a person.
+    rationale: Nobody is there at night.
+    status: approved
+    verification: test
+    decided_by: [ADR-0001]
+    changed: 2026-11-01
+
+  - id: SYS-0002
+    title: One enrollment per board
+    statement: A board shall be enrolled once and stay enrolled.
+    status: verified       # proven through GW-0002
+    verification: test
+    changed: 2026-11-01
+    tags: [security]
+
+  - id: SYS-0003
+    title: Logs are kept for a week
+    statement: "Logs shall be kept for 7 days: no less."
+    status: draft
+    verification: inspection
+    changed: 2026-11-02

@@ -1,0 +1,13 @@
+module session_test
+
+// @verifies GW-0001
+test fn sessions_survive_restart() void {
+}
+
+// @verifies GW-0002
+test fn enroll_once() void {
+}
+
+// @verifies GW-0099
+test fn points_at_nothing() void {
+}
