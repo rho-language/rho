@@ -600,3 +600,11 @@ A generated Go service given only one of `RHO_TLS_CERT` and `RHO_TLS_KEY` refuse
 
 - A service started with only one of `RHO_TLS_CERT` / `RHO_TLS_KEY` exits 1: set both, or neither.
 - A `test fn` that `main` never calls now fails `rho test`; call it from `main`. A test no longer needs to print its own `[PASS]` line.
+
+## [0.19.3] - 2026-11-19
+
+`request_query(req)` gives a go-server handler the request's raw query string, without its `?`. A handler that sends a request on elsewhere — the keeper redirecting its old `/app/<name>/…` addresses to an application's own port — had no way to keep the query: `req.query` passed the type checker but was emitted under a name Go's Request does not have.
+
+### Breaking
+
+None.

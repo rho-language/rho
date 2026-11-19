@@ -104,7 +104,7 @@ func init() {
 	// Everything that reads a request is the server's: the typed accessors, the
 	// presence tests and the raw parts.
 	for _, name := range []string{"param", "bind_ok", "bind_error", "query_default",
-		"request_query_param", "request_body", "request_auth", "request_path",
+		"request_query_param", "request_body", "request_auth", "request_path", "request_query",
 		"request_method", "request_remote"} {
 		builtinBackends[name] = goServerOnly
 	}

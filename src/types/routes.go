@@ -210,6 +210,12 @@ var protocolFuncs = map[string]functionType{
 		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
 		result: ir.Type{Kind: ir.TypeString, Name: "string"},
 	},
+	// request_query returns the request's raw query string, without its "?": a
+	// handler that sends a request on elsewhere keeps the query with it.
+	"request_query": {
+		params: []ir.Type{{Kind: ir.TypeStruct, Name: RequestTypeName}},
+		result: ir.Type{Kind: ir.TypeString, Name: "string"},
+	},
 	// request_method returns the request's method, GET or POST: a handler that
 	// answers both reads it to tell a look from a change.
 	"request_method": {

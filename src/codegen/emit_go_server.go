@@ -836,6 +836,11 @@ func requestPath(req Request) string {
 	return req.Path
 }
 
+// request_query returns the raw query string, without its "?".
+func requestQuery(req Request) string {
+	return req.Query
+}
+
 // request_method returns the request's method.
 func requestMethod(req Request) string {
 	return req.Method
@@ -998,6 +1003,11 @@ func requestAuth(req Request) string {
 // request_path returns the address the request was made to.
 func requestPath(req Request) string {
 	return req.Path
+}
+
+// request_query returns the raw query string, without its "?".
+func requestQuery(req Request) string {
+	return req.Query
 }
 
 // request_method returns the request's method.
