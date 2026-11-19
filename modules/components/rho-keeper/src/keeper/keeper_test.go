@@ -17,6 +17,7 @@ package keeper
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -544,7 +545,7 @@ func TestAStepRunsItsProgramWithItsArguments(t *testing.T) {
 		{
 			Module: "rho-dbg", Dep: "arm-none-eabi-gdb", Kind: sysdep.KindExecutable, Required: true,
 			Status: sysdep.StatusMissing, Message: "not installed",
-			Fetch:  &sysdep.FetchRecipe{URL: "https://example.com/gdb.tar.gz", Version: "14.2"},
+			Fetch: &sysdep.FetchRecipe{URL: "https://example.com/gdb.tar.gz", Version: "14.2"},
 		},
 	}}
 	plan := PlanFor(report)
@@ -1220,5 +1221,29 @@ func TestAnAptPackageIsInstalledThroughAptGet(t *testing.T) {
 	}
 	if recipe.Manager != "apt" || recipe.Package != "gcc-arm-none-eabi" || !strings.Contains(recipe.Command, "apt-get install -y gcc-arm-none-eabi") {
 		t.Fatalf("recipe: %+v", recipe)
+	}
+}
+
+// A fetch step is carried out in this program, with the report it was planned
+// from: the plan's command line for it names a command, and a module named by
+// --path is in no registry another process could read it from.
+func TestRunWithCarriesOutAStepInProcess(t *testing.T) {
+	plan := Plan{Steps: []PlannedStep{
+		{Module: "robohub-zigbee2mqtt", Dep: "node", Manager: "fetch", Command: "rho-command-that-does-not-exist", Args: []string{"keeper", "fetch"}},
+	}}
+	taken := 0
+	var reported error = errors.New("not reported")
+	plan.RunWith(func(step PlannedStep) (bool, error) {
+		if step.Manager == "fetch" {
+			taken++
+			return true, nil
+		}
+		return false, nil
+	}, func(step PlannedStep, err error) { reported = err })
+	if taken != 1 {
+		t.Fatalf("expected the fetch step to be offered in process once, got %d", taken)
+	}
+	if reported != nil {
+		t.Fatalf("expected the in-process step to be reported as done, got %v (was its command run?)", reported)
 	}
 }

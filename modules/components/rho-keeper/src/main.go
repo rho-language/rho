@@ -62,7 +62,7 @@ func run(args []string) error {
 		// report `rho doctor` prints, so the two cannot disagree about it.
 		return keeper.Doctor(os.Stdout)
 
-	case "sync", "fix", "install":
+	case "sync", "fix", "install", "fetch":
 		options := keeper.SyncOptions{}
 		for index := 0; index < len(args); index++ {
 			switch strings.TrimLeft(args[index], "-") {
@@ -84,7 +84,7 @@ func run(args []string) error {
 				}
 			}
 		}
-		if last := args[len(args)-1]; len(args) > 1 && !strings.HasPrefix(last, "-") && !isFlagValue(args, last) && command != "install" {
+		if last := args[len(args)-1]; len(args) > 1 && !strings.HasPrefix(last, "-") && !isFlagValue(args, last) && command != "install" && command != "fetch" {
 			options.Module = last
 		}
 		switch command {

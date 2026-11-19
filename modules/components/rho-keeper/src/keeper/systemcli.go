@@ -140,7 +140,19 @@ func Sync(options SyncOptions) error {
 
 	fmt.Fprintln(options.Writer)
 	failed := 0
-	plan.Run(func(step PlannedStep, err error) {
+	plan.RunWith(func(step PlannedStep) (bool, error) {
+		// A fetch is this program's own work, done here with the report it was planned
+		// from — so a module named by --path, which no registry lists, is fetched as
+		// it was planned rather than looked up again by a command that cannot see it.
+		if step.Manager != "fetch" {
+			return false, nil
+		}
+		result, found := findRequirement(report, step.Module, step.Dep)
+		if !found || result.Fetch == nil {
+			return true, fmt.Errorf("the plan named a fetch the report does not have")
+		}
+		return true, installByFetching(result, options)
+	}, func(step PlannedStep, err error) {
 		if err != nil {
 			failed++
 			fmt.Fprintf(options.Writer, "  %s: not installed — %v\n", step.Dep, err)

@@ -220,14 +220,16 @@ func checkExecutable(module string, dep sysdep.ExecutableDep, options Options) s
 		Description: dep.Description,
 	}
 
-	path, err := options.LookPath(dep.Name)
-	if err != nil {
-		// A program fetched into the Rho home is installed whether or not anybody put
-		// it on PATH — and a check that could not see it would report a program the
-		// machine has as missing, and offer to fetch a second copy of it.
-		if fetched, found := options.FetchedBinary(dep); found {
-			path, err = fetched, nil
-		}
+	// A program fetched into the Rho home for this requirement is the one checked,
+	// before anything on PATH: it was fetched because what PATH had did not do, so
+	// an older copy earlier on PATH must not hide it — and a check that could not see
+	// it would report a program the machine has as missing or outdated, and offer to
+	// fetch a second copy of it.
+	path, err := "", error(nil)
+	if fetched, found := options.FetchedBinary(dep); found {
+		path = fetched
+	} else {
+		path, err = options.LookPath(dep.Name)
 	}
 	if err != nil {
 		result.Status = sysdep.StatusMissing

@@ -78,6 +78,9 @@ func (m machine) options() Options {
 			return nil, os.ErrNotExist
 		},
 		RunVersion: func(path string, flag string) (string, error) {
+			if output, found := m.versions[path]; found {
+				return output, nil
+			}
 			name := path[strings.LastIndex(path, "/")+1:]
 			if m.failing[name] {
 				return "", &runError{"it would not answer"}
@@ -216,6 +219,27 @@ func TestAFetchedProgramIsInstalled(t *testing.T) {
 		t.Fatalf("expected a fetched program to be found, got %s: %s", result.Status, result.Message)
 	}
 	if result.FoundPath != machine.fetched["arm-none-eabi-gdb"] {
+		t.Errorf("expected the fetched path, got %q", result.FoundPath)
+	}
+}
+
+// An older copy earlier on PATH must not hide the copy fetched for the requirement:
+// the fetch happened because PATH's did not do, and reporting PATH's would send the
+// person round the same fetch again.
+func TestAFetchedProgramIsCheckedBeforeAnOlderOneOnPath(t *testing.T) {
+	machine := newMachine()
+	machine.programs["node"] = "/home/a/.local/bin/node"
+	machine.versions["/home/a/.local/bin/node"] = "v18.10.0"
+	machine.fetched["node"] = "/home/a/.rho/toolchains/node-24.22.3/node-v24.22.3-linux-x64/bin/node"
+	machine.versions[machine.fetched["node"]] = "v24.22.3"
+	result := machine.check(t, sysdep.ExecutableDep{
+		Name: "node", Version: "^22.2 || ^24", VersionPattern: `v([0-9][^\s]*)`, Required: true,
+		Fetch: &sysdep.FetchRecipe{URL: "https://nodejs.org/dist/v24.22.3/node.tar.xz", Version: "24.22.3"},
+	})
+	if result.Status != sysdep.StatusOK {
+		t.Fatalf("expected the fetched node to satisfy the requirement, got %s: %s", result.Status, result.Message)
+	}
+	if result.FoundPath != machine.fetched["node"] {
 		t.Errorf("expected the fetched path, got %q", result.FoundPath)
 	}
 }

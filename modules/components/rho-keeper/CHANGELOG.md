@@ -77,3 +77,7 @@ version rather than always showing the newest installed one.
 ## [0.1.10] - 2026-11-19
 
 A module whose pages are in `docs/doc/` has documentation: its badge and its page find `docs/doc/index.md`.
+
+## [0.1.11] - 2026-11-20
+
+`rho keeper sync` fetches a program itself, from the report it planned from, instead of running `rho keeper fetch`, a command it did not have: every fetch step of a sync failed, and one for a module named by `--path` could not have found the module from another process. `rho keeper fetch <module> <dependency>` now exists too, the same as `install`, so the line a failed step prints works by hand.

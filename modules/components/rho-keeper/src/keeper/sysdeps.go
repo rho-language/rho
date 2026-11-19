@@ -373,7 +373,22 @@ func (p Plan) Text() string {
 // One at a time so that a failure does not hide the steps after it, and so that
 // what is reported afterwards is per step rather than one verdict for the lot.
 func (p Plan) Run(onStep func(PlannedStep, error)) {
+	p.RunWith(nil, onStep)
+}
+
+// RunWith carries out a plan as Run does, offering each step first to `inProcess`,
+// which answers whether it carried the step out itself and how that went; a step it
+// does not take is run as the command the plan wrote.
+func (p Plan) RunWith(inProcess func(PlannedStep) (bool, error), onStep func(PlannedStep, error)) {
 	for _, step := range p.Steps {
+		if inProcess != nil {
+			if done, err := inProcess(step); done {
+				if onStep != nil {
+					onStep(step, err)
+				}
+				continue
+			}
+		}
 		command := exec.Command(step.Command, step.Args...)
 		command.Stdin = os.Stdin
 		command.Stdout = os.Stdout

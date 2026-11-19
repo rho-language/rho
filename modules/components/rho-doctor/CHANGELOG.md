@@ -6,6 +6,10 @@ says what changed, which is what tells two versions of one module apart. The
 section for the version being published travels with it, so a registry shows it
 against that version.
 
+## [0.1.2] - 2026-11-20
+
+A program fetched into the Rho home for a requirement is checked before anything on PATH. An older copy earlier on PATH (a Node.js 18 in ~/.local/bin, when Node.js 24 was fetched for a module that needs 22 or 24) hid the fetched one, so the report said OUTDATED and offered to fetch again what was already there.
+
 ## [0.1.1] - 2026-11-13
 
 `--path DIR` checks the module in a folder, installed or not, so an application in
