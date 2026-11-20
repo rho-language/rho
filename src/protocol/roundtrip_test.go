@@ -67,14 +67,76 @@ func TestFixedStringIsItsWidth(t *testing.T) {
 	}
 }
 
-// An array other than a string is still refused by the Rho target, by name.
+// An array other than a string or u8[N] is still refused by the Rho target.
 func TestEmitRhoStillRefusesOtherArrays(t *testing.T) {
-	schema, err := Parse("module m\nnamespace m.v1\nmessage Block {\n    data: u8[8]\n}\n")
+	schema, err := Parse("module m\nnamespace m.v1\nmessage Block {\n    data: u16[8]\n}\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if _, err := schema.EmitRho(""); err == nil || !strings.Contains(err.Error(), "array") {
 		t.Fatalf("EmitRho = %v, want an array refusal", err)
+	}
+}
+
+// u8[N] is N raw bytes for the Rho target: written padded to N, read back as
+// exactly N bytes, zeros included — a hash or a signature, not text.
+func TestEmitRhoBytesKeepTheirZeros(t *testing.T) {
+	schema, err := Parse("module m\nnamespace m.v1\nmessage Signed {\n    id: u32\n    hash: u8[4]\n    n: u16\n}\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	r, err := schema.EmitRho("")
+	if err != nil {
+		t.Fatalf("emit rho: %v", err)
+	}
+	for _, want := range []string{"hash: string", "_put_bytes(value.hash, 4)", "let hash: string = str_slice(data, off, 4)", "strlen(data) < 11"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("Rho output missing %q\n%s", want, r)
+		}
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("the go toolchain is not on the path")
+	}
+	lines := strings.SplitN(r, "\n", 3)
+	program := "module main\n" + lines[2] + `
+fn main() void {
+    let hash: string = str_from_byte(u8(0)) + str_from_byte(u8(7)) + str_from_byte(u8(0)) + str_from_byte(u8(255))
+    let wire: string = signed_marshal(Signed { u32(5), hash, u16(9) })
+    var line: string = ""
+    var i: u32 = 0
+    while i < strlen(wire) {
+        if i > 0 {
+            line = line + ","
+        }
+        line = line + int_to_str(u32(str_at(wire, i)))
+        i = i + 1
+    }
+    let back: Signed = signed_unmarshal(wire)
+    print(line + "|" + int_to_str(strlen(back.hash)) + "|" + int_to_str(u32(str_at(back.hash, 3))) + "|" + int_to_str(u32(back.n)) + "\n")
+}
+`
+	root := t.TempDir()
+	write(t, root, "module.yml", "module:\n  name: signed\n  type: rho\n  version: 0.1.0\nmain: src/main.rho\nbuild:\n  language: go\n  targets:\n    - go\n")
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "src"), "main.rho", program)
+	dirs, err := rho.GenerateAllTargets(filepath.Join(root, "src", "main.rho"), "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("generate: %v\n%s", err, program)
+	}
+	bin := filepath.Join(t.TempDir(), "signed")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = dirs[0]
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	out, err := exec.Command(bin).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got, want := string(out), "1,5,0,0,0,0,7,0,255,9,0|4|255|9\n"; got != want {
+		t.Fatalf("printed %q, want %q", got, want)
 	}
 }
 

@@ -72,8 +72,8 @@ func (s *Schema) EmitRho(transport string) (string, error) {
 
 // rhoFieldSupported rejects a field the Rho layout cannot hold.
 func rhoFieldSupported(l *layout, f ast.Field) error {
-	if f.TypeExpr.ArrayLen != nil && !isString(f) {
-		return fmt.Errorf("an array cannot be a Rho struct field yet")
+	if f.TypeExpr.ArrayLen != nil && !isString(f) && !isBytes(f) {
+		return fmt.Errorf("an array cannot be a Rho struct field yet, except u8[N]")
 	}
 	switch l.kind(f.TypeExpr.Name) {
 	case "scalar", "enum", "message", "string":
@@ -97,10 +97,13 @@ var rhoScalars = map[string]string{
 // rhoType is the Rho type of a field: a scalar as itself, an enum as the u32
 // its wire value is, a message as itself, a string as a string.
 func (l *layout) rhoType(f ast.Field) string {
+	if isBytes(f) {
+		return "string"
+	}
 	if scalar, ok := rhoScalars[f.TypeExpr.Name]; ok {
 		return scalar
 	}
-	if f.TypeExpr.Name == "string" {
+	if f.TypeExpr.Name == "string" || isBytes(f) {
 		return "string"
 	}
 	if l.kind(f.TypeExpr.Name) == "enum" {
@@ -151,6 +154,10 @@ func emitRhoMarshal(b *strings.Builder, l *layout, p string, m ast.MessageDecl, 
 			fmt.Fprintf(b, "    out = out + %s_put_string(%s, %d)\n", p, field, stringWidth(f))
 			continue
 		}
+		if isBytes(f) {
+			fmt.Fprintf(b, "    out = out + %s_put_bytes(%s, %d)\n", p, field, *f.TypeExpr.ArrayLen)
+			continue
+		}
 		fmt.Fprintf(b, "    out = out + %s_put_%s(%s)\n", p, rhoCell(l, f), field)
 	}
 	b.WriteString("    return out\n}\n\n")
@@ -174,6 +181,8 @@ func emitRhoUnmarshal(b *strings.Builder, l *layout, p string, m ast.MessageDecl
 				local, f.TypeExpr.Name, snake(f.TypeExpr.Name), l.messageSize(f.TypeExpr.Name))
 		} else if isString(f) {
 			fmt.Fprintf(b, "    let %s: string = %s_get_string(data, off, %d)\n", local, p, stringWidth(f))
+		} else if isBytes(f) {
+			fmt.Fprintf(b, "    let %s: string = str_slice(data, off, %d)\n", local, *f.TypeExpr.ArrayLen)
 		} else {
 			fmt.Fprintf(b, "    let %s: %s = %s_get_%s(data, off)\n",
 				local, l.rhoType(f), p, rhoCell(l, f))
@@ -240,6 +249,9 @@ func emitRhoWireHelpers(b *strings.Builder, p string) {
 	// bare string — truncated or NUL-padded to it, and read back up to its first
 	// NUL, which is what the C and Go emitters do.
 	fmt.Fprintf(b, "fn %s_put_string(value: string, width: u32) string {\n", p)
+	fmt.Fprintf(b, "    var out: string = \"\"\n    var i: u32 = 0\n    let length: u32 = strlen(value)\n")
+	fmt.Fprintf(b, "    while i < width {\n        if i < length {\n            out = out + str_from_byte(str_at(value, i))\n        } else {\n            out = out + str_from_byte(u8(0))\n        }\n        i = i + 1\n    }\n    return out\n}\n")
+	fmt.Fprintf(b, "fn %s_put_bytes(value: string, width: u32) string {\n", p)
 	fmt.Fprintf(b, "    var out: string = \"\"\n    var i: u32 = 0\n    let length: u32 = strlen(value)\n")
 	fmt.Fprintf(b, "    while i < width {\n        if i < length {\n            out = out + str_from_byte(str_at(value, i))\n        } else {\n            out = out + str_from_byte(u8(0))\n        }\n        i = i + 1\n    }\n    return out\n}\n")
 	fmt.Fprintf(b, "fn %s_get_string(data: string, off: u32, width: u32) string {\n", p)

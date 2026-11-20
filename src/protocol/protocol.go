@@ -337,6 +337,13 @@ func stringWidth(f ast.Field) int {
 	return stringWire
 }
 
+// isBytes reports whether a field is raw bytes: `u8[N]`, N bytes on the wire,
+// which a Rho reader holds as a string of exactly N bytes — zeros included,
+// where a `string[N]` stops at the first.
+func isBytes(f ast.Field) bool {
+	return f.TypeExpr.Name == "u8" && f.TypeExpr.ArrayLen != nil
+}
+
 // isString reports whether a field is text: a bare `string` or a `string[N]`.
 func isString(f ast.Field) bool {
 	return f.TypeExpr.Name == "string"

@@ -68,6 +68,11 @@ fixed width. Scalars are little-endian, a `bool` is one byte, an enum is a
 byte and fields, and an array (`u8[16]`) is its elements end to end.
 `Reading` above is 17 bytes: the version, three 4-byte fields and the enum.
 
+For the Rho target, `u8[N]` is a `string` of exactly N bytes — a hash, a key or
+a signature, zeros included — written padded to N and read back whole, where a
+`string[N]` stops at its first zero byte. Other arrays are not yet a Rho struct
+field and are refused by name.
+
 Little-endian is not the host's byte order but the schema's, so a big-endian
 board and a little-endian one read each other's messages. The C side reads and
 writes into a buffer the caller owns and allocates nothing.

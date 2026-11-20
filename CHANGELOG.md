@@ -625,3 +625,7 @@ Fixed: `rho module validate .` (or `../<name>`) refused a collection whose platf
 
 - The service opens its listener itself and serves on it (`Serve` / `ServeTLS`) rather than through `ListenAndServe`; an address that cannot be listened on is reported by `StartServer` before anything is served, as before.
 - A handler's request context is cancelled as soon as the stop signal arrives, not when the grace period ends: a hand-written extension that ties work to `r.Context()` sees it cancelled at shutdown.
+
+## [0.20.1] - 2026-11-20
+
+`rho protocol generate --target rho` takes `u8[N]` fields: a `string` of exactly N raw bytes, zeros kept, written padded to N and read back whole (a hash, a key, a signature), where `string[N]` stops at its first zero. Other arrays are still refused by name. The C target already wrote them.
