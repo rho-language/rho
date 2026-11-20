@@ -74,9 +74,11 @@ func EmitGoServerEntrypoint(m ir.ModuleIR) string {
 var goServerImports = []importSpec{
 	{Path: `"bufio"`},
 	{Path: `"context"`},
+	{Path: `"crypto/tls"`},
 	{Path: `"fmt"`},
 	{Path: `"io"`},
 	{Path: `"log"`},
+	{Path: `"net"`},
 	{Path: `"net/http"`},
 	{Path: `"net/url"`},
 	{Path: `"os"`},
@@ -158,9 +160,17 @@ func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		next.ServeHTTP(w, r)
+		// The server's own watchdog probe asks /healthz every few seconds; a log
+		// line for each would bury the requests a person reads the log for.
+		if r.URL.Path == "/healthz" && r.Header.Get(watchdogHeader) != "" {
+			return
+		}
 		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(started))
 	})
 }
+
+// watchdogHeader marks the server's own watchdog probe of /healthz.
+const watchdogHeader = "X-Rho-Watchdog"
 
 // withSameSite refuses a request that would change something unless it came from
 // a page of this service.
@@ -274,6 +284,7 @@ func goServerLifecycle(cfg ServerConfig) string {
 		b.WriteString("\t}\n\n")
 	}
 	b.WriteString(goServerShutdown())
+	b.WriteString(goSdNotify())
 	return b.String()
 }
 
@@ -287,9 +298,9 @@ func goServerLifecycle(cfg ServerConfig) string {
 // largest accepted is 16 MB by default, so a minute to read it is generous for a
 // real client and a wall for a slow one.
 //
-// No handler in a generated service streams, which is what makes a write timeout
-// safe; one that did would be a handler written by hand around the generated
-// server, and would set its own deadline.
+// The read and write timeouts are left open for the streams and the long
+// answers the comments below name; a stream ends when the server stops, because
+// every request's context is cancelled as shutdown begins.
 func goServerLimits() string {
 	return "\t\tReadHeaderTimeout: 10 * time.Second,\n" +
 		// A streaming response stays open for as long as the action it reports,
@@ -309,44 +320,200 @@ func goServerLimits() string {
 
 // goServerShutdown renders the part that stops the service the same way in both
 // modes: a signal, a grace period, and a close.
+//
+// Every request's context derives from one base context, and the signal cancels
+// it before Shutdown is asked to wait. Shutdown waits for the requests that are
+// open, and a page's live-update stream is a request that never ends by itself,
+// so without this every restart with a page open would wait out the whole grace
+// period. A stream watches its request's context and returns when it is done;
+// the grace period is then left to the work that is really in progress.
+//
+// The listener is opened here rather than inside ListenAndServe, so the service
+// knows the moment it is listening and can tell a supervisor so (goSdNotify).
 func goServerShutdown() string {
 	return `	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
 
+	base, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
+	server.BaseContext = func(net.Listener) context.Context { return base }
+
+	// A deployment that provides a certificate and key serves TLS; without
+	// them the service stays plain HTTP, so a reverse proxy or a private link
+	// is how a deployment chooses to end traffic. The variables are read here
+	// rather than at build time, so the same image can be static and public or
+	// loopback and plain.
+	cert := os.Getenv("RHO_TLS_CERT")
+	key := os.Getenv("RHO_TLS_KEY")
+	if (cert == "") != (key == "") {
+		// Half a pair is a deployment that meant TLS and would get plain
+		// HTTP: refused, rather than served unencrypted.
+		return fmt.Errorf("RHO_TLS_CERT and RHO_TLS_KEY must be set together; only one is set, so the service does not start")
+	}
+	secure := cert != "" && key != ""
+
+	// An empty address means every interface on the scheme's own port, as it
+	// does for ListenAndServe.
+	listenAddr := server.Addr
+	if listenAddr == "" {
+		listenAddr = ":http"
+		if secure {
+			listenAddr = ":https"
+		}
+	}
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return err
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
-		// A deployment that provides a certificate and key serves TLS; without
-		// them the service stays plain HTTP, so a reverse proxy or a private
-		// link is how a deployment chooses to end traffic. The variables are
-		// read here rather than at build time, so the same image can be static
-		// and public or loopback and plain.
-		cert := os.Getenv("RHO_TLS_CERT")
-		key := os.Getenv("RHO_TLS_KEY")
 		var err error
-		if (cert == "") != (key == "") {
-			// Half a pair is a deployment that meant TLS and would get plain
-			// HTTP: refused, rather than served unencrypted.
-			errCh <- fmt.Errorf("RHO_TLS_CERT and RHO_TLS_KEY must be set together; only one is set, so the service does not start")
-			return
-		}
-		if cert != "" && key != "" {
-			err = server.ListenAndServeTLS(cert, key)
+		if secure {
+			err = server.ServeTLS(listener, cert, key)
 		} else {
-			err = server.ListenAndServe()
+			err = server.Serve(listener)
 		}
 		if err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
 
+	// The listener is open, so a connection made from now on is answered:
+	// that is what ready means to a supervisor.
+	sdNotify("READY=1")
+	go sdWatchdog(base, listener.Addr(), secure)
+
 	select {
 	case err := <-errCh:
 		return err
 	case <-stop:
+		sdNotify("STOPPING=1")
+		// The streams end first, so Shutdown waits only for real work.
+		cancelBase()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		return server.Shutdown(ctx)
+	}
+}
+
+`
+}
+
+// goSdNotify renders how the service talks to systemd, when systemd is what
+// runs it.
+//
+// A unit of Type=notify is started when the service says READY=1, not when its
+// process exists, so what depends on it waits for a service that answers. A unit
+// with a watchdog is restarted when the service stops saying WATCHDOG=1, which is
+// how a process that is alive but stuck is noticed: systemd restarts a process
+// that exits, not one that hangs. The service says it only after asking its own
+// /healthz and getting an answer, so the message means that a request can be
+// served, not merely that a goroutine still runs.
+//
+// The protocol is a datagram on the unix socket NOTIFY_SOCKET names, and it is
+// written with the standard library alone. Without NOTIFY_SOCKET nothing is sent
+// and nothing is started, so a service run by hand or in CI is unchanged.
+//
+// The marker string is in the binary because the code that uses it is, and a
+// supervisor reads it there to know that this service can be asked to notify: a
+// binary built by an older toolchain has no marker, and is run without a
+// watchdog it could never feed.
+func goSdNotify() string {
+	return `// sdNotifyMarker is what a supervisor looks for in this binary to know that
+// the service speaks the notify protocol below.
+const sdNotifyMarker = "rho-sd-notify-v1"
+
+// sdNotify sends one state to systemd's notify socket, when there is one. A
+// socket name beginning with @ is in the abstract namespace, which the kernel
+// spells with a leading NUL byte.
+func sdNotify(state string) {
+	socket := os.Getenv("NOTIFY_SOCKET")
+	if socket == "" {
+		return
+	}
+	if strings.HasPrefix(socket, "@") {
+		socket = "\x00" + socket[1:]
+	}
+	conn, err := net.DialUnix("unixgram", nil, &net.UnixAddr{Name: socket, Net: "unixgram"})
+	if err != nil {
+		log.Printf("%s: cannot reach the notify socket: %v", sdNotifyMarker, err)
+		return
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(state)); err != nil {
+		log.Printf("%s: cannot send %s: %v", sdNotifyMarker, state, err)
+	}
+}
+
+// sdWatchdog tells systemd every half watchdog period that the service is
+// alive, for as long as its own /healthz answers 200. It asks only when systemd
+// has asked for a watchdog, for this process: WATCHDOG_PID, when set, names the
+// process the period is meant for. A probe that fails or takes longer than a
+// quarter of the period sends nothing, and two periods of nothing is a restart.
+func sdWatchdog(ctx context.Context, addr net.Addr, secure bool) {
+	if os.Getenv("NOTIFY_SOCKET") == "" {
+		return
+	}
+	usec, err := strconv.ParseInt(os.Getenv("WATCHDOG_USEC"), 10, 64)
+	if err != nil || usec <= 0 {
+		return
+	}
+	if pid := os.Getenv("WATCHDOG_PID"); pid != "" && pid != strconv.Itoa(os.Getpid()) {
+		return
+	}
+	period := time.Duration(usec) * time.Microsecond
+	timeout := period / 4
+	if timeout < time.Second {
+		timeout = time.Second
+	}
+
+	// The probe asks the address the listener really has. A listener on every
+	// interface is asked on loopback, which it also answers on.
+	host, port := "127.0.0.1", ""
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		port = strconv.Itoa(tcp.Port)
+		if tcp.IP != nil && !tcp.IP.IsUnspecified() {
+			host = tcp.IP.String()
+		}
+	}
+	scheme := "http"
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
+	if secure {
+		// The certificate is for the name the service is reached by, not for
+		// the address it asks itself on; this probe, and only this probe, does
+		// not check it.
+		scheme = "https"
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client := &http.Client{Timeout: timeout, Transport: transport}
+	probe := scheme + "://" + net.JoinHostPort(host, port) + "/healthz"
+	log.Printf("%s: watchdog every %s, asking %s", sdNotifyMarker, period/2, probe)
+
+	ticker := time.NewTicker(period / 2)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, probe, nil)
+		if err != nil {
+			continue
+		}
+		// Marked, so the log does not record a line for every probe.
+		request.Header.Set(watchdogHeader, "1")
+		response, err := client.Do(request)
+		if err != nil {
+			continue
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode == http.StatusOK {
+			sdNotify("WATCHDOG=1")
+		}
 	}
 }
 
@@ -542,6 +709,8 @@ func writeEventStream(ctx context.Context, w http.ResponseWriter, token string) 
 			return
 		}
 		select {
+		case <-ctx.Done():
+			return
 		case <-time.After(interval):
 		}
 	}

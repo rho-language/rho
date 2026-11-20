@@ -612,3 +612,16 @@ None.
 ## [0.19.4] - 2026-11-20
 
 A Server-Sent Events response carries the headers its handler added (`with_headers(sse_file(...), ...)`), as every other response does: the generated Go server wrote them only for responses that were not streams, so a stream could not answer a page on another port with `Access-Control-Allow-Origin`.
+
+## [0.20.0] - 2026-11-20
+
+A generated Go service is ready to be supervised by systemd. A signal to stop ends its open Server-Sent Events streams at once: every request's context derives from one base context that `SIGINT`/`SIGTERM` cancels before `Shutdown` waits, so a restart with a page open takes about a second instead of the full 30 s grace (a stream still waiting for its file to appear also watches its context now). Under a unit with `NOTIFY_SOCKET` the service sends `READY=1` once it listens, `WATCHDOG=1` every half `WATCHDOG_USEC` while its own `/healthz` answers `200` (a hung service stops feeding the watchdog and is restarted), and `STOPPING=1` when it is told to stop; abstract sockets (`@…`) are supported, and without `NOTIFY_SOCKET` nothing changes. The binary carries the marker `rho-sd-notify-v1`, which a supervisor reads to know it may ask for `Type=notify` and a watchdog.
+
+The watchdog's own probes of `/healthz` carry `X-Rho-Watchdog` and are not written to the request log, so a supervised service does not log a line every 15 s.
+
+Fixed: `rho module validate .` (or `../<name>`) refused a collection whose platform is reached through a sibling dependency, while the same folder named from its parent validated — the platform walk kept a `..` that the manifest reader refuses (known bug 67).
+
+### Breaking
+
+- The service opens its listener itself and serves on it (`Serve` / `ServeTLS`) rather than through `ListenAndServe`; an address that cannot be listened on is reported by `StartServer` before anything is served, as before.
+- A handler's request context is cancelled as soon as the stop signal arrives, not when the grace period ends: a hand-written extension that ties work to `r.Context()` sees it cancelled at shutdown.

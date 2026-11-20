@@ -22,3 +22,26 @@ func TestABoardBelongsToTheEnclosingPlatform(t *testing.T) {
 		t.Fatalf("a module with no platform anywhere got %q", got)
 	}
 }
+
+// A project named relatively — `.` from inside it, `../<name>` from beside it —
+// still finds a platform through a sibling it depends on (`../acme-common`),
+// whose `..` would otherwise be refused as a path that climbs.
+func TestAPlatformIsFoundFromARelativelyNamedProject(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "acme-platform"), 0o755)
+	os.MkdirAll(filepath.Join(root, "acme-common"), 0o755)
+	os.MkdirAll(filepath.Join(root, "acme-things"), 0o755)
+	os.WriteFile(filepath.Join(root, "acme-platform", "module.yml"), []byte("module:\n  name: acme-platform\n  type: platform\n  version: 0.1.0\nplatform: acme\n"), 0o644)
+	os.WriteFile(filepath.Join(root, "acme-common", "module.yml"), []byte("module:\n  name: acme-common\n  type: interfaces\n  version: 0.1.0\nplatforms:\n  - name: acme-platform\n    path: ../acme-platform\n"), 0o644)
+	os.WriteFile(filepath.Join(root, "acme-things", "module.yml"), []byte("module:\n  name: acme-things\n  type: collection\n  version: 0.1.0\ndepends:\n  - name: acme-common\n    type: c\n    path: ../acme-common\n"), 0o644)
+	previous, _ := os.Getwd()
+	defer os.Chdir(previous)
+	if err := os.Chdir(filepath.Join(root, "acme-things")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".", "./", "../acme-things", filepath.Join(root, "acme-things")} {
+		if got := Platform(name); got != "acme" {
+			t.Errorf("Platform(%q) is %q, want acme", name, got)
+		}
+	}
+}

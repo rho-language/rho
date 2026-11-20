@@ -270,7 +270,45 @@ module that defines `fn background() void` has it run on its own goroutine after
 than answer requests — polling a sensor, watching a directory.
 
 The service stops on `SIGINT` or `SIGTERM`, giving requests in flight thirty
-seconds to finish.
+seconds to finish. An event stream is not a request in flight: it never ends by
+itself, so the signal ends every open stream at once, and the thirty seconds are
+left to the work that is really in progress. A restart with a page open takes
+about a second rather than the whole grace period.
+
+### Running under systemd
+
+When systemd runs the service with `NOTIFY_SOCKET` set — a unit of
+`Type=notify` — the service speaks systemd's notify protocol, with the standard
+library alone:
+
+- `READY=1` once the listener is open, so a unit that depends on the service
+  starts when it answers, not when its process exists;
+- `WATCHDOG=1` every half `WATCHDOG_USEC`, when the unit sets `WatchdogSec=` (and
+  `WATCHDOG_PID`, when set, is this process), but only after the service has
+  asked its own `/healthz` and been answered `200` within a quarter of the
+  period (at least one second). A service that is alive but cannot serve a
+  request stops saying it, and systemd restarts it — which it would never do for
+  a process that hangs rather than exits;
+- `STOPPING=1` when the signal to stop arrives.
+
+The probe asks the address the listener has, on `127.0.0.1` when it listens on
+every interface, over HTTPS without checking the certificate when the service
+serves TLS. A socket name beginning with `@` is in the abstract namespace.
+Without `NOTIFY_SOCKET` nothing is sent and no probe runs, so a run by hand or in
+CI is unchanged.
+
+```ini
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=30
+ExecStart=/srv/app/current/app
+```
+
+The binary carries the string `rho-sd-notify-v1`, so a supervisor can read it
+and know the service can be run this way; the RoboHub keeper writes
+`Type=notify` and a watchdog for a binary that has it, and `Type=simple` for one
+built by an older toolchain.
 
 | Variable | What it does |
 |----------|--------------|

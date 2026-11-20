@@ -2,8 +2,8 @@
 // @file emit_go_tls_test.go
 // @brief TLS support in the generated server lifecycle.
 //
-// A plain `ListenAndServe` leaves every telemetry value on the LAN. The
-// lifecycle therefore upgrades to `ListenAndServeTLS` when the deployment
+// A plain `Serve` leaves every telemetry value on the LAN. The lifecycle
+// therefore upgrades to `ServeTLS` on the same listener when the deployment
 // supplies `RHO_TLS_CERT` and `RHO_TLS_KEY`, and stays plain otherwise so a
 // loopback or reverse-proxy deployment is unchanged.
 //
@@ -24,10 +24,10 @@ import (
 func TestGeneratedServerSupportsTLS(t *testing.T) {
 	lifecycle := goServerLifecycle(ServerConfig{})
 	for _, part := range []string{
-		"ListenAndServeTLS(cert, key)",
+		"ServeTLS(listener, cert, key)",
 		"RHO_TLS_CERT",
 		"RHO_TLS_KEY",
-		"ListenAndServe()",
+		"Serve(listener)",
 	} {
 		if !strings.Contains(lifecycle, part) {
 			t.Errorf("server lifecycle is missing %q", part)

@@ -58,7 +58,13 @@ func platformModule(projectRoot string) (string, *Manifest) {
 		if dir == "" || depth > 8 {
 			return "", nil
 		}
+		// Each step is followed by its absolute path. A dependency's path is
+		// relative to the module that names it (`../robohub-common`), and a project
+		// named relatively (`.`, `../robohub-devices`) keeps that `..` after the
+		// join; ManifestPath refuses a relative path that climbs, so the walk would
+		// stop at the first sibling and find no platform.
 		if absolute, err := filepath.Abs(dir); err == nil {
+			dir = absolute
 			if seen[absolute] {
 				return "", nil
 			}
