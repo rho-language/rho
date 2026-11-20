@@ -608,3 +608,7 @@ A generated Go service given only one of `RHO_TLS_CERT` and `RHO_TLS_KEY` refuse
 ### Breaking
 
 None.
+
+## [0.19.4] - 2026-11-20
+
+A Server-Sent Events response carries the headers its handler added (`with_headers(sse_file(...), ...)`), as every other response does: the generated Go server wrote them only for responses that were not streams, so a stream could not answer a page on another port with `Access-Control-Allow-Origin`.

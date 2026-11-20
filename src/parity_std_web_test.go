@@ -98,7 +98,7 @@ fn codes(req: Request) Response {
 }
 
 fn stream(req: Request) Response {
-    return sse_file(getenv("WEB_STREAM_FILE"), 20)
+    return with_headers(sse_file(getenv("WEB_STREAM_FILE"), 20), "Access-Control-Allow-Origin: http://127.0.0.1:8478")
 }
 
 fn events(req: Request) Response {
@@ -236,6 +236,11 @@ func TestStdWebOnTheGoServer(t *testing.T) {
 	resp, body := get("/stream")
 	if resp.Header.Get("Content-Type") != "text/event-stream" {
 		t.Errorf("sse_file content type %q", resp.Header.Get("Content-Type"))
+	}
+	// A stream carries the headers its handler added (a CORS answer for a page
+	// on another port).
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:8478" {
+		t.Errorf("sse_file dropped the handler's header: Access-Control-Allow-Origin is %q", got)
 	}
 	for _, want := range []string{"data: step one", "data: step two", "event: done", "data: 0"} {
 		if !strings.Contains(body, want) {
