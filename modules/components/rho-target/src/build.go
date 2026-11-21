@@ -172,8 +172,21 @@ func build(args []string) int {
 	// not installed cannot be built by anything that follows, and finding out
 	// after the project's cmake/ directory has been overwritten with another
 	// target's flags leaves a tree that is wrong in a way nobody asked for.
+	//
+	// A missing compiler is a build that was skipped rather than one that failed:
+	// nothing about the project is wrong, and the machine it ran on cannot build
+	// for this board. It exits 77, the automake convention a test runner reads as
+	// skipped, so a suite that builds for every board passes on a machine that has
+	// some of their compilers and says which ones it could not try.
 	if err := toolchainIsAvailable(spec); err != nil {
 		fmt.Fprintln(os.Stderr, "rho target build:", err)
+		if missing, ok := err.(*missingToolchainError); ok {
+			if hint := installHint(missing.Compiler, specSource); hint != "" {
+				fmt.Fprintln(os.Stderr, "rho target build:", hint)
+			}
+			fmt.Fprintf(os.Stderr, "rho target build: skipped: %s is not installed\n", missing.Compiler)
+			return ExitSkipped
+		}
 		return 1
 	}
 
@@ -432,10 +445,68 @@ func toolchainIsAvailable(spec rhtarget.Spec) error {
 		return nil
 	}
 	if _, err := exec.LookPath(compiler); err != nil {
-		return fmt.Errorf("this target needs %s, which is not on the path. Install the toolchain for this target, or build a target whose compiler is installed: %w",
-			compiler, err)
+		return &missingToolchainError{Compiler: compiler, Err: err}
 	}
 	return nil
+}
+
+// ExitSkipped is the exit code of a build that could not be tried on this
+// machine: 77, automake's "skipped", which is what a test runner reads it as.
+const ExitSkipped = 77
+
+// missingToolchainError is a target whose compiler is not installed — the one
+// build failure that says nothing about the project.
+type missingToolchainError struct {
+	Compiler string
+	Err      error
+}
+
+func (e *missingToolchainError) Error() string {
+	return fmt.Sprintf("this target needs %s, which is not on the path. Install the toolchain for this target, or build a target whose compiler is installed: %v",
+		e.Compiler, e.Err)
+}
+
+func (e *missingToolchainError) Unwrap() error { return e.Err }
+
+// installHint says how to get a missing compiler, from the `system_deps` of the
+// project or of the platform it builds against when one of them declares it, and
+// otherwise points at the commands that read every module's declarations.
+func installHint(compiler, project string) string {
+	for _, root := range append([]string{project}, cDependencyRoots(project)...) {
+		manifest, err := deps.LoadManifest(deps.ManifestPath(root))
+		if err != nil || manifest == nil || manifest.SystemDeps == nil {
+			continue
+		}
+		for _, executable := range manifest.SystemDeps.Executables {
+			if executable.Name != compiler {
+				continue
+			}
+			ways := []string{}
+			if manifest.ModuleName != "" {
+				ways = append(ways, fmt.Sprintf("`rho keeper install %s %s`", manifest.ModuleName, compiler))
+			}
+			for _, manager := range []string{"apt", "brew", "pacman", "dnf", "choco"} {
+				if pkg := executable.Install[manager]; pkg != "" {
+					command := manager + " install " + pkg
+					if manager == "apt" || manager == "pacman" || manager == "dnf" {
+						command = "sudo " + command
+					}
+					if manager == "pacman" {
+						command = "sudo pacman -S " + pkg
+					}
+					ways = append(ways, "`"+command+"`")
+				}
+			}
+			if manual := executable.Install["manual"]; manual != "" {
+				ways = append(ways, manual)
+			}
+			if len(ways) == 0 {
+				break
+			}
+			return fmt.Sprintf("%s declares %s in its system_deps; install it with %s", manifest.ModuleName, compiler, strings.Join(ways, ", or "))
+		}
+	}
+	return "`rho doctor` lists what this machine is missing for the project, and `rho keeper sync` installs it"
 }
 
 // writeBuildFlags records what this build may register, in the project's own

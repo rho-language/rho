@@ -110,3 +110,7 @@ The stack estimate is printed only for a target with a memory map (a board), or 
 ## [0.1.13] - 2026-11-21
 
 `deps.cmake` and `deps-aliases.cmake` are written for the target being built: a dependency the application declares for other presets (`depends[].presets`) is published by neither, and nor is anything reached only through it. A dependency without `presets` is published for every target, as before.
+
+## [0.1.14] - 2026-11-21
+
+`rho target build` exits 77 — skipped, the automake convention — when the board's compiler is not installed, rather than 1, and says which program is missing and how to get it: the `rho keeper install` and package-manager commands from the `system_deps` of the project or a platform it builds against that declares the compiler, and otherwise `rho doctor` and `rho keeper sync`. Nothing is written into the project. Every other build failure keeps its non-zero code.
