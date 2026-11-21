@@ -1315,6 +1315,13 @@ func buildCLI(args []string) int {
 	}
 
 	if err := buildTarget(generatedDir, projectRoot, targetName, linkMap, *buildType); err != nil {
+		// rho-target exits 77 when the board's compiler is not installed, and has
+		// already said which one and how to get it. That is the same "cannot be
+		// tried here" this command means by 77, so it is passed on as it is rather
+		// than turned into a failure; every other code is a build that failed.
+		if code := componentExitCode(err); code == exitCannotRunHere {
+			return exitCannotRunHere
+		}
 		reportError("rho build", err)
 		return 1
 	}
@@ -1910,6 +1917,16 @@ func compilable(paths []string) []string {
 // that failed for an unstated reason has not been shown to be a gap in the machine,
 // and a gap read as a failure is the safe direction to be wrong in: it costs a
 // look, while the other costs a passing build that tested nothing.
+// componentExitCode is the code a component exited with, or 0 when the error is
+// not a component's exit (it could not be started, say).
+func componentExitCode(err error) int {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return 0
+}
+
 func exitCodeFor(err error, cannotRunHere int) int {
 	if isMissingSomethingThisMachineNeeds(err) {
 		return cannotRunHere

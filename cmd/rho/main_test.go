@@ -19,6 +19,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -353,4 +354,21 @@ func builtBinary(target string) string {
 		}
 	}
 	return ""
+}
+
+// rho-target exits 77 when a board's compiler is not installed, and `rho build`
+// passes that on rather than turning it into 1; any other code is a failure.
+func TestComponentExitCodeIsReadFromTheProcess(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no shell to test with")
+	}
+	for _, want := range []int{77, 1} {
+		err := exec.Command("/bin/sh", "-c", fmt.Sprintf("exit %d", want)).Run()
+		if got := componentExitCode(err); got != want {
+			t.Errorf("expected %d, got %d", want, got)
+		}
+	}
+	if got := componentExitCode(fmt.Errorf("the rho-target component has no entry point")); got != 0 {
+		t.Errorf("an error that is not a process exit has no code, got %d", got)
+	}
 }

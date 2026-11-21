@@ -645,3 +645,9 @@ Needs rho-target 0.1.13 and rho-cimport 0.1.3, which apply the same rule to `dep
 ## [0.21.1] - 2026-11-21
 
 A program built as a framework's component (ESP-IDF) gets its Kconfig header. The framework reads the component's file inside its own `project()`, before the top-level file's build-time merge could run, so the program's `CONFIG_*` symbols were all undefined and its `autoconf.h` was nowhere in the tree. The component file now runs the same `rho kconfig merge` (tool, fragments, values file, dialect) when it is read — not in the framework's script-mode pass — fails the configure if it cannot, reconfigures when the values file or a fragment changes, and lists the dialect's header directory in `RHO_PROGRAM_INCLUDE_DIRS` after the merge has written it. A program built the ordinary way is generated as before.
+
+## [0.21.2] - 2026-11-21
+
+`rho build` passes on the 77 rho-target exits with when a board's compiler is not installed, rather than turning it into 1, so a board this machine cannot build for is a skipped build to `rho test` and to a smoke script. Every other failure of the board build still exits 1.
+
+Needs rho-target 0.1.14, which exits 77 and says which compiler is missing and how to get it; rho-test 0.4.1 reads 77 from a command suite as skipped as it already did from a build suite; rho-cimport 0.1.4 adds the paths a later board needs to a vendor repository a first board checked out sparsely.
