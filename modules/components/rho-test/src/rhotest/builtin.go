@@ -363,6 +363,12 @@ func resolveCommand(declared Declared, root string) (Suite, error) {
 			{
 				Name:    "run " + base,
 				Command: command,
+				// A script exits 77 to say it could not be tried here — the same
+				// automake convention a build uses, and the one RoboHub's own test
+				// scripts already follow — so its status is read the way a build's
+				// is: 0 passed, 77 skipped with its last line as the reason, and
+				// anything else failed.
+				Verdict: StepVerdictBuild,
 			},
 		},
 	}, nil

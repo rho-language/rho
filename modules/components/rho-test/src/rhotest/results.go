@@ -50,7 +50,7 @@ import (
 
 // RunnerVersion is this runner's version, recorded in every results file. The
 // test beside this file checks it against the module's manifest.
-const RunnerVersion = "0.4.0"
+const RunnerVersion = "0.4.1"
 
 // ResultsFileName is the name of the run's own record in the report directory.
 const ResultsFileName = "results.json"

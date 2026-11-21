@@ -67,3 +67,7 @@ A Rho test file is built as a test build, `rho build --emit-c --test-report <nam
 ### Breaking
 
 - A `test fn` that `main` never calls fails. It used to pass when the program printed no result lines, and be skipped when it printed others — a test that never ran was reported green.
+
+## [0.4.1] - 2026-11-21
+
+A `kind: command` suite whose command exits 77 is skipped, with the last line it printed as the reason, as a `kind: build` suite already was: 77 is the automake "could not be tried here" that RoboHub's test scripts use, and it was reported as a failure. Any other non-zero status still fails the suite. A suite skipped by what its build or script said, rather than by its manifest, is counted among the run's skipped suites (`N of M suites skipped`); a run whose only non-passing suites are skipped exits 0.

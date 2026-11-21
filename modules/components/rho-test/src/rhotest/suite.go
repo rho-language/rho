@@ -152,7 +152,8 @@ const (
 	// StepVerdictDefault is that a failure failed.
 	StepVerdictDefault StepVerdict = ""
 	// StepVerdictBuild reads a build's exit status: 0 built, CannotRunHere skipped,
-	// anything else failed.
+	// anything else failed. A command suite's script is read the same way, since
+	// 77 is the automake convention for both.
 	StepVerdictBuild StepVerdict = "build"
 )
 
@@ -339,15 +340,27 @@ func Summarize(suites []Suite, results []Result) Summary {
 			summary.SkippedSuites++
 			continue
 		}
-		failed := false
+		// A suite that ran and was skipped — its build or script exited 77, or every
+		// case it reported was a skip — is counted as skipped too, so a run says how
+		// many suites it could not try whether that was known before or after.
+		failed, ran, allSkipped := false, false, true
 		for _, result := range results {
-			if result.Suite == suite.Name && result.Status == StatusFail {
+			if result.Suite != suite.Name {
+				continue
+			}
+			ran = true
+			if result.Status == StatusFail {
 				failed = true
 				break
+			}
+			if result.Status != StatusSkip {
+				allSkipped = false
 			}
 		}
 		if failed {
 			summary.FailedSuites++
+		} else if ran && allSkipped {
+			summary.SkippedSuites++
 		}
 	}
 	return summary

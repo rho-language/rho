@@ -18,6 +18,7 @@ package rhotest
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -601,5 +602,89 @@ func TestAMissingTestFileFailsTheRun(t *testing.T) {
 	}
 	if !strings.Contains(report.Results[0].Reason, "no test file") {
 		t.Errorf("the reason does not say what is missing: %q", report.Results[0].Reason)
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Exit 77 from a command or a build                                          */
+/* -------------------------------------------------------------------------- */
+
+// runOne resolves and executes one declared suite for real, and summarizes it.
+func runOne(t *testing.T, declared Declared) (RunReport, Summary) {
+	t.Helper()
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no shell to test with")
+	}
+	root := t.TempDir()
+	suites, problems := ResolveAll([]Declared{declared}, root, BuiltinResolvers()...)
+	if len(problems) != 0 {
+		t.Fatalf("expected the suite to resolve, got %+v", problems)
+	}
+	report := Execute(suites, ExecuteOptions{Root: root})
+	return report, Summarize(report.Suites, report.Results)
+}
+
+// A test script that exits 77 is saying it could not be tried on this machine,
+// which RoboHub's scripts already do. It is skipped, with what it said last as
+// the reason, and a run of nothing but skips is not a failed run.
+func TestACommandSuiteExiting77IsSkipped(t *testing.T) {
+	report, summary := runOne(t, Declared{Name: "on-bench", Kind: KindCommand,
+		Command: []string{"/bin/sh", "-c", "echo probing; echo 'no board on /dev/ttyUSB0'; exit 77"}})
+	if !summary.OK() {
+		t.Errorf("a run whose only suite was skipped should pass, got %+v", summary)
+	}
+	if summary.SkippedSuites != 1 || summary.FailedSuites != 0 {
+		t.Errorf("expected one skipped suite and no failed one, got %+v", summary)
+	}
+	if len(report.Results) != 1 || report.Results[0].Status != StatusSkip {
+		t.Fatalf("expected one skipped result, got %+v", report.Results)
+	}
+	if report.Results[0].Reason != "no board on /dev/ttyUSB0" {
+		t.Errorf("expected the script's last line as the reason, got %q", report.Results[0].Reason)
+	}
+}
+
+// Any other non-zero status is still a failure.
+func TestACommandSuiteExiting1StillFails(t *testing.T) {
+	_, summary := runOne(t, Declared{Name: "smoke", Kind: KindCommand,
+		Command: []string{"/bin/sh", "-c", "echo 'assertion failed'; exit 1"}})
+	if summary.OK() || summary.FailedSuites != 1 || summary.SkippedSuites != 0 {
+		t.Errorf("expected a command exiting 1 to fail the run, got %+v", summary)
+	}
+}
+
+// fakeRho puts a `rho` in place that prints a line and exits with a code, which
+// is what a build suite runs.
+func fakeRho(t *testing.T, line string, code int) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "rho")
+	script := fmt.Sprintf("#!/bin/sh\necho 'Generating...'\necho '%s' >&2\nexit %d\n", line, code)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(RhoBinaryEnv, path)
+}
+
+// A build whose board compiler is not installed exits 77 (rho-target says which
+// compiler), and the suite is skipped rather than failed.
+func TestABuildSuiteWhoseToolchainIsMissingIsSkipped(t *testing.T) {
+	fakeRho(t, "rho target build: skipped: xtensa-esp32-elf-gcc is not installed", CannotRunHere)
+	report, summary := runOne(t, Declared{Name: "health-check-builds", Kind: KindBuild,
+		Options: map[string]any{"build": map[string]any{"project": "examples/c/health_check", "target": "lolin32-lite"}}})
+	if !summary.OK() || summary.SkippedSuites != 1 {
+		t.Errorf("expected the build suite to be skipped and the run to pass, got %+v", summary)
+	}
+	if len(report.Results) != 1 || !strings.Contains(report.Results[0].Reason, "xtensa-esp32-elf-gcc") {
+		t.Errorf("expected the missing compiler as the reason, got %+v", report.Results)
+	}
+}
+
+// A build that fails for any other reason fails the suite.
+func TestABuildSuiteThatDoesNotCompileFails(t *testing.T) {
+	fakeRho(t, "error: undefined reference to `main'", 1)
+	_, summary := runOne(t, Declared{Name: "builds", Kind: KindBuild,
+		Options: map[string]any{"build": map[string]any{"target": "lolin32-lite"}}})
+	if summary.OK() || summary.FailedSuites != 1 {
+		t.Errorf("expected a build exiting 1 to fail the run, got %+v", summary)
 	}
 }
