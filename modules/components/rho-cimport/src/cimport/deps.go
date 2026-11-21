@@ -305,6 +305,11 @@ func (r *Resolver) rootOf(dep CDep) (string, error) {
 	}
 
 	if info, err := os.Stat(dest); err == nil && info.IsDir() {
+		// Already here, but perhaps for another board. A repository is shared by
+		// every board of a family and is checked out sparsely, with the paths the
+		// board that fetched it named; a later board of the same family names its
+		// own startup file, which that checkout does not have.
+		r.widen(dep, dest)
 		return dest, nil
 	}
 
@@ -415,6 +420,90 @@ func (r *Resolver) fetch(dep CDep, dest string) error {
 		fmt.Fprintf(os.Stderr, "warning: %s: could not fetch the declared paths: %v\n", dep.Name, err)
 	}
 	return nil
+}
+
+// widen adds to an existing sparse checkout the paths this dependency names that
+// it does not have yet.
+//
+// A vendor repository is fetched once and shared by every board that uses it, and
+// what is checked out is what the first board built named. A second board of the
+// same family names a startup file of its own — `startup_stm32f446xx.s` where the
+// first named `startup_stm32f412zx.s` — and without this it links without an
+// entry point, because the file it named was never checked out.
+//
+// Nothing is run when every path is already among the checkout's patterns, so a
+// build that needs nothing new works offline as it did. A checkout that is not
+// sparse has everything, and a directory that is not a repository of its own (a
+// vendor tree copied in by hand) is somebody's to manage; both are left alone.
+func (r *Resolver) widen(dep CDep, dest string) {
+	paths := append([]string{}, dep.Include...)
+	paths = append(paths, dep.Src...)
+	if len(paths) == 0 {
+		return
+	}
+	// The directory's own repository, not one it happens to sit inside: a vendor
+	// folder is usually inside the project's checkout, and asking git in it about
+	// a folder that is not a repository answers for the project.
+	if _, err := os.Stat(filepath.Join(dest, ".git")); err != nil {
+		return
+	}
+	if sparse, _ := r.gitOutput([]string{"config", "--get", "core.sparseCheckout"}, dest); strings.TrimSpace(sparse) != "true" {
+		return
+	}
+	listed, err := r.gitOutput([]string{"sparse-checkout", "list"}, dest)
+	if err != nil {
+		return
+	}
+	have := map[string]bool{}
+	var existing []string
+	for _, line := range strings.Split(listed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		have[line] = true
+		// A git older than 2.35 took `--no-cone` for a pattern and wrote it into
+		// the file. It matches nothing, and it is not carried forward.
+		if line != "--no-cone" {
+			existing = append(existing, line)
+		}
+	}
+	var missing []string
+	for _, path := range paths {
+		if !have[path] {
+			have[path] = true
+			missing = append(missing, path)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	cone, _ := r.gitOutput([]string{"config", "--get", "core.sparseCheckoutCone"}, dest)
+	var args []string
+	if strings.TrimSpace(cone) == "true" {
+		// Cone mode takes directories only, and a startup file is a file. The
+		// checkout is moved to patterns, keeping what it had.
+		args = append([]string{"sparse-checkout", "set", "--no-cone"}, existing...)
+		args = append(args, missing...)
+	} else {
+		args = append([]string{"sparse-checkout", "add"}, missing...)
+	}
+	if err := r.git(args, dest); err != nil {
+		// As for a fresh fetch: the build goes on with what is there, and a path
+		// that could not be had surfaces as the missing file it is.
+		fmt.Fprintf(os.Stderr, "warning: %s: could not add %s to the checkout in %s: %v\n",
+			dep.Name, strings.Join(missing, ", "), dest, err)
+	}
+}
+
+// gitOutput runs a git command in a directory and returns what it printed.
+func (r *Resolver) gitOutput(args []string, dir string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Stderr = io.Discard
+	out, err := cmd.Output()
+	return string(out), err
 }
 
 // git runs a git command, optionally in a directory.

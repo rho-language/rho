@@ -30,3 +30,7 @@ platform by the workspace builds.
 A foreign interface generated for a preset (`--preset`) uses that preset's variant library (`c_connection.variants.<preset>.library`) in place of `c_connection.library`, adds the variant's `include_dirs` after the project's, and neither reads headers from nor looks for the preset in a dependency declared for other presets (`depends[].presets`). `rho cimport headers` takes `--preset` too.
 
 A build for a preset whose board declares no sources of its own removes the board-sources record a previous build for another preset left, rather than compiling that board's sources into this one.
+
+## [0.1.4] - 2026-11-21
+
+A vendor repository already checked out sparsely is widened with the paths the board being built names, rather than used as the first board left it. A repository is shared by every board of a family and was checked out with what the first board named, so on a fresh machine a second board of the same family (nucleo-f446ze after nucleo-f412zg) found no startup file of its own and linked without `Reset_Handler`. Nothing is run when every path is already checked out, so a build that needs nothing new still works offline; a checkout that is not sparse, or a vendor folder that is not a repository of its own, is left as it is.
