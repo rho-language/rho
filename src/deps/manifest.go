@@ -41,6 +41,26 @@ type DepSpec struct {
 	// keeps one ecosystem's modules together; it changes nothing about how the
 	// dependency is resolved.
 	Group string
+	// Presets are the build presets the dependency belongs to (`presets:
+	// [pico2w]`), or none for one every preset uses. A dependency for another
+	// preset is still resolved, locked and fetched; only a project generated
+	// for a preset leaves out what does not belong to it.
+	Presets []string
+}
+
+// AppliesTo reports whether the dependency belongs to a build for a preset. A
+// dependency that names no presets belongs to every build, and a build that
+// names no preset uses every dependency, because there is nothing to choose by.
+func (d DepSpec) AppliesTo(preset string) bool {
+	if len(d.Presets) == 0 || preset == "" {
+		return true
+	}
+	for _, name := range d.Presets {
+		if name == preset {
+			return true
+		}
+	}
+	return false
 }
 
 // CMakeExports is what a module exports to CMake, declared by the module itself.
@@ -985,6 +1005,9 @@ func loadYAMLManifest(data []byte, dir string) (*Manifest, error) {
 			GitTag: yamlString(item, "tag"), GitBranch: yamlString(item, "branch"),
 			Path: yamlString(item, "path"), Include: yamlString(item, "include"), Src: yamlString(item, "src"),
 		}
+		if presets := yamlStrings(item.Map["presets"]); len(presets) > 0 {
+			dep.Presets = presets
+		}
 		dep.Version.Raw = yamlString(item, "version")
 		if dep.GitTag != "" && dep.GitBranch != "" {
 			return nil, fmt.Errorf("dependency %s cannot specify both tag and branch", dep.Name)
@@ -1116,6 +1139,9 @@ type CConnection struct {
 // CVariant is one build target of a connected project: the vendor libraries it
 // links, and the macros that select the implementation at compile time.
 type CVariant struct {
+	// Library replaces the connection's own library for a build of this
+	// variant, for a program whose platform library differs by board.
+	Library string
 	// Target is the vendor CMake target, such as `vendor_stm32`.
 	Target string
 	// Libraries are the vendor libraries, when there is more than one.
@@ -1135,6 +1161,18 @@ func (v CVariant) LinkLibraries() []string {
 	}
 	libs = append(libs, v.Libraries...)
 	return libs
+}
+
+// LibraryFor is the library a build for a preset links: the variant's own when
+// the preset's variant names one, the connection's otherwise.
+func (c *CConnection) LibraryFor(preset string) string {
+	if c == nil {
+		return ""
+	}
+	if variant, found := c.Variants[preset]; found && variant.Library != "" {
+		return variant.Library
+	}
+	return c.Library
 }
 
 // Variant returns the build target a name names, and whether there is one.
@@ -1311,6 +1349,7 @@ func parseCConnection(node yaml.Value) *CConnection {
 				continue
 			}
 			connection.Variants[name] = CVariant{
+				Library:     yamlString(value, "library"),
 				Target:      yamlString(value, "target"),
 				Libraries:   yamlStrings(value.Map["libraries"]),
 				Defines:     yamlStrings(value.Map["defines"]),

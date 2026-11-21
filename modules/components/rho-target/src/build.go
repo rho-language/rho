@@ -217,7 +217,7 @@ func build(args []string) int {
 	// It is written from the application's manifest, which is where its
 	// dependencies are named — not from the generated directory, which is a
 	// build output and says nothing about what this build depends on.
-	if err := writeDepsFiles(specSource, filepath.Join(absolute, depsFileName)); err != nil {
+	if err := writeDepsFiles(specSource, filepath.Join(absolute, depsFileName), *target); err != nil {
 		fmt.Fprintln(os.Stderr, "rho target build:", err)
 		return 1
 	}

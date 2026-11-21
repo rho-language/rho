@@ -350,7 +350,7 @@ func cmakeString(value string) string {
 func emitProgramComponent(ctx Context) string {
 	name := cmakeProjectName(ctx.ModuleName)
 	_, includePaths := connectionCMake(ctx, name)
-	dependencyRoots := cDependencyRoots(ctx.ProjectRoot)
+	dependencyRoots := cDependencyRoots(ctx.ProjectRoot, ctx.Preset)
 
 	var b strings.Builder
 	b.WriteString("# The program, arranged as the component this framework builds.\n")
@@ -377,6 +377,11 @@ func emitProgramComponent(ctx Context) string {
 	}
 	b.WriteString(")\n\n")
 
+	configured := ctx.Config.Configured()
+	if configured {
+		b.WriteString(componentConfigMerge(ctx))
+	}
+
 	b.WriteString("set(RHO_PROGRAM_INCLUDE_DIRS\n")
 	b.WriteString("    ${CMAKE_CURRENT_SOURCE_DIR}\n")
 	for _, include := range ctx.IncludePaths {
@@ -385,9 +390,110 @@ func emitProgramComponent(ctx Context) string {
 	for _, include := range includePaths {
 		fmt.Fprintf(&b, "    %s\n", filepath.ToSlash(include))
 	}
+	if configured {
+		// Where the merge above wrote the header. Listed after the merge has run,
+		// because the platform's file drops a directory that does not exist yet.
+		if directory, _ := configHeader(ctx.Config.Dialect); directory == "" {
+			b.WriteString("    ${RHO_CONFIG_OUT}\n")
+		} else {
+			b.WriteString("    ${RHO_CONFIG_OUT}/" + directory + "\n")
+		}
+	}
+	b.WriteString(")\n\n")
+
+	// The libraries the build's variant links besides the platform's own, in the
+	// order it declared them. The platform's file is what links the program, so
+	// it is handed the list; set even when empty, so that file can use it
+	// without asking whether it is there.
+	b.WriteString("set(RHO_PROGRAM_LIBRARIES\n")
+	for _, library := range programLibraries(ctx) {
+		fmt.Fprintf(&b, "    %s\n", library)
+	}
 	b.WriteString(")\n\n")
 
 	b.WriteString("include(${CMAKE_CURRENT_LIST_DIR}/component.cmake)\n")
+	return b.String()
+}
+
+// programLibraries are the libraries a component-built program's variant links,
+// without the platform library itself, which the platform's own file links.
+func programLibraries(ctx Context) []string {
+	libraries := []string{}
+	if ctx.Connection == nil {
+		return libraries
+	}
+	variant, _ := ctx.Connection.Variant(ctx.Variant)
+	platform := ctx.Connection.LibraryFor(ctx.Variant)
+	for _, library := range variant.LinkLibraries() {
+		if library != platform {
+			libraries = append(libraries, library)
+		}
+	}
+	return libraries
+}
+
+// componentConfigMerge resolves the Kconfig bridge for a program a framework
+// builds as a component, at configure time.
+//
+// The normal path runs the merge as a build-time custom command and puts the
+// header's directory on the program's target. A component has no target this
+// generator owns, and the framework processes its file inside its own
+// `project()`, before anything the top-level file says after it — so the merge
+// runs here, when the file is read, with the same tool, fragments, values and
+// dialect the build-time command would use. The framework also reads the file
+// in script mode to learn its requirements; nothing is merged then. A changed
+// values file or fragment reconfigures the project.
+func componentConfigMerge(ctx Context) string {
+	config := ctx.Config
+	var b strings.Builder
+	b.WriteString("# The configuration, resolved when this file is read: a component is built\n")
+	b.WriteString("# inside the framework's own project(), before the top-level file's build-time\n")
+	b.WriteString("# merge could run, and its header has to exist for the program to see it.\n")
+	b.WriteString("set(RHO_CONFIG_OUT " + cmakePath(ctx.OutputDir) + ")\n")
+	var fragments []string
+	for _, fragment := range config.Fragments {
+		absolute := fragment
+		if !filepath.IsAbs(absolute) && config.OutputDir != "" {
+			absolute = filepath.Join(config.OutputDir, filepath.FromSlash(fragment))
+		}
+		fragments = append(fragments, cmakeString(filepath.ToSlash(absolute)))
+	}
+	b.WriteString("if(NOT CMAKE_SCRIPT_MODE_FILE AND NOT CMAKE_BUILD_EARLY_EXPANSION)\n")
+	b.WriteString("  if(DEFINED ENV{RHO_BIN} AND NOT \"$ENV{RHO_BIN}\" STREQUAL \"\")\n")
+	b.WriteString("    set(RHO_CONFIG_TOOL \"$ENV{RHO_BIN}\")\n")
+	b.WriteString("  else()\n")
+	b.WriteString("    set(RHO_CONFIG_TOOL rho)\n")
+	b.WriteString("  endif()\n")
+	b.WriteString("  execute_process(\n")
+	b.WriteString("    COMMAND ${RHO_CONFIG_TOOL} kconfig merge --quiet --force\n")
+	b.WriteString("            --dialect " + cmakeString(config.Dialect) + "\n")
+	b.WriteString("            --root ${RHO_CONFIG_OUT}\n")
+	b.WriteString("            --out ${RHO_CONFIG_OUT}\n")
+	if config.Defconfig != "" {
+		// Joined to the flag, for the reason the build-time command gives.
+		b.WriteString("            " + cmakeString("--defconfig="+config.Defconfig) + "\n")
+	}
+	for _, fragment := range fragments {
+		b.WriteString("            " + fragment + "\n")
+	}
+	b.WriteString("    RESULT_VARIABLE RHO_CONFIG_RESULT\n")
+	b.WriteString("    OUTPUT_VARIABLE RHO_CONFIG_OUTPUT\n")
+	b.WriteString("    ERROR_VARIABLE RHO_CONFIG_OUTPUT)\n")
+	b.WriteString("  if(NOT RHO_CONFIG_RESULT EQUAL 0)\n")
+	b.WriteString("    message(FATAL_ERROR \"the Kconfig bridge could not be resolved:\\n${RHO_CONFIG_OUTPUT}\")\n")
+	b.WriteString("  endif()\n")
+	depends := append([]string{}, fragments...)
+	if config.Defconfig != "" {
+		depends = append(depends, cmakeString(config.Defconfig))
+	}
+	if len(depends) > 0 {
+		b.WriteString("  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS\n")
+		for _, dependency := range depends {
+			b.WriteString("    " + dependency + "\n")
+		}
+		b.WriteString("  )\n")
+	}
+	b.WriteString("endif()\n\n")
 	return b.String()
 }
 
@@ -506,7 +612,7 @@ func emitCMakeLists(ctx Context) string {
 		b.WriteString(")\n\n")
 	}
 
-	dependencyRoots := cDependencyRoots(ctx.ProjectRoot)
+	dependencyRoots := cDependencyRoots(ctx.ProjectRoot, ctx.Preset)
 
 	// rho knows where every dependency is; a module's own build file does not.
 	// Each directory is written down under the name its manifest declares, so a
@@ -720,7 +826,12 @@ func copyProjectSources(ctx Context) (map[string]string, error) {
 // beside something that looks like a dependency. A dependency that declares a
 // build definition is contributing it; one that does not is not, and the
 // difference is a statement in a manifest rather than a directory listing.
-func cDependencyRoots(projectRoot string) []string {
+//
+// A dependency declared for other presets (`presets: [lolin32-lite]`) is left
+// out of a build for this one, and so is everything reached only through it: a
+// board's platform library is not added to the build of another board. A
+// preset of "" leaves nothing out.
+func cDependencyRoots(projectRoot, preset string) []string {
 	if projectRoot == "" {
 		return nil
 	}
@@ -742,7 +853,7 @@ func cDependencyRoots(projectRoot string) []string {
 			return
 		}
 		for _, dep := range manifest.Deps {
-			if dep.Type != deps.DepTypeC || dep.Path == "" {
+			if dep.Type != deps.DepTypeC || dep.Path == "" || !dep.AppliesTo(preset) {
 				continue
 			}
 			root := dep.Path
@@ -862,9 +973,11 @@ func connectionCMake(ctx Context, name string) (link string, includes []string) 
 
 	// A library is linked when it is named, and a build with nothing to link
 	// gets no link line rather than an empty one.
+	// A variant may name a library of its own, for a program whose platform
+	// library is a different one on each board.
 	libraries := []string{}
-	if connection.Library != "" {
-		libraries = append(libraries, connection.Library)
+	if library := connection.LibraryFor(ctx.Variant); library != "" {
+		libraries = append(libraries, library)
 	}
 	libraries = append(libraries, variant.LinkLibraries()...)
 

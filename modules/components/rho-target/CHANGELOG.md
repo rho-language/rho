@@ -106,3 +106,7 @@ given the whole command as one argument is a tool given a name it cannot parse.
 ## [0.1.12] - 2026-11-15
 
 The stack estimate is printed only for a target with a memory map (a board), or with `-v`. `pins` takes flags after its arguments.
+
+## [0.1.13] - 2026-11-21
+
+`deps.cmake` and `deps-aliases.cmake` are written for the target being built: a dependency the application declares for other presets (`depends[].presets`) is published by neither, and nor is anything reached only through it. A dependency without `presets` is published for every target, as before.

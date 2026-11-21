@@ -305,3 +305,33 @@ func revision(path, fallback string) string {
 	}
 	return strings.TrimSpace(string(output))
 }
+
+// ForPreset returns the names of the packages a build for a preset uses: the
+// ones reached from the project through dependencies that belong to the preset
+// (DepSpec.AppliesTo). Every package is still resolved and locked; a build for
+// one board only leaves out what is declared for another, and what is reached
+// only through it. A preset of "" uses every package.
+func (g *DependencyGraph) ForPreset(manifest *Manifest, preset string) map[string]bool {
+	used := map[string]bool{}
+	if g == nil {
+		return used
+	}
+	var walk func(specs []DepSpec)
+	walk = func(specs []DepSpec) {
+		for _, dep := range specs {
+			if !dep.AppliesTo(preset) || used[dep.Name] {
+				continue
+			}
+			node, ok := g.Nodes[dep.Name]
+			if !ok {
+				continue
+			}
+			used[dep.Name] = true
+			walk(node.Deps)
+		}
+	}
+	if manifest != nil {
+		walk(manifest.Deps)
+	}
+	return used
+}

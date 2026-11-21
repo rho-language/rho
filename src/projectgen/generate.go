@@ -360,6 +360,10 @@ type Context struct {
 	// Variant is the build target a person named, when it is a variant of the
 	// connection rather than an emitter of its own.
 	Variant string
+	// Preset is the build preset the project is generated for, or "" for a
+	// build that names none. A dependency declared for other presets is left out
+	// of the project.
+	Preset string
 }
 
 // Config is the Kconfig bridge a project declared: the fragments that define

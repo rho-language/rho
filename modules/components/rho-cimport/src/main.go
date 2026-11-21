@@ -148,7 +148,7 @@ func generate(args []string, check bool) int {
 	// What a project links is in its manifest, so the generator is told what it
 	// needs rather than asked for it: a binding generated from different headers
 	// than the build links is a binding that calls nothing.
-	connection, err := readConnection(absolute, *library)
+	connection, err := readConnection(absolute, *library, *presetName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho cimport:", err)
 		return 1
@@ -225,8 +225,10 @@ func generate(args []string, check bool) int {
 	return 0
 }
 
-// readConnection is the native library a project links, as its manifest says.
-func readConnection(root, library string) (deps.CConnection, error) {
+// readConnection is the native library a project links, as its manifest says,
+// for a build of a preset: the preset's variant may name a library of its own,
+// and a dependency declared for other presets contributes no headers.
+func readConnection(root, library, preset string) (deps.CConnection, error) {
 	manifest, err := deps.LoadManifest(deps.ManifestPath(root))
 	if err != nil {
 		return deps.CConnection{}, err
@@ -238,6 +240,7 @@ func readConnection(root, library string) (deps.CConnection, error) {
 		return deps.CConnection{Library: library}, nil
 	}
 	connection := *manifest.Connection
+	connection.Library = manifest.Connection.LibraryFor(preset)
 	if library != "" {
 		connection.Library = library
 	}
@@ -250,7 +253,14 @@ func readConnection(root, library string) (deps.CConnection, error) {
 	// are searched first: a project is allowed to add a directory of its own,
 	// and to place one ahead of the platform's.
 	if len(connection.IncludeDirs) == 0 {
-		connection.IncludeDirs = declaredIncludeDirs(root, manifest)
+		connection.IncludeDirs = declaredIncludeDirs(root, manifest, preset)
+	} else {
+		connection.IncludeDirs = append([]string{}, connection.IncludeDirs...)
+	}
+	// The preset's variant adds the headers its own library brings, after the
+	// project's: the same directories the generated build compiles with.
+	if variant, found := manifest.Connection.Variant(preset); found {
+		connection.IncludeDirs = append(connection.IncludeDirs, variant.IncludeDirs...)
 	}
 	return connection, nil
 }
@@ -268,7 +278,10 @@ func readConnection(root, library string) (deps.CConnection, error) {
 // Each directory is read from the manifest that declares it, resolved against
 // that manifest's own module. A path a dependency publishes is the promise; a
 // directory beside it is a guess.
-func declaredIncludeDirs(root string, manifest *deps.Manifest) []string {
+//
+// A dependency declared for other presets than the one being built is not
+// walked: its headers belong to another board's build.
+func declaredIncludeDirs(root string, manifest *deps.Manifest, preset string) []string {
 	dirs := []string{}
 	seen := map[string]bool{}
 	visited := map[string]bool{}
@@ -295,7 +308,7 @@ func declaredIncludeDirs(root string, manifest *deps.Manifest) []string {
 		}
 
 		for _, dep := range m.Deps {
-			if dep.Type != deps.DepTypeC || dep.Path == "" {
+			if dep.Type != deps.DepTypeC || dep.Path == "" || !dep.AppliesTo(preset) {
 				continue
 			}
 			dependencyRoot := dep.Path
@@ -348,7 +361,8 @@ func problems(result cimport.Result) bool {
 func headers(args []string) int {
 	fs := flag.NewFlagSet("rho cimport headers", flag.ExitOnError)
 	library := fs.String("library", "", "the C library, when the manifest does not say")
-	flagArgs, rest := splitArgs(args, map[string]bool{"library": true})
+	presetName := fs.String("preset", "", "the preset whose headers to list")
+	flagArgs, rest := splitArgs(args, map[string]bool{"library": true, "preset": true})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
@@ -361,7 +375,7 @@ func headers(args []string) int {
 		fmt.Fprintln(os.Stderr, "rho cimport:", err)
 		return 1
 	}
-	connection, err := readConnection(absolute, *library)
+	connection, err := readConnection(absolute, *library, *presetName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rho cimport:", err)
 		return 1

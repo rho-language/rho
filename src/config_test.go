@@ -67,7 +67,7 @@ func TestTheFragmentsAndTheValuesReachTheGeneratedProject(t *testing.T) {
 	root := configuredProject(t)
 	out := filepath.Join(t.TempDir(), "generated")
 
-	bridge := configBridge(root, out)
+	bridge := configBridge(root, out, "")
 	if bridge == nil {
 		t.Fatal("expected the declared bridge to be carried")
 	}
@@ -105,7 +105,7 @@ func TestAProjectWithNoBridgeCarriesNone(t *testing.T) {
 		[]byte("module:\n  name: plain\n  type: rho\n  version: 0.1.0\n\nmain: src/main.rho\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if bridge := configBridge(root, filepath.Join(root, "out")); bridge != nil {
+	if bridge := configBridge(root, filepath.Join(root, "out"), ""); bridge != nil {
 		t.Fatalf("expected no bridge, got %+v", bridge)
 	}
 }
@@ -119,7 +119,7 @@ func TestAFragmentThatCannotBeReadIsLeftToTheMerge(t *testing.T) {
 		0o644); err != nil {
 		t.Fatal(err)
 	}
-	bridge := configBridge(root, filepath.Join(t.TempDir(), "out"))
+	bridge := configBridge(root, filepath.Join(t.TempDir(), "out"), "")
 	if bridge == nil {
 		t.Fatal("expected the bridge to be carried")
 	}
@@ -149,7 +149,7 @@ func TestAModuleOfConstantsIsCarriedAsAFragment(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "kconfig", "board.Kconfig"), []byte("config CONFIG_ONE\n\tbool\n\tdefault y\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bridge := configBridge(root, filepath.Join(t.TempDir(), "out"))
+	bridge := configBridge(root, filepath.Join(t.TempDir(), "out"), "")
 	if bridge == nil {
 		t.Fatal("expected the bridge to be carried")
 	}

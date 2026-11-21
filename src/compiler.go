@@ -132,7 +132,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 	if err != nil {
 		return err
 	}
-	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots)
+	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots, "")
 	ctx := projectgen.Context{
 		Native:         native,
 		ModuleName:     irModule.Name,
@@ -143,7 +143,7 @@ func GenerateTarget(path, outputDir, targetID string, includePaths, sourceFiles,
 		IR:             irModule,
 		IncludePaths:   includePaths,
 		SourceFiles:    sourceFiles,
-		Config:         configBridge(path, outputDir, dependencyRoots...),
+		Config:         configBridge(path, outputDir, "", dependencyRoots...),
 		EnabledConfigs: enabledConfigs,
 		GuardedSources: guardedSources,
 		SQL:            sqlBridge(ProjectRoot(path)),
@@ -198,7 +198,14 @@ type GeneratedTarget struct {
 // release its strings is a warning (a host, whose arena grows) or refuses the
 // build (a board, whose string arena is a fixed size).
 func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only, layoutDir, board string, shim ...[]string) ([]GeneratedTarget, error) {
-	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots)
+	return GenerateAllTargetsForPreset(path, outputRoot, includePaths, sourceFiles, dependencyRoots, only, layoutDir, board, "", shim...)
+}
+
+// GenerateAllTargetsForPreset is GenerateAllTargetsDetailed for a build of one
+// preset: a dependency the manifest declares for other presets is left out of
+// the generated project. A preset of "" leaves nothing out.
+func GenerateAllTargetsForPreset(path, outputRoot string, includePaths, sourceFiles, dependencyRoots []string, only, layoutDir, board, preset string, shim ...[]string) ([]GeneratedTarget, error) {
+	enabledConfigs, guardedSources := resolutionOf(path, dependencyRoots, preset)
 	projectRoot := ProjectRoot(path)
 	// A project that declared SQL gets its statements generated before anything
 	// is compiled, because the generated Rho is an input to the compile: a
@@ -315,12 +322,13 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 			IR:             irModule,
 			IncludePaths:   includePaths,
 			SourceFiles:    append(sourceFiles, path),
-			Config:         configBridge(projectRoot, dir, dependencyRoots...),
+			Config:         configBridge(projectRoot, dir, preset, dependencyRoots...),
 			EnabledConfigs: enabledConfigs,
 			GuardedSources: guardedSources,
 			SQL:            sqlBridge(projectRoot),
 			Connection:     connection,
 			Variant:        variants[target.ID],
+			Preset:         preset,
 			LayoutDir:      layoutDir,
 			ModuleRoots:    moduleRootsOf(compiled, projectRoot),
 		}
@@ -330,9 +338,83 @@ func GenerateAllTargetsDetailed(path, outputRoot string, includePaths, sourceFil
 		if _, err := projectgen.Generate(ctx, target); err != nil {
 			return written, err
 		}
+		if target.Emitter == "c" {
+			if err := recordPreset(dir, preset); err != nil {
+				return written, err
+			}
+		}
 		written = append(written, GeneratedTarget{ID: target.ID, Dir: dir, Emitter: target.Emitter})
 	}
 	return written, nil
+}
+
+// ForgetOtherPreset empties the project's generated C project when it was
+// generated for another preset than this one (see forgetOtherPreset). A build
+// calls it before anything writes into that directory for this preset — the
+// foreign interface's shim is written there before generation runs.
+func ForgetOtherPreset(projectRoot, preset string) error {
+	descriptor, err := ResolveDescriptor(projectRoot)
+	if err != nil {
+		return err
+	}
+	targets, err := descriptor.ResolveTargets([]string{ConnectionVariantEmitter})
+	if err != nil || len(targets) == 0 {
+		return nil
+	}
+	root := descriptor.OutputRoot(targets[0])
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(projectRoot, root)
+	}
+	return forgetOtherPreset(filepath.Join(root, targets[0].ID), preset)
+}
+
+// presetMarker is the file a generated project records the preset it was
+// generated for in.
+const presetMarker = ".rho-preset"
+
+// forgetOtherPreset empties a generated project that was generated for another
+// preset, keeping its `build` directory, where each target's own build tree is.
+//
+// A generated project keeps a file it already has — the platform component's
+// build file, the Kconfig glue, a copied fragment — and a file written for one
+// board is wrong for the next: a program whose manifest builds for two presets
+// would build the second with the first one's platform sources. What was
+// generated for the same preset, or before a preset was recorded, is kept.
+func forgetOtherPreset(dir, preset string) error {
+	marker := filepath.Join(dir, presetMarker)
+	previous, err := os.ReadFile(marker)
+	if err == nil && strings.TrimSpace(string(previous)) != preset {
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			return readErr
+		}
+		for _, entry := range entries {
+			if entry.Name() == "build" {
+				continue
+			}
+			if removeErr := os.RemoveAll(filepath.Join(dir, entry.Name())); removeErr != nil {
+				return removeErr
+			}
+		}
+	}
+	if _, statErr := os.Stat(dir); statErr != nil {
+		// Nothing generated yet; generation records the preset.
+		return nil
+	}
+	return recordPreset(dir, preset)
+}
+
+// recordPreset writes the preset a generated project is for, or removes the
+// record for a build that names none.
+func recordPreset(dir, preset string) error {
+	marker := filepath.Join(dir, presetMarker)
+	if preset == "" {
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return os.WriteFile(marker, []byte(preset+"\n"), 0o644)
 }
 
 // BuildGeneratedTargets compiles the generated projects that are real
@@ -645,7 +727,7 @@ func cConnection(projectRoot string) *deps.CConnection {
 // place, because a generated project is a directory someone may build on its own
 // and move: it has to carry what it needs. A project that declared no bridge
 // gets none, and its build is what it was.
-func configBridge(projectRoot, outputDir string, dependencyRoots ...string) *projectgen.Config {
+func configBridge(projectRoot, outputDir, preset string, dependencyRoots ...string) *projectgen.Config {
 	manifest, err := deps.LoadManifest(deps.ManifestPath(projectRoot))
 	if err != nil || manifest == nil || manifest.Config == nil {
 		return nil
@@ -689,7 +771,7 @@ func configBridge(projectRoot, outputDir string, dependencyRoots ...string) *pro
 	// nothing unless the library that owns HAL is the one declaring `HAL_UART`,
 	// and a merge that saw only the project's own fragment would not know the
 	// symbol existed — let alone whether it were set.
-	for _, root := range cDependencyChain(projectRoot, dependencyRoots) {
+	for _, root := range cDependencyChain(projectRoot, dependencyRoots, preset) {
 		dependency, depErr := deps.LoadManifest(deps.ManifestPath(root))
 		if depErr != nil || dependency == nil {
 			continue
@@ -2473,7 +2555,14 @@ func kconfigFragmentsOf(root string, config *deps.ConfigManifest) []namedFragmen
 // configuration governs is decided from the manifests of the whole chain, not the
 // project's alone.
 func CDependencyChain(projectRoot string, roots []string) []string {
-	return cDependencyChain(projectRoot, roots)
+	return cDependencyChain(projectRoot, roots, "")
+}
+
+// CDependencyChainForPreset is CDependencyChain for a build of one preset: a
+// dependency declared for other presets (`presets: [lolin32-lite]`) is not in
+// the chain, and nor is anything reached only through it.
+func CDependencyChainForPreset(projectRoot string, roots []string, preset string) []string {
+	return cDependencyChain(projectRoot, roots, preset)
 }
 
 // cDependencyChain returns every C module reachable from a project, the ones it
@@ -2489,7 +2578,7 @@ func CDependencyChain(projectRoot string, roots []string) []string {
 // writes `depends:` as a list carrying a type and a path, and that reader expects
 // the older form where each entry was a version constraint. Asking the other one
 // finds no dependencies at all, which looks exactly like a project that has none.
-func cDependencyChain(projectRoot string, roots []string) []string {
+func cDependencyChain(projectRoot string, roots []string, preset string) []string {
 	ordered := []string{}
 	seen := map[string]bool{}
 
@@ -2513,6 +2602,9 @@ func cDependencyChain(projectRoot string, roots []string) []string {
 				continue
 			}
 			if readText(item.Map["type"]) != "c" {
+				continue
+			}
+			if !(deps.DepSpec{Presets: readTexts(item.Map["presets"])}).AppliesTo(preset) {
 				continue
 			}
 			path := readText(item.Map["path"])
@@ -2557,6 +2649,17 @@ func readTextOrEmpty(path string) string {
 	return string(data)
 }
 
+// readTexts is the strings of a list value, or nil.
+func readTexts(value yaml.Value) []string {
+	var out []string
+	for _, item := range value.List {
+		if item.Kind == yaml.KindString && item.Str != "" {
+			out = append(out, item.Str)
+		}
+	}
+	return out
+}
+
 // readText is the text of a mapping's scalar value, or "".
 func readText(value yaml.Value) string {
 	if value.Str == "" {
@@ -2571,7 +2674,7 @@ func readText(value yaml.Value) string {
 // It is resolved here as well as in the command, because generation has to know:
 // a driver that is switched off is not a driver that is unused, and the only
 // moment a source can still be left out is before the target is written.
-func resolutionOf(entryPath string, dependencyRoots []string) (map[string]bool, map[string]string) {
+func resolutionOf(entryPath string, dependencyRoots []string, preset string) (map[string]bool, map[string]string) {
 	// The manifest and the dependencies belong to the project, not to the file the
 	// build was pointed at. Handed a `.rho` path, both look inside a folder that
 	// does not exist, which is not an error — there is simply nothing to read, so
@@ -2594,7 +2697,7 @@ func resolutionOf(entryPath string, dependencyRoots []string) (map[string]bool, 
 		}
 	}
 	guarded := map[string]string{}
-	for _, root := range CDependencyChain(projectRoot, dependencyRoots) {
+	for _, root := range CDependencyChainForPreset(projectRoot, dependencyRoots, preset) {
 		module, err := deps.LoadManifest(deps.ManifestPath(root))
 		if err != nil || module == nil {
 			continue

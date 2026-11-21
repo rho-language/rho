@@ -456,10 +456,15 @@ func RecordPresetSources(root, destination, presetName string) error {
 	if err := os.WriteFile(includesFile, []byte(includes.String()), 0o644); err != nil {
 		return err
 	}
+	sourcesFile := strings.TrimSuffix(destination, ".txt") + "-board-sources.txt"
 	if len(boardSources) == 0 {
+		// One recorded for another preset is not this build's: a program built
+		// for two boards would compile the first board's sources into the second.
+		if err := os.Remove(sourcesFile); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return nil
 	}
-	sourcesFile := strings.TrimSuffix(destination, ".txt") + "-board-sources.txt"
 	return os.WriteFile(sourcesFile, []byte(strings.Join(boardSources, "\n")+"\n"), 0o644)
 }
 

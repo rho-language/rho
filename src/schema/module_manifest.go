@@ -612,6 +612,10 @@ func moduleSchema(types []string) Schema {
 						{Name: "env", Required: false, Kind: KindString},
 						{Name: "include", Required: false, Kind: KindString},
 						{Name: "src", Required: false, Kind: KindString},
+						// presets are the build presets the dependency belongs to;
+						// a build for any other leaves it out. Absent, it belongs
+						// to every build.
+						{Name: "presets", Required: false, Kind: KindList, ItemSchema: &ListItemSchema{Kind: KindString}},
 					},
 				},
 			},

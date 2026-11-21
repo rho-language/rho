@@ -1014,6 +1014,20 @@ func buildCLI(args []string) int {
 		sourceFiles = append(sourceFiles, manifest.BuildSources...)
 	}
 
+	// A dependency declared for other presets (`presets: [lolin32-lite]`) is
+	// resolved and locked like any other, and left out of a build for this
+	// preset, with everything reached only through it: its headers are not on
+	// the path, its sources are not compiled, and the missing-source check below
+	// does not ask after them. The preset is the same name the rest of the build
+	// resolves its target by.
+	preset, _, _ := resolveBuildTarget(*target, manifest)
+	used := graph.ForPreset(manifest, preset)
+	for name := range graph.Nodes {
+		if !used[name] {
+			delete(graph.Nodes, name)
+		}
+	}
+
 	for _, node := range graph.Nodes {
 		if node.Type == deps.DepTypeRho {
 			rhoDependencyRoots = append(rhoDependencyRoots, node.Path)
@@ -1062,6 +1076,14 @@ func buildCLI(args []string) int {
 	if err != nil {
 		reportError("rho build", err)
 		return 2
+	}
+
+	// A generated C project left by a build for another preset is emptied
+	// before this build writes anything into it: files it already has are kept
+	// by generation, and the ones written for one board are wrong for the next.
+	if err := src.ForgetOtherPreset(projectRoot, targetName); err != nil {
+		reportError("rho build", err)
+		return 1
 	}
 
 	// Before anything is compiled, because a project that imports an interface
@@ -1198,7 +1220,7 @@ func buildCLI(args []string) int {
 		}
 	}
 
-	targets, err := src.GenerateAllTargetsDetailed(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, only, programLayout(projectRoot, targetName), boardFor(projectRoot, targetName), shimSources)
+	targets, err := src.GenerateAllTargetsForPreset(absIn, "", includePaths, sourceFiles, rhoDependencyRoots, only, programLayout(projectRoot, targetName), boardFor(projectRoot, targetName), targetName, shimSources)
 	if err != nil {
 		reportError("rho build", err)
 		return 1
@@ -1718,7 +1740,7 @@ func resolvedConfiguration(projectRoot string, manifest *deps.Manifest, targetNa
 		merge.Args = append(merge.Args, "--defconfig="+
 			filepath.Join(projectRoot, filepath.FromSlash(manifest.Config.ValuesFile)))
 	}
-	fragments := configFragments(projectRoot, manifest)
+	fragments := configFragments(projectRoot, manifest, targetName)
 	for _, fragment := range fragments {
 		merge.Args = append(merge.Args, fragment)
 	}
@@ -1739,12 +1761,13 @@ func resolvedConfiguration(projectRoot string, manifest *deps.Manifest, targetNa
 		key = strings.TrimPrefix(strings.TrimSpace(key), "CONFIG_")
 		set[key] = strings.TrimSpace(value) == "y"
 	}
-	_ = targetName
 	return set, nil
 }
 
-// configFragments is every Kconfig file a project and its dependencies declare.
-func configFragments(projectRoot string, manifest *deps.Manifest) []string {
+// configFragments is every Kconfig file a project and its dependencies declare,
+// for a build of a preset: a dependency declared for other presets declares
+// none.
+func configFragments(projectRoot string, manifest *deps.Manifest, preset string) []string {
 	fragments := []string{}
 	for _, fragment := range manifest.Config.Fragments {
 		path := filepath.Join(projectRoot, filepath.FromSlash(fragment))
@@ -1752,7 +1775,7 @@ func configFragments(projectRoot string, manifest *deps.Manifest) []string {
 			fragments = append(fragments, path)
 		}
 	}
-	for _, root := range src.CDependencyChain(projectRoot, nil) {
+	for _, root := range src.CDependencyChainForPreset(projectRoot, nil, preset) {
 		dependency, err := deps.LoadManifest(deps.ManifestPath(root))
 		if err != nil || dependency == nil || dependency.Config == nil {
 			continue

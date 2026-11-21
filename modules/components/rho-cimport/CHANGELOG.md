@@ -24,3 +24,9 @@ Republished so an installation picks up what changed since 0.1.1 without a new
 number: paths in a manifest are expanded (`${ROBOHUB_WORKSPACE}`, `${RHO_HOME}`)
 before the platform's headers are looked for, so a project that names its
 platform by the workspace builds.
+
+## [0.1.3] - 2026-11-21
+
+A foreign interface generated for a preset (`--preset`) uses that preset's variant library (`c_connection.variants.<preset>.library`) in place of `c_connection.library`, adds the variant's `include_dirs` after the project's, and neither reads headers from nor looks for the preset in a dependency declared for other presets (`depends[].presets`). `rho cimport headers` takes `--preset` too.
+
+A build for a preset whose board declares no sources of its own removes the board-sources record a previous build for another preset left, rather than compiling that board's sources into this one.

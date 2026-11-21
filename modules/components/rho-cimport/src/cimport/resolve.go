@@ -149,7 +149,7 @@ func (r *PresetResolver) Resolve(name string) (PresetResolution, error) {
 	}
 
 	available := []string{}
-	for _, root := range r.presetRoots() {
+	for _, root := range r.presetRoots(name) {
 		presets, err := presetsDeclaredBy(root)
 		if err != nil {
 			return PresetResolution{}, err
@@ -388,7 +388,10 @@ func (r *PresetResolver) declaredPresets() ([]string, error) {
 // Paths come from the manifests. A root that is not there is not a dependency
 // that failed to resolve — it is a dependency reached by git that this build has
 // not fetched, and what it would provide is read by whoever fetches it.
-func (r *PresetResolver) dependencyRoots() []string {
+//
+// A dependency declared for other presets (`presets: [lolin32-lite]`) is not a
+// place to look for this one: it belongs to another board's build.
+func (r *PresetResolver) dependencyRoots(preset string) []string {
 	document, err := loadDocument(r.ProjectRoot)
 	if err != nil {
 		return nil
@@ -411,6 +414,9 @@ func (r *PresetResolver) dependencyRoots() []string {
 
 	for _, item := range document.Map["depends"].List {
 		if item.Kind != yaml.KindMap {
+			continue
+		}
+		if only := readStrings(item.Map["presets"]); preset != "" && len(only) > 0 && !listed(only, preset) {
 			continue
 		}
 		add(readString(item.Map["path"]))
@@ -627,7 +633,7 @@ func (r *PresetResolver) LookupPreset(name string) (Preset, error) {
 			Declared: declared,
 		}
 	}
-	for _, root := range r.dependencyRoots() {
+	for _, root := range r.dependencyRoots(name) {
 		presets, err := presetsDeclaredBy(root)
 		if err != nil {
 			return Preset{}, err
@@ -756,7 +762,7 @@ func (r *PresetResolver) RootOf(name string) (string, error) {
 			Declared: index,
 		}
 	}
-	for _, root := range r.presetRoots() {
+	for _, root := range r.presetRoots(name) {
 		presets, err := presetsDeclaredBy(root)
 		if err != nil {
 			return "", err
@@ -782,10 +788,10 @@ func (r *PresetResolver) RootOf(name string) (string, error) {
 // platform implements every board of the family at once. So a board's presets are
 // found through the platform that owns the boards, not through a dependency graph
 // that does not contain them.
-func (r *PresetResolver) presetRoots() []string {
+func (r *PresetResolver) presetRoots(preset string) []string {
 	roots := []string{}
 	seen := map[string]bool{}
-	for _, root := range r.dependencyRoots() {
+	for _, root := range r.dependencyRoots(preset) {
 		if seen[root] {
 			continue
 		}

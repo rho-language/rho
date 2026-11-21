@@ -629,3 +629,19 @@ Fixed: `rho module validate .` (or `../<name>`) refused a collection whose platf
 ## [0.20.1] - 2026-11-20
 
 `rho protocol generate --target rho` takes `u8[N]` fields: a `string` of exactly N raw bytes, zeros kept, written padded to N and read back whole (a hash, a key, a signature), where `string[N]` stops at its first zero. Other arrays are still refused by name. The C target already wrote them.
+
+## [0.21.0] - 2026-11-21
+
+A dependency, and the platform library, can belong to named presets, so one C program's manifest builds for boards of different platforms (`build.presets: [pico2w, lolin32-lite]`, `rho build -target <preset> .`):
+
+- `depends[].presets: [a, b]` — the dependency is still resolved, locked and fetched as before, but a build for a preset not in the list leaves it out: no `add_subdirectory` and no `set(<NAME>_DIR ...)` in the generated CMake, its headers are not on the include path, its sources are not compiled, its Kconfig fragments are not merged, and whatever is reached only through it is left out too. An entry without `presets` belongs to every build, as before.
+- `c_connection.variants.<preset>.library: <name>` — replaces `c_connection.library` for a build of that preset, both where the generated project links it and where `rho cimport` names it.
+- A program built as a framework's component (ESP-IDF) is handed `RHO_PROGRAM_LIBRARIES`: its variant's link libraries other than the platform library, in declared order, set (empty) even when there are none, so the platform's `component.cmake` can link them unconditionally.
+
+A generated project records the preset it was generated for (`.rho-preset`); generating it for another preset empties it first, keeping its `build/` directory and the per-target build trees in it, because files a generated project already has are kept and the ones written for one board are wrong for the next.
+
+Needs rho-target 0.1.13 and rho-cimport 0.1.3, which apply the same rule to `deps.cmake`/`deps-aliases.cmake` and to the foreign interface's headers and preset lookup.
+
+## [0.21.1] - 2026-11-21
+
+A program built as a framework's component (ESP-IDF) gets its Kconfig header. The framework reads the component's file inside its own `project()`, before the top-level file's build-time merge could run, so the program's `CONFIG_*` symbols were all undefined and its `autoconf.h` was nowhere in the tree. The component file now runs the same `rho kconfig merge` (tool, fragments, values file, dialect) when it is read — not in the framework's script-mode pass — fails the configure if it cannot, reconfigures when the values file or a fragment changes, and lists the dialect's header directory in `RHO_PROGRAM_INCLUDE_DIRS` after the merge has written it. A program built the ordinary way is generated as before.
